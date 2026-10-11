@@ -106,6 +106,7 @@ final class AudioController: ObservableObject {
         if self.status == .audioServiceStuck { self.status = .off }
         self.devices = devs
         self.currentDeviceID = current
+        self.pushParams()  // crossfeed follows headphones vs speakers
         self.log.notice("devices: \(devs.count, privacy: .public)")
         AudioCapturePermission.preflightAsync { state in
           self.log.notice("permission preflight: \(String(describing: state), privacy: .public)")
@@ -136,9 +137,11 @@ final class AudioController: ObservableObject {
   func toggle() { settings.enabled.toggle() }
 
   func apply(preset: Preset) {
+    leaveModeQuietly()
     settings.presetName = preset.name
     settings.userPresetID = nil
     settings.bass = preset.bass
+    settings.character = preset.character
     morph(to: preset.bands())
   }
 
@@ -147,8 +150,12 @@ final class AudioController: ObservableObject {
   func apply(userPreset p: UserPreset) {
     settings.presetName = nil
     settings.userPresetID = p.id
+    leaveModeQuietly()
+    settings.presetName = nil
+    settings.userPresetID = p.id
     settings.bass = p.bass
     settings.boostDb = p.boostDb
+    settings.character = p.character
     morph(to: p.bands)
   }
 
@@ -157,7 +164,8 @@ final class AudioController: ObservableObject {
   func saveCurrentAsPreset(name: String, icon: String) -> UserPreset {
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     let p = UserPreset(name: trimmed.isEmpty ? "My Preset" : String(trimmed.prefix(24)), icon: icon,
-                       bands: settings.bands, bass: settings.bass, boostDb: settings.boostDb)
+                       bands: settings.bands, bass: settings.bass, boostDb: settings.boostDb,
+                       character: settings.character)
     settings.userPresets.append(p)
     settings.presetName = nil
     settings.userPresetID = p.id
@@ -176,6 +184,7 @@ final class AudioController: ObservableObject {
       p.bands = settings.bands
       p.bass = settings.bass
       p.boostDb = settings.boostDb
+      p.character = settings.character
     }
     settings.userPresets[i] = p
   }
@@ -200,6 +209,169 @@ final class AudioController: ObservableObject {
   }
 
   func pollMeters() -> PunchMeters { punch_take_meters(engine) }
+
+  // MARK: - Modes (Study / Sleep) and Studio Ears
+
+  /// Sleep-timer state, published for the countdown in the popover.
+  @Published private(set) var sleepEndsAt: Date?
+  @Published private(set) var sleepFinished = false
+  /// Pomodoro: current phase end, and whether it's a break.
+  @Published private(set) var pomodoroEndsAt: Date?
+  @Published private(set) var pomodoroOnBreak = false
+  @Published private(set) var pomodoroPlan: (focus: Int, rest: Int)?
+  /// Live fade offsets (dB) from the sleep timer; not persisted.
+  private var fade = Fade()
+  private var modeTimer: Timer?
+  private var sleepStartedAt: Date?
+
+  struct Fade: Equatable {
+    var musicDb: Double = 0
+    var noiseDb: Double = 0
+  }
+
+  func setMode(_ mode: ListeningMode) {
+    guard mode != settings.mode else { return }
+    var s = settings
+    if s.mode == .off {
+      s.beforeMode = .init(bands: s.bands, bass: s.bass, character: s.character,
+                           presetName: s.presetName, userPresetID: s.userPresetID)
+    }
+    s.mode = mode
+    var target = s.bands
+    if let p = mode.preset {
+      s.bass = p.bass
+      s.character = p.character
+      s.presetName = nil
+      s.userPresetID = nil
+      s.noiseDb = mode.defaultNoiseDb
+      target = p.bands()
+    } else if let b = s.beforeMode {
+      s.bass = b.bass
+      s.character = b.character
+      s.presetName = b.presetName
+      s.userPresetID = b.userPresetID
+      target = b.bands
+      s.beforeMode = nil
+      s.noiseOn = false
+    }
+    stopSleepTimer()
+    stopPomodoro()
+    settings = s
+    morph(to: target, duration: 0.8)
+    if mode == .sleep && settings.sleepMinutes > 0 { startSleepTimer() }
+  }
+
+  /// Picking a preset while a mode is on ends the mode without restoring.
+  private func leaveModeQuietly() {
+    guard settings.mode != .off else { return }
+    stopSleepTimer()
+    stopPomodoro()
+    settings.mode = .off
+    settings.beforeMode = nil
+    settings.noiseOn = false
+  }
+
+  func setSleepMinutes(_ m: Int) {
+    settings.sleepMinutes = m
+    if settings.mode == .sleep {
+      stopSleepTimer()
+      if m > 0 { startSleepTimer() }
+    }
+  }
+
+  /// Sleep timer: music holds, then fades linearly in dB from 0 to -40 over
+  /// the last `fadeMinutes`, then a 30 s tail to -60 dB. The noise bed
+  /// starts its fade 5 min later and ends 5 min later (or stays all night).
+  /// Afterwards the music stays muted (the tap keeps the original silent);
+  /// any touch on the popover wakes it.
+  private func startSleepTimer() {
+    let total = Double(settings.sleepMinutes) * 60
+    sleepStartedAt = Date()
+    sleepEndsAt = Date().addingTimeInterval(total)
+    sleepFinished = false
+    startModeTicker()
+  }
+
+  func stopSleepTimer() {
+    sleepEndsAt = nil
+    sleepStartedAt = nil
+    sleepFinished = false
+    if fade != Fade() {
+      fade = Fade()
+      pushParams()
+    }
+    if pomodoroEndsAt == nil { modeTimer?.invalidate(); modeTimer = nil }
+  }
+
+  /// Restores sound after the sleep timer ran out.
+  func wakeFromSleep() {
+    guard sleepFinished || sleepEndsAt != nil else { return }
+    stopSleepTimer()
+    if settings.mode == .sleep && settings.sleepMinutes > 0 { startSleepTimer() }
+  }
+
+  static func sleepFade(elapsed t: Double, total: Double, fadeLen: Double, delay: Double = 0) -> Double {
+    let fadeStart = total - fadeLen + delay
+    let fadeEnd = total + delay
+    if t <= fadeStart { return 0 }
+    if t <= fadeEnd { return -40 * (t - fadeStart) / fadeLen }
+    let tail = min(1, (t - fadeEnd) / 30)
+    return -40 - 20 * tail
+  }
+
+  func startPomodoro(_ plan: (focus: Int, rest: Int)) {
+    pomodoroPlan = plan
+    pomodoroOnBreak = false
+    pomodoroEndsAt = Date().addingTimeInterval(Double(plan.focus) * 60)
+    startModeTicker()
+  }
+
+  func stopPomodoro() {
+    pomodoroPlan = nil
+    pomodoroEndsAt = nil
+    pomodoroOnBreak = false
+    if sleepEndsAt == nil { modeTimer?.invalidate(); modeTimer = nil }
+  }
+
+  private func startModeTicker() {
+    guard modeTimer == nil else { return }
+    let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.modeTick() }
+    RunLoop.main.add(t, forMode: .common)
+    modeTimer = t
+  }
+
+  private func modeTick() {
+    let now = Date()
+    if let start = sleepStartedAt, settings.mode == .sleep {
+      let total = Double(settings.sleepMinutes) * 60
+      let fadeLen = SleepTimer.fadeMinutes(for: settings.sleepMinutes) * 60
+      let t = now.timeIntervalSince(start)
+      var f = Fade()
+      f.musicDb = Self.sleepFade(elapsed: t, total: total, fadeLen: fadeLen)
+      f.noiseDb = settings.noiseAllNight ? 0 : Self.sleepFade(elapsed: t, total: total, fadeLen: fadeLen, delay: 300)
+      if f.musicDb <= -60 {
+        f.musicDb = -120   // effectively silent; noise may continue
+        if !sleepFinished { sleepFinished = true; sleepEndsAt = nil }
+      }
+      if f.noiseDb <= -60 { f.noiseDb = -120 }
+      if f != fade {
+        fade = f
+        pushParams()
+      }
+    }
+    if let end = pomodoroEndsAt, let plan = pomodoroPlan, now >= end {
+      pomodoroOnBreak.toggle()
+      pomodoroEndsAt = now.addingTimeInterval(Double(pomodoroOnBreak ? plan.rest : plan.focus) * 60)
+      // Soft, low chime: no sharp 3 kHz edge to startle.
+      NSSound(named: "Purr")?.play()
+    }
+  }
+
+  private var isHeadphones: Bool {
+    guard let d = devices.first(where: { $0.id == currentDeviceID }) else { return false }
+    let n = d.name.lowercased()
+    return d.isBluetooth || n.contains("headphone") || n.contains("airpods") || n.contains("beats")
+  }
 
   /// Preset changes glide the curve (log-frequency, dB gain, log-Q) with an
   /// ease-out over ~350 ms; the engine follows every frame, so what you
@@ -289,21 +461,57 @@ final class AudioController: ObservableObject {
   private func pushParams() {
     let s = settings
     let e = engine
+    let f = fade
+    let hp = isHeadphones
     audioQueue.async {
-      self.configureEQOffMain(e, s)
+      self.configureEQOffMain(e, s, fade: f, headphones: hp)
       punch_engine_publish(e)
     }
   }
 
-  private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings) {
+  private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, fade: Fade = Fade(), headphones: Bool = false) {
     punch_set_num_bands(e, Int32(s.bands.count))
     for (i, b) in s.bands.enumerated() {
       punch_set_band(e, Int32(i), b.punchType, b.freq, b.gain, b.q, true)
     }
+    // Studio Ears lives in the correction stage so it stacks on any preset.
+    if s.studioEars {
+      punch_set_correction_num_bands(e, Int32(StudioEars.bands.count))
+      for (i, b) in StudioEars.bands.enumerated() {
+        punch_set_correction_band(e, Int32(i), b.0, b.1, b.2, b.3, true)
+      }
+    } else {
+      punch_set_correction_num_bands(e, 0)
+    }
     punch_set_auto_preamp(e, true)
-    punch_set_bass(e, s.bass > 0.001, Float(s.bass), 110)
-    punch_set_output_gain_db(e, Float(s.boostDb))
-    punch_set_limiter(e, true, -1.0, 80)
+    let bass = s.studioEars && s.mode != .sleep ? min(StudioEars.maxBass, s.bass + StudioEars.extraBass) : s.bass
+    punch_set_bass(e, bass > 0.001, Float(bass), 110)
+
+    let c = s.character
+    if let k = c.compressor {
+      punch_set_compressor(e, true, Float(k.thresholdDb), Float(k.ratio), Float(k.attackMs), Float(k.releaseMs),
+                           Float(k.makeupDb), Float(k.sidechainHpHz))
+    } else {
+      punch_set_compressor(e, false, -18, 2, 10, 150, 0, 0)
+    }
+    if let k = c.saturator {
+      punch_set_saturator(e, true, Float(k.driveDb), Float(k.mix), Float(k.toneHz), Float(k.asymmetry), Float(k.crossoverHz))
+    } else {
+      punch_set_saturator(e, false, 0, 0, 12_000, 0.2, 0)
+    }
+    if let k = c.ambience {
+      punch_set_ambience(e, true, Float(k.mix), Float(k.size), Float(k.dampingHz))
+    } else {
+      punch_set_ambience(e, false, 0, 0.5, 7_000)
+    }
+    punch_set_stereo_width(e, abs(c.width - 1) > 0.001, Float(c.width))
+    punch_set_crossfeed(e, headphones && c.crossfeed > 0.001, Float(c.crossfeed))
+    let noiseOn = s.mode != .off && s.noiseOn
+    punch_set_noise(e, noiseOn, Int32(s.noiseColor.rawValue), Float(s.noiseDb + fade.noiseDb))
+    // Sleep ignores Boost: quieter is the point.
+    let boost = s.mode == .sleep ? 0 : s.boostDb
+    punch_set_output_gain_db(e, Float(boost + fade.musicDb))
+    punch_set_limiter(e, true, Float(c.ceilingDb), 80)
   }
 
   private func scheduleSave() {
@@ -361,6 +569,8 @@ final class AudioController: ObservableObject {
     status = .starting
     let s = settings
     let e = engine
+    let f = fade
+    let hp = isHeadphones
     log.notice("rebuild")
     // Every Core Audio call happens on the audio queue, never on main.
     audioQueue.async {
@@ -369,13 +579,14 @@ final class AudioController: ObservableObject {
       DispatchQueue.main.async {
         self.devices = devs
         self.currentDeviceID = defaultID
+        self.pushParams()  // crossfeed follows headphones vs speakers
       }
       guard let device = devs.first(where: { $0.id == defaultID }) ?? devs.first else {
         DispatchQueue.main.async { self.status = .failed("No output device") }
         return
       }
       self.pipelineStop(fade: true)
-      self.configureEQOffMain(e, s)
+      self.configureEQOffMain(e, s, fade: f, headphones: hp)
       punch_engine_publish(e)
       let pipeline = TapPipeline(engine: e)
       do {
@@ -414,6 +625,7 @@ final class AudioController: ObservableObject {
       DispatchQueue.main.async {
         self.devices = devs
         self.currentDeviceID = current
+        self.pushParams()  // crossfeed follows headphones vs speakers
       }
     }
   }

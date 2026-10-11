@@ -32,6 +32,8 @@ struct PopoverView: View {
       presetStrip
       MeterView(model: meters)
       sliders
+      ModesView(controller: controller)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.settings.mode)
       Divider().opacity(0.5)
       footer
     }

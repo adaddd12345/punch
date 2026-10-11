@@ -45,6 +45,7 @@ struct PresetStrip: View {
             } action: {
               controller.apply(preset: p)
             }
+            .help(p.subtitle ?? p.name)
           }
           ForEach(controller.settings.userPresets) { p in
             Chip(title: p.name, selected: controller.settings.userPresetID == p.id) {
@@ -78,7 +79,7 @@ struct PresetStrip: View {
   }
 }
 
-private struct Chip<Icon: View>: View {
+struct Chip<Icon: View>: View {
   let title: String
   let selected: Bool
   @ViewBuilder let icon: () -> Icon
