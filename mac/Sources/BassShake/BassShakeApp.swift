@@ -24,11 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var window: NSWindow?
 
   override init() {
-    log.info("delegate init")
+    // Local logger: stored properties can't be read before super.init().
+    let l = Logger(subsystem: "app.bassshake.BassShake", category: "app")
+    l.info("delegate init")
     controller = AudioController()
     updates = Updates()
-    log.info("delegate ready")
     super.init()
+    l.info("delegate ready")
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
