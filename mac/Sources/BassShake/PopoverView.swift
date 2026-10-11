@@ -8,6 +8,7 @@ struct PopoverView: View {
   private let meterTimer = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
   @State private var visible = false
   @State private var editor: PresetEditor.Mode?
+  @State private var showDrivers = false
 
   init(controller: AudioController) {
     self.controller = controller
@@ -26,6 +27,7 @@ struct PopoverView: View {
     VStack(alignment: .leading, spacing: 12) {
       header
       statusBanner
+      driverSection
       EQView(controller: controller)
         .frame(height: 150)
         .opacity(controller.settings.enabled ? 1 : 0.45)
@@ -66,6 +68,17 @@ struct PopoverView: View {
       Text("Bass Shake")
         .font(.system(size: 14, weight: .bold, design: .rounded))
       Spacer()
+      if controller.settings.enabled {
+        Button { controller.bypassed.toggle() } label: {
+          Text(controller.bypassed ? "Original" : "A/B")
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .foregroundStyle(controller.bypassed ? Color.white : Color.primary)
+            .background(Capsule().fill(controller.bypassed ? Color.orange : Color.primary.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+        .help("Compare with the original sound (\(GlobalHotkey.bypassLabel) from anywhere)")
+      }
       Toggle("", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
         .toggleStyle(.switch)
         .controlSize(.small)
@@ -93,6 +106,19 @@ struct PopoverView: View {
       Banner(symbol: "xmark.octagon", tint: .red, text: "Requires macOS 14.4 or later.", action: nil, secondary: nil)
     default:
       EmptyView()
+    }
+  }
+
+  @ViewBuilder private var driverSection: some View {
+    if showDrivers {
+      DriverCleanupView(controller: controller) { withAnimation { showDrivers = false } }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    } else if controller.settings.checkDrivers, !controller.driverBannerDismissed,
+              let d = controller.conflictingDrivers.first {
+      Banner(symbol: "exclamationmark.triangle", tint: .orange,
+             text: "Found an old audio driver (\(d.name)\(controller.conflictingDrivers.count > 1 ? " and \(controller.conflictingDrivers.count - 1) more" : "")). It can freeze macOS audio and fight with Bass Shake.",
+             action: ("Review & Clean Up", { withAnimation { showDrivers = true } }),
+             secondary: ("Not Now", { controller.driverBannerDismissed = true }))
     }
   }
 
@@ -152,6 +178,20 @@ struct PopoverView: View {
           .foregroundStyle(.tertiary)
       }
       Menu {
+        Toggle("Remember Sound per Device", isOn: Binding(get: { controller.settings.perDevice },
+                                                           set: { controller.settings.perDevice = $0 }))
+        if let d = controller.currentDevice {
+          Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
+                                                             set: { controller.setBypassOnCurrentDevice($0) }))
+        }
+        Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
+                                                                       set: { controller.settings.bypassHotkey = $0 }))
+        Divider()
+        Button("Find Old Audio Drivers…") {
+          controller.scanDrivers()
+          withAnimation { showDrivers = true }
+        }
+        Divider()
         Button("Check for Updates…") { updates.checkNow() }
         if let err = updates.startError { Text("Updates unavailable: \(err)") }
         Text("Version \(updates.currentVersion)")

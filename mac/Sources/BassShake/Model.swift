@@ -199,6 +199,25 @@ enum NoiseColorChoice: Int, Codable, CaseIterable, Identifiable {
   var title: String { ["White", "Pink", "Brown"][rawValue] }
 }
 
+/// Volume-linked loudness (equal-loudness idea, our own fitted curve): below
+/// ~75% system volume the ear loses bass first, then treble, so add a low
+/// shelf and a gentler high shelf that grow as the volume drops.
+enum Loudness {
+  static let referenceVolume = 0.75
+  static func amount(volume v: Double) -> Double {
+    max(0, min(1, (referenceVolume - v) / referenceVolume))
+  }
+  static func bands(volume v: Double) -> [(PunchFilterType, Double, Double, Double)] {
+    let a = amount(volume: v)
+    guard a > 0.01 else { return [] }
+    return [(PUNCH_LOW_SHELF, 90, 7 * a, 0.71), (PUNCH_HIGH_SHELF, 10_000, 2.5 * a, 0.71)]
+  }
+  /// Auto-preamp lowers everything by the shelf boost; give half of it back
+  /// (the limiter catches peaks) so turning the volume down doesn't also
+  /// make the music quieter still.
+  static func makeupDb(volume v: Double) -> Double { 3.5 * amount(volume: v) }
+}
+
 /// Sleep timer presets in minutes; 0 = no timer.
 enum SleepTimer {
   static let choices = [15, 30, 45, 60, 90]
@@ -274,6 +293,24 @@ struct Settings: Codable, Equatable {
   var noiseDb: Double = -40
   var sleepMinutes = SleepTimer.defaultMinutes  // 0 = no timer
   var noiseAllNight = false
+  /// Each output device remembers its own sound and switches automatically.
+  var perDevice = true
+  var deviceSounds: [String: DeviceSound] = [:]   // by device UID
+  var bypassDevices: Set<String> = []             // devices that get no processing
+  /// Bass and treble lift that grows as the system volume goes down.
+  var autoLoudness = false
+  var bypassHotkey = true
+  var checkDrivers = true
+
+  struct DeviceSound: Codable, Equatable {
+    var bands: [EQBand]
+    var bass: Double
+    var boostDb: Double
+    var character: SoundCharacter
+    var presetName: String?
+    var userPresetID: UUID?
+    var studioEars: Bool
+  }
 
   struct Snapshot: Codable, Equatable {
     var bands: [EQBand]
@@ -308,6 +345,12 @@ struct Settings: Codable, Equatable {
     noiseDb = try c.decodeIfPresent(Double.self, forKey: .noiseDb) ?? d.noiseDb
     sleepMinutes = try c.decodeIfPresent(Int.self, forKey: .sleepMinutes) ?? d.sleepMinutes
     noiseAllNight = try c.decodeIfPresent(Bool.self, forKey: .noiseAllNight) ?? d.noiseAllNight
+    perDevice = try c.decodeIfPresent(Bool.self, forKey: .perDevice) ?? d.perDevice
+    deviceSounds = (try? c.decodeIfPresent([String: DeviceSound].self, forKey: .deviceSounds)) ?? [:]
+    bypassDevices = try c.decodeIfPresent(Set<String>.self, forKey: .bypassDevices) ?? []
+    autoLoudness = try c.decodeIfPresent(Bool.self, forKey: .autoLoudness) ?? d.autoLoudness
+    bypassHotkey = try c.decodeIfPresent(Bool.self, forKey: .bypassHotkey) ?? d.bypassHotkey
+    checkDrivers = try c.decodeIfPresent(Bool.self, forKey: .checkDrivers) ?? d.checkDrivers
   }
 
   static func load() -> Settings {

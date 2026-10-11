@@ -16,6 +16,12 @@ struct ModesView: View {
           controller.settings.studioEars.toggle()
         }
         .help("Leans hard into sub-bass and trap highs (808 body, hats, air) on top of any preset. A 22 Hz guard keeps rumble out.")
+        Chip(title: "Loudness", selected: s.autoLoudness) {
+          Image(systemName: "speaker.wave.2.bubble").font(.system(size: 9, weight: .semibold))
+        } action: {
+          controller.settings.autoLoudness.toggle()
+        }
+        .help("Auto Loudness: at low volume your ears lose bass and treble first. This adds them back as you turn the volume down, and does nothing at high volume.")
         Spacer(minLength: 4)
         ForEach([ListeningMode.study, .sleep]) { m in
           Chip(title: m.title, selected: s.mode == m) {
