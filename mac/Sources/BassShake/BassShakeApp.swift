@@ -18,11 +18,18 @@ struct BassShakeApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  let controller = AudioController()
-  let updates = Updates()
+  private let log = Logger(subsystem: "app.bassshake.BassShake", category: "app")
+  let controller: AudioController
+  let updates: Updates
   private var window: NSWindow?
 
-  private let log = Logger(subsystem: "app.bassshake.BassShake", category: "app")
+  override init() {
+    log.info("delegate init")
+    controller = AudioController()
+    updates = Updates()
+    log.info("delegate ready")
+    super.init()
+  }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     log.info("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")

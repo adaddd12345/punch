@@ -62,11 +62,13 @@ final class AudioController: ObservableObject {
     curveEngine = punch_engine_create()
     punch_engine_prepare(curveEngine, 48_000, 2, 512)
     settings = Settings.load()
-    BSCrashGuardInstall()
-    installListeners()
     pushParams()
-    // Anything that talks to coreaudiod or tccd happens in bootstrap(),
-    // after the UI is on screen, so launch can never stall on it.
+    // Nothing here may talk to coreaudiod or tccd. This initializer runs
+    // inside SwiftUI's App.body while the scene graph is being built; the
+    // first Core Audio HAL call made from there never returned (beta 1-16
+    // hung at launch with no UI). All system work happens in bootstrap(),
+    // after launch, with HAL calls on the audio queue.
+    log.info("controller init")
   }
 
   private var bootstrapped = false
@@ -77,7 +79,10 @@ final class AudioController: ObservableObject {
     guard !bootstrapped else { return }
     bootstrapped = true
     log.info("bootstrap")
+    BSCrashGuardInstall()
+    installAppObservers()
     audioQueue.async {
+      self.installHALListeners()
       if #available(macOS 14.2, *) { TapPipeline.sweepLeftovers() }
       let devs = Devices.allOutputs()
       let current = Devices.defaultOutput()
@@ -353,7 +358,8 @@ final class AudioController: ObservableObject {
     currentDeviceID = Devices.defaultOutput()
   }
 
-  private func installListeners() {
+  /// audioQueue only (first HAL contact happens here, off the main thread).
+  private func installHALListeners() {
     listeners.add(systemObject, .global(kAudioHardwarePropertyDefaultOutputDevice)) { [weak self] in
       DispatchQueue.main.async {
         self?.refreshDevices()
@@ -367,6 +373,10 @@ final class AudioController: ObservableObject {
       // coreaudiod restarted: every tap, aggregate and object ID is gone.
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.0) }
     }
+  }
+
+  /// Main thread: app/workspace notifications (no Core Audio involved).
+  private func installAppObservers() {
     let ws = NSWorkspace.shared.notificationCenter
     observers.append(ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
       guard let self else { return }
