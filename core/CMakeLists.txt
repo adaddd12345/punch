@@ -14,6 +14,7 @@ add_library(punch_core STATIC
   src/parametric_eq.cpp
   src/limiter.cpp
   src/enhancers.cpp
+  src/character.cpp
   src/engine.cpp
   src/autoeq.cpp
   src/punch_c.cpp)

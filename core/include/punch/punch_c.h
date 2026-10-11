@@ -49,6 +49,21 @@ void punch_set_crossfeed(PunchEngine* e, bool enabled, float amount);
 void punch_set_output_gain_db(PunchEngine* e, float db);
 void punch_set_limiter(PunchEngine* e, bool enabled, float ceiling_db, float release_ms);
 void punch_set_bypass(PunchEngine* e, bool bypass);
+
+/* Character stages (modes / genre presets). */
+void punch_set_compressor(PunchEngine* e, bool enabled, float threshold_db, float ratio, float attack_ms,
+                          float release_ms, float makeup_db, float sidechain_hp_hz);
+void punch_set_saturator(PunchEngine* e, bool enabled, float drive_db, float mix, float tone_hz, float asymmetry,
+                         float crossover_hz);
+void punch_set_ambience(PunchEngine* e, bool enabled, float mix, float size, float damping_hz);
+/* color: 0 white, 1 pink, 2 brown. level_db is RMS dBFS. */
+void punch_set_noise(PunchEngine* e, bool enabled, int color, float level_db);
+
+/* Correction stage (applied before the user EQ): headphone correction or
+ * additive layers like Studio Ears. */
+void punch_set_correction_num_bands(PunchEngine* e, int n);
+void punch_set_correction_band(PunchEngine* e, int index, PunchFilterType type, double freq_hz, double gain_db,
+                               double q, bool enabled);
 void punch_engine_publish(PunchEngine* e);
 /* Preamp actually applied after auto-preamp compensation (valid after publish). */
 double punch_effective_preamp_db(const PunchEngine* e);

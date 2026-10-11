@@ -38,6 +38,10 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   bass_.prepare(sampleRate, numChannels_);
   stereo_.prepare(sampleRate);
   crossfeed_.prepare(sampleRate);
+  compressor_.prepare(sampleRate);
+  saturator_.prepare(sampleRate, numChannels_);
+  ambience_.prepare(sampleRate);
+  noise_.prepare(sampleRate);
   outGain_.prepare(sampleRate, 15.0);
   outGain_.snap(1.f);
   limiter_.prepare(sampleRate, numChannels_);
@@ -86,6 +90,10 @@ void Engine::applySnapshot(const EngineParams& p) {
     bass_.setParams({});
     stereo_.setParams({});
     crossfeed_.setParams({});
+    compressor_.setParams({});
+    saturator_.setParams({});
+    ambience_.setParams({});
+    noise_.setParams({});
     outGain_.setTarget(1.f);
     LimiterParams lp = p.limiter;
     lp.ceilingDb = 0.f;
@@ -98,6 +106,10 @@ void Engine::applySnapshot(const EngineParams& p) {
   bass_.setParams(p.bass);
   stereo_.setParams(p.stereo);
   crossfeed_.setParams(p.crossfeed);
+  compressor_.setParams(p.compressor);
+  saturator_.setParams(p.saturator);
+  ambience_.setParams(p.ambience);
+  noise_.setParams(p.noise);
   outGain_.setTarget(dbToGain(std::clamp(p.outputGainDb, -60.f, 24.f)));
   limiter_.setParams(p.limiter);
 }
@@ -111,8 +123,13 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
 
   correction_.process(ch, numChannels, numFrames);
   eq_.process(ch, numChannels, numFrames);
+  // Saturate after EQ (mud already cut), compress after saturation, add
+  // psychoacoustic bass after both so its harmonics don't pump or re-distort.
+  saturator_.process(ch, numChannels, numFrames);
+  compressor_.process(ch, numChannels, numFrames);
   bass_.process(ch, numChannels, numFrames);
   stereo_.process(ch, numChannels, numFrames);
+  ambience_.process(ch, numChannels, numFrames);
   crossfeed_.process(ch, numChannels, numFrames);
   if (!(outGain_.settled() && outGain_.current() == 1.f)) {
     for (int i = 0; i < numFrames; ++i) {
@@ -120,6 +137,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
       for (int c = 0; c < numChannels; ++c) ch[c][i] *= g;
     }
   }
+  noise_.process(ch, numChannels, numFrames);
   limiter_.process(ch, numChannels, numFrames);
 
   // NaN/Inf can arrive from a misbehaving client app or a driver glitch and
@@ -135,6 +153,10 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     bass_.reset();
     stereo_.reset();
     crossfeed_.reset();
+    compressor_.reset();
+    saturator_.reset();
+    ambience_.reset();
+    noise_.reset();
     limiter_.reset();
   }
 

@@ -67,6 +67,36 @@ void punch_set_limiter(PunchEngine* e, bool enabled, float ceiling_db, float rel
 }
 
 void punch_set_bypass(PunchEngine* e, bool bypass) { e->engine.edit().bypass = bypass; }
+
+void punch_set_compressor(PunchEngine* e, bool enabled, float threshold_db, float ratio, float attack_ms,
+                          float release_ms, float makeup_db, float sidechain_hp_hz) {
+  e->engine.edit().compressor = {threshold_db, ratio, attack_ms, release_ms, 6.f, makeup_db, sidechain_hp_hz, enabled};
+}
+
+void punch_set_saturator(PunchEngine* e, bool enabled, float drive_db, float mix, float tone_hz, float asymmetry,
+                         float crossover_hz) {
+  e->engine.edit().saturator = {drive_db, mix, tone_hz, asymmetry, crossover_hz, enabled};
+}
+
+void punch_set_ambience(PunchEngine* e, bool enabled, float mix, float size, float damping_hz) {
+  e->engine.edit().ambience = {mix, size, damping_hz, enabled};
+}
+
+void punch_set_noise(PunchEngine* e, bool enabled, int color, float level_db) {
+  e->engine.edit().noise = {static_cast<punch::NoiseColor>(std::clamp(color, 0, 2)), level_db, enabled};
+}
+
+void punch_set_correction_num_bands(PunchEngine* e, int n) {
+  e->engine.edit().correction.numBands = std::clamp(n, 0, punch::kMaxEqBands);
+}
+
+void punch_set_correction_band(PunchEngine* e, int index, PunchFilterType type, double freq_hz, double gain_db,
+                               double q, bool enabled) {
+  if (index < 0 || index >= punch::kMaxEqBands) return;
+  auto& eq = e->engine.edit().correction;
+  eq.bands[size_t(index)] = {static_cast<punch::FilterType>(type), freq_hz, gain_db, q, enabled};
+  eq.numBands = std::max(eq.numBands, index + 1);
+}
 void punch_engine_publish(PunchEngine* e) { e->engine.publish(); }
 double punch_effective_preamp_db(const PunchEngine* e) { return e->engine.effectivePreampDb(); }
 

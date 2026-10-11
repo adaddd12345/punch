@@ -1,8 +1,9 @@
 // The complete processing chain run inside the Core Audio IOProc.
 //
-//   in -> device correction EQ (AutoEq) -> user EQ (with preamp)
-//      -> bass enhancer -> stereo width -> crossfeed
-//      -> output gain ("boost") -> look-ahead limiter -> out
+//   in -> device correction EQ (AutoEq / Studio Ears) -> user EQ (with preamp)
+//      -> saturator -> compressor -> bass enhancer -> stereo width
+//      -> ambience -> crossfeed -> output gain ("boost") -> noise bed
+//      -> look-ahead limiter -> out
 //
 // Correction and user EQ are separate stages so a per-headphone AutoEq
 // profile stays applied underneath whatever preset the user picks.
@@ -18,6 +19,7 @@
 #include <string_view>
 #include <vector>
 
+#include "punch/character.hpp"
 #include "punch/enhancers.hpp"
 #include "punch/limiter.hpp"
 #include "punch/lockfree.hpp"
@@ -32,6 +34,10 @@ struct EngineParams {
   BassEnhancerParams bass;
   StereoParams stereo;
   CrossfeedParams crossfeed;
+  CompressorParams compressor;
+  SaturatorParams saturator;
+  AmbienceParams ambience;
+  NoiseParams noise;
   float outputGainDb = 0.f;  // post-EQ boost, protected by the limiter
   LimiterParams limiter;
   bool bypass = false;
@@ -90,6 +96,10 @@ class Engine {
   BassEnhancer bass_;
   StereoWidener stereo_;
   Crossfeed crossfeed_;
+  Compressor compressor_;
+  Saturator saturator_;
+  Ambience ambience_;
+  NoiseBed noise_;
   Smoothed outGain_;
   Limiter limiter_;
 

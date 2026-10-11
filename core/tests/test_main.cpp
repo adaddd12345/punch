@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "punch/autoeq.hpp"
+#include "punch/character.hpp"
 #include "punch/engine.hpp"
 #include "punch/lockfree.hpp"
 #include "punch/svf.hpp"
@@ -318,6 +319,10 @@ TEST(engine_process_is_allocation_free) {
   e.edit().bass.enabled = true;
   e.edit().stereo.enabled = true;
   e.edit().crossfeed.enabled = true;
+  e.edit().compressor.enabled = true;
+  e.edit().saturator = {12.f, 0.5f, 12000.f, 0.2f, 120.f, true};
+  e.edit().ambience = {0.3f, 0.5f, 7000.f, true};
+  e.edit().noise = {NoiseColor::Pink, -40.f, true};
   e.prepare(48000, 2, 1024);
   std::vector<float> buf(2048 * 2, 0.1f);
   e.edit().eq.bands[3].gainDb = -4;
@@ -416,6 +421,113 @@ TEST(engine_survives_hostile_input) {
   bool finite = true;
   for (float v : buf) finite &= std::isfinite(v) && std::fabs(v) <= 1.f;
   CHECK(finite);
+}
+
+TEST(compressor_static_curve) {
+  CHECK_NEAR(Compressor::computeGainDb(-30, -18, 4, 6), 0.0, 1e-6);       // below knee
+  CHECK_NEAR(Compressor::computeGainDb(-6, -18, 4, 6), -9.0, 1e-4);       // 12 dB over at 4:1
+  CHECK_NEAR(Compressor::computeGainDb(-18, -18, 4, 6), -0.5625, 1e-4);   // mid-knee
+  CHECK(Compressor::computeGainDb(-17, -18, 4, 0) < 0.f);
+}
+
+TEST(compressor_reduces_loud_signal) {
+  Compressor c;
+  c.prepare(48000);
+  c.setParams({-20.f, 4.f, 5.f, 100.f, 0.f, 0.f, 0.f, true});
+  std::vector<float> x(48000);
+  for (int i = 0; i < 48000; ++i) x[size_t(i)] = 0.5f * float(std::sin(i * 0.05));  // ~-6 dBFS peak
+  float* ch[1] = {x.data()};
+  c.process(ch, 1, 48000);
+  float peak = 0;
+  for (int i = 24000; i < 48000; ++i) peak = std::max(peak, std::fabs(x[size_t(i)]));
+  // 14 dB over threshold at 4:1 -> ~10.5 dB reduction (peak detector, some ripple).
+  CHECK(20 * std::log10(peak) < -14.0);
+  CHECK(c.gainReductionDb() < -8.f);
+}
+
+TEST(saturator_adds_harmonics_and_stays_bounded) {
+  Saturator s;
+  const double fs = 48000;
+  s.prepare(fs, 1);
+  s.setParams({18.f, 1.f, 16000.f, 0.3f, 0.f, true});
+  const int n = 48000;
+  std::vector<float> x(size_t(n), 0.f);
+  for (int i = 0; i < n; ++i) x[size_t(i)] = 0.5f * float(std::sin(2 * std::numbers::pi * 200 * i / fs));
+  float* ch[1] = {x.data()};
+  s.process(ch, 1, n);
+  auto mag = [&](double hz) {
+    double re = 0, im = 0;
+    for (int i = n / 2; i < n; ++i) { re += x[size_t(i)] * std::cos(2 * std::numbers::pi * hz * i / fs); im += x[size_t(i)] * std::sin(2 * std::numbers::pi * hz * i / fs); }
+    return std::sqrt(re * re + im * im) / (n / 2);
+  };
+  CHECK(mag(400) > 0.01);  // even harmonic from asymmetry
+  CHECK(mag(600) > 0.01);  // odd harmonic
+  bool ok = true;
+  for (float v : x) ok &= std::isfinite(v) && std::fabs(v) < 1.6f;
+  CHECK(ok);
+}
+
+TEST(saturator_off_is_transparent) {
+  Saturator s;
+  s.prepare(48000, 1);
+  s.setParams({18.f, 1.f, 16000.f, 0.3f, 0.f, false});
+  std::vector<float> x(1024), y;
+  for (int i = 0; i < 1024; ++i) x[size_t(i)] = float(std::sin(i * 0.1));
+  y = x;
+  float* ch[1] = {y.data()};
+  s.process(ch, 1, 1024);
+  for (int i = 0; i < 1024; ++i) CHECK(y[size_t(i)] == x[size_t(i)]);
+}
+
+TEST(noise_level_matches_request) {
+  for (int color = 0; color < 3; ++color) {
+    NoiseBed nb;
+    nb.prepare(48000);
+    nb.setParams({static_cast<NoiseColor>(color), -30.f, true});
+    std::vector<float> l(96000, 0.f), r(96000, 0.f);
+    float* ch[2] = {l.data(), r.data()};
+    nb.process(ch, 2, 96000);
+    double acc = 0, corr = 0;
+    for (int i = 48000; i < 96000; ++i) { acc += double(l[size_t(i)]) * l[size_t(i)]; corr += double(l[size_t(i)]) * r[size_t(i)]; }
+    const double rmsDb = 10 * std::log10(acc / 48000);
+    CHECK_NEAR(rmsDb, -30.0, 1.5);
+    CHECK(std::fabs(corr / acc) < 0.2);  // decorrelated stereo
+  }
+}
+
+TEST(ambience_tail_decays) {
+  Ambience a;
+  a.prepare(48000);
+  a.setParams({1.f, 0.6f, 7000.f, true});
+  std::vector<float> l(48000, 0.f), r(48000, 0.f);
+  l[0] = r[0] = 1.f;
+  float* ch[2] = {l.data(), r.data()};
+  a.process(ch, 2, 48000);
+  double early = 0, late = 0;
+  for (int i = 100; i < 4800; ++i) early += double(l[size_t(i)]) * l[size_t(i)];
+  for (int i = 24000; i < 48000; ++i) late += double(l[size_t(i)]) * l[size_t(i)];
+  CHECK(early > 1e-3);            // reflections present
+  CHECK(late < early * 1e-6);     // and gone after 0.5 s
+}
+
+TEST(saturator_split_band_keeps_sub_clean) {
+  Saturator s;
+  const double fs = 48000;
+  s.prepare(fs, 1);
+  s.setParams({24.f, 1.f, 16000.f, 0.0f, 120.f, true});
+  const int n = 48000;
+  std::vector<float> x(size_t(n), 0.f);
+  for (int i = 0; i < n; ++i) x[size_t(i)] = 0.5f * float(std::sin(2 * std::numbers::pi * 40 * i / fs));
+  float* ch[1] = {x.data()};
+  s.process(ch, 1, n);
+  auto mag = [&](double hz) {
+    double re = 0, im = 0;
+    for (int i = n / 2; i < n; ++i) { re += x[size_t(i)] * std::cos(2 * std::numbers::pi * hz * i / fs); im += x[size_t(i)] * std::sin(2 * std::numbers::pi * hz * i / fs); }
+    return std::sqrt(re * re + im * im) / (n / 2);
+  };
+  // A 40 Hz 808-like tone stays essentially intact: barely touched by the highs-only saturator.
+  CHECK(mag(40) > 0.2);
+  CHECK(mag(120) < 0.03);
 }
 
 int main() {
