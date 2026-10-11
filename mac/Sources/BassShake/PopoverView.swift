@@ -4,6 +4,7 @@ import SwiftUI
 struct PopoverView: View {
   @ObservedObject var controller: AudioController
   @ObservedObject var meters: MeterModel
+  @EnvironmentObject var updates: Updates
   private let meterTimer = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
   @State private var visible = false
   @State private var editor: PresetEditor.Mode?
@@ -40,7 +41,10 @@ struct PopoverView: View {
       guard visible else { return }
       meters.update(controller.pollMeters())
     }
-    .onAppear { visible = true }
+    .onAppear {
+      visible = true
+      updates.checkInBackgroundIfStale()
+    }
     .onDisappear {
       visible = false
       meters.reset()
@@ -140,6 +144,18 @@ struct PopoverView: View {
           .font(.system(size: 9, weight: .medium, design: .rounded))
           .foregroundStyle(.tertiary)
       }
+      Menu {
+        Button("Check for Updates…") { updates.checkNow() }
+        Text("Version \(updates.currentVersion)")
+        Divider()
+        Button("Quit Bass Shake") { NSApp.terminate(nil) }
+      } label: {
+        Image(systemName: "ellipsis.circle")
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .help("Updates, version and Quit")
       Button("Quit") { NSApp.terminate(nil) }
         .buttonStyle(.plain)
         .font(.system(size: 11))

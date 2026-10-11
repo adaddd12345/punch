@@ -30,6 +30,10 @@ jobs:
   mac-app:
     name: Bass Shake.app (macOS)
     runs-on: macos-15
+    # Publish releases and the update feed in push order.
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain
@@ -74,3 +78,36 @@ jobs:
 
             Requires macOS 14.4 or later. No driver is installed and no restart is needed;
             quitting Bass Shake instantly returns your Mac's audio to normal.
+      - name: Sign update + write Sparkle appcast
+        if: github.event_name == 'push'
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "::warning::SPARKLE_ED_PRIVATE_KEY secret is not set; skipping the auto-update feed"
+            exit 0
+          fi
+          python3 -m venv build/venv
+          build/venv/bin/pip install --quiet cryptography
+          V="0.1.0-beta.${{ github.run_number }}"
+          PUB="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' mac/Resources/Info.plist)"
+          build/venv/bin/python mac/scripts/sparkle_appcast.py "build/BassShake-$V.zip" \
+            --version "${{ github.run_number }}" --short "$V" \
+            --url "https://github.com/${{ github.repository }}/releases/download/v$V/BassShake-$V.zip" \
+            --notes "$(printf '%s\n' "$NOTES" | head -n 1)" \
+            --expect-public-key "$PUB" -o build/appcast.xml
+          echo "PUBLISH_FEED=1" >> "$GITHUB_ENV"
+      - name: Publish update feed
+        if: env.PUBLISH_FEED == '1'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: updates
+          target_commitish: ${{ github.sha }}
+          name: Update feed (Sparkle)
+          prerelease: true
+          files: build/appcast.xml
+          overwrite_files: true
+          body: |
+            Machine-readable update feed for Bass Shake's built-in updater (Sparkle).
+            This is not an app download; get the app from the newest v0.1.0-beta.N release.

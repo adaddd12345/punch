@@ -54,6 +54,25 @@ xattr -dr com.apple.quarantine "/Applications/Bass Shake.app" && open "/Applicat
 Quitting Bass Shake returns your audio to normal instantly. Uninstall =
 drag it to the Trash.
 
+## Auto-updates (Sparkle)
+
+Bass Shake updates itself with [Sparkle](https://sparkle-project.org). No Apple
+Developer account is needed: every update is signed with the project's
+EdDSA key, and Sparkle verifies it against `SUPublicEDKey` in Info.plist.
+
+- **Pipeline:** each push to GitHub → CI builds and signs `BassShake-0.1.0-beta.N.zip`
+  → publishes the `v0.1.0-beta.N` release → signs the zip and rewrites
+  `appcast.xml` on the fixed **`updates`** release (`SUFeedURL`).
+- **On the Mac:** the app checks hourly, whenever you open the popover (at most
+  every 10 minutes), and via **⋯ → Check for Updates…**. Then click *Install
+  Update*, and it relaunches on the new build. Sparkle-installed updates aren't
+  quarantined, so Gatekeeper only bothers you for the very first install.
+- **One-time setup:** add the private key as the repository secret
+  `SPARKLE_ED_PRIVATE_KEY` (Settings → Secrets and variables → Actions). Until
+  then, CI skips the feed with a warning.
+- Keep the private key safe. Losing it means existing installs can't
+  verify future updates; leaking it lets someone else sign updates.
+
 ## Repository
 
 | Path | What |

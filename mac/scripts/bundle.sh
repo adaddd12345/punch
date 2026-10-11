@@ -17,6 +17,16 @@ BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/BassSh
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/BassShake"
+
+# Embed Sparkle.framework (universal slice of the SwiftPM binary artifact).
+BIN_DIR="$(dirname "$BIN")"
+FW="$(find "$BIN_DIR" -maxdepth 3 -name Sparkle.framework -type d 2>/dev/null | head -1)"
+if [ -z "$FW" ]; then
+  FW="$(find .build/artifacts -path '*macos-arm64_x86_64/Sparkle.framework' -type d 2>/dev/null | head -1)"
+fi
+if [ -z "$FW" ]; then echo "error: Sparkle.framework not found" >&2; exit 1; fi
+mkdir -p "$APP/Contents/Frameworks"
+ditto "$FW" "$APP/Contents/Frameworks/Sparkle.framework"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" mac/Resources/Info.plist > "$APP/Contents/Info.plist"
 cp mac/Resources/MenuBarIcon*.png "$APP/Contents/Resources/"
 # Optional preset-icon artwork (PresetIcons/<sf-symbol-or-id>.png).

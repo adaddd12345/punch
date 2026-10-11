@@ -8,6 +8,7 @@ struct BassShakeApp: App {
   var body: some Scene {
     MenuBarExtra {
       PopoverView(controller: appDelegate.controller)
+        .environmentObject(appDelegate.updates)
     } label: {
       Image(nsImage: MenuBarIcon.image)
     }
@@ -17,6 +18,7 @@ struct BassShakeApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let controller = AudioController()
+  let updates = Updates()
   private var window: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -42,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   func showWindow() {
     if window == nil {
-      let host = NSHostingController(rootView: MainWindowView(controller: controller))
+      let host = NSHostingController(rootView: MainWindowView(controller: controller).environmentObject(updates))
       let w = NSWindow(contentViewController: host)
       w.title = "Bass Shake"
       w.styleMask = [.titled, .closable, .miniaturizable]

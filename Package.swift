@@ -9,6 +9,10 @@ let package = Package(
   products: [
     .executable(name: "BassShake", targets: ["BassShake"]),
   ],
+  dependencies: [
+    // Auto-updates (EdDSA-signed appcast; works without an Apple developer account).
+    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
+  ],
   targets: [
     // Portable C++ DSP engine (also built + tested with CMake on Linux).
     .target(
@@ -31,9 +35,11 @@ let package = Package(
     ),
     .executableTarget(
       name: "BassShake",
-      dependencies: ["PunchCore", "BassShakeRT"],
+      dependencies: ["PunchCore", "BassShakeRT", .product(name: "Sparkle", package: "Sparkle")],
       path: "mac/Sources/BassShake",
       linkerSettings: [
+        // Sparkle.framework is embedded in Contents/Frameworks by bundle.sh.
+        .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
         .linkedFramework("CoreAudio"),
         .linkedFramework("AudioToolbox"),
         .linkedFramework("Accelerate"),

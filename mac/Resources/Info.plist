@@ -18,6 +18,11 @@
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSAudioCaptureUsageDescription</key>
   <string>Bass Shake adds bass and EQ to your Mac’s sound as it plays. Audio is processed live and is never recorded, saved, or sent anywhere.</string>
+  <key>SUFeedURL</key><string>https://github.com/adaddd12345/punch/releases/download/updates/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>cSo3MWPriyIcFg42hMuJHhk2nLwVCNqO62OHV4Enjig=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>3600</integer>
+  <key>SUAllowsAutomaticUpdates</key><true/>
   <key>NSHumanReadableCopyright</key><string>Bass Shake beta</string>
 </dict>
 </plist>

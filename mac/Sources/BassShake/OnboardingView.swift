@@ -33,7 +33,7 @@ struct OnboardingView: View {
           .fixedSize(horizontal: false, vertical: true)
         VStack(alignment: .leading, spacing: 5) {
           Promise(symbol: "waveform", text: "Processed live, never saved.")
-          Promise(symbol: "lock.laptopcomputer", text: "Stays on this Mac: no account, no analytics, no network.")
+          Promise(symbol: "lock.laptopcomputer", text: "Your audio never leaves this Mac. No account, no analytics; the only internet use is checking for app updates.")
           Promise(symbol: "eye.slash", text: "Audio only. It can't see your screen or hear your microphone.")
           Promise(symbol: "arrow.uturn.backward", text: "Quit any time and your sound is instantly back to normal.")
         }
