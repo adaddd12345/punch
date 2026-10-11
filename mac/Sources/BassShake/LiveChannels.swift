@@ -62,6 +62,9 @@ final class LiveChannels: ObservableObject {
   @Published private(set) var levels: [String: Double] = [:]
   /// Muted app ids (bundle IDs; "pid.<n>" for apps without one, not saved).
   @Published private(set) var muted: Set<String>
+  /// Apps that skip The Bass Shaker (play unprocessed). Saved by bundle ID.
+  @Published private(set) var shakerOff: Set<String>
+  static let shakerOffKey = "BassShake.shakerOffApps.v1"
   @Published private(set) var defaultOutputName = ""
   /// Set when the level meter could not be built.
   @Published private(set) var meterProblem: String?
@@ -104,6 +107,7 @@ final class LiveChannels: ObservableObject {
   private var deviceNameCache: [AudioObjectID: String?] = [:]
   private var halApps: [LiveApp] = []
   private var halMuted: Set<String> = []
+  private var halShakerOff: Set<String> = []
   private var muteTaps: [String: MuteTap] = [:]
   private var halExcluded: [AudioObjectID] = []
   private var refreshWork: DispatchWorkItem?
@@ -130,6 +134,7 @@ final class LiveChannels: ObservableObject {
     // No Core Audio here (see AudioController.init): just the saved mutes.
     let saved = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
     muted = Set(saved)
+    shakerOff = Set(UserDefaults.standard.stringArray(forKey: Self.shakerOffKey) ?? [])
   }
 
   // MARK: - Public API (main thread)
@@ -140,8 +145,10 @@ final class LiveChannels: ObservableObject {
     guard !started else { return }
     started = true
     let m = muted
+    let off = shakerOff
     halQueue.async {
       self.halMuted = m
+      self.halShakerOff = off
       self.installSystemListeners()
       self.refreshNow()
     }
@@ -174,6 +181,31 @@ final class LiveChannels: ObservableObject {
   }
 
   func toggleMute(_ app: LiveApp) { setMuted(!muted.contains(app.id), id: app.id) }
+
+  /// Shaker on/off for one app. Off: the app is left out of the EQ tap, so
+  /// macOS plays it straight to the output, untouched.
+  func toggleShaker(_ app: LiveApp) {
+    var s = shakerOff
+    if s.contains(app.id) { s.remove(app.id) } else { s.insert(app.id) }
+    shakerOff = s
+    UserDefaults.standard.set(s.filter { !$0.hasPrefix("pid.") }.sorted(), forKey: Self.shakerOffKey)
+    halQueue.async {
+      self.halShakerOff = s
+      self.refreshNow()
+    }
+  }
+
+  /// Brings the app's windows to the front (re-opening its main window if it
+  /// has none, like clicking it in the Dock). AppKit only.
+  func open(_ app: LiveApp) {
+    if let id = app.bundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+      let cfg = NSWorkspace.OpenConfiguration()
+      cfg.activates = true
+      NSWorkspace.shared.openApplication(at: url, configuration: cfg)
+    } else {
+      NSRunningApplication(processIdentifier: app.appPID)?.activate(options: [.activateAllWindows])
+    }
+  }
 
   func setMuted(_ on: Bool, id: String) {
     var m = muted
@@ -467,12 +499,16 @@ final class LiveChannels: ObservableObject {
     for key in Array(muteTaps.keys) where desired[key] == nil {
       if let t = muteTaps.removeValue(forKey: key) { destroyMuteTap(t.id) }
     }
-    halExcluded = Array(Set(muteTaps.values.flatMap(\.objects))).sorted()
+    // Excluded from the EQ tap: muted apps (or we'd replay them) and apps
+    // with the Shaker switched off (macOS then plays them untouched).
+    var excluded = Set(muteTaps.values.flatMap(\.objects))
+    for key in halShakerOff { if let app = groups[key] { excluded.formUnion(app.processObjects) } }
+    halExcluded = Array(excluded).sorted()
   }
 
   private func createMuteTap(_ objects: [AudioObjectID]) -> AudioObjectID? {
     let d = CATapDescription(stereoMixdownOfProcesses: objects)
-    d.name = "The The Bass Shakerr Mute"
+    d.name = "The Bass Shaker Mute"
     d.uuid = UUID()
     d.isPrivate = true
     // Apple, CATapMuteBehavior (CATapDescription.h): `.muted` = "Audio is
@@ -559,7 +595,7 @@ final class LiveChannels: ObservableObject {
     do {
       for obj in objects {
         let d = CATapDescription(stereoMixdownOfProcesses: [obj])
-        d.name = "The The Bass Shakerr Meter"
+        d.name = "The Bass Shaker Meter"
         d.uuid = UUID()
         d.isPrivate = true
         d.muteBehavior = .unmuted  // listen only: the app keeps playing normally
@@ -580,7 +616,7 @@ final class LiveChannels: ObservableObject {
       guard !taps.isEmpty else { throw CAError(-1, "create meter taps") }
 
       let dict: [String: Any] = [
-        kAudioAggregateDeviceNameKey: "The The Bass Shakerr Meter",
+        kAudioAggregateDeviceNameKey: "The Bass Shaker Meter",
         // Same prefix as the EQ aggregate, so TapPipeline.sweepLeftovers()
         // also removes a meter left behind by a crash.
         kAudioAggregateDeviceUIDKey: "com.bassshake.aggregate.meter.\(UUID().uuidString)",

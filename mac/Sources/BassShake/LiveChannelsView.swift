@@ -82,9 +82,8 @@ struct LiveChannelsPanel: View {
           .foregroundStyle(.secondary)
       }
     }
-    .padding(10)
+    .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
     .onAppear { model.setMetering(true) }
     .onDisappear { model.setMetering(false) }
   }
@@ -95,10 +94,12 @@ struct LiveChannelsPanel: View {
         LiveChannelRow(app: app,
                        level: model.levels[app.id],
                        muted: model.muted.contains(app.id),
+                       shakerOn: !model.shakerOff.contains(app.id),
                        icon: model.icon(for: app),
-                       defaultOutput: model.defaultOutputName) {
-          model.toggleMute(app)
-        }
+                       defaultOutput: model.defaultOutputName,
+                       onToggle: { model.toggleMute(app) },
+                       onShaker: { model.toggleShaker(app) },
+                       onOpen: { model.open(app) })
         .frame(height: Self.rowHeight)
       }
       ForEach(idle, id: \.self) { bundleID in
@@ -115,11 +116,63 @@ private struct LiveChannelRow: View {
   let app: LiveApp
   let level: Double?
   let muted: Bool
+  let shakerOn: Bool
   let icon: NSImage
   let defaultOutput: String
   let onToggle: () -> Void
+  let onShaker: () -> Void
+  let onOpen: () -> Void
+  @State private var hover = false
 
   var body: some View {
+    HStack(spacing: 8) {
+      Button(action: onOpen) { appLabel }
+        .buttonStyle(.plain)
+        .help("Open \(app.name)")
+      Spacer(minLength: 4)
+      LiveLevelMeter(db: app.isPlaying ? level : nil)
+        .frame(width: 54, height: 5)
+        .opacity(muted ? 0.4 : 1)
+      Text(dbText)
+        .font(.system(size: 9, weight: .medium, design: .rounded))
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
+        .frame(width: 24, alignment: .trailing)
+      Button(action: onShaker) {
+        Image(nsImage: MenuBarIcon.image)
+          .renderingMode(.template)
+          .resizable()
+          .interpolation(.high)
+          .frame(width: 11, height: 11)
+          .frame(width: 28, height: 18)
+          .foregroundStyle(shakerOn ? Color.white : Color.secondary)
+          .background(Capsule().fill(shakerOn ? Color.accentColor : Color.primary.opacity(0.08)))
+          .overlay {
+            if !shakerOn {
+              Image(systemName: "line.diagonal").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
+            }
+          }
+      }
+      .buttonStyle(.plain)
+      .help(shakerOn ? "The Bass Shaker is shaping \(app.name). Click to let it play untouched."
+                     : "\(app.name) plays untouched. Click to run it through The Bass Shaker again.")
+      Button(action: onToggle) {
+        Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+          .font(.system(size: 9, weight: .bold))
+          .frame(width: 28, height: 18)
+          .foregroundStyle(muted ? Color.white : Color.primary)
+          .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
+      }
+      .buttonStyle(.plain)
+      .help(muteHelp)
+    }
+    .padding(.horizontal, 4)
+    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.06 : 0)))
+    .onHover { hover = $0 }
+    .help(rowHelp)
+  }
+
+  private var appLabel: some View {
     HStack(spacing: 8) {
       Image(nsImage: icon)
         .resizable()
@@ -140,30 +193,13 @@ private struct LiveChannelRow: View {
         }
         .foregroundStyle(.secondary)
       }
-      Spacer(minLength: 4)
-      LiveLevelMeter(db: app.isPlaying ? level : nil)
-        .frame(width: 64, height: 5)
-        .opacity(muted ? 0.4 : 1)
-      Text(dbText)
-        .font(.system(size: 9, weight: .medium, design: .rounded))
-        .monospacedDigit()
-        .foregroundStyle(.secondary)
-        .frame(width: 24, alignment: .trailing)
-      Button(action: onToggle) {
-        Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-          .font(.system(size: 9, weight: .bold))
-          .frame(width: 28, height: 18)
-          .foregroundStyle(muted ? Color.white : Color.primary)
-          .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
-      }
-      .buttonStyle(.plain)
-      .help(muteHelp)
     }
-    .help(rowHelp)
+    .contentShape(Rectangle())
   }
 
   private var deviceText: String {
     var s = app.deviceNames.isEmpty ? defaultOutput : app.deviceNames.joined(separator: ", ")
+    if !shakerOn && !muted { s = s.isEmpty ? "Untouched" : "Untouched · \(s)" }
     if muted { s = s.isEmpty ? "Muted" : "Muted · \(s)" }
     return s
   }

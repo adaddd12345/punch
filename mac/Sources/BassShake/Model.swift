@@ -305,6 +305,8 @@ struct Settings: Codable, Equatable {
   /// compression. Off by default: nothing rides the gain, and peaks over
   /// 0 dBFS clip at the device instead.
   var limit = false
+  /// Animated live waveform behind the EQ curve.
+  var waveform = true
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -356,6 +358,7 @@ struct Settings: Codable, Equatable {
     bypassHotkey = try c.decodeIfPresent(Bool.self, forKey: .bypassHotkey) ?? d.bypassHotkey
     checkDrivers = try c.decodeIfPresent(Bool.self, forKey: .checkDrivers) ?? d.checkDrivers
     limit = try c.decodeIfPresent(Bool.self, forKey: .limit) ?? d.limit
+    waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
   }
 
   static func load() -> Settings {

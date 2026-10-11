@@ -27,10 +27,6 @@ struct PopoverView: View {
   private var controls: some View {
     VStack(alignment: .leading, spacing: 12) {
       header
-      if showLive {
-        LiveChannelsPanel(model: controller.live)
-          .transition(.opacity.combined(with: .move(edge: .top)))
-      }
       statusBanner
       driverSection
       EQView(controller: controller)
@@ -49,6 +45,11 @@ struct PopoverView: View {
     .onReceive(meterTimer) { _ in
       guard visible else { return }
       meters.update(controller.pollMeters())
+      if controller.settings.waveform { controller.waveform.pull(controller) }
+    }
+    .background(HostWindowReader { LiveDrawer.shared.host = $0 })
+    .onChange(of: showLive) { _, on in
+      if on { LiveDrawer.shared.show(model: controller.live) } else { LiveDrawer.shared.hide() }
     }
     .onAppear {
       visible = true
@@ -58,6 +59,7 @@ struct PopoverView: View {
       visible = false
       meters.reset()
       showLive = false
+      LiveDrawer.shared.hide()
       controller.live.setMetering(false)
     }
   }
@@ -205,6 +207,8 @@ struct PopoverView: View {
           Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
                                                              set: { controller.setBypassOnCurrentDevice($0) }))
         }
+        Toggle("Live Waveform on EQ", isOn: Binding(get: { controller.settings.waveform },
+                                                    set: { controller.settings.waveform = $0 }))
         Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
                                                                        set: { controller.settings.bypassHotkey = $0 }))
         Divider()

@@ -64,6 +64,7 @@ final class AudioController: ObservableObject {
   let meters = MeterModel()
   /// Live Channels: apps making sound, their levels, one-click mute.
   let live = LiveChannels()
+  let waveform = WaveformModel()
 
   private let engine: OpaquePointer
   private let curveEngine: OpaquePointer
@@ -232,6 +233,11 @@ final class AudioController: ObservableObject {
   }
 
   func pollMeters() -> PunchMeters { punch_take_meters(engine) }
+
+  /// Drains the engine's post-processing mono feed (UI thread).
+  func readAnalyzer(_ buf: inout [Float]) -> Int {
+    buf.withUnsafeMutableBufferPointer { Int(punch_read_analyzer(engine, $0.baseAddress, $0.count)) }
+  }
 
   // MARK: - Per-device sound
 
