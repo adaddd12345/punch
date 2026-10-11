@@ -170,6 +170,11 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
 
 // ---------------------------------------------------------------- crash guard
 
+// Declared in AudioHardwareTapping.h, which is Objective-C only (its create
+// call takes a CATapDescription). Destroy is plain C; weak-import it so this
+// file stays C and loads on any macOS.
+extern OSStatus AudioHardwareDestroyProcessTap(AudioObjectID inTapID) __attribute__((weak_import));
+
 static _Atomic AudioObjectID gGuardAggregate = kAudioObjectUnknown;
 static _Atomic AudioObjectID gGuardTap = kAudioObjectUnknown;
 
@@ -184,9 +189,7 @@ static void guardTeardown(void) {
   const AudioObjectID agg = atomic_exchange(&gGuardAggregate, kAudioObjectUnknown);
   const AudioObjectID tap = atomic_exchange(&gGuardTap, kAudioObjectUnknown);
   if (agg != kAudioObjectUnknown) AudioHardwareDestroyAggregateDevice(agg);
-  if (tap != kAudioObjectUnknown) {
-    if (__builtin_available(macOS 14.2, *)) AudioHardwareDestroyProcessTap(tap);
-  }
+  if (tap != kAudioObjectUnknown && AudioHardwareDestroyProcessTap != NULL) AudioHardwareDestroyProcessTap(tap);
 }
 
 static void guardHandler(int sig) {

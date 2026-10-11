@@ -18,9 +18,11 @@
 extern "C" {
 #endif
 
+CF_ASSUME_NONNULL_BEGIN
+
 typedef struct BSRenderContext BSRenderContext;
 
-BSRenderContext* BSRenderContextCreate(PunchEngine* engine);
+BSRenderContext* _Nullable BSRenderContextCreate(PunchEngine* engine);
 void BSRenderContextDestroy(BSRenderContext* ctx);
 
 // Index of the tap's buffer in the aggregate's input AudioBufferList. Input
@@ -50,11 +52,9 @@ BSRenderStats BSRenderContextStats(const BSRenderContext* ctx);
 // The AudioDeviceIOProc. clientData must be a BSRenderContext*. Nullability
 // matches Core Audio's AudioDeviceIOProc typedef so Swift can pass it
 // directly as a @convention(c) function.
-CF_ASSUME_NONNULL_BEGIN
 OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBufferList* input,
                   const AudioTimeStamp* inputTime, AudioBufferList* output, const AudioTimeStamp* outputTime,
-                  void* __nullable clientData);
-CF_ASSUME_NONNULL_END
+                  void* _Nullable clientData);
 
 // ---- crash guard
 // A muted process tap that outlives us would silence the whole Mac. We
@@ -65,6 +65,8 @@ CF_ASSUME_NONNULL_END
 void BSCrashGuardInstall(void);
 void BSCrashGuardSet(AudioObjectID aggregate, AudioObjectID tap);
 void BSCrashGuardClear(void);
+
+CF_ASSUME_NONNULL_END
 
 #ifdef __cplusplus
 }
