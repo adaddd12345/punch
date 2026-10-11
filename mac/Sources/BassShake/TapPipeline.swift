@@ -27,8 +27,8 @@ final class TapPipeline {
 
   private let engine: OpaquePointer
   private var context: OpaquePointer?
-  private var tapID = AudioObjectID(kAudioObjectUnknown)
-  private var aggregateID = AudioObjectID(kAudioObjectUnknown)
+  private var tapID = unknownObject
+  private var aggregateID = unknownObject
   private var procID: AudioDeviceIOProcID?
   private(set) var info: Info?
 
@@ -51,14 +51,14 @@ final class TapPipeline {
     stop(fade: false)
     do {
       let own = Self.ownProcessObject()
-      let excluded: [NSNumber] = own.map { [NSNumber(value: $0)] } ?? []
+      let excluded: [AudioObjectID] = own.map { [$0] } ?? []
 
       // Prefer a tap scoped to the device's audio (format matches the device);
       // fall back to a stereo global tap if the device-scoped one fails.
       var isGlobal = false
-      var desc = CATapDescription(excludingProcesses: excluded, andDeviceUID: output.uid, withStream: 0)
+      var desc = CATapDescription(excludingProcesses: excluded, deviceUID: output.uid, stream: 0)
       configure(desc)
-      var tap = AudioObjectID(kAudioObjectUnknown)
+      var tap = unknownObject
       var status = AudioHardwareCreateProcessTap(desc, &tap)
       if status != noErr {
         desc = CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
@@ -68,7 +68,7 @@ final class TapPipeline {
       }
       try check(status, "create process tap")
       tapID = tap
-      BSCrashGuardSet(kAudioObjectUnknown, tap)
+      BSCrashGuardSet(unknownObject, tap)
 
       let format = try HAL.get(tapID, .global(kAudioTapPropertyFormat), default: AudioStreamBasicDescription())
       let channels = max(1, Int(format.mChannelsPerFrame))
@@ -83,7 +83,10 @@ final class TapPipeline {
         kAudioAggregateDeviceIsPrivateKey: true,
         kAudioAggregateDeviceIsStackedKey: false,
         kAudioAggregateDeviceTapAutoStartKey: true,
-        kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: output.uid]],
+        // channels-in 0: keep a headset's mic out of the aggregate so we
+        // never trigger the microphone indicator or flip AirPods to HFP.
+        kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: output.uid,
+                                                 kAudioSubDeviceInputChannelsKey: 0]],
         kAudioAggregateDeviceTapListKey: [[
           kAudioSubTapUIDKey: desc.uuid.uuidString,
           // Drift compensation on a Bluetooth clock produces a periodic
@@ -91,7 +94,7 @@ final class TapPipeline {
           kAudioSubTapDriftCompensationKey: !output.isBluetooth,
         ]],
       ]
-      var agg = AudioObjectID(kAudioObjectUnknown)
+      var agg = unknownObject
       try check(AudioHardwareCreateAggregateDevice(dict as CFDictionary, &agg), "create aggregate device")
       aggregateID = agg
       BSCrashGuardSet(agg, tapID)
@@ -104,10 +107,10 @@ final class TapPipeline {
 
       guard let ctx = BSRenderContextCreate(engine) else { throw CAError(-1, "render context") }
       context = ctx
-      // Real sub-device input streams come first in the aggregate's input
-      // buffer list; the tap follows them.
-      let deviceInputs = HAL.streamCount(output.id, scope: kAudioObjectPropertyScopeInput)
-      BSRenderContextSetTapBufferIndex(ctx, UInt32(deviceInputs))
+      // Real sub-device input streams (if any survive channels-in 0) come
+      // first in the aggregate's input buffer list and the tap is appended
+      // after them, so the last input buffer is always the tap.
+      BSRenderContextSetTapBufferIndex(ctx, UInt32.max)
 
       var proc: AudioDeviceIOProcID?
       try check(AudioDeviceCreateIOProcID(agg, BSIOProc, UnsafeMutableRawPointer(ctx), &proc), "create IOProc")
@@ -140,13 +143,13 @@ final class TapPipeline {
       procID = nil
     }
     BSCrashGuardClear()
-    if aggregateID != kAudioObjectUnknown {
+    if aggregateID != unknownObject {
       AudioHardwareDestroyAggregateDevice(aggregateID)
-      aggregateID = AudioObjectID(kAudioObjectUnknown)
+      aggregateID = unknownObject
     }
-    if tapID != kAudioObjectUnknown {
+    if tapID != unknownObject {
       AudioHardwareDestroyProcessTap(tapID)
-      tapID = AudioObjectID(kAudioObjectUnknown)
+      tapID = unknownObject
     }
     if let ctx = context {
       BSRenderContextDestroy(ctx)
@@ -167,10 +170,10 @@ final class TapPipeline {
   static func ownProcessObject() -> AudioObjectID? {
     var pid = getpid()
     var addr = AudioObjectPropertyAddress.global(kAudioHardwarePropertyTranslatePIDToProcessObject)
-    var obj = AudioObjectID(kAudioObjectUnknown)
+    var obj = unknownObject
     var size = UInt32(MemoryLayout<AudioObjectID>.size)
     let st = AudioObjectGetPropertyData(systemObject, &addr, UInt32(MemoryLayout<pid_t>.size), &pid, &size, &obj)
-    return st == noErr && obj != kAudioObjectUnknown ? obj : nil
+    return st == noErr && obj != unknownObject ? obj : nil
   }
 
   /// Destroys aggregates left behind by a previous instance that died

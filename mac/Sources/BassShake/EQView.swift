@@ -33,10 +33,10 @@ struct EQView: View {
       ZStack {
         Canvas { ctx, size in draw(ctx, size: size, bands: bands) }
         if let i = grabbed ?? hovered, i < bands.count {
+          let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
+          let ny: CGFloat = y(bands[i].gain, size.height)
           readout(bands[i], color: Self.colors[i])
-            .position(x: min(max(x(bands[i].freq, size.width), 52), size.width - 52),
-                      y: y(bands[i].gain, size.height) < 30 ? y(bands[i].gain, size.height) + 24
-                                                             : y(bands[i].gain, size.height) - 22)
+            .position(x: nx, y: ny < 30 ? ny + 24 : ny - 22)
             .allowsHitTesting(false)
             .transition(.opacity)
         }
@@ -190,7 +190,7 @@ struct EQView: View {
           snapped = abs(controller.settings.bands[i].gain) < 0.01
         }
         guard let i = grabbed, let origin = dragOrigin else { return }
-        let fine = NSEvent.modifierFlags.contains(.shift) ? 0.2 : 1.0
+        let fine: CGFloat = NSEvent.modifierFlags.contains(.shift) ? 0.2 : 1.0
         let dx = (v.location.x - origin.point.x) * fine
         let dy = (v.location.y - origin.point.y) * fine
         var b = origin.band

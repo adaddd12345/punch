@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
   name: "BassShake",
-  platforms: [.macOS(.v14)],
+  platforms: [.macOS("14.4")],  // process taps are reliable from 14.4
   products: [
     .executable(name: "BassShake", targets: ["BassShake"]),
   ],

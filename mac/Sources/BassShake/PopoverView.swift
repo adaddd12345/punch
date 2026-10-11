@@ -70,7 +70,7 @@ struct PopoverView: View {
       Banner(symbol: "exclamationmark.triangle", tint: .red, text: msg,
              action: ("Retry", controller.retry), secondary: nil)
     case .unsupported:
-      Banner(symbol: "xmark.octagon", tint: .red, text: "Requires macOS 14.2 or later.", action: nil, secondary: nil)
+      Banner(symbol: "xmark.octagon", tint: .red, text: "Requires macOS 14.4 or later.", action: nil, secondary: nil)
     default:
       EmptyView()
     }

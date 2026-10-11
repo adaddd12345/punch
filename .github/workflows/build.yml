@@ -68,5 +68,5 @@ jobs:
                (or run `xattr -dr com.apple.quarantine "/Applications/Bass Shake.app"`).
             3. Click the salt shaker in the menu bar and allow **System Audio Recording** when asked.
 
-            Requires macOS 14.2 or later. No driver is installed and no restart is needed;
+            Requires macOS 14.4 or later. No driver is installed and no restart is needed;
             quitting Bass Shake instantly returns your Mac's audio to normal.

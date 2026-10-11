@@ -47,10 +47,14 @@ typedef struct {
 
 BSRenderStats BSRenderContextStats(const BSRenderContext* ctx);
 
-// The AudioDeviceIOProc. clientData must be a BSRenderContext*.
+// The AudioDeviceIOProc. clientData must be a BSRenderContext*. Nullability
+// matches Core Audio's AudioDeviceIOProc typedef so Swift can pass it
+// directly as a @convention(c) function.
+CF_ASSUME_NONNULL_BEGIN
 OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBufferList* input,
                   const AudioTimeStamp* inputTime, AudioBufferList* output, const AudioTimeStamp* outputTime,
-                  void* clientData);
+                  void* __nullable clientData);
+CF_ASSUME_NONNULL_END
 
 // ---- crash guard
 // A muted process tap that outlives us would silence the whole Mac. We

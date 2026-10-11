@@ -112,15 +112,17 @@ private struct MeterBar: View {
 
       // Fill: a gradient through the zones, revealed up to the level, so
       // colour always tells you how hot you are — not just the bar tip.
-      let w = size.width * MeterModel.position(channel.level)
+      let w = size.width * CGFloat(MeterModel.position(channel.level))
       if w > 0.5 {
         // Each zone is solid with ~1 dB blended edges.
         var stops: [Gradient.Stop] = []
         var lo = MeterModel.floorDb
         for z in MeterModel.zones {
           let hi = min(0, z.upTo)
-          stops.append(.init(color: z.color, location: MeterModel.position(lo + (lo == MeterModel.floorDb ? 0 : 0.5))))
-          stops.append(.init(color: z.color, location: MeterModel.position(max(lo, hi - 0.5))))
+          let a = MeterModel.position(lo + (lo == MeterModel.floorDb ? 0 : 0.5))
+          let b = MeterModel.position(max(lo, hi - 0.5))
+          stops.append(Gradient.Stop(color: z.color, location: CGFloat(a)))
+          stops.append(Gradient.Stop(color: z.color, location: CGFloat(b)))
           lo = hi
         }
         let fillRect = CGRect(x: 0, y: 0, width: max(w, size.height), height: size.height)
@@ -130,7 +132,7 @@ private struct MeterBar: View {
                                        endPoint: CGPoint(x: size.width, y: 0)))
       }
       // Peak-hold tick in the colour of its zone.
-      let hx = size.width * MeterModel.position(channel.hold)
+      let hx = size.width * CGFloat(MeterModel.position(channel.hold))
       if channel.hold > MeterModel.floorDb + 0.5 {
         ctx.fill(Path(CGRect(x: max(0, hx - 1.5), y: 0, width: 3, height: size.height)),
                  with: .color(MeterModel.color(channel.hold)))
@@ -147,7 +149,7 @@ private struct MeterScale: View {
         Text(db == 0 ? "0" : "\(Int(db))")
           .font(.system(size: 8, weight: .medium, design: .rounded))
           .foregroundStyle(.tertiary)
-          .position(x: geo.size.width * MeterModel.position(db), y: 5)
+          .position(x: geo.size.width * CGFloat(MeterModel.position(db)), y: 5)
       }
     }
     .frame(height: 10)

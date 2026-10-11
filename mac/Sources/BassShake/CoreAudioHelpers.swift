@@ -39,6 +39,7 @@ extension AudioObjectPropertyAddress {
 }
 
 let systemObject = AudioObjectID(kAudioObjectSystemObject)
+let unknownObject = AudioObjectID(kAudioObjectUnknown)
 
 enum HAL {
   static func get<T>(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress, default value: T) throws -> T {
@@ -113,20 +114,20 @@ struct OutputDevice: Identifiable, Hashable {
   let transport: UInt32
 
   var isBluetooth: Bool {
-    transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE
+    transport == UInt32(kAudioDeviceTransportTypeBluetooth) || transport == UInt32(kAudioDeviceTransportTypeBluetoothLE)
   }
-  var isBuiltIn: Bool { transport == kAudioDeviceTransportTypeBuiltIn }
+  var isBuiltIn: Bool { transport == UInt32(kAudioDeviceTransportTypeBuiltIn) }
   var isAggregateOrVirtual: Bool {
-    transport == kAudioDeviceTransportTypeAggregate || transport == kAudioDeviceTransportTypeVirtual
+    transport == UInt32(kAudioDeviceTransportTypeAggregate) || transport == UInt32(kAudioDeviceTransportTypeVirtual)
   }
 
   var symbolName: String {
     if isBluetooth { return name.localizedCaseInsensitiveContains("airpods") ? "airpodspro" : "headphones" }
     if isBuiltIn { return name.localizedCaseInsensitiveContains("headphone") ? "headphones" : "laptopcomputer" }
     switch transport {
-    case kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort: return "tv"
-    case kAudioDeviceTransportTypeAirPlay: return "airplayaudio"
-    case kAudioDeviceTransportTypeUSB: return "hifispeaker"
+    case UInt32(kAudioDeviceTransportTypeHDMI), UInt32(kAudioDeviceTransportTypeDisplayPort): return "tv"
+    case UInt32(kAudioDeviceTransportTypeAirPlay): return "airplayaudio"
+    case UInt32(kAudioDeviceTransportTypeUSB): return "hifispeaker"
     default: return "speaker.wave.2"
     }
   }

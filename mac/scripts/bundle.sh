@@ -31,10 +31,18 @@ if [ -f mac/Resources/AppIcon.png ]; then
   iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
 fi
 
-OPTS=()
-if [ "$SIGN_IDENTITY" != "-" ]; then OPTS=(--options runtime --timestamp); fi
-codesign --force --sign "$SIGN_IDENTITY" "${OPTS[@]}" \
-  --entitlements mac/Resources/BassShake.entitlements "$APP"
+BUNDLE_ID="app.bassshake.BassShake"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+  # Ad-hoc, but with an identifier-only designated requirement so macOS keeps
+  # the System Audio Recording grant across beta builds (a plain ad-hoc
+  # signature pins the exact binary hash, re-prompting on every update).
+  codesign --force --sign - --identifier "$BUNDLE_ID" \
+    --requirements "=designated => identifier \"$BUNDLE_ID\"" \
+    --entitlements mac/Resources/BassShake.entitlements "$APP"
+else
+  codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp \
+    --entitlements mac/Resources/BassShake.entitlements "$APP"
+fi
 codesign --verify --strict --verbose=2 "$APP"
 plutil -lint "$APP/Contents/Info.plist"
 
