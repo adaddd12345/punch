@@ -27,6 +27,11 @@ final class AudioController: ObservableObject {
     didSet { if status != oldValue { log.info("status: \(String(describing: self.status), privacy: .public)") } }
   }
   @Published private(set) var devices: [OutputDevice] = []
+  /// First run: explain what Bass Shake does and why macOS will ask for
+  /// permission *before* the system prompt appears (Apple HIG: ask in
+  /// context, after the user acts). Never prompt at launch.
+  @Published private(set) var needsOnboarding = !UserDefaults.standard.bool(forKey: AudioController.onboardedKey)
+  private static let onboardedKey = "BassShake.onboarded.v1"
   @Published private(set) var currentDeviceID: AudioObjectID = 0
   @Published var settings: Settings {
     didSet {
@@ -62,7 +67,23 @@ final class AudioController: ObservableObject {
     refreshDevices()
     installListeners()
     pushParams()
-    if settings.enabled { start() }
+    if needsOnboarding && AudioCapturePermission.preflight() == .granted {
+      // Already trusted (e.g. an earlier beta): nothing to explain.
+      markOnboarded()
+    }
+    if settings.enabled && !needsOnboarding { start() }
+  }
+
+  /// The user read the explanation and chose to turn Bass Shake on. Only now
+  /// do we trigger the macOS permission prompt.
+  func completeOnboarding() {
+    markOnboarded()
+    if settings.enabled { start() } else { settings.enabled = true }
+  }
+
+  private func markOnboarded() {
+    UserDefaults.standard.set(true, forKey: Self.onboardedKey)
+    needsOnboarding = false
   }
 
   // MARK: - Public actions
@@ -178,6 +199,7 @@ final class AudioController: ObservableObject {
   // MARK: - Lifecycle
 
   private func start() {
+    guard !needsOnboarding else { return }
     guard #available(macOS 14.2, *) else {
       status = .unsupported
       return

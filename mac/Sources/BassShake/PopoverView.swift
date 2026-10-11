@@ -13,6 +13,14 @@ struct PopoverView: View {
   }
 
   var body: some View {
+    if controller.needsOnboarding {
+      OnboardingView(controller: controller)
+    } else {
+      controls
+    }
+  }
+
+  private var controls: some View {
     VStack(alignment: .leading, spacing: 12) {
       header
       statusBanner
