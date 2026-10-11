@@ -4,6 +4,7 @@ import Combine
 import CoreAudio
 import Foundation
 import PunchCore
+import os
 
 /// Owns the DSP engine and the tap pipeline, keeps them alive across device
 /// changes, and exposes simple state to the UI.
@@ -22,7 +23,9 @@ final class AudioController: ObservableObject {
     case failed(String)
   }
 
-  @Published private(set) var status: Status = .off
+  @Published private(set) var status: Status = .off {
+    didSet { if status != oldValue { log.info("status: \(String(describing: self.status), privacy: .public)") } }
+  }
   @Published private(set) var devices: [OutputDevice] = []
   @Published private(set) var currentDeviceID: AudioObjectID = 0
   @Published var settings: Settings {
@@ -46,6 +49,8 @@ final class AudioController: ObservableObject {
   private var saveWork: DispatchWorkItem?
   private var observers: [NSObjectProtocol] = []
   private var morphTimer: Timer?
+  /// `log stream --predicate 'subsystem == "app.bassshake.BassShake"'`
+  private let log = Logger(subsystem: "app.bassshake.BassShake", category: "audio")
 
   init() {
     engine = punch_engine_create()

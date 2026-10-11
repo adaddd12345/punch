@@ -18,20 +18,41 @@ built to beat Boom 2 on reliability, feel and looks.
 
 ## Download the beta
 
-Every push builds a universal (Apple silicon + Intel) app on GitHub
-Actions. Get the newest **`v0.1.0-beta.N`** prerelease from this repo's
-**Releases** page, or the `BassShake-*` artifact on the latest **build**
-workflow run.
+Every push builds a universal (Apple silicon + Intel) app. Get the newest
+**`v0.1.0-beta.N`** from this repo's **Releases** page. Requires **macOS
+14.4 or later**.
 
-1. Unzip and drag **Bass Shake.app** into Applications.
-2. The beta is ad-hoc signed, not notarized. Open it once, then go to
-   **System Settings → Privacy & Security → Open Anyway**. Alternatively:
-   `xattr -dr com.apple.quarantine "/Applications/Bass Shake.app"`.
-3. Click the salt shaker in the menu bar and allow **System Audio
-   Recording**. Because beta builds are ad-hoc signed, macOS may ask again
-   after each new build.
+### Install (macOS 15 Sequoia / 26 Tahoe / 27)
+1. Download `BassShake-….zip`. Safari unzips it automatically; otherwise
+   double-click the zip. Drag **Bass Shake.app** into **Applications**.
+2. Double-click it. macOS says *"Apple could not verify 'Bass Shake'…"*
+   because the beta isn't notarized yet. Click **Done**, not Move to Trash.
+3. Open **System Settings → Privacy & Security** and scroll to
+   **Security**. Next to *"Bass Shake" was blocked…*, click **Open
+   Anyway**, then enter your password. (Right-click → Open no longer
+   bypasses this on macOS 15+.)
+4. A **Bass Shake** window appears with the controls, and a salt shaker
+   appears in the menu bar. Turn the switch on and allow **System Audio
+   Recording** when asked.
 
-Quitting Bass Shake returns your audio to normal instantly.
+**Shortcut** that skips steps 2–3: paste this into Terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Bass Shake.app" && open "/Applications/Bass Shake.app"
+```
+
+### Still not opening?
+| Symptom | Fix |
+|---|---|
+| *"…is damaged and can't be opened"* | Run the Terminal shortcut above (it removes the download quarantine flag). |
+| *"You can't use this version…"* | You need macOS 14.4 or newer ( → About This Mac). |
+| No "Open Anyway" button | It only appears for about an hour after a blocked launch. Double-click the app again, then re-check Privacy & Security. |
+| Opens, but no menu-bar icon | Your menu bar is full (the icon is hidden behind the notch), or on macOS 26 check **System Settings → Menu Bar** and allow Bass Shake. Double-click the app again to bring back its window. |
+| Opens, but no sound change | Check **System Settings → Privacy & Security → Screen & System Audio Recording** → *System Audio Recording Only* → Bass Shake is on. |
+| Crashes or quits immediately | Run `"/Applications/Bass Shake.app/Contents/MacOS/BassShake"` in Terminal and send the output. Live logs: `log stream --predicate 'subsystem == "app.bassshake.BassShake"'` |
+
+Quitting Bass Shake returns your audio to normal instantly. Uninstall =
+drag it to the Trash.
 
 ## Repository
 

@@ -17,10 +17,71 @@ struct BassShakeApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let controller = AudioController()
+  private var window: NSWindow?
+
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    // A menu-bar-only app is invisible when launched from Finder, and its
+    // icon can be hidden behind the notch or by macOS 26's menu bar
+    // settings. Always show the controls in a window on launch.
+    showWindow()
+  }
+
+  /// Double-clicking the app again (Finder, Launchpad, Spotlight) while it is
+  /// already running brings the window back.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    showWindow()
+    return false
+  }
+
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
   func applicationWillTerminate(_ notification: Notification) {
     // Release the tap so the original audio resumes immediately.
     controller.shutdown()
+  }
+
+  func showWindow() {
+    if window == nil {
+      let host = NSHostingController(rootView: MainWindowView(controller: controller))
+      let w = NSWindow(contentViewController: host)
+      w.title = "Bass Shake"
+      w.styleMask = [.titled, .closable, .miniaturizable]
+      w.isReleasedWhenClosed = false
+      w.center()
+      window = w
+    }
+    NSApp.activate()
+    window?.makeKeyAndOrderFront(nil)
+  }
+}
+
+/// Same controls as the menu-bar popup, plus a pointer to where the app lives.
+struct MainWindowView: View {
+  let controller: AudioController
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(alignment: .top, spacing: 10) {
+        Image(nsImage: MenuBarIcon.image)
+          .renderingMode(.template)
+          .resizable()
+          .frame(width: 18, height: 18)
+          .foregroundStyle(Color.accentColor)
+        VStack(alignment: .leading, spacing: 3) {
+          Text("Bass Shake lives in your menu bar")
+            .font(.system(size: 12, weight: .semibold))
+          Text("Click the salt shaker near the clock to open these controls any time. You can close this window; Bass Shake keeps running. Can't see the icon? Your menu bar may be full (hidden behind the notch), or on macOS 26 check System Settings → Menu Bar.")
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      .padding(14)
+      .frame(width: 360, alignment: .leading)
+      .background(Color.primary.opacity(0.04))
+      Divider()
+      PopoverView(controller: controller)
+    }
   }
 }
 
@@ -50,8 +111,8 @@ enum MenuBarIcon {
   }()
 }
 
-/// The salt-shaker mark (same geometry as Resources/BassShakeIcon.svg,
-/// simplified), drawable at any size.
+/// Vector fallback for the shaker mark, used only if the bundled PNGs are
+/// missing (e.g. running the bare binary from `swift run`).
 struct ShakerIcon: View {
   var body: some View {
     Canvas { ctx, size in

@@ -61,12 +61,16 @@ jobs:
           body: |
             Bass Shake beta build from `${{ github.ref_name }}` @ ${{ github.sha }}.
 
-            **Install**
-            1. Download `BassShake-*.zip`, unzip, and drag **Bass Shake.app** to Applications.
-            2. This beta is not notarized. The first time, open it, then go to
-               System Settings → Privacy & Security and click **Open Anyway**
-               (or run `xattr -dr com.apple.quarantine "/Applications/Bass Shake.app"`).
-            3. Click the salt shaker in the menu bar and allow **System Audio Recording** when asked.
+            **Install (macOS 15+)**
+            1. Download `BassShake-*.zip`, unzip, drag **Bass Shake.app** to Applications.
+            2. Double-click it → "Apple could not verify…" → **Done**.
+            3. System Settings → Privacy & Security → scroll to Security → **Open Anyway** → password.
+            4. The Bass Shake window and the salt shaker in the menu bar appear. Allow **System Audio Recording**.
+
+            Or skip 2–3 in Terminal:
+            `xattr -dr com.apple.quarantine "/Applications/Bass Shake.app" && open "/Applications/Bass Shake.app"`
+
+            Troubleshooting: see the README (menu-bar icon hidden behind the notch, macOS 26 Menu Bar settings, permissions).
 
             Requires macOS 14.4 or later. No driver is installed and no restart is needed;
             quitting Bass Shake instantly returns your Mac's audio to normal.
