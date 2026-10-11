@@ -52,8 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       w.center()
       window = w
     }
-    NSApp.activate()
+    // macOS 14+ treats activate() as a polite request and ignores it when
+    // another app (e.g. Terminal or Finder) launched us, which left the
+    // window behind other windows. Force it to the front.
+    NSApp.activate(ignoringOtherApps: true)
     window?.makeKeyAndOrderFront(nil)
+    window?.orderFrontRegardless()
   }
 }
 
