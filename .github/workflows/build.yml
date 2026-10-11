@@ -54,7 +54,7 @@ jobs:
           path: build/BassShake-*.zip
           if-no-files-found: error
       - name: Publish beta prerelease
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0-beta.${{ github.run_number }}
@@ -79,7 +79,7 @@ jobs:
             Requires macOS 14.4 or later. No driver is installed and no restart is needed;
             quitting Bass Shake instantly returns your Mac's audio to normal.
       - name: Sign update + write Sparkle appcast
-        if: github.event_name == 'push'
+        if: github.event_name != 'pull_request'
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
           NOTES: ${{ github.event.head_commit.message }}
