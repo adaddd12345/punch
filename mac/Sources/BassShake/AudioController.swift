@@ -92,8 +92,52 @@ final class AudioController: ObservableObject {
 
   func apply(preset: Preset) {
     settings.presetName = preset.name
+    settings.userPresetID = nil
     settings.bass = preset.bass
     morph(to: preset.bands())
+  }
+
+  // MARK: - User presets
+
+  func apply(userPreset p: UserPreset) {
+    settings.presetName = nil
+    settings.userPresetID = p.id
+    settings.bass = p.bass
+    settings.boostDb = p.boostDb
+    morph(to: p.bands)
+  }
+
+  /// Saves the current sound as a new preset and selects it.
+  @discardableResult
+  func saveCurrentAsPreset(name: String, icon: String) -> UserPreset {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let p = UserPreset(name: trimmed.isEmpty ? "My Preset" : String(trimmed.prefix(24)), icon: icon,
+                       bands: settings.bands, bass: settings.bass, boostDb: settings.boostDb)
+    settings.userPresets.append(p)
+    settings.presetName = nil
+    settings.userPresetID = p.id
+    return p
+  }
+
+  func updateUserPreset(_ id: UUID, name: String? = nil, icon: String? = nil, captureCurrentSound: Bool = false) {
+    guard let i = settings.userPresets.firstIndex(where: { $0.id == id }) else { return }
+    var p = settings.userPresets[i]
+    if let name {
+      let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !t.isEmpty { p.name = String(t.prefix(24)) }
+    }
+    if let icon { p.icon = icon }
+    if captureCurrentSound {
+      p.bands = settings.bands
+      p.bass = settings.bass
+      p.boostDb = settings.boostDb
+    }
+    settings.userPresets[i] = p
+  }
+
+  func deleteUserPreset(_ id: UUID) {
+    settings.userPresets.removeAll { $0.id == id }
+    if settings.userPresetID == id { settings.userPresetID = nil }
   }
 
   func update(band i: Int, to b: EQBand, animated: Bool = false) {
@@ -101,6 +145,7 @@ final class AudioController: ObservableObject {
     var bands = settings.bands
     bands[i] = b
     settings.presetName = nil
+    settings.userPresetID = nil
     if animated {
       morph(to: bands)
     } else {

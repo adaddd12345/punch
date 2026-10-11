@@ -19,6 +19,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/BassShake"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" mac/Resources/Info.plist > "$APP/Contents/Info.plist"
 cp mac/Resources/MenuBarIcon*.png "$APP/Contents/Resources/"
+# Optional preset-icon artwork (PresetIcons/<sf-symbol-or-id>.png).
+if [ -d mac/Resources/PresetIcons ]; then cp -R mac/Resources/PresetIcons "$APP/Contents/Resources/"; fi
 
 # App icon: render the shaker onto a rounded tile and build an .icns.
 if [ -f mac/Resources/AppIcon.png ]; then

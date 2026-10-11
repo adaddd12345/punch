@@ -90,15 +90,53 @@ extension Preset {
   ]
 }
 
+/// A preset the user saved: their EQ curve, Shake and Boost, a name and an icon.
+struct UserPreset: Codable, Equatable, Identifiable {
+  var id = UUID()
+  var name: String
+  var icon: String       // PresetIcon id
+  var bands: [EQBand]
+  var bass: Double
+  var boostDb: Double
+}
+
+/// Icons offered for user presets. Each id renders a bundled image from
+/// Resources/PresetIcons/<id>.png when present, otherwise the SF Symbol of the
+/// same name, so new artwork can be dropped in without code changes.
+enum PresetIcon {
+  static let choices: [String] = [
+    "music.note", "headphones", "speaker.wave.3.fill", "guitars", "waveform",
+    "car.fill", "gamecontroller.fill", "moon.stars.fill", "flame.fill", "film",
+  ]
+}
+
 /// Everything the user can change, persisted as one JSON blob.
 struct Settings: Codable, Equatable {
   var enabled = true
   var bands = EQBand.defaults
-  var presetName: String? = "Bass Shake"
+  var presetName: String? = "Bass Shake"       // selected built-in preset
+  var userPresetID: UUID?                       // selected user preset
   var bass: Double = 0.55
   var boostDb: Double = 0
+  var userPresets: [UserPreset] = []
 
   static let key = "BassShake.settings.v1"
+
+  init() {}
+
+  // Tolerant decoding: fields added in later versions fall back to defaults
+  // instead of discarding the user's saved settings.
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let d = Settings()
+    enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
+    bands = try c.decodeIfPresent([EQBand].self, forKey: .bands) ?? d.bands
+    presetName = try c.decodeIfPresent(String.self, forKey: .presetName)
+    userPresetID = try c.decodeIfPresent(UUID.self, forKey: .userPresetID)
+    bass = try c.decodeIfPresent(Double.self, forKey: .bass) ?? d.bass
+    boostDb = try c.decodeIfPresent(Double.self, forKey: .boostDb) ?? d.boostDb
+    userPresets = try c.decodeIfPresent([UserPreset].self, forKey: .userPresets) ?? []
+  }
 
   static func load() -> Settings {
     guard let data = UserDefaults.standard.data(forKey: key),

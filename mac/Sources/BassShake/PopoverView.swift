@@ -6,6 +6,7 @@ struct PopoverView: View {
   @ObservedObject var meters: MeterModel
   private let meterTimer = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
   @State private var visible = false
+  @State private var editor: PresetEditor.Mode?
 
   init(controller: AudioController) {
     self.controller = controller
@@ -85,25 +86,17 @@ struct PopoverView: View {
   }
 
   private var presetStrip: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
-      HStack(spacing: 6) {
-        ForEach(Preset.all) { p in
-          let selected = controller.settings.presetName == p.name
-          Button { controller.apply(preset: p) } label: {
-            HStack(spacing: 4) {
-              Image(systemName: p.symbol).font(.system(size: 9, weight: .semibold))
-              Text(p.name).font(.system(size: 11, weight: .semibold, design: .rounded))
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .foregroundStyle(selected ? Color.white : Color.primary)
-            .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
-          }
-          .buttonStyle(.plain)
-          .animation(.easeOut(duration: 0.15), value: selected)
+    VStack(alignment: .leading, spacing: 8) {
+      PresetStrip(controller: controller, editor: $editor)
+      if let mode = editor {
+        PresetEditor(controller: controller, mode: mode) {
+          withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = nil }
         }
+        .id(mode == .create ? "create" : "edit")
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
     }
+    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
   }
 
   private var sliders: some View {
