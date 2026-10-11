@@ -32,16 +32,15 @@ class TripleBuffer {
     back_ = prev & kIndexMask;
   }
 
-  // Audio thread. Returns true if a new snapshot arrived since the last call.
+  // Audio thread. If a new snapshot arrived since the last call, copies it
+  // into `out` and returns true; otherwise leaves `out` untouched (so the
+  // common no-change path costs one relaxed load, not a multi-KB copy).
   bool read(T& out) {
-    bool fresh = false;
-    if (middle_.load(std::memory_order_relaxed) & kDirty) {
-      const std::uint8_t prev = middle_.exchange(front_, std::memory_order_acq_rel);
-      front_ = prev & kIndexMask;
-      fresh = true;
-    }
+    if (!(middle_.load(std::memory_order_relaxed) & kDirty)) return false;
+    const std::uint8_t prev = middle_.exchange(front_, std::memory_order_acq_rel);
+    front_ = prev & kIndexMask;
     out = slots_[front_];
-    return fresh;
+    return true;
   }
 
  private:

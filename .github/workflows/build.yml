@@ -1,0 +1,72 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # publish the beta prerelease
+
+jobs:
+  core-linux:
+    name: DSP core (Linux, tests + sanitizers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build & test
+        run: |
+          cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build core/build -j
+          ctest --test-dir core/build --output-on-failure
+          core/build/punch_bench
+      - name: ASan/UBSan
+        run: |
+          cmake -S core -B core/build-asan -DPUNCH_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build core/build-asan -j
+          ctest --test-dir core/build-asan --output-on-failure
+
+  mac-app:
+    name: Bass Shake.app (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: DSP core tests (Apple Silicon)
+        run: |
+          cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build core/build -j
+          ctest --test-dir core/build --output-on-failure
+          core/build/punch_bench
+      - name: Build app bundle
+        run: mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BassShake-0.1.0-beta.${{ github.run_number }}
+          path: build/BassShake-*.zip
+          if-no-files-found: error
+      - name: Publish beta prerelease
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-beta.${{ github.run_number }}
+          name: Bass Shake 0.1.0 beta ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: build/BassShake-*.zip
+          body: |
+            Bass Shake beta build from `${{ github.ref_name }}` @ ${{ github.sha }}.
+
+            **Install**
+            1. Download `BassShake-*.zip`, unzip, and drag **Bass Shake.app** to Applications.
+            2. This beta is not notarized. The first time, open it, then go to
+               System Settings → Privacy & Security and click **Open Anyway**
+               (or run `xattr -dr com.apple.quarantine "/Applications/Bass Shake.app"`).
+            3. Click the salt shaker in the menu bar and allow **System Audio Recording** when asked.
+
+            Requires macOS 14.2 or later. No driver is installed and no restart is needed;
+            quitting Bass Shake instantly returns your Mac's audio to normal.

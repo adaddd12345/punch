@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleExecutable</key><string>BassShake</string>
+  <key>CFBundleIdentifier</key><string>app.bassshake.BassShake</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Bass Shake</string>
+  <key>CFBundleDisplayName</key><string>Bass Shake</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundleVersion</key><string>__BUILD__</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key><string>14.2</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Bass Shake processes your Mac's audio (EQ, bass and loudness) before it reaches your speakers or headphones. Audio never leaves your Mac and is never recorded.</string>
+  <key>NSHumanReadableCopyright</key><string>Bass Shake beta</string>
+</dict>
+</plist>

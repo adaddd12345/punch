@@ -33,6 +33,7 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   numChannels_ = std::clamp(numChannels, 1, kMaxChannels);
   maxFrames_ = std::max(maxFrames, 16);
 
+  correction_.prepare(sampleRate, numChannels_);
   eq_.prepare(sampleRate, numChannels_);
   bass_.prepare(sampleRate, numChannels_);
   stereo_.prepare(sampleRate);
@@ -50,6 +51,8 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   publish();
   mailbox_.read(live_);
   applySnapshot(live_);
+  correction_.snapToTargets();
+  correction_.reset();
   eq_.snapToTargets();
   eq_.reset();
   outGain_.snap(outGain_.target());
@@ -57,12 +60,16 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
 
 void Engine::publish() {
   EngineParams snap = pending_;
-  effectivePreampDb_ = snap.eq.preampDb;
-  // Auto headroom: never let the EQ push a full-scale signal over 0 dBFS,
-  // but don't double-count headroom the user (or an AutoEq profile, which
-  // ships its own preamp) already provided.
-  if (snap.autoPreamp) effectivePreampDb_ = std::min(effectivePreampDb_, -eqPeakBoostDb(snap.eq, sampleRate_));
-  snap.eq.preampDb = float(effectivePreampDb_);
+  // All headroom is applied once, at the correction stage's preamp; the
+  // user stage runs at unity preamp.
+  effectivePreampDb_ = double(snap.correction.preampDb) + double(snap.eq.preampDb);
+  // Auto headroom: never let the combined EQ push a full-scale signal over
+  // 0 dBFS, but don't double-count headroom the user (or an AutoEq profile,
+  // which ships its own preamp) already provided.
+  if (snap.autoPreamp)
+    effectivePreampDb_ = std::min(effectivePreampDb_, -eqPeakBoostDb({&snap.correction, &snap.eq}, sampleRate_));
+  snap.correction.preampDb = float(effectivePreampDb_);
+  snap.eq.preampDb = 0.f;
   mailbox_.write(snap);
 }
 
@@ -74,6 +81,7 @@ void Engine::applySnapshot(const EngineParams& p) {
     EqParams flat = p.eq;
     for (auto& b : flat.bands) b.enabled = false;
     flat.preampDb = 0.f;
+    correction_.setParams(flat);
     eq_.setParams(flat);
     bass_.setParams({});
     stereo_.setParams({});
@@ -85,6 +93,7 @@ void Engine::applySnapshot(const EngineParams& p) {
     limiter_.setParams(lp);
     return;
   }
+  correction_.setParams(p.correction);
   eq_.setParams(p.eq);
   bass_.setParams(p.bass);
   stereo_.setParams(p.stereo);
@@ -100,6 +109,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
 
   for (int c = 0; c < std::min(numChannels, 2); ++c) atomicMax(inPeak_[c], blockPeak(ch[c], numFrames));
 
+  correction_.process(ch, numChannels, numFrames);
   eq_.process(ch, numChannels, numFrames);
   bass_.process(ch, numChannels, numFrames);
   stereo_.process(ch, numChannels, numFrames);
@@ -120,6 +130,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     for (int i = 0; i < numFrames; ++i) finite &= std::isfinite(ch[c][i]);
   if (!finite) {
     for (int c = 0; c < numChannels; ++c) std::fill(ch[c], ch[c] + numFrames, 0.f);
+    correction_.reset();
     eq_.reset();
     bass_.reset();
     stereo_.reset();

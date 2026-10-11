@@ -1,7 +1,11 @@
 // The complete processing chain run inside the Core Audio IOProc.
 //
-//   in -> EQ (with preamp) -> bass enhancer -> stereo width -> crossfeed
+//   in -> device correction EQ (AutoEq) -> user EQ (with preamp)
+//      -> bass enhancer -> stereo width -> crossfeed
 //      -> output gain ("boost") -> look-ahead limiter -> out
+//
+// Correction and user EQ are separate stages so a per-headphone AutoEq
+// profile stays applied underneath whatever preset the user picks.
 //
 // Threading contract:
 //   * prepare() / control setters / publish(): one control thread (main).
@@ -22,8 +26,9 @@
 namespace punch {
 
 struct EngineParams {
-  EqParams eq;
-  bool autoPreamp = true;  // preamp = min(user preamp, -EQ peak boost)
+  EqParams correction;  // per-output-device (headphone/speaker) correction
+  EqParams eq;          // user preset / graphic EQ
+  bool autoPreamp = true;  // preamp = min(user preamps, -combined EQ peak boost)
   BassEnhancerParams bass;
   StereoParams stereo;
   CrossfeedParams crossfeed;
@@ -80,6 +85,7 @@ class Engine {
   TripleBuffer<EngineParams> mailbox_;
   EngineParams live_;
 
+  ParametricEq correction_;
   ParametricEq eq_;
   BassEnhancer bass_;
   StereoWidener stereo_;

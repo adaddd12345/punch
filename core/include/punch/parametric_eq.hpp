@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <initializer_list>
 #include <vector>
 
 #include "punch/dsp_util.hpp"
@@ -26,6 +27,8 @@ double eqResponseDb(const EqParams& p, double sampleRate, double hz);
 // Peak boost across 20 Hz..20 kHz (log grid). Negate and use as preamp to
 // guarantee a full-scale sine can never be pushed over 0 dBFS by the EQ.
 double eqPeakBoostDb(const EqParams& p, double sampleRate);
+// Same, for several EQ stages in series.
+double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampleRate);
 // Fills `outDb` with the response sampled on a log grid between lo and hi.
 void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::vector<double>& outDb);
 

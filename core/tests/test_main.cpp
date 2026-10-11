@@ -340,15 +340,14 @@ TEST(triple_buffer_threaded) {
   });
   int last = 0;
   bool consistent = true, monotonic = true;
+  Snap s{0, 0, 0};
   while (!done.load()) {
-    Snap s;
     tb.read(s);
     if (s.b != -s.a || s.c != 2 * s.a) consistent = false;
     if (s.a < last) monotonic = false;
     last = s.a;
   }
   writer.join();
-  Snap s;
   tb.read(s);
   CHECK(consistent);
   CHECK(monotonic);

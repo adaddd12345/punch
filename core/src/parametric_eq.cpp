@@ -25,14 +25,14 @@ double eqResponseDb(const EqParams& p, double sampleRate, double hz) {
   return db;
 }
 
-double eqPeakBoostDb(const EqParams& p, double sampleRate) {
+double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampleRate) {
   constexpr int kPoints = 1024;
   const double lo = 20.0, hi = std::min(20000.0, 0.49 * sampleRate);
   // Build coefficient sets once, then scan.
   std::vector<SvfCoeffs> cs;
-  cs.reserve(size_t(p.numBands));
-  for (int i = 0; i < p.numBands; ++i)
-    if (p.bands[size_t(i)].enabled) cs.push_back(SvfCoeffs::make(p.bands[size_t(i)], sampleRate));
+  for (const EqParams* p : stages)
+    for (int i = 0; i < p->numBands; ++i)
+      if (p->bands[size_t(i)].enabled) cs.push_back(SvfCoeffs::make(p->bands[size_t(i)], sampleRate));
   double peak = 0.0;
   for (int k = 0; k < kPoints; ++k) {
     const double hz = lo * std::pow(hi / lo, double(k) / (kPoints - 1));
@@ -42,6 +42,8 @@ double eqPeakBoostDb(const EqParams& p, double sampleRate) {
   }
   return peak;
 }
+
+double eqPeakBoostDb(const EqParams& p, double sampleRate) { return eqPeakBoostDb({&p}, sampleRate); }
 
 void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::vector<double>& outDb) {
   const size_t n = outDb.size();

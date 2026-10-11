@@ -1,0 +1,6 @@
+// SwiftPM picks this up from publicHeadersPath. Only the C surface is
+// exported to Swift; the C++ headers stay internal to the library.
+module PunchCore {
+  header "punch/punch_c.h"
+  export *
+}
