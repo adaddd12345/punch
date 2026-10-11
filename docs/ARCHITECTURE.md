@@ -62,7 +62,7 @@ apps ──► coreaudiod ──► default output device (unchanged)
 | If the app quits or crashes | silence until the default device is reset | taps stop being read → original audio resumes; crash guard destroys taps |
 | Uninstall | leftover device, `sudo` commands | delete the app |
 | Restart needed | sometimes | never [09] |
-| macOS support | 10.x+ | 14.2+ (taps); see §8 for a fallback |
+| macOS support | 10.x+ | 14.4+ (taps); see §8 for a fallback |
 
 ### Why device-scoped `mutedWhenTapped`
 - **Device-scoped** (`CATapDescription(excludingProcesses:andDeviceUID:withStream:)`)

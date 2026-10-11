@@ -46,15 +46,18 @@ enum HAL {
     var addr = address
     var result = value
     var size = UInt32(MemoryLayout<T>.size)
-    try check(AudioObjectGetPropertyData(object, &addr, 0, nil, &size, &result), "get \(addr.mSelector)")
+    try check(withUnsafeMutableBytes(of: &result) { raw in
+      AudioObjectGetPropertyData(object, &addr, 0, nil, &size, raw.baseAddress!)
+    }, "get \(addr.mSelector)")
     return result
   }
 
   static func set<T>(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress, _ value: T) throws {
     var addr = address
     var v = value
-    try check(AudioObjectSetPropertyData(object, &addr, 0, nil, UInt32(MemoryLayout<T>.size), &v),
-              "set \(addr.mSelector)")
+    try check(withUnsafeBytes(of: &v) { raw in
+      AudioObjectSetPropertyData(object, &addr, 0, nil, UInt32(MemoryLayout<T>.size), raw.baseAddress!)
+    }, "set \(addr.mSelector)")
   }
 
   static func array<T>(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress, of: T.Type, zero: T) throws -> [T] {
