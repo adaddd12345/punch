@@ -62,6 +62,8 @@ final class AudioController: ObservableObject {
     }
   }
   let meters = MeterModel()
+  /// Live Channels: apps making sound, their levels, one-click mute.
+  let live = LiveChannels()
 
   private let engine: OpaquePointer
   private let curveEngine: OpaquePointer
@@ -107,6 +109,8 @@ final class AudioController: ObservableObject {
     bootstrapped = true
     log.notice("bootstrap")
     BSCrashGuardInstall()
+    live.onMutedProcessesChanged = { [weak self] in self?.scheduleRebuild(delay: 0.3) }
+    live.start()
     installAppObservers()
     updateHotkey()
     if settings.checkDrivers { scanDrivers() }
@@ -557,6 +561,7 @@ final class AudioController: ObservableObject {
       done.signal()
     }
     _ = done.wait(timeout: .now() + 1.5)
+    live.shutdown()
   }
 
   // MARK: - Engine parameters
@@ -710,6 +715,8 @@ final class AudioController: ObservableObject {
     let s = settings
     let e = engine
     let live = liveState
+    // Muted apps stay out of the EQ tap, or we'd play them back.
+    let exclude = self.live.excludedProcessObjects
     log.notice("rebuild")
     // Every Core Audio call happens on the audio queue, never on main.
     audioQueue.async {
@@ -729,7 +736,8 @@ final class AudioController: ObservableObject {
       punch_engine_publish(e)
       let pipeline = TapPipeline(engine: e)
       do {
-        let info = try pipeline.start(output: device)
+        let info = try pipeline.start(output: device, alsoExclude: exclude)
+        self.audioExcluded = Set(exclude)
         self.audioPipeline = pipeline
         self.watchDevice(device)
         self.log.notice("running on \(info.deviceName, privacy: .public) @ \(info.sampleRate, privacy: .public) Hz")
@@ -872,6 +880,7 @@ final class AudioController: ObservableObject {
   // audioQueue-confined state.
   private var audioPipeline: AnyObject?  // TapPipeline (macOS 14.2+)
   private var audioWatchdog: DispatchSourceTimer?
+  private var audioExcluded: Set<AudioObjectID> = []
   private var lastStats = BSRenderStats()
   private var silentStreak = 0
   private var stalledStreak = 0
@@ -903,7 +912,7 @@ final class AudioController: ObservableObject {
     let dCallbacks = s.callbacks &- lastStats.callbacks
     let dSilent = s.silentCallbacks &- lastStats.silentCallbacks
     lastStats = s
-    let othersPlaying = TapPipeline.othersArePlaying()
+    let othersPlaying = TapPipeline.othersArePlaying(excluding: audioExcluded)
 
     if dCallbacks > dSilent { everHeardAudio = true; silentStreak = 0 }
     if othersPlaying && dCallbacks > 0 && dSilent == dCallbacks { silentStreak += 1 }

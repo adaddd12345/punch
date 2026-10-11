@@ -9,6 +9,7 @@ struct PopoverView: View {
   @State private var visible = false
   @State private var editor: PresetEditor.Mode?
   @State private var showDrivers = false
+  @State private var showLive = false
 
   init(controller: AudioController) {
     self.controller = controller
@@ -26,6 +27,10 @@ struct PopoverView: View {
   private var controls: some View {
     VStack(alignment: .leading, spacing: 12) {
       header
+      if showLive {
+        LiveChannelsPanel(model: controller.live)
+          .transition(.opacity.combined(with: .move(edge: .top)))
+      }
       statusBanner
       driverSection
       EQView(controller: controller)
@@ -52,6 +57,8 @@ struct PopoverView: View {
     .onDisappear {
       visible = false
       meters.reset()
+      showLive = false
+      controller.live.setMetering(false)
     }
   }
 
@@ -68,6 +75,7 @@ struct PopoverView: View {
       Text("Bass Shake")
         .font(.system(size: 14, weight: .bold, design: .rounded))
       Spacer()
+      LiveChannelsButton(model: controller.live, expanded: $showLive)
       if controller.settings.enabled {
         Button { controller.bypassed.toggle() } label: {
           Text(controller.bypassed ? "Original" : "A/B")
