@@ -77,6 +77,10 @@ final class AudioController: ObservableObject {
   }
 
   private var bootstrapped = false
+  /// Set once the first Core Audio query returns. If coreaudiod never
+  /// answers (seen on a Mac with a wedged audio service), say so instead of
+  /// sitting silently.
+  private var halResponded = false
 
   /// Called once the window is up. Device queries run on the audio queue,
   /// the permission check is asynchronous with a timeout.
@@ -86,12 +90,19 @@ final class AudioController: ObservableObject {
     log.notice("bootstrap")
     BSCrashGuardInstall()
     installAppObservers()
+    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+      guard !self.halResponded else { return }
+      self.log.error("coreaudiod did not respond within 6 s")
+      self.status = .failed("macOS's audio service isn't responding, so Bass Shake can't see your speakers or headphones. Fix: open Terminal and run  sudo killall coreaudiod  then reopen Bass Shake. Old audio drivers (e.g. Boom 2) can cause this.")
+    }
     audioQueue.async {
       self.installHALListeners()
       if #available(macOS 14.2, *) { TapPipeline.sweepLeftovers() }
       let devs = Devices.allOutputs()
       let current = Devices.defaultOutput()
       DispatchQueue.main.async {
+        self.halResponded = true
+        if case .failed = self.status { self.status = .off }
         self.devices = devs
         self.currentDeviceID = current
         self.log.notice("devices: \(devs.count, privacy: .public)")
