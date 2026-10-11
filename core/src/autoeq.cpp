@@ -1,9 +1,10 @@
 #include "punch/autoeq.hpp"
 
 #include <cctype>
-#include <charconv>
 #include <cmath>
 #include <cstdio>
+#include <locale>
+#include <sstream>
 #include <optional>
 #include <vector>
 
@@ -31,11 +32,16 @@ bool iequals(std::string_view a, std::string_view b) {
 }
 
 std::optional<double> number(std::string_view s) {
-  // from_chars for double is available in libstdc++ 11+ / libc++ 17+.
+  // Not std::from_chars: Apple's libc++ lacks the floating-point overloads
+  // for our deployment target. Not strtod: it follows the C locale's
+  // decimal separator. The classic locale always parses "6.5".
+  std::istringstream in{std::string(s)};
+  in.imbue(std::locale::classic());
   double v = 0;
-  const auto* end = s.data() + s.size();
-  auto [p, ec] = std::from_chars(s.data(), end, v);
-  if (ec != std::errc{} || p != end || !std::isfinite(v)) return std::nullopt;
+  in >> v;
+  if (in.fail() || !std::isfinite(v)) return std::nullopt;
+  in.peek();
+  if (!in.eof()) return std::nullopt;  // trailing junk
   return v;
 }
 
