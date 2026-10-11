@@ -25,17 +25,25 @@ struct OnboardingView: View {
       }
 
       VStack(alignment: .leading, spacing: 8) {
-        Text("macOS will ask you one question")
+        Text("One quick macOS permission")
           .font(.system(size: 12, weight: .semibold))
-        Text("To shape your sound, Bass Shake needs to hear it. macOS calls this “system audio recording”, the same permission every EQ and volume mixer needs.")
+        Text("Bass Shake needs to hear what your Mac is playing so it can shape it. macOS calls this “System Audio Recording”, but nothing is recorded: sound is processed live, in memory, and played straight back to you.")
           .font(.system(size: 11))
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
         VStack(alignment: .leading, spacing: 5) {
-          Promise(symbol: "waveform", text: "Processed live. Nothing is ever recorded or saved.")
-          Promise(symbol: "lock.laptopcomputer", text: "Your audio never leaves your Mac.")
-          Promise(symbol: "mic.slash", text: "Never uses your microphone. No driver, no restart.")
+          Promise(symbol: "waveform", text: "Processed live, never saved.")
+          Promise(symbol: "lock.laptopcomputer", text: "Stays on this Mac: no account, no analytics, no network.")
+          Promise(symbol: "eye.slash", text: "Audio only. It can't see your screen or hear your microphone.")
           Promise(symbol: "arrow.uturn.backward", text: "Quit any time and your sound is instantly back to normal.")
+        }
+        .padding(.top, 2)
+        HStack(alignment: .top, spacing: 6) {
+          Circle().fill(Color.purple).frame(width: 7, height: 7).padding(.top, 4)
+          Text("While Bass Shake is on, macOS shows a small purple dot in the menu bar. That's Apple's sign that an app can hear system audio.")
+            .font(.system(size: 10.5))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 2)
       }
@@ -43,20 +51,20 @@ struct OnboardingView: View {
       .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.05)))
 
       DisclosureGroup(isExpanded: $showWhy) {
-        Text("Apple groups every app that can hear other apps' sound under one permission, whether it records (like a screen recorder) or only adjusts (like Bass Shake). Older enhancers such as Boom install a driver instead, which makes macOS ask for your microphone and shows the orange microphone dot. Bass Shake avoids both.")
+        Text("Apple uses one permission for every app that can hear other apps' sound, whether it records it (like a screen recorder) or only adjusts it (like Bass Shake). Driver-based enhancers such as Boom ask for your microphone instead and show the orange microphone dot.")
           .font(.system(size: 10.5))
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
           .padding(.top, 4)
       } label: {
-        Text("Why does macOS call it recording?")
+        Text("Why does macOS say “recording”?")
           .font(.system(size: 11, weight: .medium))
       }
 
       Button {
         controller.completeOnboarding()
       } label: {
-        Text("Turn On Bass Shake")
+        Text("Continue")
           .font(.system(size: 13, weight: .semibold))
           .frame(maxWidth: .infinity)
           .padding(.vertical, 4)

@@ -346,6 +346,12 @@ final class AudioController: ObservableObject {
       self.rebuildWork?.cancel()
       self.audioQueue.async { self.pipelineStop(fade: false) }
     })
+    // Coming back from System Settings after granting permission: macOS
+    // won't tell us, so re-check whenever the app becomes active.
+    observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      guard let self, self.status == .needsPermission, AudioCapturePermission.preflight() == .granted else { return }
+      self.retry()
+    })
     observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.5) }
     })

@@ -72,9 +72,9 @@ struct PopoverView: View {
     switch controller.status {
     case .needsPermission:
       Banner(symbol: "lock.shield", tint: .orange,
-             text: "Bass Shake needs System Audio Recording permission to hear your Mac.",
-             action: ("Open Settings", controller.openPermissionSettings),
-             secondary: ("Retry", controller.retry))
+             text: "Bass Shake can't hear your Mac yet. In System Settings, open Privacy & Security → Screen & System Audio Recording, and under “System Audio Recording Only” turn on Bass Shake. It resumes automatically when you come back.",
+             action: ("Open System Settings", controller.openPermissionSettings),
+             secondary: ("Try Again", controller.retry))
     case .failed(let msg):
       Banner(symbol: "exclamationmark.triangle", tint: .red, text: msg,
              action: ("Retry", controller.retry), secondary: nil)

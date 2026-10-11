@@ -17,7 +17,7 @@
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSAudioCaptureUsageDescription</key>
-  <string>Bass Shake processes your Mac's audio (EQ, bass and loudness) before it reaches your speakers or headphones. Audio never leaves your Mac and is never recorded.</string>
+  <string>Bass Shake adds bass and EQ to your Mac’s sound as it plays. Audio is processed live and is never recorded, saved, or sent anywhere.</string>
   <key>NSHumanReadableCopyright</key><string>Bass Shake beta</string>
 </dict>
 </plist>
