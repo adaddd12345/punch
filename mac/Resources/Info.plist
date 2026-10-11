@@ -6,8 +6,8 @@
   <key>CFBundleExecutable</key><string>BassShake</string>
   <key>CFBundleIdentifier</key><string>app.bassshake.BassShake</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>CFBundleName</key><string>Bass Shake</string>
-  <key>CFBundleDisplayName</key><string>Bass Shake</string>
+  <key>CFBundleName</key><string>The Bass Shaker</string>
+  <key>CFBundleDisplayName</key><string>The Bass Shaker</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>__VERSION__</string>
   <key>CFBundleVersion</key><string>__BUILD__</string>
@@ -17,12 +17,12 @@
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSAudioCaptureUsageDescription</key>
-  <string>Bass Shake adds bass and EQ to your Mac’s sound as it plays. Audio is processed live and is never recorded, saved, or sent anywhere.</string>
+  <string>The Bass Shaker adds bass and EQ to your Mac’s sound as it plays. Audio is processed live and is never recorded, saved, or sent anywhere.</string>
   <key>SUFeedURL</key><string>https://github.com/adaddd12345/punch/releases/download/updates/appcast.xml</string>
   <key>SUPublicEDKey</key><string>cSo3MWPriyIcFg42hMuJHhk2nLwVCNqO62OHV4Enjig=</string>
   <key>SUEnableAutomaticChecks</key><true/>
   <key>SUScheduledCheckInterval</key><integer>3600</integer>
   <key>SUAllowsAutomaticUpdates</key><true/>
-  <key>NSHumanReadableCopyright</key><string>Bass Shake beta</string>
+  <key>NSHumanReadableCopyright</key><string>The Bass Shaker beta</string>
 </dict>
 </plist>

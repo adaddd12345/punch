@@ -19,6 +19,6 @@ enum HeadphonePresets {
            subtitle: "Softens the forward 2.5 kHz and restores some of the top-end roll-off. Tuned with ANC on."),
     Preset(name: "B&W Px7 S2e", nodes: [(105, -3.5, 0.71), (200, -2.5, 1.2), (1_000, -1, 1.5), (2_000, 4, 1.8), (5_300, 1.5, 1.5), (10_000, 0, 0.71)],
            bass: 0.20, symbol: "headphones",
-           subtitle: "Tightens the Px7 S2e's heavy mid-bass and fills its 2 kHz hole for clearer vocals; Shake keeps the punch."),
+           subtitle: "Tightens the Px7 S2e's heavy mid-bass and fills its 2 kHz hole for clearer vocals; Strength keeps the punch."),
   ]
 }

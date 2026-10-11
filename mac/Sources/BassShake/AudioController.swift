@@ -617,9 +617,9 @@ final class AudioController: ObservableObject {
     for (i, b) in correction.enumerated() {
       punch_set_correction_band(e, Int32(i), b.0, b.1, b.2, b.3, true)
     }
-    // No Limit (except in Sleep, where quiet and safe is the point):
-    // nothing in the chain turns the music down behind the user's back.
-    let unlimited = s.noLimit && s.mode != .sleep
+    // Limit off (the default; Sleep always limits, since quiet and safe is
+    // the point): nothing in the chain turns the music down.
+    let unlimited = !s.limit && s.mode != .sleep
     punch_set_auto_preamp(e, !unlimited)
     punch_set_preamp_db(e, 0)
     let bass = s.studioEars && s.mode != .sleep ? min(StudioEars.maxBass, s.bass + StudioEars.extraBass) : s.bass
@@ -759,7 +759,7 @@ final class AudioController: ObservableObject {
             self.status = .starting
             self.scheduleRebuild(delay: delays[self.startFailures - 1])
           } else {
-            self.status = .failed("Couldn't start on this device (\(error)). Your audio is playing normally without Bass Shake.")
+            self.status = .failed("Couldn't start on this device (\(error)). Your audio is playing normally without The Bass Shaker.")
           }
         }
       }

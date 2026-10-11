@@ -472,7 +472,7 @@ final class LiveChannels: ObservableObject {
 
   private func createMuteTap(_ objects: [AudioObjectID]) -> AudioObjectID? {
     let d = CATapDescription(stereoMixdownOfProcesses: objects)
-    d.name = "Bass Shake Mute"
+    d.name = "The The Bass Shakerr Mute"
     d.uuid = UUID()
     d.isPrivate = true
     // Apple, CATapMuteBehavior (CATapDescription.h): `.muted` = "Audio is
@@ -559,7 +559,7 @@ final class LiveChannels: ObservableObject {
     do {
       for obj in objects {
         let d = CATapDescription(stereoMixdownOfProcesses: [obj])
-        d.name = "Bass Shake Meter"
+        d.name = "The The Bass Shakerr Meter"
         d.uuid = UUID()
         d.isPrivate = true
         d.muteBehavior = .unmuted  // listen only: the app keeps playing normally
@@ -580,7 +580,7 @@ final class LiveChannels: ObservableObject {
       guard !taps.isEmpty else { throw CAError(-1, "create meter taps") }
 
       let dict: [String: Any] = [
-        kAudioAggregateDeviceNameKey: "Bass Shake Meter",
+        kAudioAggregateDeviceNameKey: "The The Bass Shakerr Meter",
         // Same prefix as the EQ aggregate, so TapPipeline.sweepLeftovers()
         // also removes a meter left behind by a crash.
         kAudioAggregateDeviceUIDKey: "com.bassshake.aggregate.meter.\(UUID().uuidString)",

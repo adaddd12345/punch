@@ -301,9 +301,10 @@ struct Settings: Codable, Equatable {
   var autoLoudness = false
   var bypassHotkey = true
   var checkDrivers = true
-  /// No Limit: no auto-headroom, no limiter, no compressor. Nothing rides
-  /// the gain; peaks over 0 dBFS clip at the device instead.
-  var noLimit = false
+  /// Limit: bass-priority limiter, mid/treble auto-headroom and preset
+  /// compression. Off by default: nothing rides the gain, and peaks over
+  /// 0 dBFS clip at the device instead.
+  var limit = false
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -354,7 +355,7 @@ struct Settings: Codable, Equatable {
     autoLoudness = try c.decodeIfPresent(Bool.self, forKey: .autoLoudness) ?? d.autoLoudness
     bypassHotkey = try c.decodeIfPresent(Bool.self, forKey: .bypassHotkey) ?? d.bypassHotkey
     checkDrivers = try c.decodeIfPresent(Bool.self, forKey: .checkDrivers) ?? d.checkDrivers
-    noLimit = try c.decodeIfPresent(Bool.self, forKey: .noLimit) ?? d.noLimit
+    limit = try c.decodeIfPresent(Bool.self, forKey: .limit) ?? d.limit
   }
 
   static func load() -> Settings {

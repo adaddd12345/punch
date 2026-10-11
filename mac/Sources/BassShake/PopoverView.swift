@@ -72,7 +72,7 @@ struct PopoverView: View {
         .interpolation(.high)
         .frame(width: 16, height: 16)
         .foregroundStyle(controller.settings.enabled ? Color.accentColor : .secondary)
-      Text("Bass Shake")
+      Text("The Bass Shaker")
         .font(.system(size: 14, weight: .bold, design: .rounded))
       Spacer()
       LiveChannelsButton(model: controller.live, expanded: $showLive)
@@ -91,7 +91,7 @@ struct PopoverView: View {
         .toggleStyle(.switch)
         .controlSize(.small)
         .labelsHidden()
-        .help(controller.settings.enabled ? "Turn Bass Shake off" : "Turn Bass Shake on")
+        .help(controller.settings.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
     }
   }
 
@@ -99,12 +99,12 @@ struct PopoverView: View {
     switch controller.status {
     case .needsPermission:
       Banner(symbol: "lock.shield", tint: .orange,
-             text: "Bass Shake can't hear your Mac yet. In System Settings, open Privacy & Security → Screen & System Audio Recording, and under “System Audio Recording Only” turn on Bass Shake. It resumes automatically when you come back.",
+             text: "The Bass Shaker can't hear your Mac yet. In System Settings, open Privacy & Security → Screen & System Audio Recording, and under “System Audio Recording Only” turn on The Bass Shaker. It resumes automatically when you come back.",
              action: ("Open System Settings", controller.openPermissionSettings),
              secondary: ("Try Again", controller.retry))
     case .audioServiceStuck:
       Banner(symbol: "speaker.slash", tint: .orange,
-             text: "macOS's audio service isn't responding, so Bass Shake can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
+             text: "macOS's audio service isn't responding, so The Bass Shaker can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
              action: ("Restart macOS Audio", controller.restartAudioService),
              secondary: nil)
     case .failed(let msg):
@@ -124,7 +124,7 @@ struct PopoverView: View {
     } else if controller.settings.checkDrivers, !controller.driverBannerDismissed,
               let d = controller.conflictingDrivers.first {
       Banner(symbol: "exclamationmark.triangle", tint: .orange,
-             text: "Found an old audio driver (\(d.name)\(controller.conflictingDrivers.count > 1 ? " and \(controller.conflictingDrivers.count - 1) more" : "")). It can freeze macOS audio and fight with Bass Shake.",
+             text: "Found an old audio driver (\(d.name)\(controller.conflictingDrivers.count > 1 ? " and \(controller.conflictingDrivers.count - 1) more" : "")). It can freeze macOS audio and fight with The Bass Shaker.",
              action: ("Review & Clean Up", { withAnimation { showDrivers = true } }),
              secondary: ("Not Now", { controller.driverBannerDismissed = true }))
     }
@@ -146,26 +146,26 @@ struct PopoverView: View {
 
   private var sliders: some View {
     VStack(spacing: 8) {
-      LabeledSlider(title: "Shake", symbol: "waveform.path",
+      LabeledSlider(title: "Strength", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                     range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
                     help: "Psychoacoustic bass: adds harmonics so small speakers sound deeper without distorting.")
       LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
                     value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
                     range: 0...12, format: { String(format: "+%.0f dB", $0) },
-                    help: controller.settings.noLimit
-                      ? "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping."
-                      : "Extra loudness. When it runs out of room, Bass Shake holds back the bass first, so vocals don't duck.")
+                    help: controller.settings.limit
+                      ? "Extra loudness. With Limit on, the bass is held back first when there's no room, so vocals don't duck."
+                      : "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping.")
       HStack(spacing: 6) {
         Spacer()
-        Toggle(isOn: Binding(get: { controller.settings.noLimit }, set: { controller.settings.noLimit = $0 })) {
-          Label("No Limit", systemImage: "bolt.fill")
+        Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
+          Label("Limit", systemImage: "rectangle.compress.vertical")
             .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(controller.settings.noLimit ? Color.orange : Color.secondary)
+            .foregroundStyle(controller.settings.limit ? Color.orange : Color.secondary)
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
-        .help("Bass Shake already limits only the bass when it runs out of room, so vocals never duck. No Limit goes further and turns off all gain riding: the limiter, headroom and compression. Peaks can then clip and distort, and red meters show it. Not applied in Sleep mode.")
+        .help("Off: nothing holds the sound back. EQ and Boost go straight to your speakers, and loud peaks can clip (red meters). On: when there's no room left, the bass is held back first so vocals never duck, and the EQ shows how much is being restricted. Sleep mode always limits.")
       }
     }
   }
@@ -217,7 +217,7 @@ struct PopoverView: View {
         if let err = updates.startError { Text("Updates unavailable: \(err)") }
         Text("Version \(updates.currentVersion)")
         Divider()
-        Button("Quit Bass Shake") { NSApp.terminate(nil) }
+        Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       } label: {
         Image(systemName: "ellipsis.circle")
       }

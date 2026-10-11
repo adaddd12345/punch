@@ -32,6 +32,12 @@ struct EQView: View {
       let bands = controller.settings.bands
       ZStack {
         Canvas { ctx, size in draw(ctx, size: size, bands: bands) }
+        if controller.settings.limit && controller.settings.enabled {
+          LimitOverlay(meters: controller.meters, size: size, bassEdgeX: x(150, size.width),
+                       yFor: { y($0, size.height) })
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
         if let i = grabbed ?? hovered, i < bands.count {
           let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
           let ny: CGFloat = y(bands[i].gain, size.height)
@@ -238,5 +244,51 @@ struct EQView: View {
   private func removeScrollMonitor() {
     if let m = scrollMonitor { NSEvent.removeMonitor(m) }
     scrollMonitor = nil
+  }
+}
+
+
+/// Shown on the EQ while Limit is on: a lid over the bass region that comes
+/// down by the live gain reduction (the bass-priority limiter holds the bass
+/// back first), plus a badge with the amount. Lives in its own view so meter
+/// updates don't redraw the EQ curve.
+private struct LimitOverlay: View {
+  @ObservedObject var meters: MeterModel
+  let size: CGSize
+  let bassEdgeX: CGFloat
+  let yFor: (Double) -> CGFloat
+
+  var body: some View {
+    let gr = min(12, max(0, -meters.gainReductionDb))
+    let active = meters.limiting && gr > 0.1
+    let top = yFor(12)
+    let lid = yFor(12 - gr)
+    ZStack(alignment: .topLeading) {
+      // Restricted zone over the bass.
+      Path { p in
+        p.addRect(CGRect(x: 0, y: 0, width: bassEdgeX, height: max(lid, top + 2)))
+      }
+      .fill(LinearGradient(colors: [Color.orange.opacity(active ? 0.30 : 0.10), Color.orange.opacity(0.02)],
+                           startPoint: .top, endPoint: .bottom))
+      // The lid itself.
+      Path { p in
+        p.move(to: CGPoint(x: 0, y: max(lid, top + 2)))
+        p.addLine(to: CGPoint(x: bassEdgeX, y: max(lid, top + 2)))
+      }
+      .stroke(Color.orange.opacity(active ? 0.9 : 0.45), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+      // Badge.
+      HStack(spacing: 3) {
+        Image(systemName: "rectangle.compress.vertical").font(.system(size: 8, weight: .bold))
+        Text(active ? String(format: "LIMIT −%.1f dB", gr) : "LIMIT")
+          .font(.system(size: 9, weight: .bold, design: .rounded))
+          .monospacedDigit()
+      }
+      .padding(.horizontal, 6).padding(.vertical, 2)
+      .foregroundStyle(active ? Color.white : Color.orange)
+      .background(Capsule().fill(active ? Color.orange : Color.orange.opacity(0.15)))
+      .position(x: size.width - 46, y: 12)
+    }
+    .frame(width: size.width, height: size.height)
+    .animation(.easeOut(duration: 0.12), value: gr)
   }
 }

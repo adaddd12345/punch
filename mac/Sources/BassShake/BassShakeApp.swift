@@ -63,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if window == nil {
       let host = NSHostingController(rootView: MainWindowView(controller: controller).environmentObject(updates))
       let w = NSWindow(contentViewController: host)
-      w.title = "Bass Shake"
+      w.title = "The Bass Shaker"
       w.styleMask = [.titled, .closable, .miniaturizable]
       w.isReleasedWhenClosed = false
       w.center()
@@ -91,9 +91,9 @@ struct MainWindowView: View {
           .frame(width: 18, height: 18)
           .foregroundStyle(Color.accentColor)
         VStack(alignment: .leading, spacing: 3) {
-          Text("Bass Shake lives in your menu bar")
+          Text("The Bass Shaker lives in your menu bar")
             .font(.system(size: 12, weight: .semibold))
-          Text("Click the salt shaker near the clock to open these controls any time. You can close this window; Bass Shake keeps running. Can't see the icon? Your menu bar may be full (hidden behind the notch), or on macOS 26 check System Settings → Menu Bar.")
+          Text("Click the salt shaker near the clock to open these controls any time. You can close this window; The Bass Shaker keeps running. Can't see the icon? Your menu bar may be full (hidden behind the notch), or on macOS 26 check System Settings → Menu Bar.")
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)

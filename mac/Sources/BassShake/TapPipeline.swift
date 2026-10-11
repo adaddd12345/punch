@@ -85,7 +85,7 @@ final class TapPipeline {
       // drift-compensated onto it.
       let aggUID = "com.bassshake.aggregate.\(UUID().uuidString)"
       let dict: [String: Any] = [
-        kAudioAggregateDeviceNameKey: "Bass Shake",
+        kAudioAggregateDeviceNameKey: "The Bass Shaker",
         kAudioAggregateDeviceUIDKey: aggUID,
         kAudioAggregateDeviceMainSubDeviceKey: output.uid,
         kAudioAggregateDeviceIsPrivateKey: true,
@@ -167,7 +167,7 @@ final class TapPipeline {
   }
 
   private func configure(_ d: CATapDescription) {
-    d.name = "Bass Shake"
+    d.name = "The Bass Shaker"
     d.uuid = UUID()
     d.isPrivate = true
     d.muteBehavior = .mutedWhenTapped

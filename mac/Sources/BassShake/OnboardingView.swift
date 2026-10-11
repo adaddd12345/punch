@@ -17,7 +17,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 2) {
           Text("Make everything hit harder")
             .font(.system(size: 15, weight: .bold, design: .rounded))
-          Text("Bass Shake tunes all your Mac's sound (music, video, games) on its way to your speakers or headphones.")
+          Text("The Bass Shaker tunes all your Mac's sound (music, video, games) on its way to your speakers or headphones.")
             .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -27,7 +27,7 @@ struct OnboardingView: View {
       VStack(alignment: .leading, spacing: 8) {
         Text("One quick macOS permission")
           .font(.system(size: 12, weight: .semibold))
-        Text("Bass Shake needs to hear what your Mac is playing so it can shape it. macOS calls this “System Audio Recording”, but nothing is recorded: sound is processed live, in memory, and played straight back to you.")
+        Text("The Bass Shaker needs to hear what your Mac is playing so it can shape it. macOS calls this “System Audio Recording”, but nothing is recorded: sound is processed live, in memory, and played straight back to you.")
           .font(.system(size: 11))
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -40,7 +40,7 @@ struct OnboardingView: View {
         .padding(.top, 2)
         HStack(alignment: .top, spacing: 6) {
           Circle().fill(Color.purple).frame(width: 7, height: 7).padding(.top, 4)
-          Text("While Bass Shake is on, macOS shows a small purple dot in the menu bar. That's Apple's sign that an app can hear system audio.")
+          Text("While The Bass Shaker is on, macOS shows a small purple dot in the menu bar. That's Apple's sign that an app can hear system audio.")
             .font(.system(size: 10.5))
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
@@ -51,7 +51,7 @@ struct OnboardingView: View {
       .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.05)))
 
       DisclosureGroup(isExpanded: $showWhy) {
-        Text("Apple uses one permission for every app that can hear other apps' sound, whether it records it (like a screen recorder) or only adjusts it (like Bass Shake). Driver-based enhancers such as Boom ask for your microphone instead and show the orange microphone dot.")
+        Text("Apple uses one permission for every app that can hear other apps' sound, whether it records it (like a screen recorder) or only adjusts it (like The Bass Shaker). Driver-based enhancers such as Boom ask for your microphone instead and show the orange microphone dot.")
           .font(.system(size: 10.5))
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
