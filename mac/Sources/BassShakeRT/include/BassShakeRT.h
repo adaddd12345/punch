@@ -65,6 +65,44 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
 void BSCrashGuardInstall(void);
 void BSCrashGuardSet(AudioObjectID aggregate, AudioObjectID tap);
 void BSCrashGuardClear(void);
+// Extra taps destroyed by the same guard: the Live Channels per-app mute
+// taps (CATapMuteBehavior.muted silences an app whether or not anyone reads
+// the tap, so one left behind would keep that app silent). A small fixed
+// table; Add returns false when it is full (the tap still works, it is just
+// not crash-guarded). Remove is a no-op for an unknown ID.
+enum { BSCrashGuardMaxExtraTaps = 32 };
+bool BSCrashGuardAddTap(AudioObjectID tap);
+void BSCrashGuardRemoveTap(AudioObjectID tap);
+
+// ---- Live Channels level meter
+// One private aggregate holds one non-muting tap per playing process.
+// BSMeterIOProc never writes audio (it zeroes the output buffers); it only
+// stores the peak |sample| of each tap's buffer(s) into per-slot atomics
+// that Swift drains (~30 Hz) with BSMeterContextTakePeak.
+enum { BSMeterMaxSlots = 64, BSMeterMaxBuffers = 256 };
+
+typedef struct BSMeterContext BSMeterContext;
+
+BSMeterContext* _Nullable BSMeterContextCreate(void);
+void BSMeterContextDestroy(BSMeterContext* ctx);
+
+// Maps the LAST `count` buffers of the aggregate's input list to meter slots
+// (taps are appended after any real sub-device input streams, in tap-list
+// order). slots[i] is the slot of the i-th of those buffers, or -1 to
+// ignore it. A non-interleaved tap contributes one buffer per channel, all
+// mapped to the same slot. Call before AudioDeviceStart, never while IO runs.
+void BSMeterContextSetLayout(BSMeterContext* ctx, const int32_t* slots, uint32_t count);
+
+// Linear peak (max |sample|, 0...) of `slot` since the previous call, then
+// resets it. Lock-free; safe from any one non-IO thread.
+float BSMeterContextTakePeak(BSMeterContext* ctx, uint32_t slot);
+uint64_t BSMeterContextCallbacks(const BSMeterContext* ctx);
+uint64_t BSMeterContextLayoutErrors(const BSMeterContext* ctx);
+
+// The AudioDeviceIOProc. clientData must be a BSMeterContext*.
+OSStatus BSMeterIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBufferList* input,
+                       const AudioTimeStamp* inputTime, AudioBufferList* output, const AudioTimeStamp* outputTime,
+                       void* _Nullable clientData);
 
 CF_ASSUME_NONNULL_END
 

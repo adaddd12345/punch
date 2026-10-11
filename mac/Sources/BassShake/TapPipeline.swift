@@ -47,11 +47,19 @@ final class TapPipeline {
 
   /// Builds and starts the pipeline. Blocking (AudioDeviceStart can stall
   /// while another tap client holds the device); call off the main thread.
-  func start(output: OutputDevice) throws -> Info {
+  ///
+  /// `alsoExclude`: extra HAL process objects to leave out of the tap, on top
+  /// of our own process. Live Channels passes the processes of apps the user
+  /// muted: their `.muted` taps keep them off the hardware, but this tap
+  /// would otherwise capture their audio and play it again, processed.
+  func start(output: OutputDevice, alsoExclude: [AudioObjectID] = []) throws -> Info {
     stop(fade: false)
     do {
       let own = Self.ownProcessObject()
-      let excluded: [AudioObjectID] = own.map { [$0] } ?? []
+      var excluded: [AudioObjectID] = own.map { [$0] } ?? []
+      for obj in alsoExclude where obj != unknownObject && !excluded.contains(obj) {
+        excluded.append(obj)
+      }
 
       // Prefer a tap scoped to the device's audio (format matches the device);
       // fall back to a stereo global tap if the device-scoped one fails.
@@ -189,11 +197,14 @@ final class TapPipeline {
 
   /// True if any process other than us is currently producing output.
   /// Used by the watchdog to tell "nothing is playing" from "dead tap".
-  static func othersArePlaying() -> Bool {
+  /// Pass the same objects as `alsoExclude`: a muted app that keeps playing
+  /// never reaches our tap, so counting it would make a healthy tap look
+  /// dead (rebuild loop, or a false "needs permission" banner).
+  static func othersArePlaying(excluding extra: Set<AudioObjectID> = []) -> Bool {
     let own = ownProcessObject()
     let procs = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyProcessObjectList),
                                 of: AudioObjectID.self, zero: 0)) ?? []
-    for p in procs where p != own {
+    for p in procs where p != own && !extra.contains(p) {
       let running = (try? HAL.get(p, .global(kAudioProcessPropertyIsRunningOutput), default: UInt32(0))) ?? 0
       if running != 0 { return true }
     }
