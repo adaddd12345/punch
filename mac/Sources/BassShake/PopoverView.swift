@@ -146,6 +146,7 @@ struct PopoverView: View {
       }
       Menu {
         Button("Check for Updates…") { updates.checkNow() }
+        if let err = updates.startError { Text("Updates unavailable: \(err)") }
         Text("Version \(updates.currentVersion)")
         Divider()
         Button("Quit Bass Shake") { NSApp.terminate(nil) }

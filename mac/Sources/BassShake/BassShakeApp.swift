@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 
 @main
@@ -21,11 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   let updates = Updates()
   private var window: NSWindow?
 
+  private let log = Logger(subsystem: "app.bassshake.BassShake", category: "app")
+
   func applicationDidFinishLaunching(_ notification: Notification) {
+    log.info("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")
     // A menu-bar-only app is invisible when launched from Finder, and its
     // icon can be hidden behind the notch or by macOS 26's menu bar
     // settings. Always show the controls in a window on launch.
     showWindow()
+    log.info("window shown")
+    // Start auto-updates only once the UI is up, and never block on it.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }
   }
 
   /// Double-clicking the app again (Finder, Launchpad, Spotlight) while it is

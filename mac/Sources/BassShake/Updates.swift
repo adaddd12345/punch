@@ -1,4 +1,6 @@
 import AppKit
+import Combine
+import os
 import Sparkle
 
 /// Sparkle auto-updates. The feed (appcast.xml) is published by CI to the
@@ -9,10 +11,30 @@ import Sparkle
 final class Updates: NSObject, ObservableObject, SPUStandardUserDriverDelegate {
   private(set) var controller: SPUStandardUpdaterController!
   private var lastBackgroundCheck = Date.distantPast
+  private(set) var started = false
+  @Published private(set) var startError: String?
+  private let log = Logger(subsystem: "app.bassshake.BassShake", category: "updates")
 
   override init() {
     super.init()
-    controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: self)
+    // Not started here: SPUStandardUpdaterController's own start shows a
+    // *modal* alert on any configuration problem, which in a menu-bar app
+    // (no Dock icon) sits invisibly behind other windows and blocks launch.
+    controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
+  }
+
+  /// Call after the UI is up. Failures are logged and shown in the ⋯ menu,
+  /// never as a blocking alert.
+  func start() {
+    guard !started else { return }
+    do {
+      try controller.updater.start()
+      started = true
+      log.info("updater started")
+    } catch {
+      startError = error.localizedDescription
+      log.error("updater failed to start: \(error.localizedDescription, privacy: .public)")
+    }
   }
 
   var currentVersion: String {
@@ -22,14 +44,16 @@ final class Updates: NSObject, ObservableObject, SPUStandardUserDriverDelegate {
   }
 
   func checkNow() {
-    NSApp.activate()
+    start()
+    guard started else { return }
+    NSApp.activate(ignoringOtherApps: true)
     controller.checkForUpdates(nil)
   }
 
   /// Opportunistic quiet check (e.g. when the popover opens), at most every
   /// 10 minutes, on top of Sparkle's hourly schedule.
   func checkInBackgroundIfStale() {
-    guard Date().timeIntervalSince(lastBackgroundCheck) > 600, controller.updater.canCheckForUpdates else { return }
+    guard started, Date().timeIntervalSince(lastBackgroundCheck) > 600, controller.updater.canCheckForUpdates else { return }
     lastBackgroundCheck = Date()
     controller.updater.checkForUpdatesInBackground()
   }
