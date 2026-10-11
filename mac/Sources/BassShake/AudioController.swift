@@ -1,4 +1,5 @@
 import AppKit
+import AudioToolbox
 import BassShakeRT
 import Combine
 import CoreAudio
@@ -33,13 +34,29 @@ final class AudioController: ObservableObject {
   /// context, after the user acts). Never prompt at launch.
   @Published private(set) var needsOnboarding = !UserDefaults.standard.bool(forKey: AudioController.onboardedKey)
   private static let onboardedKey = "BassShake.onboarded.v1"
-  @Published private(set) var currentDeviceID: AudioObjectID = 0
+  @Published private(set) var currentDeviceID: AudioObjectID = 0 {
+    didSet { if currentDeviceID != oldValue { deviceChanged(from: oldValue) } }
+  }
+  /// Instant A/B: the tap keeps running, the engine passes audio untouched.
+  @Published var bypassed = false {
+    didSet { if bypassed != oldValue { pushParams() } }
+  }
+  /// Output device volume (0...1) for Auto Loudness; not persisted.
+  @Published private(set) var deviceVolume: Double?
+  /// Old/conflicting audio drivers found on disk.
+  @Published private(set) var foundDrivers: [AudioDriver] = []
+  @Published var driverBannerDismissed = false
+  private var bypassHotkey: GlobalHotkey?
+  private var startFailures = 0
+  private var volumeListeners = PropertyListeners(queue: AudioController.listenerQueue)
+  private var volumePushPending = false
   @Published var settings: Settings {
     didSet {
       guard settings != oldValue else { return }
       if settings.enabled != oldValue.enabled {
         settings.enabled ? start() : stop()
       }
+      if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
       pushParams()
       scheduleSave()
     }
@@ -91,6 +108,8 @@ final class AudioController: ObservableObject {
     log.notice("bootstrap")
     BSCrashGuardInstall()
     installAppObservers()
+    updateHotkey()
+    if settings.checkDrivers { scanDrivers() }
     DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
       guard !self.halResponded else { return }
       self.log.error("coreaudiod did not respond within 6 s")
@@ -209,6 +228,97 @@ final class AudioController: ObservableObject {
   }
 
   func pollMeters() -> PunchMeters { punch_take_meters(engine) }
+
+  // MARK: - Per-device sound
+
+  var currentDevice: OutputDevice? { devices.first { $0.id == currentDeviceID } }
+
+  private var currentSound: Settings.DeviceSound {
+    .init(bands: settings.bands, bass: settings.bass, boostDb: settings.boostDb, character: settings.character,
+          presetName: settings.presetName, userPresetID: settings.userPresetID, studioEars: settings.studioEars)
+  }
+
+  /// Keeps the current device's remembered sound up to date (called with
+  /// each save). Modes are temporary, so they're never remembered.
+  private func rememberDeviceSound() {
+    guard settings.perDevice, settings.mode == .off, let uid = currentDevice?.uid else { return }
+    let sound = currentSound
+    if settings.deviceSounds[uid] != sound { settings.deviceSounds[uid] = sound }
+  }
+
+  /// The output changed: switch to the sound this device had last time.
+  /// A device we haven't seen keeps the current sound (and learns it).
+  private func deviceChanged(from old: AudioObjectID) {
+    guard settings.perDevice, settings.mode == .off else { return }
+    // Bank the outgoing device's sound first (a pending save may not have run).
+    if let oldUID = devices.first(where: { $0.id == old })?.uid {
+      settings.deviceSounds[oldUID] = currentSound
+    }
+    guard let uid = currentDevice?.uid, let sound = settings.deviceSounds[uid] else { return }
+    log.notice("per-device sound for \(uid, privacy: .public)")
+    var s = settings
+    s.bass = sound.bass
+    s.boostDb = sound.boostDb
+    s.character = sound.character
+    s.presetName = sound.presetName
+    s.userPresetID = sound.userPresetID
+    s.studioEars = sound.studioEars
+    settings = s
+    morph(to: sound.bands)
+  }
+
+  func setBypassOnCurrentDevice(_ on: Bool) {
+    guard let uid = currentDevice?.uid else { return }
+    if on { settings.bypassDevices.insert(uid) } else { settings.bypassDevices.remove(uid) }
+  }
+
+  var currentDeviceBypassed: Bool {
+    currentDevice.map { settings.bypassDevices.contains($0.uid) } ?? false
+  }
+
+  // MARK: - Hotkey
+
+  private func updateHotkey() {
+    bypassHotkey = nil
+    guard settings.bypassHotkey else { return }
+    bypassHotkey = GlobalHotkey(keyCode: GlobalHotkey.bypassKeyCode, modifiers: GlobalHotkey.bypassModifiers, id: 1) { [weak self] in
+      guard let self, self.settings.enabled else { return }
+      self.bypassed.toggle()
+    }
+  }
+
+  // MARK: - Old audio drivers
+
+  func scanDrivers() {
+    DispatchQueue.global(qos: .utility).async {
+      let found = DriverScanner.scan()
+      DispatchQueue.main.async { self.foundDrivers = found }
+    }
+  }
+
+  var conflictingDrivers: [AudioDriver] { foundDrivers.filter { $0.kind == .conflicting } }
+
+  /// Moves the chosen drivers to the Trash, restarts coreaudiod (one admin
+  /// prompt) and relaunches Bass Shake against the fresh audio service.
+  func cleanUp(drivers: [AudioDriver]) {
+    guard !drivers.isEmpty else { return }
+    log.notice("removing drivers: \(drivers.map(\.name).joined(separator: ", "), privacy: .public)")
+    guard DriverScanner.moveToTrashAndRestartAudio(drivers) else {
+      log.error("driver cleanup cancelled or failed")
+      scanDrivers()
+      return
+    }
+    relaunch()
+  }
+
+  private func relaunch() {
+    let path = Bundle.main.bundlePath.replacingOccurrences(of: "'", with: "'\\''")
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/bin/sh")
+    p.arguments = ["-c", "sleep 2; /usr/bin/open -n '\(path)'"]
+    try? p.run()
+    NSApp.terminate(nil)
+  }
 
   // MARK: - Modes (Study / Sleep) and Studio Ears
 
@@ -461,27 +571,46 @@ final class AudioController: ObservableObject {
   private func pushParams() {
     let s = settings
     let e = engine
-    let f = fade
-    let hp = isHeadphones
+    let live = liveState
     audioQueue.async {
-      self.configureEQOffMain(e, s, fade: f, headphones: hp)
+      self.configureEQOffMain(e, s, live)
       punch_engine_publish(e)
     }
   }
 
-  private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, fade: Fade = Fade(), headphones: Bool = false) {
+  /// Runtime inputs to the engine that aren't persisted settings.
+  struct LiveState {
+    var fade = Fade()
+    var headphones = false
+    var bypass = false
+    var volume: Double?   // device volume 0...1, when known
+  }
+
+  private var liveState: LiveState {
+    let uid = currentDevice?.uid
+    return LiveState(fade: fade, headphones: isHeadphones,
+                     bypass: bypassed || (uid.map { settings.bypassDevices.contains($0) } ?? false),
+                     volume: deviceVolume)
+  }
+
+  private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, _ live: LiveState = LiveState()) {
+    let fade = live.fade, headphones = live.headphones
+    punch_set_bypass(e, live.bypass)
     punch_set_num_bands(e, Int32(s.bands.count))
     for (i, b) in s.bands.enumerated() {
       punch_set_band(e, Int32(i), b.punchType, b.freq, b.gain, b.q, true)
     }
-    // Studio Ears lives in the correction stage so it stacks on any preset.
-    if s.studioEars {
-      punch_set_correction_num_bands(e, Int32(StudioEars.bands.count))
-      for (i, b) in StudioEars.bands.enumerated() {
-        punch_set_correction_band(e, Int32(i), b.0, b.1, b.2, b.3, true)
-      }
-    } else {
-      punch_set_correction_num_bands(e, 0)
+    // Studio Ears and Auto Loudness live in the correction stage so they
+    // stack on any preset.
+    var correction = s.studioEars ? StudioEars.bands : []
+    var loudnessMakeup = 0.0
+    if s.autoLoudness, s.mode != .sleep, let v = live.volume {
+      correction += Loudness.bands(volume: v)
+      loudnessMakeup = Loudness.makeupDb(volume: v)
+    }
+    punch_set_correction_num_bands(e, Int32(correction.count))
+    for (i, b) in correction.enumerated() {
+      punch_set_correction_band(e, Int32(i), b.0, b.1, b.2, b.3, true)
     }
     punch_set_auto_preamp(e, true)
     let bass = s.studioEars && s.mode != .sleep ? min(StudioEars.maxBass, s.bass + StudioEars.extraBass) : s.bass
@@ -510,14 +639,17 @@ final class AudioController: ObservableObject {
     punch_set_noise(e, noiseOn, Int32(s.noiseColor.rawValue), Float(s.noiseDb + fade.noiseDb))
     // Sleep ignores Boost: quieter is the point.
     let boost = s.mode == .sleep ? 0 : s.boostDb
-    punch_set_output_gain_db(e, Float(boost + fade.musicDb))
+    punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb))
     punch_set_limiter(e, true, Float(c.ceilingDb), 80)
   }
 
   private func scheduleSave() {
     saveWork?.cancel()
-    let s = settings
-    let w = DispatchWorkItem { s.save() }
+    let w = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      self.rememberDeviceSound()
+      self.settings.save()
+    }
     saveWork = w
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: w)
   }
@@ -569,8 +701,7 @@ final class AudioController: ObservableObject {
     status = .starting
     let s = settings
     let e = engine
-    let f = fade
-    let hp = isHeadphones
+    let live = liveState
     log.notice("rebuild")
     // Every Core Audio call happens on the audio queue, never on main.
     audioQueue.async {
@@ -586,7 +717,7 @@ final class AudioController: ObservableObject {
         return
       }
       self.pipelineStop(fade: true)
-      self.configureEQOffMain(e, s, fade: f, headphones: hp)
+      self.configureEQOffMain(e, s, live)
       punch_engine_publish(e)
       let pipeline = TapPipeline(engine: e)
       do {
@@ -595,12 +726,26 @@ final class AudioController: ObservableObject {
         self.watchDevice(device)
         self.log.notice("running on \(info.deviceName, privacy: .public) @ \(info.sampleRate, privacy: .public) Hz")
         DispatchQueue.main.async {
+          self.startFailures = 0
           self.status = .running(device: info.deviceName, sampleRate: info.sampleRate)
         }
         self.startWatchdog()
       } catch {
         self.log.error("start failed: \(String(describing: error), privacy: .public)")
-        DispatchQueue.main.async { self.status = .failed(String(describing: error)) }
+        // Fail safe: a failed start leaves no tap behind, so the original
+        // audio plays normally. Retry a few times with backoff (devices often
+        // aren't ready right after a switch or wake), then say so.
+        self.pipelineStop(fade: false)
+        DispatchQueue.main.async {
+          self.startFailures += 1
+          let delays = [1.0, 3.0, 8.0]
+          if self.startFailures <= delays.count {
+            self.status = .starting
+            self.scheduleRebuild(delay: delays[self.startFailures - 1])
+          } else {
+            self.status = .failed("Couldn't start on this device (\(error)). Your audio is playing normally without Bass Shake.")
+          }
+        }
       }
     }
   }
@@ -681,6 +826,36 @@ final class AudioController: ObservableObject {
     }
     deviceListeners.add(device.id, .global(kAudioDevicePropertyDeviceIsAlive)) { [weak self] in
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 0.5) }
+    }
+    watchVolume(device)
+  }
+
+  /// audioQueue only. Tracks the device's main volume for Auto Loudness.
+  /// Reads happen on the listener queue (never main); UI updates are
+  /// coalesced to at most ~20 per second.
+  private func watchVolume(_ device: OutputDevice) {
+    volumeListeners.removeAll()
+    volumeListeners = PropertyListeners(queue: AudioController.listenerQueue)
+    let addr = AudioObjectPropertyAddress.output(kAudioHardwareServiceDeviceProperty_VirtualMainVolume)
+    guard HAL.has(device.id, addr) else {
+      DispatchQueue.main.async { self.deviceVolume = nil }
+      return
+    }
+    let read: () -> Void = { [weak self] in
+      guard let v = try? HAL.get(device.id, addr, default: Float32(1)) else { return }
+      DispatchQueue.main.async { self?.volumeChanged(Double(v)) }
+    }
+    volumeListeners.add(device.id, addr) { read() }
+    read()
+  }
+
+  private func volumeChanged(_ v: Double) {
+    deviceVolume = v
+    guard settings.autoLoudness, !volumePushPending else { return }
+    volumePushPending = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+      self.volumePushPending = false
+      self.pushParams()
     }
   }
 
