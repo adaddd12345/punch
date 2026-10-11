@@ -612,12 +612,16 @@ final class AudioController: ObservableObject {
     for (i, b) in correction.enumerated() {
       punch_set_correction_band(e, Int32(i), b.0, b.1, b.2, b.3, true)
     }
-    punch_set_auto_preamp(e, true)
+    // No Limit (except in Sleep, where quiet and safe is the point):
+    // nothing in the chain turns the music down behind the user's back.
+    let unlimited = s.noLimit && s.mode != .sleep
+    punch_set_auto_preamp(e, !unlimited)
+    punch_set_preamp_db(e, 0)
     let bass = s.studioEars && s.mode != .sleep ? min(StudioEars.maxBass, s.bass + StudioEars.extraBass) : s.bass
     punch_set_bass(e, bass > 0.001, Float(bass), 110)
 
     let c = s.character
-    if let k = c.compressor {
+    if let k = c.compressor, !unlimited {
       punch_set_compressor(e, true, Float(k.thresholdDb), Float(k.ratio), Float(k.attackMs), Float(k.releaseMs),
                            Float(k.makeupDb), Float(k.sidechainHpHz))
     } else {
@@ -640,7 +644,7 @@ final class AudioController: ObservableObject {
     // Sleep ignores Boost: quieter is the point.
     let boost = s.mode == .sleep ? 0 : s.boostDb
     punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb))
-    punch_set_limiter(e, true, Float(c.ceilingDb), 80)
+    punch_set_limiter(e, !unlimited, Float(c.ceilingDb), 80)
   }
 
   private func scheduleSave() {

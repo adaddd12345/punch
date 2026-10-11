@@ -145,7 +145,20 @@ struct PopoverView: View {
       LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
                     value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
                     range: 0...12, format: { String(format: "+%.0f dB", $0) },
-                    help: "Extra loudness. The limiter keeps peaks under −1 dBFS so it never clips.")
+                    help: controller.settings.noLimit
+                      ? "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping."
+                      : "Extra loudness. The limiter keeps peaks under −1 dBFS so it never clips.")
+      HStack(spacing: 6) {
+        Spacer()
+        Toggle(isOn: Binding(get: { controller.settings.noLimit }, set: { controller.settings.noLimit = $0 })) {
+          Label("No Limit", systemImage: "bolt.fill")
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .foregroundStyle(controller.settings.noLimit ? Color.orange : Color.secondary)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .help("Turns off everything that holds loudness back: auto-headroom, the limiter and compression. EQ boosts and Boost go straight to your speakers, so loud peaks can clip and distort, and red meters mean it's happening. Not applied in Sleep mode.")
+      }
     }
   }
 
