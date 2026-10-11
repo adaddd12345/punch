@@ -26,20 +26,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   override init() {
     // Local logger: stored properties can't be read before super.init().
     let l = Logger(subsystem: "app.bassshake.BassShake", category: "app")
-    l.info("delegate init")
+    l.notice("delegate init")
     controller = AudioController()
     updates = Updates()
     super.init()
-    l.info("delegate ready")
+    l.notice("delegate ready")
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    log.info("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")
+    log.notice("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")
     // A menu-bar-only app is invisible when launched from Finder, and its
     // icon can be hidden behind the notch or by macOS 26's menu bar
     // settings. Always show the controls in a window on launch.
     showWindow()
-    log.info("window shown")
+    log.notice("window shown")
     DispatchQueue.main.async { [controller] in controller.bootstrap() }
     // Start auto-updates only once the UI is up, and never block on it.
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }

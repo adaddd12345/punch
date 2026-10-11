@@ -30,7 +30,7 @@ final class Updates: NSObject, ObservableObject, SPUStandardUserDriverDelegate {
     do {
       try controller.updater.start()
       started = true
-      log.info("updater started")
+      log.notice("updater started")
     } catch {
       startError = error.localizedDescription
       log.error("updater failed to start: \(error.localizedDescription, privacy: .public)")

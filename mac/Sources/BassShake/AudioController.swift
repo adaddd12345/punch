@@ -24,7 +24,7 @@ final class AudioController: ObservableObject {
   }
 
   @Published private(set) var status: Status = .off {
-    didSet { if status != oldValue { log.info("status: \(String(describing: self.status), privacy: .public)") } }
+    didSet { if status != oldValue { log.notice("status: \(String(describing: self.status), privacy: .public)") } }
   }
   @Published private(set) var devices: [OutputDevice] = []
   /// First run: explain what Bass Shake does and why macOS will ask for
@@ -48,8 +48,13 @@ final class AudioController: ObservableObject {
   private let engine: OpaquePointer
   private let curveEngine: OpaquePointer
   private let audioQueue = DispatchQueue(label: "bassshake.audio", qos: .userInteractive)
-  private let listeners = PropertyListeners()
-  private var deviceListeners = PropertyListeners()
+  /// HAL property-listener callbacks land here, never on main. Registering a
+  /// listener that targets the main queue *from* the main thread hung the app
+  /// on macOS 26 (launch hang in beta 1-16, freeze after Continue in beta 18).
+  private static let listenerQueue = DispatchQueue(label: "bassshake.hal-listeners")
+  // Both are touched only on audioQueue.
+  private let listeners = PropertyListeners(queue: AudioController.listenerQueue)
+  private var deviceListeners = PropertyListeners(queue: AudioController.listenerQueue)
   private var rebuildWork: DispatchWorkItem?
   private var saveWork: DispatchWorkItem?
   private var observers: [NSObjectProtocol] = []
@@ -68,7 +73,7 @@ final class AudioController: ObservableObject {
     // first Core Audio HAL call made from there never returned (beta 1-16
     // hung at launch with no UI). All system work happens in bootstrap(),
     // after launch, with HAL calls on the audio queue.
-    log.info("controller init")
+    log.notice("controller init")
   }
 
   private var bootstrapped = false
@@ -78,7 +83,7 @@ final class AudioController: ObservableObject {
   func bootstrap() {
     guard !bootstrapped else { return }
     bootstrapped = true
-    log.info("bootstrap")
+    log.notice("bootstrap")
     BSCrashGuardInstall()
     installAppObservers()
     audioQueue.async {
@@ -89,9 +94,9 @@ final class AudioController: ObservableObject {
       DispatchQueue.main.async {
         self.devices = devs
         self.currentDeviceID = current
-        self.log.info("devices: \(devs.count, privacy: .public)")
+        self.log.notice("devices: \(devs.count, privacy: .public)")
         AudioCapturePermission.preflightAsync { state in
-          self.log.info("permission preflight: \(String(describing: state), privacy: .public)")
+          self.log.notice("permission preflight: \(String(describing: state), privacy: .public)")
           if self.needsOnboarding && state == .granted {
             // Already trusted (e.g. an earlier beta): nothing to explain.
             self.markOnboarded()
@@ -209,7 +214,7 @@ final class AudioController: ObservableObject {
   func select(device: OutputDevice) {
     // Following the system default keeps us in step with the Sound menu,
     // Control Center and AirPods auto-switching.
-    try? Devices.setDefaultOutput(device.id)
+    audioQueue.async { try? Devices.setDefaultOutput(device.id) }
   }
 
   func openPermissionSettings() {
@@ -228,8 +233,15 @@ final class AudioController: ObservableObject {
     return out
   }
 
+  /// Called at quit. Bounded wait: if Core Audio is stuck, quit anyway; the
+  /// crash guard's atexit handler still destroys the tap and aggregate.
   func shutdown() {
-    audioQueue.sync { self.pipelineStop(fade: true) }
+    let done = DispatchSemaphore(value: 0)
+    audioQueue.async {
+      self.pipelineStop(fade: true)
+      done.signal()
+    }
+    _ = done.wait(timeout: .now() + 1.5)
   }
 
   // MARK: - Engine parameters
@@ -313,16 +325,22 @@ final class AudioController: ObservableObject {
 
   private func rebuildNow() {
     guard #available(macOS 14.2, *), settings.enabled else { return }
-    refreshDevices()
-    let defaultID = Devices.defaultOutput()
-    guard let device = devices.first(where: { $0.id == defaultID }) ?? devices.first else {
-      status = .failed("No output device")
-      return
-    }
     status = .starting
     let s = settings
     let e = engine
+    log.notice("rebuild")
+    // Every Core Audio call happens on the audio queue, never on main.
     audioQueue.async {
+      let devs = Devices.allOutputs()
+      let defaultID = Devices.defaultOutput()
+      DispatchQueue.main.async {
+        self.devices = devs
+        self.currentDeviceID = defaultID
+      }
+      guard let device = devs.first(where: { $0.id == defaultID }) ?? devs.first else {
+        DispatchQueue.main.async { self.status = .failed("No output device") }
+        return
+      }
       self.pipelineStop(fade: true)
       self.configureEQOffMain(e, s)
       punch_engine_publish(e)
@@ -330,12 +348,14 @@ final class AudioController: ObservableObject {
       do {
         let info = try pipeline.start(output: device)
         self.audioPipeline = pipeline
+        self.watchDevice(device)
+        self.log.notice("running on \(info.deviceName, privacy: .public) @ \(info.sampleRate, privacy: .public) Hz")
         DispatchQueue.main.async {
           self.status = .running(device: info.deviceName, sampleRate: info.sampleRate)
-          self.watchDevice(device)
         }
         self.startWatchdog()
       } catch {
+        self.log.error("start failed: \(String(describing: error), privacy: .public)")
         DispatchQueue.main.async { self.status = .failed(String(describing: error)) }
       }
     }
@@ -353,9 +373,16 @@ final class AudioController: ObservableObject {
 
   // MARK: - Devices
 
+  /// HAL queries run on the audio queue; results are published on main.
   private func refreshDevices() {
-    devices = Devices.allOutputs()
-    currentDeviceID = Devices.defaultOutput()
+    audioQueue.async {
+      let devs = Devices.allOutputs()
+      let current = Devices.defaultOutput()
+      DispatchQueue.main.async {
+        self.devices = devs
+        self.currentDeviceID = current
+      }
+    }
   }
 
   /// audioQueue only (first HAL contact happens here, off the main thread).
@@ -398,9 +425,10 @@ final class AudioController: ObservableObject {
 
   /// Rebuild when the output's format changes (e.g. AirPods dropping to the
   /// call profile, or another app switching 44.1k/48k).
+  /// audioQueue only.
   private func watchDevice(_ device: OutputDevice) {
     deviceListeners.removeAll()
-    deviceListeners = PropertyListeners()
+    deviceListeners = PropertyListeners(queue: AudioController.listenerQueue)
     for sel in [kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamConfiguration] {
       deviceListeners.add(device.id, .global(sel)) { [weak self] in
         DispatchQueue.main.async { self?.scheduleRebuild(delay: 0.5) }

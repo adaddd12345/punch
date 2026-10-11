@@ -178,7 +178,9 @@ final class PropertyListeners {
   private var entries: [Entry] = []
   private let queue: DispatchQueue
 
-  init(queue: DispatchQueue = .main) { self.queue = queue }
+  /// `queue` receives callbacks. Never pass `.main`, and never add/remove
+  /// listeners from the thread that services `queue`.
+  init(queue: DispatchQueue) { self.queue = queue }
 
   func add(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress, _ handler: @escaping () -> Void) {
     var addr = address
