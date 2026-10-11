@@ -19,6 +19,7 @@ final class AudioController: ObservableObject {
     case starting
     case running(device: String, sampleRate: Double)
     case needsPermission
+    case audioServiceStuck   // coreaudiod isn't answering new clients
     case unsupported
     case failed(String)
   }
@@ -93,7 +94,7 @@ final class AudioController: ObservableObject {
     DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
       guard !self.halResponded else { return }
       self.log.error("coreaudiod did not respond within 6 s")
-      self.status = .failed("macOS's audio service isn't responding, so Bass Shake can't see your speakers or headphones. Fix: open Terminal and run  sudo killall coreaudiod  then reopen Bass Shake. Old audio drivers (e.g. Boom 2) can cause this.")
+      self.status = .audioServiceStuck
     }
     audioQueue.async {
       self.installHALListeners()
@@ -102,7 +103,7 @@ final class AudioController: ObservableObject {
       let current = Devices.defaultOutput()
       DispatchQueue.main.async {
         self.halResponded = true
-        if case .failed = self.status { self.status = .off }
+        if self.status == .audioServiceStuck { self.status = .off }
         self.devices = devs
         self.currentDeviceID = current
         self.log.notice("devices: \(devs.count, privacy: .public)")
@@ -226,6 +227,27 @@ final class AudioController: ObservableObject {
     // Following the system default keeps us in step with the Sound menu,
     // Control Center and AirPods auto-switching.
     audioQueue.async { try? Devices.setDefaultOutput(device.id) }
+  }
+
+  /// Restarts coreaudiod (asks for an admin password via the standard macOS
+  /// dialog), then relaunches Bass Shake as a fresh process, since our own
+  /// stuck connection to the old daemon can't be trusted to recover.
+  func restartAudioService() {
+    log.notice("restarting coreaudiod")
+    var error: NSDictionary?
+    let script = NSAppleScript(source: "do shell script \"/usr/bin/killall coreaudiod\" with administrator privileges")
+    script?.executeAndReturnError(&error)
+    if let error {
+      // -128 = user cancelled the password dialog.
+      log.error("coreaudiod restart failed: \(error, privacy: .public)")
+      return
+    }
+    let path = Bundle.main.bundlePath.replacingOccurrences(of: "'", with: "'\\''")
+    let relaunch = Process()
+    relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+    relaunch.arguments = ["-c", "sleep 2; /usr/bin/open -n '\(path)'"]
+    try? relaunch.run()
+    NSApp.terminate(nil)
   }
 
   func openPermissionSettings() {

@@ -79,6 +79,11 @@ struct PopoverView: View {
              text: "Bass Shake can't hear your Mac yet. In System Settings, open Privacy & Security → Screen & System Audio Recording, and under “System Audio Recording Only” turn on Bass Shake. It resumes automatically when you come back.",
              action: ("Open System Settings", controller.openPermissionSettings),
              secondary: ("Try Again", controller.retry))
+    case .audioServiceStuck:
+      Banner(symbol: "speaker.slash", tint: .orange,
+             text: "macOS's audio service isn't responding, so Bass Shake can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
+             action: ("Restart macOS Audio", controller.restartAudioService),
+             secondary: nil)
     case .failed(let msg):
       Banner(symbol: "exclamationmark.triangle", tint: .red, text: msg,
              action: ("Retry", controller.retry), secondary: nil)
