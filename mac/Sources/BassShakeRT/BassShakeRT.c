@@ -185,11 +185,34 @@ void BSCrashGuardSet(AudioObjectID aggregate, AudioObjectID tap) {
 
 void BSCrashGuardClear(void) { BSCrashGuardSet(kAudioObjectUnknown, kAudioObjectUnknown); }
 
+static _Atomic AudioObjectID gGuardExtraTaps[BSCrashGuardMaxExtraTaps];  // zero == kAudioObjectUnknown
+
+bool BSCrashGuardAddTap(AudioObjectID tap) {
+  if (tap == kAudioObjectUnknown) return false;
+  for (int i = 0; i < BSCrashGuardMaxExtraTaps; ++i) {
+    AudioObjectID expected = kAudioObjectUnknown;
+    if (atomic_compare_exchange_strong(&gGuardExtraTaps[i], &expected, tap)) return true;
+  }
+  return false;
+}
+
+void BSCrashGuardRemoveTap(AudioObjectID tap) {
+  if (tap == kAudioObjectUnknown) return;
+  for (int i = 0; i < BSCrashGuardMaxExtraTaps; ++i) {
+    AudioObjectID expected = tap;
+    if (atomic_compare_exchange_strong(&gGuardExtraTaps[i], &expected, kAudioObjectUnknown)) return;
+  }
+}
+
 static void guardTeardown(void) {
   const AudioObjectID agg = atomic_exchange(&gGuardAggregate, kAudioObjectUnknown);
   const AudioObjectID tap = atomic_exchange(&gGuardTap, kAudioObjectUnknown);
   if (agg != kAudioObjectUnknown) AudioHardwareDestroyAggregateDevice(agg);
   if (tap != kAudioObjectUnknown && AudioHardwareDestroyProcessTap != NULL) AudioHardwareDestroyProcessTap(tap);
+  for (int i = 0; i < BSCrashGuardMaxExtraTaps; ++i) {
+    const AudioObjectID t = atomic_exchange(&gGuardExtraTaps[i], kAudioObjectUnknown);
+    if (t != kAudioObjectUnknown && AudioHardwareDestroyProcessTap != NULL) AudioHardwareDestroyProcessTap(t);
+  }
 }
 
 static void guardHandler(int sig) {
@@ -210,4 +233,93 @@ void BSCrashGuardInstall(void) {
     sigaction(sigs[i], &sa, NULL);
   }
   atexit(guardTeardown);
+}
+
+// ---------------------------------------------------------------- level meter
+
+struct BSMeterContext {
+  _Atomic float peaks[BSMeterMaxSlots];
+  int32_t layout[BSMeterMaxBuffers];  // written before IO starts, then read-only
+  uint32_t layoutCount;
+  _Atomic uint64_t callbacks;
+  _Atomic uint64_t layoutErrors;
+};
+
+BSMeterContext* BSMeterContextCreate(void) {
+  BSMeterContext* c = calloc(1, sizeof(BSMeterContext));
+  if (!c) return NULL;
+  for (int i = 0; i < BSMeterMaxSlots; ++i) atomic_init(&c->peaks[i], 0.f);
+  for (int i = 0; i < BSMeterMaxBuffers; ++i) c->layout[i] = -1;
+  return c;
+}
+
+void BSMeterContextDestroy(BSMeterContext* ctx) { free(ctx); }
+
+void BSMeterContextSetLayout(BSMeterContext* ctx, const int32_t* slots, uint32_t count) {
+  if (count > BSMeterMaxBuffers) count = BSMeterMaxBuffers;
+  for (uint32_t i = 0; i < count; ++i) {
+    const int32_t s = slots[i];
+    ctx->layout[i] = (s >= 0 && s < BSMeterMaxSlots) ? s : -1;
+  }
+  ctx->layoutCount = count;
+  atomic_thread_fence(memory_order_release);
+}
+
+float BSMeterContextTakePeak(BSMeterContext* ctx, uint32_t slot) {
+  if (slot >= BSMeterMaxSlots) return 0.f;
+  return atomic_exchange_explicit(&ctx->peaks[slot], 0.f, memory_order_relaxed);
+}
+
+uint64_t BSMeterContextCallbacks(const BSMeterContext* ctx) {
+  return atomic_load_explicit(&((BSMeterContext*)ctx)->callbacks, memory_order_relaxed);
+}
+
+uint64_t BSMeterContextLayoutErrors(const BSMeterContext* ctx) {
+  return atomic_load_explicit(&((BSMeterContext*)ctx)->layoutErrors, memory_order_relaxed);
+}
+
+OSStatus BSMeterIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBufferList* input,
+                       const AudioTimeStamp* inputTime, AudioBufferList* output, const AudioTimeStamp* outputTime,
+                       void* clientData) {
+  (void)device; (void)now; (void)inputTime; (void)outputTime;
+  // Never contribute sound: the aggregate's clock device is the real output.
+  if (output) zeroOutput(output);
+  BSMeterContext* ctx = (BSMeterContext*)clientData;
+  if (!ctx) return noErr;
+  bump(&ctx->callbacks);
+  atomic_thread_fence(memory_order_acquire);
+  const uint32_t count = ctx->layoutCount;
+  if (!input || count == 0) return noErr;
+
+  uint32_t n = input->mNumberBuffers;
+  uint32_t first = 0;   // first mapped layout entry
+  uint32_t base = 0;    // first input buffer that is a tap buffer
+  if (n >= count) {
+    base = n - count;
+  } else {
+    // Fewer buffers than expected: align to the end, skip the missing ones.
+    bump(&ctx->layoutErrors);
+    first = count - n;
+  }
+  for (uint32_t i = first; i < count; ++i) {
+    const int32_t slot = ctx->layout[i];
+    if (slot < 0) continue;
+    const AudioBuffer* b = &input->mBuffers[base + (i - first)];
+    if (!b->mData || b->mDataByteSize < sizeof(float)) continue;
+    // Layout agnostic: the peak over every float in the buffer.
+    const float* src = (const float*)b->mData;
+    const uint32_t samples = b->mDataByteSize / (uint32_t)sizeof(float);
+    float peak = 0.f;
+    for (uint32_t k = 0; k < samples; ++k) {
+      const float a = fabsf(src[k]);
+      if (a > peak) peak = a;  // NaN compares false and is ignored
+    }
+    if (peak <= 0.f) continue;
+    _Atomic float* dst = &ctx->peaks[slot];
+    float old = atomic_load_explicit(dst, memory_order_relaxed);
+    while (peak > old &&
+           !atomic_compare_exchange_weak_explicit(dst, &old, peak, memory_order_relaxed, memory_order_relaxed)) {
+    }
+  }
+  return noErr;
 }
