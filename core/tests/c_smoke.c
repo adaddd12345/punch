@@ -12,8 +12,11 @@ int main(void) {
   punch_set_bass(e, true, 0.5f, 120.f);
   punch_engine_prepare(e, 48000.0, 2, 512);
   float buf[512 * 2];
-  for (int i = 0; i < 512; ++i) buf[2 * i] = buf[2 * i + 1] = 0.5f * sinf((float)i * 0.1f);
-  punch_process_interleaved(e, buf, buf, 2, 512);
+  /* Several blocks: the output is delayed by the look-ahead latency. */
+  for (int b = 0; b < 4; ++b) {
+    for (int i = 0; i < 512; ++i) buf[2 * i] = buf[2 * i + 1] = 0.5f * sinf((float)(b * 512 + i) * 0.1f);
+    punch_process_interleaved(e, buf, buf, 2, 512);
+  }
   PunchMeters m = punch_take_meters(e);
   char out[256];
   size_t need = punch_export_equalizer_apo(e, out, sizeof out);
