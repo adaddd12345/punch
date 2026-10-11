@@ -47,3 +47,6 @@ target_link_libraries(punch_render PRIVATE punch_core)
 
 add_executable(punch_bench tools/punch_bench.cpp)
 target_link_libraries(punch_bench PRIVATE punch_core)
+
+add_executable(punch_loudness tools/punch_loudness.cpp)
+target_link_libraries(punch_loudness PRIVATE punch_core)

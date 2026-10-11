@@ -1,4 +1,5 @@
 // Self-contained test runner (no third-party deps so it builds anywhere).
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -528,6 +529,83 @@ TEST(saturator_split_band_keeps_sub_clean) {
   // A 40 Hz 808-like tone stays essentially intact: barely touched by the highs-only saturator.
   CHECK(mag(40) > 0.2);
   CHECK(mag(120) < 0.03);
+}
+
+// ---- bass-priority limiting ("something is fighting the EQ")
+
+static void bassHeavyEngine(Engine& e, bool bassPriority) {
+  e.prepare(48000, 2, 512);
+  auto& p = e.edit();
+  p.eq.numBands = 1;
+  p.eq.bands[0] = {FilterType::LowShelf, 100, 10, 0.71, true};
+  p.autoPreamp = false;
+  p.limiter = {-1.f, 80.f, true, 0.f, 0.f, bassPriority ? 150.f : 0.f};
+  e.publish();
+}
+
+// Kick-like 50 Hz bursts near full scale plus a steady 1 kHz tone.
+static std::vector<float> kickAndTone(int n, double fs) {
+  std::vector<float> x(size_t(n), 0.f);
+  for (int i = 0; i < n; ++i) {
+    const double t = i / fs, tk = std::fmod(t, 0.5);
+    x[size_t(i)] = float(0.8 * std::sin(2 * std::numbers::pi * 50 * t) * std::exp(-tk / 0.15) +
+                         0.1 * std::sin(2 * std::numbers::pi * 1000 * t));
+  }
+  return x;
+}
+
+static double toneDipDb(const std::vector<float>& y, double fs, int from) {
+  SvfCoeffs bp = SvfCoeffs::make({FilterType::BandPass, 1000, 0, 12, true}, fs);
+  SvfState s1, s2;
+  std::vector<double> env;
+  const int w = int(0.01 * fs);
+  double acc = 0;
+  int k = 0;
+  for (size_t i = 0; i < y.size(); ++i) {
+    const float v = s2.tick(bp, s1.tick(bp, y[i]));
+    if (int(i) < from) continue;
+    acc += double(v) * v;
+    if (++k == w) { env.push_back(10 * std::log10(acc / w + 1e-20)); acc = 0; k = 0; }
+  }
+  std::sort(env.begin(), env.end());
+  return env[env.size() / 2] - env[env.size() / 50];
+}
+
+static std::vector<float> runMono(Engine& e, std::vector<float> x) {
+  std::vector<float> r = x;
+  for (size_t s = 0; s < x.size(); s += 512) {
+    float* p[2] = {x.data() + s, r.data() + s};
+    e.processPlanar(p, 2, int(std::min<size_t>(512, x.size() - s)));
+  }
+  return x;
+}
+
+TEST(bass_priority_never_exceeds_ceiling) {
+  Engine e;
+  bassHeavyEngine(e, true);
+  const double fs = 48000;
+  std::mt19937 rng(3);
+  std::uniform_real_distribution<float> u(-0.2f, 0.2f);
+  auto x = kickAndTone(48000 * 3, fs);
+  for (auto& v : x) v += u(rng);
+  const auto y = runMono(e, x);
+  float peak = 0;
+  for (float v : y) peak = std::max(peak, std::fabs(v));
+  CHECK(peak <= dbToGain(-1.f) + 1e-4f);
+}
+
+TEST(bass_priority_does_not_duck_the_mids) {
+  const double fs = 48000;
+  const auto x = kickAndTone(48000 * 4, fs);
+  Engine plain, bp;
+  bassHeavyEngine(plain, false);
+  bassHeavyEngine(bp, true);
+  const double dipPlain = toneDipDb(runMono(plain, x), fs, 48000);
+  const double dipBp = toneDipDb(runMono(bp, x), fs, 48000);
+  // A full-band limiter pulls the steady tone down on every kick; the
+  // bass-priority limiter takes the reduction from the bass alone.
+  CHECK(dipPlain > 3.0);
+  CHECK(dipBp < 1.0);
 }
 
 int main() {

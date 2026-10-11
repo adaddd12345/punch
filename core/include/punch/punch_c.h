@@ -49,6 +49,10 @@ void punch_set_crossfeed(PunchEngine* e, bool enabled, float amount);
 void punch_set_output_gain_db(PunchEngine* e, float db);
 void punch_set_limiter(PunchEngine* e, bool enabled, float ceiling_db, float release_ms);
 void punch_set_bypass(PunchEngine* e, bool bypass);
+/* Bass-priority limiting: below crossover_hz the bass is limited against the
+ * room the rest of the mix leaves (mids never duck for the bass), and bass
+ * boosts no longer cost auto-headroom. 0 = off. */
+void punch_set_bass_priority(PunchEngine* e, float crossover_hz);
 
 /* Character stages (modes / genre presets). */
 void punch_set_compressor(PunchEngine* e, bool enabled, float threshold_db, float ratio, float attack_ms,

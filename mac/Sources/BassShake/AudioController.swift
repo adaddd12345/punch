@@ -645,6 +645,10 @@ final class AudioController: ObservableObject {
     let boost = s.mode == .sleep ? 0 : s.boostDb
     punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb))
     punch_set_limiter(e, !unlimited, Float(c.ceilingDb), 80)
+    // Bass-priority limiting (docs/research/22-loudness-fighting.md): bass
+    // boosts are limited against the room the rest of the mix leaves, so the
+    // vocals never duck and bass boosts don't turn the whole song down.
+    punch_set_bass_priority(e, 150)
   }
 
   private func scheduleSave() {

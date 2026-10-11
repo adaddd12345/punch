@@ -147,7 +147,7 @@ struct PopoverView: View {
                     range: 0...12, format: { String(format: "+%.0f dB", $0) },
                     help: controller.settings.noLimit
                       ? "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping."
-                      : "Extra loudness. The limiter keeps peaks under −1 dBFS so it never clips.")
+                      : "Extra loudness. When it runs out of room, Bass Shake holds back the bass first, so vocals don't duck.")
       HStack(spacing: 6) {
         Spacer()
         Toggle(isOn: Binding(get: { controller.settings.noLimit }, set: { controller.settings.noLimit = $0 })) {
@@ -157,7 +157,7 @@ struct PopoverView: View {
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
-        .help("Turns off everything that holds loudness back: auto-headroom, the limiter and compression. EQ boosts and Boost go straight to your speakers, so loud peaks can clip and distort, and red meters mean it's happening. Not applied in Sleep mode.")
+        .help("Bass Shake already limits only the bass when it runs out of room, so vocals never duck. No Limit goes further and turns off all gain riding: the limiter, headroom and compression. Peaks can then clip and distort, and red meters show it. Not applied in Sleep mode.")
       }
     }
   }

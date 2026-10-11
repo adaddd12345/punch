@@ -45,6 +45,7 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   outGain_.prepare(sampleRate, 15.0);
   outGain_.snap(1.f);
   limiter_.prepare(sampleRate, numChannels_);
+  bassLimiter_.prepare(sampleRate, numChannels_, maxFrames_);
 
   scratch_.assign(size_t(numChannels_), std::vector<float>(size_t(maxFrames_), 0.f));
   scratchPtrs_.resize(size_t(numChannels_));
@@ -70,8 +71,13 @@ void Engine::publish() {
   // Auto headroom: never let the combined EQ push a full-scale signal over
   // 0 dBFS, but don't double-count headroom the user (or an AutoEq profile,
   // which ships its own preamp) already provided.
+  // With bass-priority limiting, bass boosts don't need headroom: the bass
+  // band is limited against the room the rest of the mix leaves, so only
+  // boosts well above the crossover turn the whole mix down.
+  const bool bassPriority = snap.limiter.enabled && snap.limiter.bassPriorityHz > 0.f && !snap.bypass;
+  const double minHz = bassPriority ? 2.0 * double(snap.limiter.bassPriorityHz) : 20.0;
   if (snap.autoPreamp)
-    effectivePreampDb_ = std::min(effectivePreampDb_, -eqPeakBoostDb({&snap.correction, &snap.eq}, sampleRate_));
+    effectivePreampDb_ = std::min(effectivePreampDb_, -eqPeakBoostDb({&snap.correction, &snap.eq}, sampleRate_, minHz));
   snap.correction.preampDb = float(effectivePreampDb_);
   snap.eq.preampDb = 0.f;
   mailbox_.write(snap);
@@ -99,6 +105,8 @@ void Engine::applySnapshot(const EngineParams& p) {
     lp.ceilingDb = 0.f;
     lp.enabled = true;
     limiter_.setParams(lp);
+    // Keep the bass stage in circuit (constant latency) but transparent.
+    bassLimiter_.setParams(0.f, 120.f, 100.f, false);
     return;
   }
   correction_.setParams(p.correction);
@@ -112,6 +120,9 @@ void Engine::applySnapshot(const EngineParams& p) {
   noise_.setParams(p.noise);
   outGain_.setTarget(dbToGain(std::clamp(p.outputGainDb, -60.f, 24.f)));
   limiter_.setParams(p.limiter);
+  bassPriority_ = p.limiter.enabled;
+  bassLimiter_.setParams(p.limiter.ceilingDb, p.limiter.bassPriorityHz > 0.f ? p.limiter.bassPriorityHz : 120.f, 100.f,
+                         p.limiter.bassPriorityHz > 0.f);
 }
 
 void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
@@ -138,6 +149,9 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     }
   }
   noise_.process(ch, numChannels, numFrames);
+  // Bass first (against the room the highs leave), then the full-band
+  // safety net. With the limiter off (No Limit) neither runs.
+  if (bassPriority_) bassLimiter_.process(ch, numChannels, numFrames);
   limiter_.process(ch, numChannels, numFrames);
 
   // NaN/Inf can arrive from a misbehaving client app or a driver glitch and
@@ -158,6 +172,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     ambience_.reset();
     noise_.reset();
     limiter_.reset();
+    bassLimiter_.reset();
   }
 
   for (int c = 0; c < std::min(numChannels, 2); ++c) atomicMax(outPeak_[c], blockPeak(ch[c], numFrames));
@@ -203,7 +218,7 @@ Meters Engine::takeMeters() {
     m.inPeak[c] = inPeak_[c].exchange(0.f, std::memory_order_relaxed);
     m.outPeak[c] = outPeak_[c].exchange(0.f, std::memory_order_relaxed);
   }
-  m.gainReductionDb = limiter_.gainReductionDb();
+  m.gainReductionDb = std::min(limiter_.gainReductionDb(), bassLimiter_.gainReductionDb());
   return m;
 }
 

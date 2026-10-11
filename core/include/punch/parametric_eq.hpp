@@ -28,7 +28,8 @@ double eqResponseDb(const EqParams& p, double sampleRate, double hz);
 // guarantee a full-scale sine can never be pushed over 0 dBFS by the EQ.
 double eqPeakBoostDb(const EqParams& p, double sampleRate);
 // Same, for several EQ stages in series.
-double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampleRate);
+// minHz: ignore boosts below this (e.g. bass a bass-priority limiter handles).
+double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampleRate, double minHz = 20.0);
 // Fills `outDb` with the response sampled on a log grid between lo and hi.
 void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::vector<double>& outDb);
 

@@ -25,9 +25,9 @@ double eqResponseDb(const EqParams& p, double sampleRate, double hz) {
   return db;
 }
 
-double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampleRate) {
+double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampleRate, double minHz) {
   constexpr int kPoints = 1024;
-  const double lo = 20.0, hi = std::min(20000.0, 0.49 * sampleRate);
+  const double lo = std::max(20.0, minHz), hi = std::min(20000.0, 0.49 * sampleRate);
   // Build coefficient sets once, then scan.
   std::vector<SvfCoeffs> cs;
   for (const EqParams* p : stages)

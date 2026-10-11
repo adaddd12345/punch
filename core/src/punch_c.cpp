@@ -63,10 +63,13 @@ void punch_set_limiter(PunchEngine* e, bool enabled, float ceiling_db, float rel
   auto& l = e->engine.edit().limiter;
   l.enabled = enabled;
   l.ceilingDb = ceiling_db;
-  l.releaseMs = release_ms;
+  l.releaseMs = release_ms;  // other limiter fields (bass priority) are kept
 }
 
 void punch_set_bypass(PunchEngine* e, bool bypass) { e->engine.edit().bypass = bypass; }
+void punch_set_bass_priority(PunchEngine* e, float crossover_hz) {
+  e->engine.edit().limiter.bassPriorityHz = std::max(0.f, crossover_hz);
+}
 
 void punch_set_compressor(PunchEngine* e, bool enabled, float threshold_db, float ratio, float attack_ms,
                           float release_ms, float makeup_db, float sidechain_hp_hz) {
