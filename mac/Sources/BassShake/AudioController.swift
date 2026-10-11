@@ -63,15 +63,38 @@ final class AudioController: ObservableObject {
     punch_engine_prepare(curveEngine, 48_000, 2, 512)
     settings = Settings.load()
     BSCrashGuardInstall()
-    if #available(macOS 14.2, *) { TapPipeline.sweepLeftovers() }
-    refreshDevices()
     installListeners()
     pushParams()
-    if needsOnboarding && AudioCapturePermission.preflight() == .granted {
-      // Already trusted (e.g. an earlier beta): nothing to explain.
-      markOnboarded()
+    // Anything that talks to coreaudiod or tccd happens in bootstrap(),
+    // after the UI is on screen, so launch can never stall on it.
+  }
+
+  private var bootstrapped = false
+
+  /// Called once the window is up. Device queries run on the audio queue,
+  /// the permission check is asynchronous with a timeout.
+  func bootstrap() {
+    guard !bootstrapped else { return }
+    bootstrapped = true
+    log.info("bootstrap")
+    audioQueue.async {
+      if #available(macOS 14.2, *) { TapPipeline.sweepLeftovers() }
+      let devs = Devices.allOutputs()
+      let current = Devices.defaultOutput()
+      DispatchQueue.main.async {
+        self.devices = devs
+        self.currentDeviceID = current
+        self.log.info("devices: \(devs.count, privacy: .public)")
+        AudioCapturePermission.preflightAsync { state in
+          self.log.info("permission preflight: \(String(describing: state), privacy: .public)")
+          if self.needsOnboarding && state == .granted {
+            // Already trusted (e.g. an earlier beta): nothing to explain.
+            self.markOnboarded()
+          }
+          if self.settings.enabled && !self.needsOnboarding { self.start() }
+        }
+      }
     }
-    if settings.enabled && !needsOnboarding { start() }
   }
 
   /// The user read the explanation and chose to turn Bass Shake on. Only now
@@ -250,15 +273,19 @@ final class AudioController: ObservableObject {
       return
     }
     status = .starting
-    switch AudioCapturePermission.preflight() {
-    case .denied:
-      status = .needsPermission
-    case .granted:
-      scheduleRebuild(delay: 0)
-    case .unknown:
-      AudioCapturePermission.request { granted in
-        DispatchQueue.main.async {
-          if granted { self.scheduleRebuild(delay: 0) } else { self.status = .needsPermission }
+    AudioCapturePermission.preflightAsync { state in
+      switch state {
+      case .denied:
+        self.status = .needsPermission
+      case .granted:
+        self.scheduleRebuild(delay: 0)
+      case .unknown:
+        DispatchQueue.global(qos: .userInitiated).async {
+          AudioCapturePermission.request { granted in
+            DispatchQueue.main.async {
+              if granted { self.scheduleRebuild(delay: 0) } else { self.status = .needsPermission }
+            }
+          }
         }
       }
     }
@@ -349,8 +376,10 @@ final class AudioController: ObservableObject {
     // Coming back from System Settings after granting permission: macOS
     // won't tell us, so re-check whenever the app becomes active.
     observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-      guard let self, self.status == .needsPermission, AudioCapturePermission.preflight() == .granted else { return }
-      self.retry()
+      guard let self, self.status == .needsPermission else { return }
+      AudioCapturePermission.preflightAsync { state in
+        if state == .granted { self.retry() }
+      }
     })
     observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.5) }

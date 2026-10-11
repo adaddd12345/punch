@@ -28,6 +28,23 @@ enum AudioCapturePermission {
     }
   }
 
+  /// Non-blocking preflight: runs off the main thread and gives up after
+  /// `timeout`, so a slow or stalled TCC daemon can never freeze launch.
+  /// Completion is always called once, on the main thread.
+  static func preflightAsync(timeout: TimeInterval = 2, _ completion: @escaping (State) -> Void) {
+    var delivered = false
+    let deliver: (State) -> Void = { s in
+      guard !delivered else { return }
+      delivered = true
+      completion(s)
+    }
+    DispatchQueue.global(qos: .userInitiated).async {
+      let s = preflight()
+      DispatchQueue.main.async { deliver(s) }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { deliver(.unknown) }
+  }
+
   /// Shows the system prompt if the user hasn't decided yet.
   static func request(_ completion: @escaping (Bool) -> Void) {
     guard let handle, let sym = dlsym(handle, "TCCAccessRequest") else {
