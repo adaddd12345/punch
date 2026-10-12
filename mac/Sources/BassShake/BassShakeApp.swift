@@ -9,7 +9,7 @@ struct BassShakeApp: App {
   var body: some Scene {
     // The menu-bar item and popover are AppKit (see AppDelegate); this scene
     // only satisfies SwiftUI's need for one.
-    Settings { EmptyView() }
+    SwiftUI.Settings { EmptyView() }
   }
 }
 
