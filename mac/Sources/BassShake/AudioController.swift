@@ -111,6 +111,10 @@ final class AudioController: ObservableObject {
       scheduleSave()
     }
   }
+  /// Fair Level's whole-mix gain, dB (FairLevel.swift). Not saved.
+  var fairLevelDb: Double = 0 {
+    didSet { if fairLevelDb != oldValue { pushParams() } }
+  }
   let meters = MeterModel()
   /// Live Channels: apps making sound, their levels, one-click mute.
   let live = LiveChannels()
@@ -170,6 +174,7 @@ final class AudioController: ObservableObject {
     // the excluded set means a pipeline rebuild.
     live.onMutedProcessesChanged = { [weak self] in self?.scheduleRebuild(delay: 1.0) }
     live.start()
+    FairLevel.shared.attach(self)
     installAppObservers()
     updateHotkey()
     if settings.checkDrivers { scanDrivers() }
@@ -935,13 +940,14 @@ final class AudioController: ObservableObject {
     var headphones = false
     var bypass = false
     var volume: Double?   // device volume 0...1, when known
+    var fairDb = 0.0      // Fair Level gain
   }
 
   private var liveState: LiveState {
     let uid = currentDevice?.uid
     return LiveState(dj: dj, fade: fade, headphones: isHeadphones,
                      bypass: bypassed || (uid.map { settings.bypassDevices.contains($0) } ?? false),
-                     volume: deviceVolume)
+                     volume: deviceVolume, fairDb: settings.fairLevel ? fairLevelDb : 0)
   }
 
   private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, _ live: LiveState = LiveState()) {
@@ -996,7 +1002,8 @@ final class AudioController: ObservableObject {
     punch_set_noise(e, noiseOn, Int32(s.noiseColor.rawValue), Float(s.noiseDb + fade.noiseDb))
     // Sleep ignores Boost: quieter is the point.
     let boost = s.mode == .sleep ? 0 : s.boostDb
-    punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb + currentQuietFloorDb))
+    let fair = s.mode == .sleep ? min(0, live.fairDb) : live.fairDb
+    punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb + fair + currentQuietFloorDb))
     punch_set_loudness_guard(e, s.nightGuard, Float(s.nightGuardDb), 20)
     let d = live.dj
     punch_set_dj(e, d.isOn(.low), d.isOn(.mid), d.isOn(.high), Float(d.filter), d.isOn(.echo), d.isOn(.crush),

@@ -442,6 +442,8 @@ struct PopoverView: View {
         Divider()
         Toggle("Ear Protector (duck sudden loud blasts)", isOn: Binding(get: { controller.settings.earProtector },
                                                                         set: { controller.settings.earProtector = $0 }))
+        Toggle("Fair Level (even out loudness between apps)", isOn: Binding(get: { controller.settings.fairLevel },
+                                                                            set: { controller.settings.fairLevel = $0 }))
         Picker("Center Lock", selection: Binding(get: { controller.settings.centerLock },
                                                   set: { controller.settings.centerLock = $0 })) {
           ForEach(CenterLock.allCases) { Text($0.title).tag($0) }

@@ -447,6 +447,10 @@ struct Settings: Codable, Equatable {
   /// Quiet Floor: per-device digital pad in dB (<= 0), by device UID.
   var quietFloor: [String: Double] = [:]
   var quietFloorDismissed: Set<String> = []
+  /// Fair Level: ride the output gain so the dominant app sits near a common loudness.
+  var fairLevel = false
+  /// Bundle IDs Fair Level leaves alone.
+  var fairLevelPinned: Set<String> = []
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -514,6 +518,8 @@ struct Settings: Codable, Equatable {
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
     quietFloor = (try? c.decodeIfPresent([String: Double].self, forKey: .quietFloor)) ?? [:]
     quietFloorDismissed = (try? c.decodeIfPresent(Set<String>.self, forKey: .quietFloorDismissed)) ?? []
+    fairLevel = (try? c.decodeIfPresent(Bool.self, forKey: .fairLevel)) ?? d.fairLevel
+    fairLevelPinned = ((try? c.decodeIfPresent(Set<String>.self, forKey: .fairLevelPinned)) ?? nil) ?? d.fairLevelPinned
   }
 
   static func load() -> Settings {

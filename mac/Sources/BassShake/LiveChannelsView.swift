@@ -138,6 +138,7 @@ private struct LiveChannelRow: View {
         .monospacedDigit()
         .foregroundStyle(.secondary)
         .frame(width: 24, alignment: .trailing)
+      FairLevelPinButton(appID: app.id, appName: app.name)
       Button(action: onShaker) {
         Image(nsImage: MenuBarIcon.image)
           .renderingMode(.template)

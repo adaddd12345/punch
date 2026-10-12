@@ -173,6 +173,19 @@ final class LiveChannels: ObservableObject {
 
   /// Turns the level meter on while the list is visible, off otherwise.
   func setMetering(_ on: Bool) {
+    uiMetering = on
+    applyMetering(uiMetering || backgroundMetering)
+  }
+
+  /// Keeps the meter running with the list closed (Fair Level reads `levels`).
+  func setBackgroundMetering(_ on: Bool) {
+    backgroundMetering = on
+    applyMetering(uiMetering || backgroundMetering)
+  }
+  private var uiMetering = false
+  private var backgroundMetering = false
+
+  private func applyMetering(_ on: Bool) {
     guard on != meteringWanted else { return }
     meteringWanted = on
     if on {
