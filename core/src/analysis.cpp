@@ -24,6 +24,7 @@ double parabolicOffset(double a, double b, double c) {
 void TempoTracker::prepare(double sampleRate) {
   fs_ = sampleRate;
   hop_ = std::max(1, int(std::lround(fs_ / kFrameRate)));
+  frameRate_ = fs_ / hop_;  // exactly 200 Hz at 48k, 199.5 Hz at 44.1k
 
   // Six bands: kick, low-mid, mids, upper-mids, presence, hats. Energy flux
   // per band is the poor man's spectral flux (no FFT needed).
@@ -41,9 +42,9 @@ void TempoTracker::prepare(double sampleRate) {
   onset_.assign(size_t(frames), 0.f);
   work_.assign(size_t(frames), 0.f);
   // Lag range for the tempo search plus room for the comb multiples.
-  minLag_ = int(std::floor(60.0 * kFrameRate / kMaxBpm));
-  maxLag_ = int(std::ceil(60.0 * kFrameRate / kMinBpm));
-  score_.assign(size_t(maxLag_ + 1), 0.0);
+  minLag_ = int(std::floor(60.0 * frameRate_ / kMaxBpm));
+  maxLag_ = int(std::ceil(60.0 * frameRate_ / kMinBpm));
+  acf_.assign(size_t(frames), 0.0);
   reset();
 }
 
@@ -94,12 +95,6 @@ void TempoTracker::pushOnsetFrame(float value) {
   }
 }
 
-double TempoTracker::acfAt(const float* x, int n, int lag) const {
-  double acc = 0.0;
-  for (int i = 0; i + lag < n; ++i) acc += double(x[i]) * double(x[i + lag]);
-  return acc;
-}
-
 void TempoTracker::estimate() {
   // Linearise the newest onsetCount_ frames (oldest first) and remove the mean.
   const int size = int(onset_.size());
@@ -109,26 +104,44 @@ void TempoTracker::estimate() {
   for (int i = 0; i < n; ++i) mean += onset_[size_t((start + i) % size)];
   mean /= n;
   for (int i = 0; i < n; ++i) work_[size_t(i)] = float(onset_[size_t((start + i) % size)] - mean);
-  const float* x = work_.data();
 
-  const double r0 = acfAt(x, n, 0);
-  if (r0 < 1e-9 || mean < 1e-4) {  // silence or a flat envelope
+  // Biased autocorrelation, normalised so r[0] = 1. "Biased" (divide by n,
+  // not n - lag) tapers long lags, which gently favours the faster octave.
+  const int maxLagNeeded = std::min(n - 1, kCombSize * maxLag_ + kCombSize);
+  for (int lag = 0; lag <= maxLagNeeded; ++lag) {
+    double acc = 0.0;
+    for (int i = 0; i + lag < n; ++i) acc += double(work_[size_t(i)]) * double(work_[size_t(i + lag)]);
+    acf_[size_t(lag)] = acc;
+  }
+  if (acf_[0] < 1e-9 || mean < 1e-4) {  // silence or a flat envelope
     confidence_ = 0.0;
     return;
   }
-  auto r = [&](int lag) { return acfAt(x, n, lag) / r0; };  // biased, so r(lag) <= 1
+  for (int lag = maxLagNeeded; lag >= 0; --lag) acf_[size_t(lag)] /= acf_[0];
+  const auto r = [&](int lag) { return acf_[size_t(lag)]; };
+  // Largest r within +-w of lag (the k-th multiple of an integer lag can be
+  // up to k/2 frames off the true peak).
+  const auto peakNear = [&](int lag, int w) {
+    int m = lag;
+    for (int l = std::max(1, lag - w); l <= std::min(maxLagNeeded - 1, lag + w); ++l)
+      if (r(l) > r(m)) m = l;
+    return m;
+  };
 
-  // Tempo prior: log-Gaussian around 120 BPM (after Ellis 2007), kPriorOctaves
-  // wide. With the biased ACF it resolves the half/double-tempo ambiguity of
-  // patterns that repeat every two beats (kick + snare on 2 and 4).
+  // Comb tempogram: a candidate period scores the mean of r at its first
+  // kCombSize multiples, so the beat (whose multiples land on bars) beats a
+  // tatum multiple such as 3 sixteenths. Then a log-Gaussian tempo prior
+  // around 120 BPM (after Ellis 2007) settles half/double-tempo ties.
   int best = -1;
   double bestScore = -1e9;
-  const int lastLag = std::min(maxLag_, n / 2);
+  const int lastLag = std::min(maxLag_, maxLagNeeded / 2);
   for (int lag = minLag_; lag <= lastLag; ++lag) {
-    const double bpm = 60.0 * kFrameRate / lag;
-    const double oct = std::log2(bpm / 120.0);
-    const double s = r(lag) * std::exp(-0.5 * oct * oct / (kPriorOctaves * kPriorOctaves));
-    score_[size_t(lag)] = s;
+    double comb = 0.0;
+    int terms = 0;
+    for (int k = 1; k <= kCombSize && k * lag + k / 2 < maxLagNeeded; ++k, ++terms)
+      comb += r(peakNear(k * lag, k / 2));
+    const double oct = std::log2(60.0 * frameRate_ / lag / 120.0);
+    const double s = comb / terms * std::exp(-0.5 * oct * oct / (kPriorOctaves * kPriorOctaves));
     if (s > bestScore) bestScore = s, best = lag;
   }
   if (best <= minLag_ || best >= lastLag) {  // peak on the edge: no clear tempo
@@ -136,25 +149,22 @@ void TempoTracker::estimate() {
     return;
   }
 
-  const double peak = r(best);
-  double period = best + parabolicOffset(r(best - 1), peak, r(best + 1));
-
-  // Comb refinement: the peaks at 2T, 3T, 4T pin the period to a fraction of
-  // a frame (least-squares fit through the origin).
+  // Sub-frame period: parabolic peaks at T, 2T, ... and a least-squares fit
+  // through the origin (precision improves roughly with k).
+  const int p1 = peakNear(best, 1);
+  double period = p1 + parabolicOffset(r(p1 - 1), r(p1), r(p1 + 1));
+  const double peak = r(p1);
   double num = period, den = 1.0;
-  for (int k = 2; k <= 4; ++k) {
+  for (int k = 2; k <= kCombSize; ++k) {
     const int c = int(std::lround(k * period));
-    if (c + 3 >= n / 2) break;
-    int m = c;
-    for (int l = c - 2; l <= c + 2; ++l)
-      if (r(l) > r(m)) m = l;
-    const double pk = m + parabolicOffset(r(m - 1), r(m), r(m + 1));
-    num += k * pk;
+    if (c + 3 >= maxLagNeeded) break;
+    const int m = peakNear(c, 2);
+    num += k * (m + parabolicOffset(r(m - 1), r(m), r(m + 1)));
     den += double(k * k);
   }
   period = num / den;
 
-  bpm_ = 60.0 * kFrameRate / period;
+  bpm_ = 60.0 * frameRate_ / period;
   // r(T) is ~0.1 for noise and 0.5-0.9 for a steady groove.
   confidence_ = std::clamp((peak - 0.15) / 0.35, 0.0, 1.0);
 }

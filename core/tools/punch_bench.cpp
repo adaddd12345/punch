@@ -5,6 +5,7 @@
 #include <random>
 #include <vector>
 
+#include "punch/analysis.hpp"
 #include "punch/engine.hpp"
 
 int main() {
@@ -42,5 +43,22 @@ int main() {
   std::printf("16-band EQ + bass + width + crossfeed + limiter, stereo 48k, block %d\n", block);
   std::printf("%d s of audio in %.3f s  ->  %.3f%% of one core (%.1f us per block, budget %.0f us)\n", seconds, secs,
               100.0 * secs / seconds, 1e6 * secs / iters, 1e6 * block / fs);
+
+  // Analysis (meant for the analyzer-feed thread, mono, same rate).
+  punch::TempoTracker tempo;
+  punch::BassPitchTracker pitch;
+  tempo.prepare(fs);
+  pitch.prepare(fs);
+  std::vector<float> mono(block);
+  for (int i = 0; i < block; ++i) mono[size_t(i)] = buf[size_t(2 * i)];
+  const auto t1 = std::chrono::steady_clock::now();
+  for (int i = 0; i < iters; ++i) tempo.process(mono.data(), block);
+  const auto t2 = std::chrono::steady_clock::now();
+  for (int i = 0; i < iters; ++i) pitch.process(mono.data(), block);
+  const auto t3 = std::chrono::steady_clock::now();
+  const double tSecs = std::chrono::duration<double>(t2 - t1).count();
+  const double pSecs = std::chrono::duration<double>(t3 - t2).count();
+  std::printf("TempoTracker mono 48k: %.3f%% of one core; BassPitchTracker: %.3f%%\n", 100.0 * tSecs / seconds,
+              100.0 * pSecs / seconds);
   return 0;
 }

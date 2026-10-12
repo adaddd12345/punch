@@ -37,18 +37,19 @@ class TempoTracker {
 
  private:
   static constexpr int kBands = 6;
-  static constexpr double kFrameRate = 200.0;  // onset frames per second
+  static constexpr double kFrameRate = 200.0;  // target onset frames per second
   static constexpr double kWindowSec = 6.0;
   static constexpr double kMinSecToReport = 3.0;
   static constexpr double kUpdateSec = 0.5;
-  static constexpr double kPriorOctaves = 0.75;  // tempo-prior width (std dev)
+  static constexpr int kCombSize = 4;            // multiples per comb
+  static constexpr double kPriorOctaves = 1.0;  // tempo-prior width (std dev)
 
   void pushOnsetFrame(float value);
   void estimate();
-  double acfAt(const float* x, int n, int lag) const;
 
   double fs_ = 48000.0;
   int hop_ = 240;
+  double frameRate_ = 200.0;  // actual: fs / hop
   int hopCount_ = 0;
   std::array<SvfCoeffs, kBands> bandCoeffs_{};
   std::array<SvfState, kBands> bandState_{};
@@ -57,7 +58,7 @@ class TempoTracker {
 
   std::vector<float> onset_;   // ring of onset frames
   std::vector<float> work_;    // linearised, mean-removed copy
-  std::vector<double> score_;  // prior-weighted ACF per lag
+  std::vector<double> acf_;    // normalised autocorrelation per lag
   int onsetWrite_ = 0;
   int onsetCount_ = 0;
   int framesSinceUpdate_ = 0;
