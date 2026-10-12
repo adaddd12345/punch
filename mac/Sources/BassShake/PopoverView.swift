@@ -42,7 +42,7 @@ struct PopoverView: View {
   private var size: ViewSize { role == .launchWindow ? .full : controller.settings.viewSize }
 
   private var controls: some View {
-    VStack(alignment: .leading, spacing: size == .mini ? 10 : 12) {
+    VStack(alignment: .leading, spacing: 8) {
       header
       statusBanner
       MutedNotice(model: controller.live)
@@ -66,7 +66,7 @@ struct PopoverView: View {
       // Mini has no footer, so no Live/DJ tray either.
       if new == .mini { showLive = false; showDJ = false }
     }
-    .padding(14)
+    .padding(12)
     .frame(width: 360)
     .onReceive(meterTimer) { _ in
       guard visible else { return }
@@ -232,7 +232,7 @@ struct PopoverView: View {
 
   /// The bottom tray (modes): collapses and opens; its state is remembered.
   private var tray: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 6) {
       Button {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { controller.settings.trayOpen.toggle() }
       } label: {
@@ -276,7 +276,7 @@ struct PopoverView: View {
   }
 
   private var sliders: some View {
-    VStack(spacing: 8) {
+    VStack(spacing: 4) {
       LabeledSlider(title: "Strength", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                     range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
@@ -422,9 +422,9 @@ private struct LabeledSlider: View {
   let help: String
 
   var body: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 6) {
       IconText(title: title, symbol: symbol, size: 11)
-        .frame(width: 84, alignment: .leading)
+        .frame(width: 74, alignment: .leading)
       Slider(value: $value, in: range)
         .controlSize(.small)
       Text(format(value))

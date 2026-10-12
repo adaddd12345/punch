@@ -8,7 +8,7 @@ struct ModesView: View {
   private var s: Settings { controller.settings }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 6) {
         Chip(title: "Studio Ears", selected: s.studioEars) {
           Image(systemName: "ear.badge.waveform").font(.system(size: 9, weight: .semibold))
@@ -78,7 +78,7 @@ struct ModesView: View {
   }
 
   @ViewBuilder private var panel: some View {
-    VStack(alignment: .leading, spacing: 7) {
+    VStack(alignment: .leading, spacing: 6) {
       if s.mode == .sleep { sleepRow } else { studyRow }
       noiseRow
       Text(caption)
