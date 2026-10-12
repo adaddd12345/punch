@@ -650,6 +650,42 @@ TEST(night_guard_tames_a_loud_title_sequence) {
   CHECK(loudOut - quietOut > 6.0);  // still clearly louder, not flattened
 }
 
+TEST(ear_protector_ducks_a_sudden_blast_but_not_music) {
+  const double fs = 48000;
+  SpikeGuard g;
+  g.prepare(fs);
+  SpikeGuardParams sp;
+  sp.enabled = true;
+  g.setParams(sp);
+  std::mt19937 rng(5);
+  std::normal_distribution<float> nd(0.f, 1.f);
+  // 4 s of steady loud-ish music (noise at -16 dBFS RMS): must never trip.
+  const size_t n1 = size_t(4 * fs), n2 = size_t(2 * fs);
+  std::vector<float> l(n1 + n2), r(n1 + n2);
+  for (size_t i = 0; i < n1; ++i) l[i] = r[i] = dbToGain(-40.f) * nd(rng);
+  for (size_t i = 0; i < n1; ++i) if (i > size_t(fs)) l[i] = r[i] = dbToGain(-16.f) * nd(rng) * 0.25f;
+  // Then a full-scale blast.
+  for (size_t i = n1; i < n1 + n2; ++i) l[i] = r[i] = float(std::sin(0.05 * double(i)));
+  for (size_t s = 0; s < l.size(); s += 512) {
+    float* p[2] = {l.data() + s, r.data() + s};
+    g.process(p, 2, int(std::min<size_t>(512, l.size() - s)));
+  }
+  CHECK(g.events() == 1);
+  const double blastOut = rmsDbRange(l, n1 + size_t(0.05 * fs), n1 + size_t(1.5 * fs));
+  CHECK(blastOut < -3.0 - 15.0);  // a -3 dBFS RMS sine, cut by ~20 dB
+}
+
+TEST(ear_protector_off_is_transparent) {
+  SpikeGuard g;
+  g.prepare(48000);
+  std::vector<float> l(9600, 0.f), r(9600, 0.f);
+  for (size_t i = 4800; i < l.size(); ++i) l[i] = r[i] = float(std::sin(0.05 * double(i)));
+  const auto ref = l;
+  float* p[2] = {l.data(), r.data()};
+  g.process(p, 2, int(l.size()));
+  CHECK(l == ref);
+}
+
 TEST(night_guard_off_is_transparent) {
   LoudnessGuard g;
   g.prepare(48000);

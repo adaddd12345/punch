@@ -103,6 +103,7 @@ final class AudioController: ObservableObject {
         settings.enabled ? start() : stop()
       }
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
+      hqGuardOn.store(settings.hqGuard)
       pushParams()
       scheduleSave()
     }
@@ -139,6 +140,7 @@ final class AudioController: ObservableObject {
     curveEngine = punch_engine_create()
     punch_engine_prepare(curveEngine, 48_000, 2, 512)
     settings = Settings.load()
+    hqGuardOn.store(settings.hqGuard)
     pushParams()
     // Nothing here may talk to coreaudiod or tccd. This initializer runs
     // inside SwiftUI's App.body while the scene graph is being built; the
@@ -519,7 +521,11 @@ final class AudioController: ObservableObject {
           let list = try? JSONDecoder().decode([UserPreset].self, from: data) else { return }
     pushUndo()
     let have = Set(settings.userPresets.map(\.id))
-    settings.userPresets += list.filter { !have.contains($0.id) }
+    settings.userPresets += list.filter { !have.contains($0.id) }.map { p in
+      var p = p
+      p.bands = EQBand.normalized(p.bands).map(\.clamped)
+      return p
+    }
   }
 
   /// "Resumes automatically": a menu-bar app isn't activated when the user
@@ -979,7 +985,9 @@ final class AudioController: ObservableObject {
     } else {
       punch_set_ambience(e, false, 0, 0.5, 7_000)
     }
-    punch_set_stereo_width(e, abs(c.width - 1) > 0.001, Float(c.width))
+    let width = s.centerLock == .off ? c.width : min(c.width, s.centerLock.width)
+    punch_set_stereo_width(e, abs(width - 1) > 0.001, Float(width))
+    punch_set_spike_guard(e, s.earProtector)
     punch_set_crossfeed(e, headphones && c.crossfeed > 0.001, Float(c.crossfeed))
     let noiseOn = s.mode != .off && s.noiseOn
     punch_set_noise(e, noiseOn, Int32(s.noiseColor.rawValue), Float(s.noiseDb + fade.noiseDb))
@@ -1142,6 +1150,12 @@ final class AudioController: ObservableObject {
         self.devices = devs
         self.currentDeviceID = current
         self.pushParams()  // crossfeed follows headphones vs speakers
+        // A device that wasn't ready at login (USB DAC, coreaudiod still
+        // waking) can come alive later: give a failed start another go.
+        if case .failed = self.status, self.settings.enabled {
+          self.startFailures = 0
+          self.scheduleRebuild(delay: 1)
+        }
       }
       self.refreshInputsOffMain()
     }
@@ -1297,6 +1311,47 @@ final class AudioController: ObservableObject {
   private var silentStreak = 0
   private var stalledStreak = 0
   private var everHeardAudio = false
+  private var hqGuardTick = 0
+  private var lastSpikeEvents: UInt32 = 0
+  let hqGuardOn = AtomicFlag()
+  /// Bumped each time the Ear Protector catches a blast (banner/notification).
+  @Published private(set) var earAlerts = 0
+  @Published var earAlertVisible = false
+
+  /// audioQueue.
+  private func checkEarProtector() {
+    let n = punch_spike_guard_events(engine)
+    guard n != lastSpikeEvents else { return }
+    lastSpikeEvents = n
+    log.notice("ear protector caught a sudden loud sound")
+    DispatchQueue.main.async { self.earAlerts += 1; self.earAlertVisible = true }
+  }
+
+  /// AirPods HQ Guard (audioQueue): a Bluetooth headset whose own mic is the
+  /// default input drops to call mode (16 kHz mono, muffled) as soon as any
+  /// app opens the mic. While nobody is using that mic, keep the default
+  /// input on the Mac's own mic so the headset stays in full-quality stereo.
+  /// Call apps can still pick the headset mic explicitly.
+  private func keepBluetoothInStereo() {
+    let outID = Devices.defaultOutput()
+    guard let out = Devices.allOutputs().first(where: { $0.id == outID }), out.isBluetooth else { return }
+    let ins = Devices.allInputs()
+    guard let input = ins.first(where: { $0.id == Devices.defaultInput() }), input.isBluetooth else { return }
+    let running = (try? HAL.get(input.id, .global(kAudioDevicePropertyDeviceIsRunningSomewhere), default: UInt32(0))) ?? 0
+    guard running == 0, let mic = ins.first(where: { $0.isBuiltIn }) else { return }
+    try? Devices.setDefaultInput(mic.id)
+    log.notice("HQ guard: default input \(input.name, privacy: .public) -> \(mic.name, privacy: .public)")
+    refreshInputsOffMain()
+  }
+
+  /// Mutes the Mac's output (Ear Protector banner's Mute button).
+  func muteOutput() {
+    audioQueue.async {
+      let id = Devices.defaultOutput()
+      let mute = AudioObjectPropertyAddress.output(kAudioDevicePropertyMute)
+      if HAL.has(id, mute) { try? HAL.set(id, mute, UInt32(1)) }
+    }
+  }
   private var deadStreak = 0
   private var watchdogRebuilds: [TimeInterval] = []   // audioQueue
   private var watchdogPausedUntil: TimeInterval = 0   // audioQueue
@@ -1327,6 +1382,9 @@ final class AudioController: ObservableObject {
       audioWatchdog = nil
       return
     }
+    checkEarProtector()
+    hqGuardTick &+= 1
+    if hqGuardTick % 3 == 0 && hqGuardOn.load() { keepBluetoothInStereo() }
     let dCallbacks = s.callbacks &- lastStats.callbacks
     let dSilent = s.silentCallbacks &- lastStats.silentCallbacks
     let dDead = s.deadOutputCallbacks &- lastStats.deadOutputCallbacks
@@ -1372,7 +1430,11 @@ final class AudioController: ObservableObject {
       // almost certainly no capture permission. Release the tap so the user
       // gets their (unprocessed) sound back. (Checked before any rebuild, or
       // the rebuild would always win and this could never trigger.)
-      if silentStreak >= 5 {
+      if silentStreak >= 5 && AudioCapturePermission.preflight() == .granted {
+        // Permission is fine: an app is just outputting silence (a call
+        // app idling, a WebAudio tab, protected video). Don't cry wolf.
+        silentStreak = 0
+      } else if silentStreak >= 5 {
         pipelineStop(fade: false)
         DispatchQueue.main.async { [weak self] in self?.status = .needsPermission }
       }

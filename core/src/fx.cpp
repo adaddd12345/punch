@@ -9,6 +9,63 @@ namespace {
 float coeffFor(double seconds, double rate) { return float(1.0 - std::exp(-1.0 / (seconds * rate))); }
 }  // namespace
 
+// ================================================================ SpikeGuard
+
+void SpikeGuard::prepare(double sampleRate) {
+  sampleRate_ = sampleRate;
+  fastRel_ = coeffFor(0.03, sampleRate);
+  slowCoeff_ = coeffFor(3.0, sampleRate);
+  attack_ = coeffFor(0.0008, sampleRate);
+  release_ = coeffFor(0.8, sampleRate);
+  reset();
+}
+
+void SpikeGuard::reset() {
+  fast_ = slow_ = 0.f;
+  gain_ = 1.f;
+  holdLeft_ = 0;
+  warm_ = 0;
+}
+
+void SpikeGuard::process(float* const* ch, int numChannels, int numFrames) {
+  if (!p_.enabled && gain_ >= 1.f && holdLeft_ == 0) {
+    // Keep learning the level so turning it on mid-song doesn't false-trip.
+    for (int i = 0; i < numFrames; ++i) {
+      float pk = 0.f;
+      for (int c = 0; c < numChannels; ++c) pk = std::max(pk, std::fabs(ch[c][i]));
+      slow_ += slowCoeff_ * (pk - slow_);
+    }
+    return;
+  }
+  const float rise = std::pow(10.f, p_.riseDb / 20.f);
+  const float floor = std::pow(10.f, p_.floorDb / 20.f);
+  const float cut = std::pow(10.f, -std::fabs(p_.cutDb) / 20.f);
+  const int hold = int(p_.holdSeconds * sampleRate_);
+  const int warmNeeded = int(0.5 * sampleRate_);
+  for (int i = 0; i < numFrames; ++i) {
+    float pk = 0.f;
+    for (int c = 0; c < numChannels; ++c) pk = std::max(pk, std::fabs(ch[c][i]));
+    fast_ = pk > fast_ ? pk : fast_ + fastRel_ * (pk - fast_);
+    // The recent level ignores near-silence floors so a quiet passage still
+    // counts as "quiet" (that is when a blast hurts most).
+    const float ref = std::max(slow_, 0.004f);
+    if (p_.enabled && warm_ >= warmNeeded && holdLeft_ == 0 && fast_ > floor && fast_ > ref * rise) {
+      holdLeft_ = hold;
+      events_.fetch_add(1, std::memory_order_relaxed);
+    }
+    slow_ += slowCoeff_ * (pk - slow_);
+    if (pk > 1e-4f && warm_ < warmNeeded) ++warm_;
+    float target = 1.f;
+    if (holdLeft_ > 0) {
+      --holdLeft_;
+      target = cut;
+    }
+    gain_ += (target < gain_ ? attack_ : release_) * (target - gain_);
+    if (target == 1.f && gain_ > 0.9999f) gain_ = 1.f;
+    for (int c = 0; c < numChannels; ++c) ch[c][i] *= gain_;
+  }
+}
+
 // ================================================================ LoudnessGuard
 
 void LoudnessGuard::prepare(double sampleRate) {

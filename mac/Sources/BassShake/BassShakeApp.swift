@@ -122,6 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       .receive(on: RunLoop.main)
       .sink { [weak self] enabled, bypassed, status in self?.updateStatusIcon(enabled: enabled, bypassed: bypassed, status: status) }
       .store(in: &cancellables)
+    controller.$earAlerts.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
+      guard let self, !self.popover.isShown else { return }
+      self.notifyProblem("Ear Protector caught a sudden loud sound and turned it down. Click to open (and mute).")
+    }.store(in: &cancellables)
     // Unpinned, the popover goes away with the app losing focus or a Space change.
     let nc = NotificationCenter.default
     nc.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in

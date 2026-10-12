@@ -43,6 +43,7 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   ambience_.prepare(sampleRate);
   dj_.prepare(sampleRate, numChannels_);
   guard_.prepare(sampleRate);
+  spike_.prepare(sampleRate);
   noise_.prepare(sampleRate);
   outGain_.prepare(sampleRate, 15.0);
   outGain_.snap(1.f);
@@ -112,6 +113,7 @@ void Engine::applySnapshot(const EngineParams& p) {
     noise_.setParams({});
     dj_.setParams({});
     guard_.setParams({});
+    spike_.setParams(p.spike);   // protection stays on while comparing
     outGain_.setTarget(1.f);
     LimiterParams lp = p.limiter;
     lp.ceilingDb = 0.f;
@@ -132,6 +134,7 @@ void Engine::applySnapshot(const EngineParams& p) {
   noise_.setParams(p.noise);
   dj_.setParams(p.dj);
   guard_.setParams(p.guard);
+  spike_.setParams(p.spike);
   outGain_.setTarget(dbToGain(std::clamp(p.outputGainDb, -60.f, 24.f)));
   limiter_.setParams(p.limiter);
   // Both limiter stages always run (constant latency); "off" crossfades to a
@@ -168,6 +171,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     }
   }
   noise_.process(ch, numChannels, numFrames);
+  spike_.process(ch, numChannels, numFrames);
   // Bass first (against the room the highs leave), then the full-band
   // safety net. With the limiter off (No Limit) neither runs.
   if (bassPriority_) bassLimiter_.process(ch, numChannels, numFrames);
@@ -191,6 +195,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     ambience_.reset();
     dj_.reset();
     guard_.reset();
+    spike_.reset();
     noise_.reset();
     limiter_.reset();
     bassLimiter_.reset();

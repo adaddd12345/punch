@@ -5,6 +5,7 @@
 #define PUNCH_C_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -66,6 +67,9 @@ void punch_set_noise(PunchEngine* e, bool enabled, int color, float level_db);
  * average (e.g. a loud title sequence after quiet dialogue). */
 void punch_set_loudness_guard(PunchEngine* e, bool enabled, float over_db, float max_cut_db);
 float punch_loudness_guard_cut_db(const PunchEngine* e);
+/// Ear Protector: sudden blasts drop ~20 dB for 3 s. Events counts trips.
+void punch_set_spike_guard(PunchEngine* e, bool enabled);
+uint32_t punch_spike_guard_events(const PunchEngine* e);
 /* DJ effects. filter: -1..1 (<0 low-pass sweep, >0 high-pass sweep, 0 off). */
 void punch_set_dj(PunchEngine* e, bool low_kill, bool mid_kill, bool high_kill, float filter, bool echo, bool crush,
                   bool drive);

@@ -41,6 +41,7 @@ struct EngineParams {
   NoiseParams noise;
   DjParams dj;
   LoudnessGuardParams guard;  // Night Guard
+  SpikeGuardParams spike;     // Ear Protector (works in A/B too)
   float outputGainDb = 0.f;  // post-EQ boost, protected by the limiter
   LimiterParams limiter;
   bool bypass = false;
@@ -78,6 +79,7 @@ class Engine {
   Meters takeMeters();
   // Night Guard's current reduction in dB (<= 0); any thread.
   float loudnessGuardCutDb() const { return guard_.cutDb(); }
+  uint32_t spikeEvents() const { return spike_.events(); }
   // Post-processing mono feed for the UI spectrum analyzer.
   SpscRing<float>& analyzerFeed() { return analyzer_; }
 
@@ -108,6 +110,7 @@ class Engine {
   Smoothed outGain_;
   DjFx dj_;
   LoudnessGuard guard_;
+  SpikeGuard spike_;
   Limiter limiter_;
   BassPriorityLimiter bassLimiter_;
   bool bassPriority_ = true;

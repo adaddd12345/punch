@@ -99,7 +99,8 @@ final class TapPipeline {
           kAudioSubTapUIDKey: desc.uuid.uuidString,
           // Drift compensation on a Bluetooth clock produces a periodic
           // crackle (~every 0.7 s); the BT device is the clock anyway.
-          kAudioSubTapDriftCompensationKey: !output.isBluetooth,
+          // AirPlay runs its own (buffered) clock too.
+          kAudioSubTapDriftCompensationKey: !output.isBluetooth && output.transport != UInt32(kAudioDeviceTransportTypeAirPlay),
         ]],
       ]
       var agg = unknownObject

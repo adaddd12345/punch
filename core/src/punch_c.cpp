@@ -94,6 +94,9 @@ void punch_set_loudness_guard(PunchEngine* e, bool enabled, float over_db, float
 }
 float punch_loudness_guard_cut_db(const PunchEngine* e) { return e->engine.loudnessGuardCutDb(); }
 
+void punch_set_spike_guard(PunchEngine* e, bool enabled) { e->engine.edit().spike.enabled = enabled; }
+uint32_t punch_spike_guard_events(const PunchEngine* e) { return e->engine.spikeEvents(); }
+
 void punch_set_dj(PunchEngine* e, bool low_kill, bool mid_kill, bool high_kill, float filter, bool echo, bool crush,
                   bool drive) {
   e->engine.edit().dj = {low_kill, mid_kill, high_kill, filter, echo, crush, drive};

@@ -100,6 +100,9 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   }
   if (!tap || !tap->mData || tap->mNumberChannels == 0 || tap->mNumberChannels > kMaxChannels) {
     bump(&ctx->layoutErrors);
+    // More channels than we handle (big pro interfaces): count it as dead
+    // output so the watchdog steps aside instead of leaving the Mac silent.
+    if (tap && tap->mNumberChannels > kMaxChannels) bump(&ctx->deadOutputCallbacks);
     zeroOutput(output);
     return noErr;
   }

@@ -149,6 +149,15 @@ struct SoundCharacter: Codable, Equatable {
 extension EQBand {
   /// Always exactly the six default nodes (ids 0...5): stored band lists
   /// from older betas or corrupt JSON can't crash the EQ view.
+  /// Finite and in range (imported or hand-edited presets).
+  var clamped: EQBand {
+    var b = self
+    b.freq = freq.isFinite ? min(EQBand.freqRange.upperBound, max(EQBand.freqRange.lowerBound, freq)) : 1000
+    b.gain = gain.isFinite ? min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, gain)) : 0
+    b.q = q.isFinite ? min(20, max(0.1, q)) : 0.7
+    return b
+  }
+
   static func normalized(_ bands: [EQBand]) -> [EQBand] {
     if bands.count == defaults.count && bands.enumerated().allSatisfy({ $0.offset == $0.element.id }) { return bands }
     return defaults.enumerated().map { i, d in
@@ -306,6 +315,16 @@ enum ViewSize: String, Codable, CaseIterable {
 }
 
 /// Scope trace colour: the Mac's accent colour, or a fixed one.
+/// Center Lock: old hard-panned stereo (early Beatles, Bohemian Rhapsody's
+/// panned parts) puts whole instruments in one ear. Narrow keeps a little
+/// width; Mono is identical in both ears (one-earbud listening).
+enum CenterLock: String, Codable, CaseIterable, Identifiable {
+  case off, narrow, mono
+  var id: String { rawValue }
+  var title: String { ["off": "Off", "narrow": "Narrow (both ears hear everything)", "mono": "Mono (one earbud)"][rawValue]! }
+  var width: Double { self == .off ? 1 : self == .narrow ? 0.35 : 0 }
+}
+
 enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   case system, ambientBlue
   var id: String { rawValue }
@@ -411,6 +430,9 @@ struct Settings: Codable, Equatable {
   /// Quick fade when the controls appear and disappear.
   var fadeWindows = true
   var autoFixAfterSleep = true                    // Check & Fix runs itself after wake
+  var centerLock: CenterLock = .off
+  var earProtector = false                        // duck sudden blasts (opt-in)
+  var hqGuard = true                              // keep Bluetooth headsets in stereo
   /// Live oscilloscope trace behind the EQ curve.
   var waveform = true
   var scopeColor: ScopeColor = .accent
@@ -457,7 +479,7 @@ struct Settings: Codable, Equatable {
     userPresetID = try c.decodeIfPresent(UUID.self, forKey: .userPresetID)
     bass = try c.decodeIfPresent(Double.self, forKey: .bass) ?? d.bass
     boostDb = try c.decodeIfPresent(Double.self, forKey: .boostDb) ?? d.boostDb
-    userPresets = try c.decodeIfPresent([UserPreset].self, forKey: .userPresets) ?? []
+    userPresets = ((try? c.decodeIfPresent([Lossy<UserPreset>].self, forKey: .userPresets)) ?? nil)?.compactMap(\.value) ?? []
     character = try c.decodeIfPresent(SoundCharacter.self, forKey: .character) ?? d.character
     studioEars = try c.decodeIfPresent(Bool.self, forKey: .studioEars) ?? d.studioEars
     mode = (try? c.decodeIfPresent(ListeningMode.self, forKey: .mode)) ?? d.mode
@@ -477,6 +499,9 @@ struct Settings: Codable, Equatable {
     nightGuard = try c.decodeIfPresent(Bool.self, forKey: .nightGuard) ?? d.nightGuard
     fadeWindows = try c.decodeIfPresent(Bool.self, forKey: .fadeWindows) ?? d.fadeWindows
     autoFixAfterSleep = (try? c.decodeIfPresent(Bool.self, forKey: .autoFixAfterSleep)) ?? d.autoFixAfterSleep
+    centerLock = (try? c.decodeIfPresent(CenterLock.self, forKey: .centerLock)) ?? d.centerLock
+    earProtector = (try? c.decodeIfPresent(Bool.self, forKey: .earProtector)) ?? d.earProtector
+    hqGuard = (try? c.decodeIfPresent(Bool.self, forKey: .hqGuard)) ?? d.hqGuard
     waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
@@ -501,6 +526,8 @@ struct Settings: Codable, Equatable {
   /// Repairs anything a stored blob could hold that the app can't handle.
   mutating func sanitize() {
     bands = EQBand.normalized(bands)
+    userPresets = userPresets.map { var p = $0; p.bands = p.bands.map(\.clamped); return p }
+    bands = bands.map(\.clamped)
     userPresets = userPresets.map { var p = $0; p.bands = EQBand.normalized(p.bands); return p }
     deviceSounds = deviceSounds.mapValues { var d = $0; d.bands = EQBand.normalized(d.bands); return d }
     if var b = beforeMode { b.bands = EQBand.normalized(b.bands); beforeMode = b }
@@ -523,4 +550,11 @@ struct Settings: Codable, Equatable {
   func save() {
     if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: Self.key) }
   }
+}
+
+
+/// Decodes what it can; a broken element becomes nil instead of failing the array.
+struct Lossy<T: Decodable>: Decodable {
+  let value: T?
+  init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }

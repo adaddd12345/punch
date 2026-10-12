@@ -53,6 +53,43 @@ class LoudnessGuard {
   std::atomic<float> cutDb_{0.f};
 };
 
+// ---------------------------------------------------------------- Ear Protector
+
+// Opt-in guard against sudden blasts (a jump-scare, a notification at full
+// scale, a stream that starts 30 dB hotter). When the instantaneous peak
+// leaps far above the recent level and is loud in absolute terms, the
+// output drops ~20 dB within a millisecond, holds for a few seconds so the
+// listener can reach for mute, then eases back. Normal music never trips it.
+struct SpikeGuardParams {
+  bool enabled = false;
+  float riseDb = 20.f;      // jump above the recent level that counts as a spike
+  float floorDb = -6.f;     // and it must be at least this loud (dBFS)
+  float cutDb = 20.f;       // how far it turns down
+  float holdSeconds = 3.f;
+
+  friend bool operator==(const SpikeGuardParams&, const SpikeGuardParams&) = default;
+};
+
+class SpikeGuard {
+ public:
+  void prepare(double sampleRate);
+  void reset();
+  void setParams(const SpikeGuardParams& p) { p_ = p; }
+  void process(float* const* ch, int numChannels, int numFrames);
+  uint32_t events() const { return events_.load(std::memory_order_relaxed); }
+  bool engaged() const { return holdLeft_ > 0 || gain_ < 0.99f; }
+
+ private:
+  double sampleRate_ = 48000.0;
+  SpikeGuardParams p_;
+  float fast_ = 0.f, slow_ = 0.f;
+  float fastRel_ = 0.f, slowCoeff_ = 0.f, attack_ = 0.f, release_ = 0.f;
+  float gain_ = 1.f;
+  int holdLeft_ = 0;
+  int warm_ = 0;
+  std::atomic<uint32_t> events_{0};
+};
+
 // ---------------------------------------------------------------- DJ effects
 
 struct DjParams {

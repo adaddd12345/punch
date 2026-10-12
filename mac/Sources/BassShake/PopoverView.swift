@@ -233,6 +233,11 @@ struct PopoverView: View {
              text: "macOS's audio service isn't responding, so The Bass Shaker can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
              action: ("Restart macOS Audio", controller.restartAudioService),
              secondary: nil)
+    case _ where controller.earAlertVisible:
+      Banner(symbol: "ear.trianglebadge.exclamationmark", tint: .orange,
+             text: "Ear Protector caught a sudden loud sound and turned it down for a few seconds.",
+             action: ("Mute Now", { controller.muteOutput(); controller.earAlertVisible = false }),
+             secondary: ("OK", { controller.earAlertVisible = false }))
     case _ where controller.doctorReport != nil:
       Banner(symbol: "stethoscope", tint: .green,
              text: (controller.doctorReport ?? []).joined(separator: "\n"),
@@ -430,7 +435,15 @@ struct PopoverView: View {
         Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
                                                                set: { controller.settings.autoFixAfterSleep = $0 }))
         Divider()
+        Toggle("Ear Protector (duck sudden loud blasts)", isOn: Binding(get: { controller.settings.earProtector },
+                                                                        set: { controller.settings.earProtector = $0 }))
+        Picker("Center Lock", selection: Binding(get: { controller.settings.centerLock },
+                                                  set: { controller.settings.centerLock = $0 })) {
+          ForEach(CenterLock.allCases) { Text($0.title).tag($0) }
+        }
         Menu("Sound") {
+          Toggle("AirPods HQ Guard (keep Bluetooth in stereo)", isOn: Binding(get: { controller.settings.hqGuard },
+                                                                              set: { controller.settings.hqGuard = $0 }))
           Toggle("Remember Sound per Device", isOn: Binding(get: { controller.settings.perDevice },
                                                              set: { controller.settings.perDevice = $0 }))
           if let d = controller.currentDevice {
