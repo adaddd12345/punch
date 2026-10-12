@@ -34,17 +34,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // feed back. A relaunch (update, audio restart) overlaps briefly with the
     // old copy shutting down, so give it a few seconds to go first.
     if let id = Bundle.main.bundleIdentifier {
-      let deadline = Date().addingTimeInterval(4)
+      let mine = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
       var others = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0 != .current }
+      // A relaunch (update, audio restart) overlaps briefly with the old copy
+      // shutting down: give it a moment.
+      let deadline = Date().addingTimeInterval(3)
       while !others.isEmpty && Date() < deadline {
         RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         others = others.filter { !$0.isTerminated }
       }
-      if let other = others.first {
-        log.notice("another instance is running; handing over to it")
-        other.activate(options: [])
-        NSApp.terminate(nil)
-        return
+      for other in others {
+        let theirs = other.bundleURL.flatMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CFBundleVersion") as? String } ?? "?"
+        log.notice("another instance pid \(other.processIdentifier, privacy: .public) v\(theirs, privacy: .public) (mine v\(mine, privacy: .public))")
+        if theirs == mine, let url = other.bundleURL {
+          // Same build: bring its window forward (a reopen event, which an
+          // LSUIElement app needs; activate() alone shows nothing) and step away.
+          NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+          NSApp.terminate(nil)
+          return
+        }
+        // Different build (the user opened a new download) or a hung copy:
+        // the new one wins. Ask nicely, then insist.
+        other.terminate()
+        let until = Date().addingTimeInterval(3)
+        while !other.isTerminated && Date() < until { RunLoop.current.run(until: Date().addingTimeInterval(0.2)) }
+        if !other.isTerminated { other.forceTerminate() }
       }
     }
     log.notice("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")
@@ -70,8 +84,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
   func applicationWillTerminate(_ notification: Notification) {
-    // Release the tap so the original audio resumes immediately.
-    controller.shutdown()
+    // Release the tap so the original audio resumes immediately. If Core
+    // Audio is wedged and teardown didn't finish, leave at once: atexit's
+    // HAL teardown could block forever, and coreaudiod frees a dead client's
+    // taps and aggregates anyway.
+    if !controller.shutdown() { _exit(0) }
   }
 
   // MARK: - Menu bar popover

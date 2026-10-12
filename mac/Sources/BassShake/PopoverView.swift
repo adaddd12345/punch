@@ -20,7 +20,7 @@ struct PopoverView: View {
   /// drop-down drawer; the launch window's copy must not (two owners made
   /// the drawer flicker between windows).
   private let role: Role
-  private var ownsDrawer: Bool { role == .pinned || (role == .menuBar && !controller.pinned) }
+  private var ownsDrawer: Bool { role != .launchWindow }
   @State private var window = WindowRef()
 
   init(controller: AudioController, ownsDrawer: Bool = true, role: Role? = nil) {

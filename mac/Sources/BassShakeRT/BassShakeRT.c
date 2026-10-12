@@ -239,7 +239,11 @@ static void guardHandler(int sig) {
   // be the IO thread, and HAL calls there can deadlock, leaving the process
   // hung with the tap muting the Mac). Just die: coreaudiod releases a dead
   // client's private taps and aggregates, and the next launch sweeps leftovers.
-  if (sig == SIGTERM || sig == SIGINT || sig == SIGHUP || sig == SIGQUIT) guardTeardown();
+  // Polite signals: exit immediately too. HAL calls aren't async-signal-safe
+  // (they can deadlock inside a handler); coreaudiod frees a dead client's
+  // taps and aggregates, and the next launch sweeps any leftovers. (A normal
+  // Quit goes through applicationWillTerminate, not here.)
+  if (sig == SIGTERM || sig == SIGINT || sig == SIGHUP || sig == SIGQUIT) _exit(0);
   // Re-raise with the default action so crash reports / exit codes stay normal.
   signal(sig, SIG_DFL);
   raise(sig);

@@ -709,14 +709,17 @@ final class AudioController: ObservableObject {
 
   /// Called at quit. Bounded wait: if Core Audio is stuck, quit anyway; the
   /// crash guard's atexit handler still destroys the tap and aggregate.
-  func shutdown() {
+  /// Returns false if the audio queue didn't finish in time (Core Audio wedged).
+  @discardableResult
+  func shutdown() -> Bool {
     let done = DispatchSemaphore(value: 0)
     audioQueue.async {
       self.pipelineStop(fade: true)
       done.signal()
     }
-    _ = done.wait(timeout: .now() + 1.5)
+    let finished = done.wait(timeout: .now() + 1.5) == .success
     live.shutdown()
+    return finished
   }
 
   // MARK: - Engine parameters
