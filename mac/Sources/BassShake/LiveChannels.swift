@@ -118,8 +118,21 @@ final class LiveChannels: ObservableObject {
 
   private struct MuteTap {
     let id: AudioObjectID
+    let uuid: String
     let objects: [AudioObjectID]  // sorted
   }
+
+  /// Silent aggregate that reads every mute tap. A tap only reliably
+  /// silences its process while a client is reading it (beta 34 showed an
+  /// unread `.muted` tap leaving the app audible), so this keeps them read.
+  private struct MuteReader {
+    let aggregate: AudioObjectID
+    let proc: AudioDeviceIOProcID?
+    let context: OpaquePointer
+    let tapUUIDs: [String]
+    let deviceID: AudioObjectID
+  }
+  private var muteReader: MuteReader?
 
   private struct MeterAggregate {
     let aggregate: AudioObjectID
@@ -233,6 +246,7 @@ final class LiveChannels: ObservableObject {
       self.refreshWork?.cancel()
       self.meterWork?.cancel()
       self.teardownMeter()
+      self.teardownMuteReader()
       for t in self.muteTaps.values { self.destroyMuteTap(t.id) }
       self.muteTaps = [:]
       self.processListeners.removeAll()
@@ -362,6 +376,7 @@ final class LiveChannels: ObservableObject {
     for t in muteTaps.values { BSCrashGuardRemoveTap(t.id) }
     muteTaps = [:]
     teardownMeter()
+    teardownMuteReader()
     owners = [:]
     deviceNameCache = [:]
     watchedObjects = []
@@ -490,8 +505,8 @@ final class LiveChannels: ObservableObject {
     }
     for (key, objects) in desired where muteTaps[key]?.objects != objects {
       let old = muteTaps[key]
-      if let tap = createMuteTap(objects) {
-        muteTaps[key] = MuteTap(id: tap, objects: objects)
+      if let made = createMuteTap(objects) {
+        muteTaps[key] = MuteTap(id: made.0, uuid: made.1, objects: objects)
         if let old { destroyMuteTap(old.id) }
       }
       // On failure keep the old tap (if any); the next refresh retries.
@@ -504,19 +519,69 @@ final class LiveChannels: ObservableObject {
     var excluded = Set(muteTaps.values.flatMap(\.objects))
     for key in halShakerOff { if let app = groups[key] { excluded.formUnion(app.processObjects) } }
     halExcluded = Array(excluded).sorted()
+    syncMuteReader()
   }
 
-  private func createMuteTap(_ objects: [AudioObjectID]) -> AudioObjectID? {
+  /// (Re)builds the mute reader when the set of mute taps or the output
+  /// device changes; removes it when nothing is muted.
+  private func syncMuteReader() {
+    let uuids = muteTaps.values.map(\.uuid).sorted()
+    let deviceID = Devices.defaultOutput()
+    if let r = muteReader, r.tapUUIDs == uuids, r.deviceID == deviceID { return }
+    teardownMuteReader()
+    guard !uuids.isEmpty, deviceID != unknownObject,
+          let uid = try? HAL.string(deviceID, .global(kAudioDevicePropertyDeviceUID)) else { return }
+    var agg = unknownObject
+    let dict: [String: Any] = [
+      kAudioAggregateDeviceNameKey: "The Bass Shaker Mute",
+      kAudioAggregateDeviceUIDKey: "com.bassshake.aggregate.mute.\(UUID().uuidString)",
+      kAudioAggregateDeviceMainSubDeviceKey: uid,
+      kAudioAggregateDeviceIsPrivateKey: true,
+      kAudioAggregateDeviceIsStackedKey: false,
+      kAudioAggregateDeviceTapAutoStartKey: true,
+      kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: uid, kAudioSubDeviceInputChannelsKey: 0]],
+      kAudioAggregateDeviceTapListKey: uuids.map { [kAudioSubTapUIDKey: $0, kAudioSubTapDriftCompensationKey: false] },
+    ]
+    guard AudioHardwareCreateAggregateDevice(dict as CFDictionary, &agg) == noErr, agg != unknownObject,
+          let ctx = BSMeterContextCreate() else {
+      if agg != unknownObject { AudioHardwareDestroyAggregateDevice(agg) }
+      log.error("mute reader: aggregate failed")
+      return
+    }
+    // No layout: BSMeterIOProc zeroes the output and measures nothing.
+    var proc: AudioDeviceIOProcID?
+    guard AudioDeviceCreateIOProcID(agg, BSMeterIOProc, UnsafeMutableRawPointer(ctx), &proc) == noErr,
+          AudioDeviceStart(agg, proc) == noErr else {
+      if let proc { AudioDeviceDestroyIOProcID(agg, proc) }
+      AudioHardwareDestroyAggregateDevice(agg)
+      BSMeterContextDestroy(ctx)
+      log.error("mute reader: IO failed")
+      return
+    }
+    muteReader = MuteReader(aggregate: agg, proc: proc, context: ctx, tapUUIDs: uuids, deviceID: deviceID)
+    log.notice("mute reader: \(uuids.count, privacy: .public) taps")
+  }
+
+  private func teardownMuteReader() {
+    guard let r = muteReader else { return }
+    muteReader = nil
+    if let p = r.proc {
+      AudioDeviceStop(r.aggregate, p)
+      AudioDeviceDestroyIOProcID(r.aggregate, p)
+    }
+    AudioHardwareDestroyAggregateDevice(r.aggregate)
+    BSMeterContextDestroy(r.context)
+  }
+
+  private func createMuteTap(_ objects: [AudioObjectID]) -> (AudioObjectID, String)? {
     let d = CATapDescription(stereoMixdownOfProcesses: objects)
     d.name = "The Bass Shaker Mute"
     d.uuid = UUID()
     d.isPrivate = true
-    // Apple, CATapMuteBehavior (CATapDescription.h): `.muted` = "Audio is
-    // captured by the tap but no audio is sent from the process to the audio
-    // hardware", unconditionally — unlike `.mutedWhenTapped`, which mutes
-    // only while a client is reading the tap. So this tap mutes the app with
-    // no aggregate or IOProc attached. It must never be left behind: it is
-    // destroyed on unmute and at quit, and registered with the crash guard.
+    // `.muted` per Apple's CATapMuteBehavior docs; in practice (beta 34) the
+    // app stayed audible until the tap was read, so the mute reader
+    // aggregate reads every mute tap. Never left behind: destroyed on unmute
+    // and at quit, and registered with the crash guard.
     d.muteBehavior = .muted
     var tap = unknownObject
     let status = AudioHardwareCreateProcessTap(d, &tap)
@@ -525,7 +590,7 @@ final class LiveChannels: ObservableObject {
       return nil
     }
     if !BSCrashGuardAddTap(tap) { log.error("crash guard full; mute tap \(tap, privacy: .public) unguarded") }
-    return tap
+    return (tap, d.uuid.uuidString)
   }
 
   private func destroyMuteTap(_ tap: AudioObjectID) {

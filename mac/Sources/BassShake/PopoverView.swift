@@ -76,8 +76,8 @@ struct PopoverView: View {
         .foregroundStyle(controller.settings.enabled ? Color.accentColor : .secondary)
       Text("The Bass Shaker")
         .font(.system(size: 14, weight: .bold, design: .rounded))
-      Spacer()
-      LiveChannelsButton(model: controller.live, expanded: $showLive)
+      Spacer(minLength: 4)
+      deviceMenu
       if controller.settings.enabled {
         Button { controller.bypassed.toggle() } label: {
           Text(controller.bypassed ? "Original" : "A/B")
@@ -172,28 +172,35 @@ struct PopoverView: View {
     }
   }
 
-  private var footer: some View {
-    HStack(spacing: 8) {
-      Menu {
-        ForEach(controller.devices) { d in
-          Button {
-            controller.select(device: d)
-          } label: {
-            if d.id == controller.currentDeviceID {
-              Label(d.name, systemImage: "checkmark")
-            } else {
-              Text(d.name)
-            }
+  /// Output picker (top right): follows and sets the system default output.
+  private var deviceMenu: some View {
+    Menu {
+      ForEach(controller.devices) { d in
+        Button {
+          controller.select(device: d)
+        } label: {
+          if d.id == controller.currentDeviceID {
+            Label(d.name, systemImage: "checkmark")
+          } else {
+            Text(d.name)
           }
         }
-      } label: {
-        let current = controller.devices.first { $0.id == controller.currentDeviceID }
-        Label(current?.name ?? "Output", systemImage: current?.symbolName ?? "speaker.wave.2")
-          .font(.system(size: 11, weight: .medium))
-          .lineLimit(1)
       }
-      .menuStyle(.borderlessButton)
-      .fixedSize(horizontal: false, vertical: true)
+    } label: {
+      let current = controller.devices.first { $0.id == controller.currentDeviceID }
+      Label(current?.name ?? "Output", systemImage: current?.symbolName ?? "speaker.wave.2")
+        .font(.system(size: 10, weight: .medium))
+        .lineLimit(1)
+    }
+    .menuStyle(.borderlessButton)
+    .frame(maxWidth: 96)
+    .fixedSize(horizontal: false, vertical: true)
+    .help("Output device")
+  }
+
+  private var footer: some View {
+    HStack(spacing: 8) {
+      LiveChannelsButton(model: controller.live, expanded: $showLive)
       Spacer()
       if case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
