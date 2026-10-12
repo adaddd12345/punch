@@ -50,6 +50,7 @@ final class AudioController: ObservableObject {
   @Published var dj = DJState() {
     didSet { if dj != oldValue { pushParams() } }
   }
+  private var lastStatsLine = "no pipeline"
   private var lopsidedSince: TimeInterval?
   private var lastChannelFix: TimeInterval = 0
   private var balanceListeners = PropertyListeners(queue: AudioController.listenerQueue)
@@ -280,6 +281,31 @@ final class AudioController: ObservableObject {
     channelNotice = "One side of your audio went silent, so The Bass Shaker restarted its sound. It should be back to normal."
     scheduleRebuild(delay: 0)
     DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in self?.channelNotice = nil }
+  }
+
+  // MARK: - Diagnostics
+
+  /// A few lines of state for logs and for "Copy Diagnostics" (no personal data).
+  func diagnosticSummary() -> String {
+    let s = settings
+    let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+    let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+    let os = ProcessInfo.processInfo.operatingSystemVersionString
+    let dev = currentDevice.map { "\($0.name) [transport \($0.transport)]" } ?? "none"
+    let bal = balance.map { String(format: "%.2f", $0) } ?? "n/a"
+    return [
+      "The Bass Shaker \(v) (\(b)) on macOS \(os)",
+      "status: \(status)  output: \(dev)  balance: \(bal)",
+      "enabled \(s.enabled) bypassed \(bypassed) limit \(s.limit) nightGuard \(s.nightGuard) mode \(s.mode.rawValue)",
+      "studioEars \(s.studioEars) loudness \(s.autoLoudness) boost \(s.boostDb) strength \(s.bass) dj \(dj.anyActive)",
+      "muted apps \(live.muted.count) shaker-off apps \(live.shakerOff.count) excluded objects \(live.excludedProcessObjects.count)",
+      "render: \(lastStatsLine)",
+    ].joined(separator: "\n")
+  }
+
+  func copyDiagnostics() {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(diagnosticSummary(), forType: .string)
   }
 
   func centerBalance() {
@@ -1007,6 +1033,8 @@ final class AudioController: ObservableObject {
   private var silentStreak = 0
   private var stalledStreak = 0
   private var everHeardAudio = false
+  private var deadStreak = 0
+  private var lastDeadRebuild: TimeInterval = 0
 
   /// audioQueue only. Detects (a) a tap that has gone "silently dead" while
   /// other apps are playing and (b) a permission denial that slipped past
@@ -1033,8 +1061,36 @@ final class AudioController: ObservableObject {
     }
     let dCallbacks = s.callbacks &- lastStats.callbacks
     let dSilent = s.silentCallbacks &- lastStats.silentCallbacks
+    let dDead = s.deadOutputCallbacks &- lastStats.deadOutputCallbacks
     lastStats = s
+
+    // Fail-safe: music is coming in but our output is silent (or broken
+    // numbers). First restart once; if it happens again within a minute,
+    // step aside so the Mac plays normally, and say why.
+    let audible = dCallbacks &- dSilent
+    if audible > 0 && dDead * 10 >= audible * 9 { deadStreak += 1 } else { deadStreak = 0 }
+    if deadStreak >= 2 {
+      deadStreak = 0
+      let now = ProcessInfo.processInfo.systemUptime
+      log.error("output silent while input has sound (\(dDead, privacy: .public)/\(audible, privacy: .public) cycles)")
+      DispatchQueue.main.async { [weak self] in
+        guard let self else { return }
+        self.log.error("state at silent output: \(self.diagnosticSummary(), privacy: .public)")
+      }
+      if now - lastDeadRebuild > 60 {
+        lastDeadRebuild = now
+        DispatchQueue.main.async { [weak self] in self?.scheduleRebuild(delay: 0) }
+      } else {
+        pipelineStop(fade: false)
+        DispatchQueue.main.async { [weak self] in
+          self?.status = .failed("The Bass Shaker's output went silent, so it stepped aside and your Mac is playing normally. Please send the diagnostics (⋯ › Copy Diagnostics).")
+        }
+      }
+      return
+    }
     let othersPlaying = TapPipeline.othersArePlaying(excluding: audioExcluded)
+    let statsLine = "cycles \(s.callbacks) silent-in \(s.silentCallbacks) dead-out \(s.deadOutputCallbacks) layout-err \(s.layoutErrors) ch \(s.lastInputChannels)->\(s.lastOutputChannels)"
+    DispatchQueue.main.async { [weak self] in self?.lastStatsLine = statsLine }
 
     if dCallbacks > dSilent { everHeardAudio = true; silentStreak = 0 }
     if othersPlaying && dCallbacks > 0 && dSilent == dCallbacks { silentStreak += 1 }

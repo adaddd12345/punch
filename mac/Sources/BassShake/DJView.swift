@@ -30,8 +30,7 @@ struct DJView: View {
       }
       filterRow
     }
-    .padding(10)
-    .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
+    .padding(12)
   }
 
   private func padView(_ pad: DJState.Pad, tint: Color) -> some View {

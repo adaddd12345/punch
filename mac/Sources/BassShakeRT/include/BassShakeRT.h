@@ -45,6 +45,7 @@ typedef struct {
   uint64_t layoutErrors;     // tap buffer missing / unexpected format
   uint32_t lastInputChannels;
   uint32_t lastOutputChannels;
+  uint64_t deadOutputCallbacks;  // tap had sound but what we wrote was silent / non-finite
 } BSRenderStats;
 
 BSRenderStats BSRenderContextStats(const BSRenderContext* ctx);

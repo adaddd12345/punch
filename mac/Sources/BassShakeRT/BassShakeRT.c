@@ -22,6 +22,7 @@ struct BSRenderContext {
   _Atomic uint64_t layoutErrors;
   _Atomic uint32_t inChannels;
   _Atomic uint32_t outChannels;
+  _Atomic uint64_t deadOutputCallbacks;
 };
 
 BSRenderContext* BSRenderContextCreate(PunchEngine* engine) {
@@ -71,6 +72,7 @@ BSRenderStats BSRenderContextStats(const BSRenderContext* ctx) {
   s.layoutErrors = atomic_load_explicit(&c->layoutErrors, memory_order_relaxed);
   s.lastInputChannels = atomic_load_explicit(&c->inChannels, memory_order_relaxed);
   s.lastOutputChannels = atomic_load_explicit(&c->outChannels, memory_order_relaxed);
+  s.deadOutputCallbacks = atomic_load_explicit(&c->deadOutputCallbacks, memory_order_relaxed);
   return s;
 }
 
@@ -132,6 +134,7 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   const float target = atomic_load_explicit(&ctx->fadeTarget, memory_order_relaxed);
   const float step = atomic_load_explicit(&ctx->fadeStep, memory_order_relaxed);
   float tmp[kChunkFrames * kMaxChannels];
+  float outPeak = 0.f;
 
   for (UInt32 start = 0; start < frames; start += kChunkFrames) {
     const UInt32 n = (frames - start) < kChunkFrames ? (frames - start) : kChunkFrames;
@@ -146,6 +149,11 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
         for (UInt32 c = 0; c < inCh; ++c) tmp[i * inCh + c] *= g;
       }
       ctx->fadeGain = g;
+    }
+    for (UInt32 i = 0, m = n * inCh; i < m; ++i) {
+      const float a = fabsf(tmp[i]);
+      if (!(a <= 1e30f)) { outPeak = INFINITY; break; }  // NaN / Inf
+      if (a > outPeak) outPeak = a;
     }
 
     // Output channel k takes input channel k; a mono tap feeds every
@@ -164,6 +172,9 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
     }
   }
   if (target == 0.f && ctx->fadeGain == 0.f) atomic_store_explicit(&ctx->fadedOut, true, memory_order_relaxed);
+  // Watchdog signal: sound came in but nothing usable went out (and we're
+  // not deliberately fading). The Swift side steps aside if this persists.
+  if (!silent && target == 1.f && (outPeak < 1e-6f || isinf(outPeak))) bump(&ctx->deadOutputCallbacks);
   atomic_fetch_add_explicit(&ctx->frames, frames, memory_order_relaxed);
   return noErr;
 }

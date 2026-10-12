@@ -18,6 +18,12 @@ final class LiveDrawer {
   var isShown: Bool { panel?.isVisible ?? false }
 
   func show(model: LiveChannels) {
+    show(LiveChannelsPanel(model: model))
+  }
+
+  /// Shows any content in the drawer (Live Channels, DJ pads), replacing
+  /// what was there.
+  func show<Content: View>(_ content: Content) {
     guard let host else { return }
     if panel == nil {
       let p = DrawerPanel(contentRect: NSRect(x: 0, y: 0, width: host.frame.width, height: 120),
@@ -29,21 +35,21 @@ final class LiveDrawer {
       p.hidesOnDeactivate = false
       p.isReleasedWhenClosed = false
 
-      // The hosting controller sizes the window to the content (rows come
-      // and go); the resize observer keeps its top edge under the popover.
-      let root = LiveChannelsPanel(model: model)
-        .frame(width: host.frame.width)
-        .background(VisualEffectBackground())
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-      let hosting = NSHostingController(rootView: root)
-      hosting.sizingOptions = [.preferredContentSize]
-      p.contentViewController = hosting
       panel = p
       // Keep the top edge pinned under the popover as rows come and go.
       resizeObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: p,
                                                               queue: .main) { [weak self] _ in self?.reposition() }
     }
     guard let panel else { return }
+    // The hosting controller sizes the window to the content (rows come
+    // and go); the resize observer keeps its top edge under the popover.
+    let root = content
+      .frame(width: host.frame.width)
+      .background(VisualEffectBackground())
+      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    let hosting = NSHostingController(rootView: AnyView(root))
+    hosting.sizingOptions = [.preferredContentSize]
+    panel.contentViewController = hosting
     panel.level = host.level
     if panel.parent !== host { host.addChildWindow(panel, ordered: .above) }
     reposition()

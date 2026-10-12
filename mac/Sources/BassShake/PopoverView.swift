@@ -42,10 +42,6 @@ struct PopoverView: View {
       sliders
       ModesView(controller: controller)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.settings.mode)
-      if showDJ {
-        DJView(controller: controller)
-          .transition(.opacity.combined(with: .move(edge: .bottom)))
-      }
       Divider().opacity(0.5)
       footer
     }
@@ -58,7 +54,19 @@ struct PopoverView: View {
     }
     .background(HostWindowReader { LiveDrawer.shared.host = $0 })
     .onChange(of: showLive) { _, on in
-      if on { LiveDrawer.shared.show(model: controller.live) } else { LiveDrawer.shared.hide() }
+      if on {
+        showDJ = false
+        LiveDrawer.shared.show(model: controller.live)
+      } else if !showDJ {
+        LiveDrawer.shared.hide()
+      }
+    }
+    .onChange(of: showDJ) { _, on in
+      if on {
+        LiveDrawer.shared.show(DJView(controller: controller))
+      } else if !showLive {
+        LiveDrawer.shared.hide()
+      }
     }
     .onAppear {
       visible = true
@@ -69,6 +77,7 @@ struct PopoverView: View {
       visible = false
       meters.reset()
       showLive = false
+      showDJ = false
       LiveDrawer.shared.hide()
       controller.live.setMetering(false)
     }
@@ -223,7 +232,7 @@ struct PopoverView: View {
     HStack(spacing: 8) {
       LiveChannelsButton(model: controller.live, expanded: $showLive)
       Button {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { showDJ.toggle() }
+        if showDJ { showDJ = false } else { showLive = false; showDJ = true }
       } label: {
         HStack(spacing: 3) {
           Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
@@ -276,6 +285,7 @@ struct PopoverView: View {
           withAnimation { showDrivers = true }
         }
         Divider()
+        Button("Copy Diagnostics") { controller.copyDiagnostics() }
         Button("Check for Updates…") { updates.checkNow() }
         if let err = updates.startError { Text("Updates unavailable: \(err)") }
         Text("Version \(updates.currentVersion)")
