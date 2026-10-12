@@ -51,6 +51,11 @@ struct DJView: View {
         .gesture(DragGesture(minimumDistance: 0)
           .onChanged { _ in if !controller.dj.held.contains(pad) { controller.dj.held.insert(pad) } }
           .onEnded { _ in controller.dj.held.remove(pad) })
+        .accessibilityElement()
+        .accessibilityLabel(pad.title)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(on ? "On" : "Off")
+        .accessibilityAction { if pinned { controller.dj.pinned.remove(pad) } else { controller.dj.pinned.insert(pad) } }
       Button {
         if pinned { controller.dj.pinned.remove(pad) } else { controller.dj.pinned.insert(pad) }
       } label: {

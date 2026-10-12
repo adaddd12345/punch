@@ -201,7 +201,37 @@ final class AudioController: ObservableObject {
 
   func toggle() { settings.enabled.toggle() }
 
+  // MARK: Undo (⌘Z): the sound, not the switches
+
+  private struct SoundSnapshot {
+    var bands: [EQBand], bass: Double, boostDb: Double, character: SoundCharacter
+    var presetName: String?, userPresetID: UUID?, userPresets: [UserPreset]
+  }
+  private var undoStack: [SoundSnapshot] = []
+  var canUndo: Bool { !undoStack.isEmpty }
+
+  /// Call just before an edit (drag start, preset apply, delete).
+  func pushUndo() {
+    let s = settings
+    undoStack.append(SoundSnapshot(bands: s.bands, bass: s.bass, boostDb: s.boostDb, character: s.character,
+                                   presetName: s.presetName, userPresetID: s.userPresetID, userPresets: s.userPresets))
+    if undoStack.count > 30 { undoStack.removeFirst() }
+  }
+
+  func undo() {
+    guard let u = undoStack.popLast() else { return }
+    morphTimer?.invalidate()
+    settings.presetName = u.presetName
+    settings.userPresetID = u.userPresetID
+    settings.bass = u.bass
+    settings.boostDb = u.boostDb
+    settings.character = u.character
+    settings.userPresets = u.userPresets
+    settings.bands = u.bands
+  }
+
   func apply(preset: Preset) {
+    pushUndo()
     leaveModeQuietly()
     settings.presetName = preset.name
     settings.userPresetID = nil
@@ -213,6 +243,7 @@ final class AudioController: ObservableObject {
   // MARK: - User presets
 
   func apply(userPreset p: UserPreset) {
+    pushUndo()
     settings.presetName = nil
     settings.userPresetID = p.id
     leaveModeQuietly()
@@ -255,6 +286,7 @@ final class AudioController: ObservableObject {
   }
 
   func deleteUserPreset(_ id: UUID) {
+    pushUndo()   // ⌘Z brings it back
     settings.userPresets.removeAll { $0.id == id }
     if settings.userPresetID == id { settings.userPresetID = nil }
   }
@@ -329,6 +361,13 @@ final class AudioController: ObservableObject {
   func copyDiagnostics() {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(diagnosticSummary(), forType: .string)
+  }
+
+  func reportBug() {
+    let body = "What happened?\n\n\n---\n" + diagnosticSummary()
+    var c = URLComponents(string: "https://github.com/adaddd12345/punch/issues/new")!
+    c.queryItems = [URLQueryItem(name: "title", value: "Bug: "), URLQueryItem(name: "body", value: body)]
+    if let u = c.url { NSWorkspace.shared.open(u) }
   }
 
   func centerBalance() {
@@ -1013,6 +1052,17 @@ final class AudioController: ObservableObject {
       AudioCapturePermission.preflightAsync { state in
         if state == .granted { self.retry() }
       }
+    })
+    // Fast user switching: stop while another account has the Mac.
+    observers.append(ws.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      guard let self else { return }
+      self.isSleeping = true
+      self.rebuildWork?.cancel()
+      self.audioQueue.async { self.pipelineStop(fade: false) }
+    })
+    observers.append(ws.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.isSleeping = false
+      DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.5) }
     })
     observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
       self?.isSleeping = false

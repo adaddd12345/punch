@@ -119,6 +119,7 @@ struct Chip<Icon: View>: View {
       .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
     }
     .buttonStyle(.plain)
+    .accessibilityAddTraits(selected ? .isSelected : [])
     .animation(.easeOut(duration: 0.15), value: selected)
   }
 }

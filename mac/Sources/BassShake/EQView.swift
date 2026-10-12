@@ -52,6 +52,17 @@ struct EQView: View {
         }
       }
       .contentShape(Rectangle())
+      .accessibilityRepresentation {
+        VStack {
+          ForEach(bands.indices, id: \.self) { i in
+            Slider(value: Binding(get: { controller.settings.bands[i].gain },
+                                  set: { g in var b = controller.settings.bands[i]; b.gain = g; controller.update(band: i, to: b) }),
+                   in: EQBand.gainRange)
+              .accessibilityLabel("EQ band \(i + 1), \(Int(bands[i].freq)) hertz")
+              .accessibilityValue("\(String(format: "%.1f", bands[i].gain)) decibels")
+          }
+        }
+      }
       .gesture(dragGesture(size: size))
       .simultaneousGesture(TapGesture(count: 2).onEnded { resetHovered() })
       .onContinuousHover { phase in
@@ -196,6 +207,7 @@ struct EQView: View {
         if grabbed == nil {
           guard let i = nearest(v.startLocation, size: size) else { return }
           grabbed = i
+          controller.pushUndo()
           dragOrigin = (controller.settings.bands[i], v.startLocation)
           snapped = abs(controller.settings.bands[i].gain) < 0.01
         }

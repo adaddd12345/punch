@@ -1,6 +1,8 @@
 import AppKit
+import Combine
 import os
 import SwiftUI
+import UserNotifications
 
 @main
 struct BassShakeApp: App {
@@ -10,10 +12,14 @@ struct BassShakeApp: App {
     // The menu-bar item and popover are AppKit (see AppDelegate); this scene
     // only satisfies SwiftUI's need for one.
     SwiftUI.Settings { EmptyView() }
+      .commands {
+        // No preferences window exists, so don't offer an empty one on ⌘,.
+        CommandGroup(replacing: .appSettings) {}
+      }
   }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "app")
   let controller: AudioController
   let updates: Updates
@@ -62,11 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
     log.notice("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")
-    // A menu-bar-only app is invisible when launched from Finder, and its
-    // icon can be hidden behind the notch or by macOS 26's menu bar
-    // settings. Always show the controls in a window on launch.
-    showWindow()
-    log.notice("window shown")
+    // Only the first run shows it (the explainer); later launches, updates
+    // and login launches start quietly. Reopening the app still shows it.
+    if controller.needsOnboarding { showWindow() }
     setUpStatusItem()
     controller.onPinChange = { [weak self] _, _ in self?.applyPopoverBehavior() }
     DispatchQueue.main.async { [controller] in controller.bootstrap() }
@@ -106,8 +110,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     item.button?.imagePosition = .imageOnly
     item.button?.target = self
     item.button?.action = #selector(statusClicked(_:))
-    item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp, .otherMouseUp])
+    item.button?.setAccessibilityLabel("The Bass Shaker")
+    item.autosaveName = "BassShakeStatusItem"
     statusItem = item
+    popover.delegate = self
+    UNUserNotificationCenter.current().delegate = self
+
+    Publishers.CombineLatest3(controller.$settings.map(\.enabled), controller.$bypassed, controller.$status)
+      .receive(on: RunLoop.main)
+      .sink { [weak self] enabled, bypassed, status in self?.updateStatusIcon(enabled: enabled, bypassed: bypassed, status: status) }
+      .store(in: &cancellables)
+    // Unpinned, the popover goes away with the app losing focus or a Space change.
+    let nc = NotificationCenter.default
+    nc.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.closeIfUnpinned()
+    }
+    NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.closeIfUnpinned()
+    }
 
     let host = NSHostingController(rootView: PopoverView(controller: controller).environmentObject(updates))
     host.sizingOptions = [.preferredContentSize]
@@ -125,10 +146,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   private var outsideClickMonitors: [Any] = []
+  private var cancellables = Set<AnyCancellable>()
+  private var lastProblem: String?
+
+  private func closeIfUnpinned() {
+    if popover.isShown && !controller.pinned { closePopover() }
+  }
+
+  /// The icon shows state without opening anything: dimmed when off, "A/B"
+  /// while comparing with the original, "!" when something needs attention.
+  private func updateStatusIcon(enabled: Bool, bypassed: Bool, status: AudioController.Status) {
+    guard let b = statusItem?.button else { return }
+    var tip = "The Bass Shaker: On"
+    var title = ""
+    var problem: String?
+    switch status {
+    case .needsPermission:
+      title = "!"; tip = "The Bass Shaker needs permission to hear your Mac"
+      problem = "It needs the System Audio Recording permission. Click the icon for steps."
+    case .audioServiceStuck:
+      title = "!"; tip = "macOS audio isn't responding"
+      problem = "macOS's audio service isn't responding. Click the icon to restart it."
+    case .failed:
+      title = "!"; tip = "The Bass Shaker couldn't start"
+      problem = "Sound enhancement stopped. Click the icon for details."
+    default:
+      if !enabled { tip = "The Bass Shaker: Off" } else if bypassed { title = "A/B"; tip = "The Bass Shaker: Original sound (A/B)" }
+    }
+    b.title = title
+    b.font = NSFont.systemFont(ofSize: 10, weight: .bold)
+    b.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+    b.alphaValue = enabled ? 1 : 0.45
+    b.toolTip = tip
+    b.setAccessibilityValue(tip)
+    if let p = problem, enabled {
+      if p != lastProblem && !popover.isShown { notifyProblem(p) }
+      lastProblem = p
+    } else {
+      lastProblem = nil
+    }
+  }
+
+  private func notifyProblem(_ text: String) {
+    let c = UNUserNotificationCenter.current()
+    c.requestAuthorization(options: [.alert]) { ok, _ in
+      guard ok else { return }
+      let n = UNMutableNotificationContent()
+      n.title = "The Bass Shaker"
+      n.body = text
+      c.add(UNNotificationRequest(identifier: "problem", content: n, trigger: nil))
+    }
+  }
+
+  func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                              withCompletionHandler completionHandler: @escaping () -> Void) {
+    DispatchQueue.main.async { [weak self] in
+      if let self, !self.popover.isShown { self.togglePopover(nil) }
+    }
+    completionHandler()
+  }
+
+  func popoverDidClose(_ notification: Notification) {
+    removeOutsideClickMonitors()
+    statusItem?.button?.highlight(false)
+  }
 
   @objc private func statusClicked(_ sender: Any?) {
-    if NSApp.currentEvent?.type == .rightMouseUp {
+    let e = NSApp.currentEvent
+    if e?.type == .rightMouseUp || e?.modifierFlags.contains(.control) == true {
       showStatusMenu()
+    } else if e?.type == .otherMouseUp {
+      controller.toggle()                       // middle click: on/off
+    } else if e?.modifierFlags.contains(.option) == true {
+      if controller.settings.enabled { controller.bypassed.toggle() }   // ⌥-click: A/B
     } else {
       togglePopover(sender)
     }
@@ -143,12 +233,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       // A menu-bar-only app must activate for the popover to take keys.
       NSApp.activate(ignoringOtherApps: true)
       popover.contentViewController?.view.window?.makeKey()
+      popover.contentViewController?.view.window?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+      button.highlight(true)
       installOutsideClickMonitors()
     }
   }
 
   private func closePopover() {
     removeOutsideClickMonitors()
+    statusItem?.button?.highlight(false)
     popover.performClose(nil)
   }
 
@@ -162,6 +255,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       guard let self, !self.controller.pinned else { return }
       self.closePopover()
     }) { outsideClickMonitors.append(g) }
+    // Esc closes an unpinned popover, ⌘W closes it, ⌘Z undoes a sound edit.
+    if let k = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+      guard let self, self.popover.isShown else { return event }
+      let cmd = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
+      if event.keyCode == 53, !self.controller.pinned { self.closePopover(); return nil }
+      if cmd, event.charactersIgnoringModifiers == "w" { self.closePopover(); return nil }
+      if cmd, event.charactersIgnoringModifiers == "z" { self.controller.undo(); return nil }
+      return event
+    }) { outsideClickMonitors.append(k) }
     if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
       guard let self, !self.controller.pinned, let w = event.window else { return event }
       let popoverWindow = self.popover.contentViewController?.view.window
@@ -181,12 +283,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func showStatusMenu() {
     let menu = NSMenu()
-    menu.addItem(withTitle: popover.isShown ? "Hide The Bass Shaker" : "Open The Bass Shaker",
-                 action: #selector(menuToggle), keyEquivalent: "").target = self
-    let pin = menu.addItem(withTitle: controller.pinned ? "Unpin" : "Pin Open", action: #selector(menuPin), keyEquivalent: "")
-    pin.target = self
+    func add(_ title: String, _ sel: Selector, on: Bool = false, key: String = "") {
+      let it = menu.addItem(withTitle: title, action: sel, keyEquivalent: key)
+      it.target = self
+      it.state = on ? .on : .off
+    }
+    add(popover.isShown ? "Hide The Bass Shaker" : "Open The Bass Shaker", #selector(menuToggle))
     menu.addItem(.separator())
-    menu.addItem(withTitle: "Quit", action: #selector(menuQuit), keyEquivalent: "q").target = self
+    add("On", #selector(menuEnabled), on: controller.settings.enabled)
+    if controller.settings.enabled { add("Original Sound (A/B)", #selector(menuBypass), on: controller.bypassed) }
+    let presets = NSMenuItem(title: "Preset", action: nil, keyEquivalent: "")
+    let sub = NSMenu()
+    for p in Preset.all {
+      let it = sub.addItem(withTitle: p.name, action: #selector(menuPreset(_:)), keyEquivalent: "")
+      it.target = self
+      it.state = controller.settings.presetName == p.name ? .on : .off
+    }
+    presets.submenu = sub
+    menu.addItem(presets)
+    menu.addItem(.separator())
+    add(controller.pinned ? "Unpin" : "Pin Open", #selector(menuPin))
+    add("Open at Login", #selector(menuLogin), on: LoginItem.isOn)
+    menu.addItem(.separator())
+    add("Check for Updates…", #selector(menuUpdates))
+    add("About The Bass Shaker", #selector(menuAbout))
+    menu.addItem(.separator())
+    add("Quit", #selector(menuQuit), key: "q")
     let force = menu.addItem(withTitle: "Force Quit", action: #selector(menuForceQuit), keyEquivalent: "")
     force.target = self
     force.toolTip = "Ends The Bass Shaker immediately, even if it's stuck. Your Mac's sound goes back to normal."
@@ -195,6 +317,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     statusItem?.menu = nil                  // left-click keeps toggling the popover
   }
 
+  @objc private func menuEnabled() { controller.toggle() }
+  @objc private func menuBypass() { controller.bypassed.toggle() }
+  @objc private func menuPreset(_ sender: NSMenuItem) {
+    if let p = Preset.all.first(where: { $0.name == sender.title }) { controller.apply(preset: p) }
+  }
+  @objc private func menuLogin() { LoginItem.set(!LoginItem.isOn) }
+  @objc private func menuUpdates() { updates.checkNow() }
+  @objc private func menuAbout() { AboutPanel.show() }
   @objc private func menuToggle() { togglePopover(nil) }
   @objc private func menuPin() { controller.setPinned(!controller.pinned, from: nil) }
   @objc private func menuQuit() { NSApp.terminate(nil) }

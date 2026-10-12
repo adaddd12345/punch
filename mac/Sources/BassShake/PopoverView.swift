@@ -5,11 +5,12 @@ struct PopoverView: View {
   @ObservedObject var controller: AudioController
   @ObservedObject var meters: MeterModel
   @EnvironmentObject var updates: Updates
-  private let meterTimer = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
+  @State private var ticker = MeterTicker()
   @State private var visible = false
   @State private var editor: PresetEditor.Mode?
   @State private var showDrivers = false
   @State private var showLive = false
+  @State private var loginOn = LoginItem.isOn
   @State private var showDJ = false
   @ObservedObject private var latencyLab = LatencyLab.shared
   @State private var showLatencyLab = false
@@ -68,11 +69,6 @@ struct PopoverView: View {
     }
     .padding(12)
     .frame(width: 360)
-    .onReceive(meterTimer) { _ in
-      guard visible else { return }
-      meters.update(controller.pollMeters())
-      if controller.settings.waveform && role != .launchWindow { controller.waveform.pull(controller) }
-    }
     .background(HostWindowReader { w in
       guard let w, window.window !== w else { return }  // only real changes (runs every frame)
       window.window = w
@@ -96,12 +92,18 @@ struct PopoverView: View {
     }
     .onAppear {
       visible = true
+      // 60 Hz meters only while this is on screen (nothing runs when closed).
+      ticker.start { [controller, meters, role] in
+        meters.update(controller.pollMeters())
+        if controller.settings.waveform && role != .launchWindow { controller.waveform.pull(controller) }
+      }
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
       latencyLab.startMonitoring()
       updates.checkInBackgroundIfStale()
     }
     .onDisappear {
       visible = false
+      ticker.stop()
       meters.reset()
       showLive = false
       showDJ = false
@@ -141,6 +143,8 @@ struct PopoverView: View {
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("View size: \(controller.settings.viewSize.title)")
+        .accessibilityHint("Switches to \(controller.settings.viewSize.next.title)")
         .help("View: \(controller.settings.viewSize.title). Click for \(controller.settings.viewSize.next.title).")
       }
       if role != .launchWindow {
@@ -153,6 +157,7 @@ struct PopoverView: View {
             .rotationEffect(.degrees(controller.pinned ? 0 : 45))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(controller.pinned ? "Unpin" : "Pin open")
         .help(controller.pinned ? "Unpin: close when you click elsewhere" : "Pin: keep this open when you click elsewhere")
       }
       if controller.settings.enabled {
@@ -164,9 +169,11 @@ struct PopoverView: View {
             .background(Capsule().fill(controller.bypassed ? Color.orange : Color.primary.opacity(0.08)))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Compare with original sound")
+        .accessibilityValue(controller.bypassed ? "Original" : "Processed")
         .help("Compare with the original sound (\(GlobalHotkey.bypassLabel) from anywhere)")
       }
-      Toggle("", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
+      Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
         .toggleStyle(.switch)
         .controlSize(.small)
         .labelsHidden()
@@ -393,6 +400,10 @@ struct PopoverView: View {
         }
         Divider()
         Button("Copy Diagnostics") { controller.copyDiagnostics() }
+        Button("Report a Bug…") { controller.reportBug() }
+        Button("Undo Sound Change") { controller.undo() }.disabled(!controller.canUndo)
+        Toggle("Open at Login", isOn: Binding(get: { loginOn }, set: { LoginItem.set($0); loginOn = LoginItem.isOn }))
+        Button("About The Bass Shaker") { AboutPanel.show() }
         Button("Check for Updates…") { updates.checkNow() }
         if let err = updates.startError { Text("Updates unavailable: \(err)") }
         Text("Version \(updates.currentVersion)")
@@ -427,6 +438,8 @@ private struct LabeledSlider: View {
         .frame(width: 74, alignment: .leading)
       Slider(value: $value, in: range)
         .controlSize(.small)
+        .accessibilityLabel(title)
+        .accessibilityValue(format(value))
       Text(format(value))
         .font(.system(size: 10, weight: .medium, design: .rounded))
         .monospacedDigit()
@@ -465,4 +478,18 @@ private struct Banner: View {
 /// Holds the hosting window without triggering SwiftUI updates.
 final class WindowRef {
   weak var window: NSWindow?
+}
+
+
+/// Drives the 60 Hz meter/scope refresh only while a window is showing.
+final class MeterTicker {
+  private var timer: Timer?
+  func start(_ tick: @escaping () -> Void) {
+    stop()
+    let t = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in tick() }
+    RunLoop.main.add(t, forMode: .common)
+    timer = t
+  }
+  func stop() { timer?.invalidate(); timer = nil }
+  deinit { timer?.invalidate() }
 }
