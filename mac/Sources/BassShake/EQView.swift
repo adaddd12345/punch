@@ -32,7 +32,7 @@ struct EQView: View {
       let bands = controller.settings.bands
       ZStack {
         if controller.settings.waveform && controller.settings.enabled {
-          WaveformView(model: controller.waveform)
+          WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
             .allowsHitTesting(false)
         }
         Canvas { ctx, size in draw(ctx, size: size, bands: bands) }

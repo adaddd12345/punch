@@ -309,6 +309,10 @@ struct PopoverView: View {
         Divider()
         Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
                                             set: { controller.settings.waveform = $0 }))
+        Picker("Scope Color", selection: Binding(get: { controller.settings.scopeColor },
+                                                  set: { controller.settings.scopeColor = $0 })) {
+          ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
+        }
         Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
                                               set: { controller.settings.fadeWindows = $0 }))
         Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },

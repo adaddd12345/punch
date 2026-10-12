@@ -285,6 +285,13 @@ struct DJState: Equatable {
   var anyActive: Bool { !held.isEmpty || !pinned.isEmpty || abs(filter) > 0.01 }
 }
 
+/// Scope trace colour: the Mac's accent colour, or a fixed one.
+enum ScopeColor: String, Codable, CaseIterable, Identifiable {
+  case accent, yellow, green, cyan, magenta, white
+  var id: String { rawValue }
+  var title: String { self == .accent ? "System Accent" : rawValue.capitalized }
+}
+
 /// Sleep timer presets in minutes; 0 = no timer.
 enum SleepTimer {
   static let choices = [15, 30, 45, 60, 90]
@@ -379,6 +386,7 @@ struct Settings: Codable, Equatable {
   var fadeWindows = true
   /// Live oscilloscope trace behind the EQ curve.
   var waveform = true
+  var scopeColor: ScopeColor = .accent
   var nightGuardDb: Double = 8
   /// Balance Lock: keep the system's left/right balance centred.
   var balanceLock = false
@@ -437,6 +445,7 @@ struct Settings: Codable, Equatable {
     nightGuard = try c.decodeIfPresent(Bool.self, forKey: .nightGuard) ?? d.nightGuard
     fadeWindows = try c.decodeIfPresent(Bool.self, forKey: .fadeWindows) ?? d.fadeWindows
     waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
+    scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
   }
