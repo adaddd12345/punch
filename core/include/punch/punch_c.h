@@ -62,6 +62,13 @@ void punch_set_saturator(PunchEngine* e, bool enabled, float drive_db, float mix
 void punch_set_ambience(PunchEngine* e, bool enabled, float mix, float size, float damping_hz);
 /* color: 0 white, 1 pink, 2 brown. level_db is RMS dBFS. */
 void punch_set_noise(PunchEngine* e, bool enabled, int color, float level_db);
+/* Night Guard: turns down anything more than over_db louder than the running
+ * average (e.g. a loud title sequence after quiet dialogue). */
+void punch_set_loudness_guard(PunchEngine* e, bool enabled, float over_db, float max_cut_db);
+float punch_loudness_guard_cut_db(const PunchEngine* e);
+/* DJ effects. filter: -1..1 (<0 low-pass sweep, >0 high-pass sweep, 0 off). */
+void punch_set_dj(PunchEngine* e, bool low_kill, bool mid_kill, bool high_kill, float filter, bool echo, bool crush,
+                  bool drive);
 
 /* Correction stage (applied before the user EQ): headphone correction or
  * additive layers like Studio Ears. */

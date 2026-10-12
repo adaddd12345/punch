@@ -41,6 +41,8 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   compressor_.prepare(sampleRate);
   saturator_.prepare(sampleRate, numChannels_);
   ambience_.prepare(sampleRate);
+  dj_.prepare(sampleRate, numChannels_);
+  guard_.prepare(sampleRate);
   noise_.prepare(sampleRate);
   outGain_.prepare(sampleRate, 15.0);
   outGain_.snap(1.f);
@@ -100,6 +102,8 @@ void Engine::applySnapshot(const EngineParams& p) {
     saturator_.setParams({});
     ambience_.setParams({});
     noise_.setParams({});
+    dj_.setParams({});
+    guard_.setParams({});
     outGain_.setTarget(1.f);
     LimiterParams lp = p.limiter;
     lp.ceilingDb = 0.f;
@@ -118,6 +122,8 @@ void Engine::applySnapshot(const EngineParams& p) {
   saturator_.setParams(p.saturator);
   ambience_.setParams(p.ambience);
   noise_.setParams(p.noise);
+  dj_.setParams(p.dj);
+  guard_.setParams(p.guard);
   outGain_.setTarget(dbToGain(std::clamp(p.outputGainDb, -60.f, 24.f)));
   limiter_.setParams(p.limiter);
   bassPriority_ = p.limiter.enabled;
@@ -142,6 +148,9 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   stereo_.process(ch, numChannels, numFrames);
   ambience_.process(ch, numChannels, numFrames);
   crossfeed_.process(ch, numChannels, numFrames);
+  // DJ effects, then Night Guard (so a guarded level isn't undone by them).
+  dj_.process(ch, numChannels, numFrames);
+  guard_.process(ch, numChannels, numFrames);
   if (!(outGain_.settled() && outGain_.current() == 1.f)) {
     for (int i = 0; i < numFrames; ++i) {
       const float g = outGain_.next();
@@ -170,6 +179,8 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     compressor_.reset();
     saturator_.reset();
     ambience_.reset();
+    dj_.reset();
+    guard_.reset();
     noise_.reset();
     limiter_.reset();
     bassLimiter_.reset();

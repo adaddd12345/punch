@@ -34,9 +34,45 @@ struct ModesView: View {
           .help(m == .study ? "Lo-fi study sound: warm, soft highs, gentle tape character." : "Sleep: dark, soft and level, with a fade-out timer.")
         }
       }
+      nightGuardRow
       if s.mode != .off {
         panel
           .transition(.opacity.combined(with: .move(edge: .top)))
+      }
+    }
+  }
+
+  /// Night Guard: keeps loud surprises (a booming title sequence after quiet
+  /// dialogue) from jumping more than N dB above what you've been hearing.
+  private var nightGuardRow: some View {
+    HStack(spacing: 6) {
+      Chip(title: "Night Guard", selected: s.nightGuard) {
+        Image(systemName: "moon.haze").font(.system(size: 9, weight: .semibold))
+      } action: {
+        controller.settings.nightGuard.toggle()
+      }
+      .help("Turns down anything that gets suddenly louder than what you've been listening to, like a booming title sequence after quiet dialogue. Quiet parts are left alone.")
+      if s.nightGuard {
+        Text("Allow")
+          .font(.system(size: 9, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
+        Slider(value: Binding(get: { s.nightGuardDb }, set: { controller.settings.nightGuardDb = $0.rounded() }), in: 3...15)
+          .controlSize(.mini)
+          .frame(width: 80)
+        Text("+\(Int(s.nightGuardDb)) dB")
+          .font(.system(size: 9, weight: .medium, design: .rounded))
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
+        Spacer(minLength: 2)
+        if controller.nightGuardCutDb < -0.5 {
+          Text(String(format: "−%.0f dB", -controller.nightGuardCutDb))
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .padding(.horizontal, 5).padding(.vertical, 1)
+            .foregroundStyle(.white)
+            .background(Capsule().fill(Color.indigo))
+            .help("Night Guard is turning things down right now")
+        }
       }
     }
   }

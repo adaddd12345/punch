@@ -218,6 +218,41 @@ enum Loudness {
   static func makeupDb(volume v: Double) -> Double { 3.5 * amount(volume: v) }
 }
 
+/// DJ pads: held while pressed, or pinned on. Not saved.
+struct DJState: Equatable {
+  enum Pad: String, CaseIterable, Identifiable {
+    case low, mid, high, echo, crush, drive
+    var id: String { rawValue }
+    var title: String {
+      switch self {
+      case .low: return "LOW"
+      case .mid: return "MID"
+      case .high: return "HIGH"
+      case .echo: return "ECHO"
+      case .crush: return "CRUSH"
+      case .drive: return "DRIVE"
+      }
+    }
+    var help: String {
+      switch self {
+      case .low: return "Kill the bass (below 250 Hz)"
+      case .mid: return "Kill the mids (vocals, 250 Hz–3 kHz)"
+      case .high: return "Kill the highs (above 3 kHz)"
+      case .echo: return "Echo: 3/8-second repeats; the tail rings out when you let go"
+      case .crush: return "Bit-crusher: lo-fi, gritty digital"
+      case .drive: return "Distortion: hard, saturated"
+      }
+    }
+  }
+  var held: Set<Pad> = []
+  var pinned: Set<Pad> = []
+  var filter: Double = 0        // -1...1 (low-pass ... high-pass)
+  var filterPinned = false
+
+  func isOn(_ p: Pad) -> Bool { held.contains(p) || pinned.contains(p) }
+  var anyActive: Bool { !held.isEmpty || !pinned.isEmpty || abs(filter) > 0.01 }
+}
+
 /// Sleep timer presets in minutes; 0 = no timer.
 enum SleepTimer {
   static let choices = [15, 30, 45, 60, 90]
@@ -307,6 +342,12 @@ struct Settings: Codable, Equatable {
   var limit = false
   /// Animated live waveform behind the EQ curve.
   var waveform = true
+  /// Night Guard: turn down anything much louder than what you've been
+  /// listening to (a loud title sequence after quiet dialogue).
+  var nightGuard = false
+  var nightGuardDb: Double = 8
+  /// Balance Lock: keep the system's left/right balance centred.
+  var balanceLock = false
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -359,6 +400,9 @@ struct Settings: Codable, Equatable {
     checkDrivers = try c.decodeIfPresent(Bool.self, forKey: .checkDrivers) ?? d.checkDrivers
     limit = try c.decodeIfPresent(Bool.self, forKey: .limit) ?? d.limit
     waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
+    nightGuard = try c.decodeIfPresent(Bool.self, forKey: .nightGuard) ?? d.nightGuard
+    nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
+    balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
   }
 
   static func load() -> Settings {

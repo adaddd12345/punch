@@ -12,9 +12,11 @@
 #include <thread>
 #include <vector>
 
+#include "punch/analysis.hpp"
 #include "punch/autoeq.hpp"
 #include "punch/character.hpp"
 #include "punch/engine.hpp"
+#include "punch/fx.hpp"
 #include "punch/lockfree.hpp"
 #include "punch/svf.hpp"
 
@@ -324,6 +326,8 @@ TEST(engine_process_is_allocation_free) {
   e.edit().saturator = {12.f, 0.5f, 12000.f, 0.2f, 120.f, true};
   e.edit().ambience = {0.3f, 0.5f, 7000.f, true};
   e.edit().noise = {NoiseColor::Pink, -40.f, true};
+  e.edit().dj = {true, false, false, -0.5f, true, true, true};
+  e.edit().guard = {8.f, 20.f, true};
   e.prepare(48000, 2, 1024);
   std::vector<float> buf(2048 * 2, 0.1f);
   e.edit().eq.bands[3].gainDb = -4;
@@ -606,6 +610,240 @@ TEST(bass_priority_does_not_duck_the_mids) {
   // bass-priority limiter takes the reduction from the bass alone.
   CHECK(dipPlain > 3.0);
   CHECK(dipBp < 1.0);
+}
+
+// ---- Night Guard and DJ effects
+
+static double rmsDbRange(const std::vector<float>& x, size_t a, size_t b) {
+  double s = 0;
+  for (size_t i = a; i < b; ++i) s += double(x[i]) * x[i];
+  return 10 * std::log10(s / double(b - a) + 1e-20);
+}
+
+TEST(night_guard_tames_a_loud_title_sequence) {
+  // 20 s of quiet "dialogue" (-32 dBFS noise), then 10 s of loud "titles"
+  // (-12 dBFS): a 20 dB jump. With an 8 dB allowance, the titles should land
+  // no more than ~8-9 dB above the dialogue; the dialogue is untouched.
+  const double fs = 48000;
+  LoudnessGuard g;
+  g.prepare(fs);
+  g.setParams({8.f, 20.f, true});
+  std::mt19937 rng(11);
+  std::normal_distribution<float> nd(0.f, 1.f);
+  const size_t n = size_t(30 * fs), loudAt = size_t(20 * fs);
+  std::vector<float> l(n), r(n);
+  for (size_t i = 0; i < n; ++i) {
+    const float a = i < loudAt ? dbToGain(-32.f) : dbToGain(-12.f);
+    l[i] = a * nd(rng);
+    r[i] = a * nd(rng);
+  }
+  const std::vector<float> in = l;
+  for (size_t s = 0; s < n; s += 512) {
+    float* p[2] = {l.data() + s, r.data() + s};
+    g.process(p, 2, int(std::min<size_t>(512, n - s)));
+  }
+  const double quietIn = rmsDbRange(in, size_t(10 * fs), loudAt);
+  const double quietOut = rmsDbRange(l, size_t(10 * fs), loudAt);
+  const double loudOut = rmsDbRange(l, loudAt + size_t(1 * fs), n);
+  CHECK(std::fabs(quietOut - quietIn) < 0.5);
+  CHECK(loudOut - quietOut < 9.5);
+  CHECK(loudOut - quietOut > 6.0);  // still clearly louder, not flattened
+}
+
+TEST(night_guard_off_is_transparent) {
+  LoudnessGuard g;
+  g.prepare(48000);
+  std::vector<float> l(4800), r(4800);
+  for (size_t i = 0; i < l.size(); ++i) l[i] = r[i] = float(std::sin(0.01 * double(i)));
+  const auto ref = l;
+  float* p[2] = {l.data(), r.data()};
+  g.process(p, 2, int(l.size()));
+  CHECK(l == ref);
+}
+
+TEST(dj_idle_is_bit_exact) {
+  DjFx d;
+  d.prepare(48000, 2);
+  std::vector<float> l(4800), r(4800);
+  for (size_t i = 0; i < l.size(); ++i) l[i] = r[i] = float(0.5 * std::sin(0.03 * double(i)));
+  const auto ref = l;
+  float* p[2] = {l.data(), r.data()};
+  d.process(p, 2, int(l.size()));
+  CHECK(l == ref);
+}
+
+static double toneMag(const std::vector<float>& x, double hz, double fs, size_t from) {
+  double re = 0, im = 0;
+  for (size_t i = from; i < x.size(); ++i) {
+    re += x[i] * std::cos(2 * std::numbers::pi * hz * double(i) / fs);
+    im += x[i] * std::sin(2 * std::numbers::pi * hz * double(i) / fs);
+  }
+  return std::sqrt(re * re + im * im) / double(x.size() - from);
+}
+
+TEST(dj_low_kill_removes_bass_keeps_mids) {
+  const double fs = 48000;
+  DjFx d;
+  d.prepare(fs, 2);
+  DjParams p;
+  p.lowKill = true;
+  d.setParams(p);
+  const size_t n = size_t(fs);
+  std::vector<float> l(n), r(n);
+  for (size_t i = 0; i < n; ++i)
+    l[i] = r[i] = float(0.4 * std::sin(2 * std::numbers::pi * 50 * double(i) / fs) +
+                        0.2 * std::sin(2 * std::numbers::pi * 1000 * double(i) / fs));
+  for (size_t s = 0; s < n; s += 512) {
+    float* q[2] = {l.data() + s, r.data() + s};
+    d.process(q, 2, int(std::min<size_t>(512, n - s)));
+  }
+  CHECK(toneMag(l, 50, fs, n / 2) < 0.4 / 2 * 0.1);      // > 20 dB down
+  CHECK(std::fabs(toneMag(l, 1000, fs, n / 2) - 0.1) < 0.012);  // mids within ~1 dB
+}
+
+TEST(dj_lowpass_sweep_cuts_highs) {
+  const double fs = 48000;
+  DjFx d;
+  d.prepare(fs, 2);
+  DjParams p;
+  p.filter = -0.8f;
+  d.setParams(p);
+  const size_t n = size_t(fs);
+  std::vector<float> l(n), r(n);
+  for (size_t i = 0; i < n; ++i) l[i] = r[i] = float(0.3 * std::sin(2 * std::numbers::pi * 8000 * double(i) / fs));
+  for (size_t s = 0; s < n; s += 512) {
+    float* q[2] = {l.data() + s, r.data() + s};
+    d.process(q, 2, int(std::min<size_t>(512, n - s)));
+  }
+  CHECK(toneMag(l, 8000, fs, n / 2) < 0.15 * 0.05);
+}
+
+// ---------------------------------------------------------------------------
+// Tempo and bass-pitch analysis.
+
+// Synthetic drum loop: kick on every beat, optional closed hats on the
+// off-beat eighths and a snare on 2 and 4.
+static std::vector<float> drumLoop(double bpm, double fs, double seconds, bool hats) {
+  const int n = int(fs * seconds);
+  std::vector<float> x(size_t(n), 0.f);
+  std::mt19937 rng(3);
+  std::uniform_real_distribution<float> ud(-1.f, 1.f);
+  const double beat = 60.0 / bpm;
+  float hpPrev = 0.f, hpOut = 0.f;
+  for (int i = 0; i < n; ++i) {
+    const double t = i / fs;
+    const int b = int(t / beat);
+    const double tb = t - b * beat;  // time since the beat
+    // Kick: pitch-swept sine, 150 -> 50 Hz.
+    const double f = 50.0 + 100.0 * std::exp(-tb / 0.02);
+    double s = 0.8 * std::sin(2.0 * std::numbers::pi * f * tb) * std::exp(-tb / 0.12);
+    const float nz = ud(rng);
+    hpOut = 0.9f * (hpOut + nz - hpPrev);  // crude high-pass for hats
+    hpPrev = nz;
+    if (hats) {
+      const double te = std::fmod(t + 0.5 * beat, 0.5 * beat * 2.0);  // off-beat eighth
+      if (te < 0.5 * beat) s += 0.25 * hpOut * std::exp(-te / 0.015);
+      if (b % 2 == 1) s += 0.35 * nz * std::exp(-tb / 0.06);  // snare on 2 and 4
+    }
+    x[size_t(i)] = float(s);
+  }
+  return x;
+}
+
+static double runTempo(const std::vector<float>& x, double fs, double* conf) {
+  TempoTracker t;
+  t.prepare(fs);
+  for (size_t i = 0; i < x.size(); i += 512) t.process(x.data() + i, std::min<size_t>(512, x.size() - i));
+  *conf = t.confidence();
+  return t.bpm();
+}
+
+TEST(tempo_120_kick_pattern) {
+  double conf = 0;
+  const double bpm = runTempo(drumLoop(120.0, 48000, 10.0, false), 48000, &conf);
+  std::printf("  120 bpm kick -> %.2f bpm, confidence %.2f\n", bpm, conf);
+  CHECK_NEAR(bpm, 120.0, 1.0);  // not 60 or 240
+  CHECK(conf > 0.6);
+}
+
+TEST(tempo_128_with_hats) {
+  for (double fs : {44100.0, 48000.0}) {
+    double conf = 0;
+    const double bpm = runTempo(drumLoop(128.0, fs, 10.0, true), fs, &conf);
+    std::printf("  128 bpm kick+hats+snare @%.0f -> %.2f bpm, confidence %.2f\n", fs, bpm, conf);
+    CHECK_NEAR(bpm, 128.0, 1.0);
+    CHECK(conf > 0.5);
+  }
+}
+
+TEST(tempo_noise_has_low_confidence) {
+  std::mt19937 rng(11);
+  std::uniform_real_distribution<float> ud(-0.3f, 0.3f);
+  std::vector<float> x(size_t(48000 * 10));
+  for (auto& v : x) v = ud(rng);
+  double conf = 1;
+  runTempo(x, 48000, &conf);
+  std::printf("  white noise -> tempo confidence %.2f\n", conf);
+  CHECK(conf < 0.3);
+}
+
+static void runPitch(BassPitchTracker& p, double hz, double fs, bool harmonics) {
+  p.prepare(fs);
+  std::vector<float> x(static_cast<size_t>(fs));  // 1 s
+  for (size_t i = 0; i < x.size(); ++i) {
+    const double ph = 2.0 * std::numbers::pi * hz * double(i) / fs;
+    double s = std::sin(ph);
+    if (harmonics) s += 0.6 * std::sin(2 * ph + 0.3) + 0.4 * std::sin(3 * ph + 1.1) + 0.25 * std::sin(4 * ph);
+    x[i] = float(0.3 * s);
+  }
+  for (size_t i = 0; i < x.size(); i += 512) p.process(x.data() + i, std::min<size_t>(512, x.size() - i));
+}
+
+TEST(bass_pitch_e1_and_a1) {
+  struct Case { double hz; int midi; const char* name; double fs; };
+  for (const Case& c : {Case{41.2034, 28, "E1", 48000}, Case{55.0, 33, "A1", 48000},
+                        Case{41.2034, 28, "E1", 44100}, Case{55.0, 33, "A1", 44100}}) {
+    BassPitchTracker p;
+    runPitch(p, c.hz, c.fs, true);
+    std::printf("  %.2f Hz @%.0f -> %.2f Hz %s %+.1f cents, confidence %.2f\n", c.hz, c.fs, p.hz(), p.noteName(),
+                p.cents(), p.confidence());
+    CHECK(p.midiNote() == c.midi);
+    CHECK(std::string(p.noteName()) == c.name);
+    CHECK(std::fabs(p.cents()) < 10.0);
+    CHECK(p.confidence() > 0.8);
+  }
+  BassPitchTracker pure;  // a bare sine too, and a higher bass note
+  runPitch(pure, 98.0, 48000, false);
+  CHECK(pure.midiNote() == 43);  // G2
+}
+
+TEST(bass_pitch_noise_has_low_confidence) {
+  BassPitchTracker p;
+  p.prepare(48000);
+  std::mt19937 rng(5);
+  std::uniform_real_distribution<float> ud(-0.3f, 0.3f);
+  std::vector<float> x(48000);
+  for (auto& v : x) v = ud(rng);
+  p.process(x.data(), x.size());
+  std::printf("  white noise -> pitch confidence %.2f, hz %.1f\n", p.confidence(), p.hz());
+  CHECK(p.confidence() < 0.5);
+  CHECK(p.hz() == 0.0);
+}
+
+TEST(analysis_process_is_allocation_free) {
+  TempoTracker t;
+  BassPitchTracker p;
+  t.prepare(48000);
+  p.prepare(48000);
+  const auto x = drumLoop(120.0, 48000, 5.0, true);
+  g_allocCount = 0;
+  g_trackAllocs = true;
+  for (size_t i = 0; i < x.size(); i += 256) {
+    t.process(x.data() + i, std::min<size_t>(256, x.size() - i));
+    p.process(x.data() + i, std::min<size_t>(256, x.size() - i));
+  }
+  g_trackAllocs = false;
+  CHECK(g_allocCount.load() == 0);
 }
 
 int main() {

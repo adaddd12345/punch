@@ -151,6 +151,27 @@ enum Devices {
     }
   }
 
+  /// Devices with input channels (microphones, interfaces), our own
+  /// aggregates excluded.
+  static func allInputs() -> [OutputDevice] {
+    let ids = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyDevices), of: AudioObjectID.self, zero: 0)) ?? []
+    return ids.compactMap { id -> OutputDevice? in
+      guard HAL.channelCount(id, scope: kAudioObjectPropertyScopeInput) > 0 else { return nil }
+      guard let uid = try? HAL.string(id, .global(kAudioDevicePropertyDeviceUID)), !uid.hasPrefix("com.bassshake.") else { return nil }
+      let name = (try? HAL.string(id, .global(kAudioObjectPropertyName))) ?? uid
+      let transport = (try? HAL.get(id, .global(kAudioDevicePropertyTransportType), default: UInt32(0))) ?? 0
+      return OutputDevice(id: id, uid: uid, name: name, transport: transport)
+    }
+  }
+
+  static func defaultInput() -> AudioObjectID {
+    (try? HAL.get(systemObject, .global(kAudioHardwarePropertyDefaultInputDevice), default: AudioObjectID(0))) ?? 0
+  }
+
+  static func setDefaultInput(_ id: AudioObjectID) throws {
+    try HAL.set(systemObject, .global(kAudioHardwarePropertyDefaultInputDevice), id)
+  }
+
   static func defaultOutput() -> AudioObjectID {
     (try? HAL.get(systemObject, .global(kAudioHardwarePropertyDefaultOutputDevice), default: AudioObjectID(0))) ?? 0
   }

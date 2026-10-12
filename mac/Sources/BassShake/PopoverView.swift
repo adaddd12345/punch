@@ -10,6 +10,7 @@ struct PopoverView: View {
   @State private var editor: PresetEditor.Mode?
   @State private var showDrivers = false
   @State private var showLive = false
+  @State private var showDJ = false
 
   init(controller: AudioController) {
     self.controller = controller
@@ -37,6 +38,10 @@ struct PopoverView: View {
       sliders
       ModesView(controller: controller)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.settings.mode)
+      if showDJ {
+        DJView(controller: controller)
+          .transition(.opacity.combined(with: .move(edge: .bottom)))
+      }
       Divider().opacity(0.5)
       footer
     }
@@ -109,6 +114,13 @@ struct PopoverView: View {
              text: "macOS's audio service isn't responding, so The Bass Shaker can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
              action: ("Restart macOS Audio", controller.restartAudioService),
              secondary: nil)
+    case _ where controller.channelNotice != nil:
+      Banner(symbol: "speaker.wave.2", tint: .blue, text: controller.channelNotice ?? "", action: nil, secondary: nil)
+    case _ where controller.balanceIsOff && !controller.settings.balanceLock:
+      Banner(symbol: "dial.low", tint: .orange,
+             text: "Your sound is panned to the \((controller.balance ?? 0.5) < 0.5 ? "left" : "right") by macOS's balance setting, so one side is quieter or silent.",
+             action: ("Centre It", controller.centerBalance),
+             secondary: ("Keep Centred", { controller.settings.balanceLock = true; controller.centerBalance() }))
     case .failed(let msg):
       Banner(symbol: "exclamationmark.triangle", tint: .red, text: msg,
              action: ("Retry", controller.retry), secondary: nil)
@@ -172,6 +184,10 @@ struct PopoverView: View {
     }
   }
 
+  private var currentInputName: String {
+    controller.inputs.first(where: { $0.id == controller.currentInputID })?.name ?? "None"
+  }
+
   /// Output picker (top right): follows and sets the system default output.
   private var deviceMenu: some View {
     Menu {
@@ -201,6 +217,20 @@ struct PopoverView: View {
   private var footer: some View {
     HStack(spacing: 8) {
       LiveChannelsButton(model: controller.live, expanded: $showLive)
+      Button {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { showDJ.toggle() }
+      } label: {
+        HStack(spacing: 3) {
+          Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
+          Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded))
+        }
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .foregroundStyle(controller.dj.anyActive ? Color.white : Color.primary)
+        .background(Capsule().fill(controller.dj.anyActive ? Color.purple
+                                   : (showDJ ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08))))
+      }
+      .buttonStyle(.plain)
+      .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
       Spacer()
       if case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
@@ -214,6 +244,21 @@ struct PopoverView: View {
           Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
                                                              set: { controller.setBypassOnCurrentDevice($0) }))
         }
+        Menu("Microphone: \(currentInputName)") {
+          ForEach(controller.inputs) { d in
+            Button {
+              controller.selectInput(d)
+            } label: {
+              if d.id == controller.currentInputID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
+            }
+          }
+          Divider()
+          Button("Sound Settings…") { controller.openSoundSettings() }
+        }
+        Toggle("Balance Lock (keep left/right centred)", isOn: Binding(get: { controller.settings.balanceLock },
+                                                                       set: { controller.settings.balanceLock = $0
+                                                                              if $0 { controller.centerBalance() } }))
+        Divider()
         Toggle("Live Waveform on EQ", isOn: Binding(get: { controller.settings.waveform },
                                                     set: { controller.settings.waveform = $0 }))
         Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },

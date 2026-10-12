@@ -37,6 +37,23 @@ final class AudioController: ObservableObject {
   @Published private(set) var currentDeviceID: AudioObjectID = 0 {
     didSet { if currentDeviceID != oldValue { deviceChanged(from: oldValue) } }
   }
+  /// Microphones / inputs and the system default input.
+  @Published private(set) var inputs: [OutputDevice] = []
+  @Published private(set) var currentInputID: AudioObjectID = 0
+  /// System left/right balance of the output (0 left ... 0.5 centre ... 1 right).
+  @Published private(set) var balance: Double?
+  /// Shown when one channel dropped out and we restarted the audio.
+  @Published private(set) var channelNotice: String?
+  /// Night Guard's live reduction, dB (<= 0), for the UI.
+  @Published private(set) var nightGuardCutDb: Double = 0
+  /// DJ pads (not saved).
+  @Published var dj = DJState() {
+    didSet { if dj != oldValue { pushParams() } }
+  }
+  private var lopsidedSince: TimeInterval?
+  private var lastChannelFix: TimeInterval = 0
+  private var balanceListeners = PropertyListeners(queue: AudioController.listenerQueue)
+
   /// Instant A/B: the tap keeps running, the engine passes audio untouched.
   @Published var bypassed = false {
     didSet { if bypassed != oldValue { pushParams() } }
@@ -232,7 +249,71 @@ final class AudioController: ObservableObject {
     }
   }
 
-  func pollMeters() -> PunchMeters { punch_take_meters(engine) }
+  func pollMeters() -> PunchMeters {
+    let m = punch_take_meters(engine)
+    checkChannels(m)
+    let cut = Double(punch_loudness_guard_cut_db(engine))
+    if abs(cut - nightGuardCutDb) > 0.05 { nightGuardCutDb = cut }
+    return m
+  }
+
+  // MARK: - One-sided audio
+
+  /// Rarely, audio collapses to one side. Two causes: macOS's own balance
+  /// drifting off centre (handled by the balance watch / Balance Lock), or
+  /// our output losing a channel. For the second: if the input has sound on
+  /// both sides but our output is silent on one for 1.5 s while the popover
+  /// is open (when people come looking), restart the pipeline and say so.
+  private func checkChannels(_ m: PunchMeters) {
+    guard settings.enabled, case .running = status, !bypassed else { lopsidedSince = nil; return }
+    func db(_ v: Float) -> Double { 20 * log10(max(Double(v), 1e-7)) }
+    let inL = db(m.in_peak.0), inR = db(m.in_peak.1), outL = db(m.out_peak.0), outR = db(m.out_peak.1)
+    let inputBalanced = inL > -50 && inR > -50 && abs(inL - inR) < 20
+    let outputOneSided = max(outL, outR) > -50 && abs(outL - outR) > 40
+    let now = ProcessInfo.processInfo.systemUptime
+    guard inputBalanced && outputOneSided else { lopsidedSince = nil; return }
+    if lopsidedSince == nil { lopsidedSince = now }
+    guard let since = lopsidedSince, now - since > 1.5, now - lastChannelFix > 30 else { return }
+    lopsidedSince = nil
+    lastChannelFix = now
+    log.error("one-sided output (L \(outL, privacy: .public) R \(outR, privacy: .public)); rebuilding")
+    channelNotice = "One side of your audio went silent, so The Bass Shaker restarted its sound. It should be back to normal."
+    scheduleRebuild(delay: 0)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in self?.channelNotice = nil }
+  }
+
+  func centerBalance() {
+    guard let id = currentDevice?.id else { return }
+    audioQueue.async {
+      let addr = AudioObjectPropertyAddress.output(kAudioHardwareServiceDeviceProperty_VirtualMainBalance)
+      try? HAL.set(id, addr, Float32(0.5))
+    }
+  }
+
+  var balanceIsOff: Bool { balance.map { abs($0 - 0.5) > 0.04 } ?? false }
+
+  // MARK: - Microphone
+
+  func selectInput(_ d: OutputDevice) {
+    audioQueue.async {
+      try? Devices.setDefaultInput(d.id)
+      self.refreshInputsOffMain()
+    }
+  }
+
+  /// audioQueue only.
+  private func refreshInputsOffMain() {
+    let ins = Devices.allInputs()
+    let cur = Devices.defaultInput()
+    DispatchQueue.main.async {
+      self.inputs = ins
+      self.currentInputID = cur
+    }
+  }
+
+  func openSoundSettings() {
+    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension")!)
+  }
 
   /// Drains the engine's post-processing mono feed (UI thread).
   func readAnalyzer(_ buf: inout [Float]) -> Int {
@@ -591,6 +672,7 @@ final class AudioController: ObservableObject {
 
   /// Runtime inputs to the engine that aren't persisted settings.
   struct LiveState {
+    var dj = DJState()
     var fade = Fade()
     var headphones = false
     var bypass = false
@@ -599,7 +681,7 @@ final class AudioController: ObservableObject {
 
   private var liveState: LiveState {
     let uid = currentDevice?.uid
-    return LiveState(fade: fade, headphones: isHeadphones,
+    return LiveState(dj: dj, fade: fade, headphones: isHeadphones,
                      bypass: bypassed || (uid.map { settings.bypassDevices.contains($0) } ?? false),
                      volume: deviceVolume)
   }
@@ -655,6 +737,10 @@ final class AudioController: ObservableObject {
     // Sleep ignores Boost: quieter is the point.
     let boost = s.mode == .sleep ? 0 : s.boostDb
     punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb))
+    punch_set_loudness_guard(e, s.nightGuard, Float(s.nightGuardDb), 20)
+    let d = live.dj
+    punch_set_dj(e, d.isOn(.low), d.isOn(.mid), d.isOn(.high), Float(d.filter), d.isOn(.echo), d.isOn(.crush),
+                 d.isOn(.drive))
     punch_set_limiter(e, !unlimited, Float(c.ceilingDb), 80)
     // Bass-priority limiting (docs/research/22-loudness-fighting.md): bass
     // boosts are limited against the room the rest of the mix leaves, so the
@@ -794,6 +880,7 @@ final class AudioController: ObservableObject {
         self.currentDeviceID = current
         self.pushParams()  // crossfeed follows headphones vs speakers
       }
+      self.refreshInputsOffMain()
     }
   }
 
@@ -804,6 +891,9 @@ final class AudioController: ObservableObject {
         self?.refreshDevices()
         self?.scheduleRebuild()
       }
+    }
+    listeners.add(systemObject, .global(kAudioHardwarePropertyDefaultInputDevice)) { [weak self] in
+      DispatchQueue.main.async { self?.refreshDevices() }
     }
     listeners.add(systemObject, .global(kAudioHardwarePropertyDevices)) { [weak self] in
       DispatchQueue.main.async { self?.refreshDevices() }
@@ -868,6 +958,32 @@ final class AudioController: ObservableObject {
       DispatchQueue.main.async { self?.volumeChanged(Double(v)) }
     }
     volumeListeners.add(device.id, addr) { read() }
+    read()
+    watchBalance(device)
+  }
+
+  /// audioQueue only. Watches the output's left/right balance; with Balance
+  /// Lock on, a drift off centre is put back immediately.
+  private func watchBalance(_ device: OutputDevice) {
+    balanceListeners.removeAll()
+    balanceListeners = PropertyListeners(queue: AudioController.listenerQueue)
+    let addr = AudioObjectPropertyAddress.output(kAudioHardwareServiceDeviceProperty_VirtualMainBalance)
+    guard HAL.has(device.id, addr) else {
+      DispatchQueue.main.async { self.balance = nil }
+      return
+    }
+    let read: () -> Void = { [weak self] in
+      guard let v = try? HAL.get(device.id, addr, default: Float32(0.5)) else { return }
+      DispatchQueue.main.async {
+        guard let self else { return }
+        self.balance = Double(v)
+        if self.settings.balanceLock && self.balanceIsOff {
+          self.log.notice("balance drifted to \(v, privacy: .public); recentring")
+          self.centerBalance()
+        }
+      }
+    }
+    balanceListeners.add(device.id, addr) { read() }
     read()
   }
 

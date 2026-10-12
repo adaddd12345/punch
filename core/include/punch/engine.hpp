@@ -21,6 +21,7 @@
 
 #include "punch/character.hpp"
 #include "punch/enhancers.hpp"
+#include "punch/fx.hpp"
 #include "punch/limiter.hpp"
 #include "punch/lockfree.hpp"
 #include "punch/parametric_eq.hpp"
@@ -38,6 +39,8 @@ struct EngineParams {
   SaturatorParams saturator;
   AmbienceParams ambience;
   NoiseParams noise;
+  DjParams dj;
+  LoudnessGuardParams guard;  // Night Guard
   float outputGainDb = 0.f;  // post-EQ boost, protected by the limiter
   LimiterParams limiter;
   bool bypass = false;
@@ -73,6 +76,8 @@ class Engine {
   int latencyFrames() const { return limiter_.latencyFrames() + bassLimiter_.latencyFrames(); }
   // Peaks accumulated since the previous call (UI polls at ~30-60 Hz).
   Meters takeMeters();
+  // Night Guard's current reduction in dB (<= 0); any thread.
+  float loudnessGuardCutDb() const { return guard_.cutDb(); }
   // Post-processing mono feed for the UI spectrum analyzer.
   SpscRing<float>& analyzerFeed() { return analyzer_; }
 
@@ -101,6 +106,8 @@ class Engine {
   Ambience ambience_;
   NoiseBed noise_;
   Smoothed outGain_;
+  DjFx dj_;
+  LoudnessGuard guard_;
   Limiter limiter_;
   BassPriorityLimiter bassLimiter_;
   bool bassPriority_ = false;

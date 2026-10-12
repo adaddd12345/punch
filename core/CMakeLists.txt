@@ -15,8 +15,10 @@ add_library(punch_core STATIC
   src/limiter.cpp
   src/enhancers.cpp
   src/character.cpp
+  src/fx.cpp
   src/engine.cpp
   src/autoeq.cpp
+  src/analysis.cpp
   src/punch_c.cpp)
 target_include_directories(punch_core PUBLIC include)
 if(MSVC)

@@ -89,6 +89,16 @@ void punch_set_noise(PunchEngine* e, bool enabled, int color, float level_db) {
   e->engine.edit().noise = {static_cast<punch::NoiseColor>(std::clamp(color, 0, 2)), level_db, enabled};
 }
 
+void punch_set_loudness_guard(PunchEngine* e, bool enabled, float over_db, float max_cut_db) {
+  e->engine.edit().guard = {over_db, max_cut_db, enabled};
+}
+float punch_loudness_guard_cut_db(const PunchEngine* e) { return e->engine.loudnessGuardCutDb(); }
+
+void punch_set_dj(PunchEngine* e, bool low_kill, bool mid_kill, bool high_kill, float filter, bool echo, bool crush,
+                  bool drive) {
+  e->engine.edit().dj = {low_kill, mid_kill, high_kill, filter, echo, crush, drive};
+}
+
 void punch_set_correction_num_bands(PunchEngine* e, int n) {
   e->engine.edit().correction.numBands = std::clamp(n, 0, punch::kMaxEqBands);
 }
