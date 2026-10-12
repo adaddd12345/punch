@@ -75,7 +75,7 @@ final class WaveformModel: ObservableObject {
     mins = lo
     maxs = hi
     let peak = max(lo.map(abs).max() ?? 0, hi.map(abs).max() ?? 0)
-    envelope = max(peak, envelope * 0.97)               // ~1.5 s fall at 60 fps
+    envelope = max(peak, envelope * 0.94)               // ~1.5 s fall at 30 fps
     scale = 0.85 / max(envelope, 0.004)                  // at most ~48 dB of zoom
   }
 }

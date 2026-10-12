@@ -626,7 +626,7 @@ final class MeterTicker {
   private var timer: Timer?
   func start(_ tick: @escaping () -> Void) {
     stop()
-    let t = Timer(timeInterval: 1.0 / 60, repeats: true) { _ in tick() }
+    let t = Timer(timeInterval: 1.0 / 30, repeats: true) { _ in tick() }
     RunLoop.main.add(t, forMode: .common)
     timer = t
   }
