@@ -67,7 +67,8 @@ final class WaveformModel: ObservableObject {
   }
 }
 
-/// Glowing white trace, like a phosphor scope.
+/// Glowing trace, like a phosphor scope, in the label colour (white in dark
+/// mode, near-black in light mode).
 struct WaveformView: View {
   @ObservedObject var model: WaveformModel
 
@@ -87,10 +88,10 @@ struct WaveformView: View {
       var axis = Path()
       axis.move(to: CGPoint(x: 0, y: mid))
       axis.addLine(to: CGPoint(x: size.width, y: mid))
-      ctx.stroke(axis, with: .color(.white.opacity(0.06)), lineWidth: 1)
-      ctx.stroke(path, with: .color(.white.opacity(0.10)), style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
-      ctx.stroke(path, with: .color(.white.opacity(0.22)), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-      ctx.stroke(path, with: .color(.white.opacity(0.9)), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
+      ctx.stroke(axis, with: .color(.primary.opacity(0.06)), lineWidth: 1)
+      ctx.stroke(path, with: .color(.primary.opacity(0.05)), style: StrokeStyle(lineWidth: 6, lineCap: .round, lineJoin: .round))
+      ctx.stroke(path, with: .color(.primary.opacity(0.10)), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+      ctx.stroke(path, with: .color(.primary.opacity(0.45)), style: StrokeStyle(lineWidth: 1.0, lineCap: .round, lineJoin: .round))
     }
   }
 }

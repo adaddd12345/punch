@@ -106,7 +106,7 @@ struct MainWindowView: View {
           .renderingMode(.template)
           .resizable()
           .frame(width: 18, height: 18)
-          .foregroundStyle(Color.accentColor)
+          .foregroundStyle(Mono.ink)
         VStack(alignment: .leading, spacing: 3) {
           Text("The Bass Shaker lives in your menu bar")
             .font(.system(size: 12, weight: .semibold))
