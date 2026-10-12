@@ -33,6 +33,7 @@ struct PopoverView: View {
     VStack(alignment: .leading, spacing: 12) {
       header
       statusBanner
+      MutedNotice(model: controller.live)
       driverSection
       EQView(controller: controller)
         .frame(height: 150)

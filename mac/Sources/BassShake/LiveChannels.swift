@@ -145,7 +145,11 @@ final class LiveChannels: ObservableObject {
 
   init() {
     // No Core Audio here (see AudioController.init): just the saved mutes.
-    let saved = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? []
+    // Mutes last for this session only. Saved mutes silently killed people's
+    // music after an update (beta 35 made mute real; an old saved mute came
+    // back at launch), so they're no longer restored, and old ones are cleared.
+    UserDefaults.standard.removeObject(forKey: Self.defaultsKey)
+    let saved: [String] = []
     muted = Set(saved)
     shakerOff = Set(UserDefaults.standard.stringArray(forKey: Self.shakerOffKey) ?? [])
   }
@@ -300,7 +304,7 @@ final class LiveChannels: ObservableObject {
   }
 
   private func saveMutes() {
-    UserDefaults.standard.set(muted.filter { !$0.hasPrefix("pid.") }.sorted(), forKey: Self.defaultsKey)
+    // Session-only by design (see init); nothing is written.
   }
 
   // MARK: - Level polling (main; atomics only, no HAL)
@@ -559,7 +563,7 @@ final class LiveChannels: ObservableObject {
       return
     }
     muteReader = MuteReader(aggregate: agg, proc: proc, context: ctx, tapUUIDs: uuids, deviceID: deviceID)
-    log.notice("mute reader: \(uuids.count, privacy: .public) taps")
+    log.notice("mute reader: \(uuids.count, privacy: .public) taps (\(self.halMuted.sorted().joined(separator: ", "), privacy: .public))")
   }
 
   private func teardownMuteReader() {
