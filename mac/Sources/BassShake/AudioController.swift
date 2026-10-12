@@ -85,6 +85,9 @@ final class AudioController: ObservableObject {
   }
   /// Output device volume (0...1) for Auto Loudness; not persisted.
   @Published private(set) var deviceVolume: Double?
+  /// Device UID to offer a Quiet Floor pad for (see QuietFloor.swift).
+  @Published var quietFloorSuggestion: String?
+  let quietFloorTracker = QuietFloorTracker()
   /// Old/conflicting audio drivers found on disk.
   @Published private(set) var foundDrivers: [AudioDriver] = []
   @Published var driverBannerDismissed = false
@@ -993,7 +996,7 @@ final class AudioController: ObservableObject {
     punch_set_noise(e, noiseOn, Int32(s.noiseColor.rawValue), Float(s.noiseDb + fade.noiseDb))
     // Sleep ignores Boost: quieter is the point.
     let boost = s.mode == .sleep ? 0 : s.boostDb
-    punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb))
+    punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb + currentQuietFloorDb))
     punch_set_loudness_guard(e, s.nightGuard, Float(s.nightGuardDb), 20)
     let d = live.dj
     punch_set_dj(e, d.isOn(.low), d.isOn(.mid), d.isOn(.high), Float(d.filter), d.isOn(.echo), d.isOn(.crush),
@@ -1293,6 +1296,7 @@ final class AudioController: ObservableObject {
 
   private func volumeChanged(_ v: Double) {
     deviceVolume = v
+    quietFloorVolumeChanged(v)
     guard settings.autoLoudness, !volumePushPending else { return }
     volumePushPending = true
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {

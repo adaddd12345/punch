@@ -444,6 +444,9 @@ struct Settings: Codable, Equatable {
   var nightGuardDb: Double = 8
   /// Balance Lock: keep the system's left/right balance centred.
   var balanceLock = false
+  /// Quiet Floor: per-device digital pad in dB (<= 0), by device UID.
+  var quietFloor: [String: Double] = [:]
+  var quietFloorDismissed: Set<String> = []
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -509,6 +512,8 @@ struct Settings: Codable, Equatable {
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
+    quietFloor = (try? c.decodeIfPresent([String: Double].self, forKey: .quietFloor)) ?? [:]
+    quietFloorDismissed = (try? c.decodeIfPresent(Set<String>.self, forKey: .quietFloorDismissed)) ?? []
   }
 
   static func load() -> Settings {

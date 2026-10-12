@@ -243,6 +243,11 @@ struct PopoverView: View {
              text: (controller.doctorReport ?? []).joined(separator: "\n"),
              action: ("OK", { controller.doctorReport = nil }),
              secondary: controller.status == .audioServiceStuck ? ("Restart macOS Audio", controller.restartAudioService) : nil)
+    case _ where controller.quietFloorSuggestion != nil:
+      Banner(symbol: "speaker.wave.1", tint: .blue,
+             text: "You never go above 20% on \(controller.quietFloorSuggestionName). Pad it by -15 dB for finer control?",
+             action: ("Pad -15 dB", { controller.acceptQuietFloorSuggestion() }),
+             secondary: ("No Thanks", { controller.dismissQuietFloorSuggestion() }))
     case _ where controller.channelNotice != nil:
       Banner(symbol: "speaker.wave.2", tint: .blue, text: controller.channelNotice ?? "", action: nil, secondary: nil)
     case _ where controller.balanceIsOff && !controller.settings.balanceLock:
@@ -449,6 +454,12 @@ struct PopoverView: View {
           if let d = controller.currentDevice {
             Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
                                                                set: { controller.setBypassOnCurrentDevice($0) }))
+            Picker("Quiet Floor for \(d.name)", selection: Binding(get: { controller.currentQuietFloorDb },
+                                                                    set: { controller.setQuietFloor($0, uid: d.uid) })) {
+              ForEach(QuietFloor.choices, id: \.self) { db in
+                Text(db == 0 ? "Off" : "\(Int(db)) dB").tag(db)
+              }
+            }
           }
           Toggle("Balance Lock (keep left/right centered)", isOn: Binding(get: { controller.settings.balanceLock },
                                                                           set: { controller.settings.balanceLock = $0
