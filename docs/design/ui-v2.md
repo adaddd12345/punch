@@ -95,8 +95,12 @@ One sheet style, two hosts:
 2. **Bottom drawer** (`LiveDrawer`, a child window). Pulled out of the
    popover's **bottom** edge: the content slides down from under the edge
    with the same spring. Square-ish (6 pt) corners, hairline border, same
-   header style. If the screen is too short, the drawer rides up over the
-   bottom of the popover instead of going off screen.
+   header style with a HIDE word. Placement: below the popover when it
+   fits; else beside it (left, then right); else it rides up over the
+   popover's bottom edge. Always clamped to the screen's visible frame, and
+   re-placed when the popover moves/resizes or screens change. The drawer
+   attaches to the window of the view that opened it, so the menu-bar
+   popover and the main window never fight over it.
    Used by: Live Channels, DJ.
 
 ## Wireframes
@@ -240,4 +244,22 @@ One sheet style, two hosts:
 - EQ: drag nodes, scroll for Q, double-click to reset. Click a node to select
   it; the arrow keys then nudge it (↑↓ 0.5 dB, ←→ 1/6 octave; Shift = fine).
 - DJ: hold a pad; click its corner to pin it.
-- Esc closes the open sheet. The global A/B hotkey is unchanged.
+- Esc closes the open sheet; ⌘, toggles Settings; ⌘Q quits from Settings.
+  The global A/B hotkey is unchanged.
+
+## Height budget
+
+The middle of the popover (everything between header and footer) sits in a
+ScrollView whose height is its content's height, capped so the whole
+popover is ≤ 560 pt and ≤ the screen's visible height − 40. Scrolling is
+disabled while it fits, so normally nothing scrolls; a stack of banners
+plus every option open scrolls instead of pushing the footer off screen.
+Sheets live in an overlay, so they never add height.
+
+## Robustness notes
+
+- DJ pads track the press with `@GestureState`, which resets if the
+  gesture is cancelled (window closes mid-press). Held pads are also
+  cleared when the popover disappears and whenever the drawer hides.
+- Only the key PopoverView window polls the meters and waveform (the
+  menu-bar popover and the main window would otherwise split the feed).
