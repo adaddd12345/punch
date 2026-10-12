@@ -11,6 +11,8 @@ struct PopoverView: View {
   @State private var showDrivers = false
   @State private var showLive = false
   @State private var showDJ = false
+  @ObservedObject private var latencyLab = LatencyLab.shared
+  @State private var showLatencyLab = false
 
   init(controller: AudioController) {
     self.controller = controller
@@ -20,6 +22,8 @@ struct PopoverView: View {
   var body: some View {
     if controller.needsOnboarding {
       OnboardingView(controller: controller)
+    } else if showLatencyLab {
+      LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
     } else {
       controls
     }
@@ -58,6 +62,7 @@ struct PopoverView: View {
     }
     .onAppear {
       visible = true
+      latencyLab.startMonitoring()
       updates.checkInBackgroundIfStale()
     }
     .onDisappear {
@@ -231,6 +236,7 @@ struct PopoverView: View {
       }
       .buttonStyle(.plain)
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
+      LatencyChip(lab: latencyLab) { withAnimation { showLatencyLab = true } }
       Spacer()
       if case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
@@ -255,6 +261,7 @@ struct PopoverView: View {
           Divider()
           Button("Sound Settings…") { controller.openSoundSettings() }
         }
+        Button("Latency Lab… (Bluetooth delay for recording)") { withAnimation { showLatencyLab = true } }
         Toggle("Balance Lock (keep left/right centred)", isOn: Binding(get: { controller.settings.balanceLock },
                                                                        set: { controller.settings.balanceLock = $0
                                                                               if $0 { controller.centerBalance() } }))
