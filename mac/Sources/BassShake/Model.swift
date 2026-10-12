@@ -285,6 +285,26 @@ struct DJState: Equatable {
   var anyActive: Bool { !held.isEmpty || !pinned.isEmpty || abs(filter) > 0.01 }
 }
 
+/// Popover sizes.
+enum ViewSize: String, Codable, CaseIterable {
+  case full, compact, mini
+  var next: ViewSize {
+    switch self {
+    case .full: return .compact
+    case .compact: return .mini
+    case .mini: return .full
+    }
+  }
+  var symbol: String {
+    switch self {
+    case .full: return "rectangle.expand.vertical"
+    case .compact: return "rectangle.compress.vertical"
+    case .mini: return "minus.rectangle"
+    }
+  }
+  var title: String { rawValue.capitalized }
+}
+
 /// Scope trace colour: the Mac's accent colour, or a fixed one.
 enum ScopeColor: String, Codable, CaseIterable, Identifiable {
   case accent, yellow, green, cyan, magenta, white
@@ -387,6 +407,10 @@ struct Settings: Codable, Equatable {
   /// Live oscilloscope trace behind the EQ curve.
   var waveform = true
   var scopeColor: ScopeColor = .accent
+  /// Popover size: everything, compact, or just the sliders.
+  var viewSize: ViewSize = .full
+  /// The bottom tray (modes) is open.
+  var trayOpen = true
   var nightGuardDb: Double = 8
   /// Balance Lock: keep the system's left/right balance centred.
   var balanceLock = false
@@ -446,6 +470,8 @@ struct Settings: Codable, Equatable {
     fadeWindows = try c.decodeIfPresent(Bool.self, forKey: .fadeWindows) ?? d.fadeWindows
     waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
+    viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
+    trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
   }

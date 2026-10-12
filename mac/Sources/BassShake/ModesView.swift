@@ -99,7 +99,7 @@ struct ModesView: View {
 
   private var sleepRow: some View {
     HStack(spacing: 8) {
-      Label("Timer", systemImage: "timer").font(.system(size: 11, weight: .semibold, design: .rounded))
+      IconText(title: "Timer", symbol: "timer", size: 11)
       Menu {
         ForEach(SleepTimer.choices, id: \.self) { m in
           Button("\(m) min") { controller.setSleepMinutes(m) }
@@ -125,7 +125,7 @@ struct ModesView: View {
 
   private var studyRow: some View {
     HStack(spacing: 8) {
-      Label("Pomodoro", systemImage: "clock").font(.system(size: 11, weight: .semibold, design: .rounded))
+      IconText(title: "Pomodoro", symbol: "clock", size: 11)
       Menu {
         ForEach(Pomodoro.choices.indices, id: \.self) { i in
           let p = Pomodoro.choices[i]

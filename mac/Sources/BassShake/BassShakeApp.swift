@@ -111,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let host = NSHostingController(rootView: PopoverView(controller: controller).environmentObject(updates))
     host.sizingOptions = [.preferredContentSize]
     popover.contentViewController = host
+    LiveDrawer.shared.anchorView = host.view
     applyPopoverBehavior()
   }
 

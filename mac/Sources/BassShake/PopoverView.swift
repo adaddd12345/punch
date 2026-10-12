@@ -39,22 +39,32 @@ struct PopoverView: View {
     }
   }
 
+  private var size: ViewSize { role == .launchWindow ? .full : controller.settings.viewSize }
+
   private var controls: some View {
-    VStack(alignment: .leading, spacing: 12) {
+    VStack(alignment: .leading, spacing: size == .mini ? 10 : 12) {
       header
       statusBanner
       MutedNotice(model: controller.live)
-      driverSection
-      EQView(controller: controller)
-        .frame(height: 150)
-        .opacity(controller.settings.enabled ? 1 : 0.45)
-      presetStrip
-      MeterView(model: meters)
+      if size != .mini {
+        driverSection
+        EQView(controller: controller)
+          .frame(height: size == .full ? 150 : 112)
+          .opacity(controller.settings.enabled ? 1 : 0.45)
+        presetStrip
+        if size == .full { MeterView(model: meters) }
+      }
       sliders
-      ModesView(controller: controller)
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.settings.mode)
-      Divider().opacity(0.5)
-      footer
+      if size != .mini {
+        tray
+        Divider().opacity(0.5)
+        footer
+      }
+    }
+    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: size)
+    .onChange(of: controller.settings.viewSize) { _, new in
+      // Mini has no footer, so no Live/DJ tray either.
+      if new == .mini { showLive = false; showDJ = false }
     }
     .padding(14)
     .frame(width: 360)
@@ -114,10 +124,25 @@ struct PopoverView: View {
         .frame(width: 26, height: 26)
         .saturation(controller.settings.enabled ? 1 : 0)
         .opacity(controller.settings.enabled ? 1 : 0.6)
-      Text("The Bass Shaker")
-        .font(.system(size: 14, weight: .bold, design: .rounded))
+      if size != .mini {
+        Text("The Bass Shaker")
+          .font(.system(size: 14, weight: .bold, design: .rounded))
+          .lineLimit(1)
+          .layoutPriority(1)
+      }
       Spacer(minLength: 4)
-      deviceMenu
+      if size != .mini { deviceMenu }
+      if role != .launchWindow {
+        Button {
+          controller.settings.viewSize = controller.settings.viewSize.next
+        } label: {
+          Image(systemName: controller.settings.viewSize.symbol)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("View: \(controller.settings.viewSize.title). Click for \(controller.settings.viewSize.next.title).")
+      }
       if role != .launchWindow {
         Button {
           controller.setPinned(!controller.pinned, from: window.window)
@@ -205,6 +230,51 @@ struct PopoverView: View {
     .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
   }
 
+  /// The bottom tray (modes): collapses and opens; its state is remembered.
+  private var tray: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Button {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { controller.settings.trayOpen.toggle() }
+      } label: {
+        HStack(spacing: 4) {
+          Image(systemName: "chevron.right")
+            .font(.system(size: 8, weight: .bold))
+            .rotationEffect(.degrees(controller.settings.trayOpen ? 90 : 0))
+            .frame(width: 10)
+          Text("MODES")
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+          if !controller.settings.trayOpen, let active = activeModesSummary {
+            Text(active)
+              .font(.system(size: 9, weight: .medium, design: .rounded))
+              .foregroundStyle(.tertiary)
+              .lineLimit(1)
+          }
+          Spacer()
+        }
+        .foregroundStyle(.secondary)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help(controller.settings.trayOpen ? "Collapse" : "Show modes")
+      if controller.settings.trayOpen {
+        ModesView(controller: controller)
+          .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.settings.mode)
+          .transition(.opacity.combined(with: .move(edge: .top)))
+      }
+    }
+  }
+
+  /// What's on, for the collapsed tray's label.
+  private var activeModesSummary: String? {
+    let s = controller.settings
+    var on: [String] = []
+    if s.studioEars { on.append("Studio Ears") }
+    if s.autoLoudness { on.append("Loudness") }
+    if s.nightGuard { on.append("Night Guard") }
+    if s.mode != .off { on.append(s.mode.title) }
+    return on.isEmpty ? nil : on.joined(separator: " · ")
+  }
+
   private var sliders: some View {
     VStack(spacing: 8) {
       LabeledSlider(title: "Strength", symbol: "waveform.path",
@@ -220,8 +290,7 @@ struct PopoverView: View {
       HStack(spacing: 6) {
         Spacer()
         Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
-          Label("Limit", systemImage: "rectangle.compress.vertical")
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
+          IconText(title: "Limit", symbol: "ear", size: 10)
             .foregroundStyle(controller.settings.limit ? Color.orange : Color.secondary)
         }
         .toggleStyle(.switch)
@@ -354,10 +423,7 @@ private struct LabeledSlider: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      Label(title, systemImage: symbol)
-        .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .lineLimit(1)
-        .fixedSize()
+      IconText(title: title, symbol: symbol, size: 11)
         .frame(width: 84, alignment: .leading)
       Slider(value: $value, in: range)
         .controlSize(.small)

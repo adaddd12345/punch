@@ -13,6 +13,15 @@ final class LiveDrawer {
   }
   private var panel: DrawerPanel?
   private var resizeObserver: NSObjectProtocol?
+  /// The popover's content view: the tray matches its width and hangs from
+  /// its bottom edge (the popover window itself is wider, with margins).
+  weak var anchorView: NSView?
+
+  /// The anchor's rect on screen, or the host window's frame.
+  private var anchorRect: NSRect? {
+    if let v = anchorView, let w = v.window { return w.convertToScreen(v.convert(v.bounds, to: nil)) }
+    return host?.frame
+  }
   private let gap: CGFloat = 6
 
   var isShown: Bool { panel?.isVisible ?? false }
@@ -26,7 +35,7 @@ final class LiveDrawer {
   func show<Content: View>(_ content: Content) {
     guard let host else { return }
     if panel == nil {
-      let p = DrawerPanel(contentRect: NSRect(x: 0, y: 0, width: host.frame.width, height: 120),
+      let p = DrawerPanel(contentRect: NSRect(x: 0, y: 0, width: anchorRect?.width ?? host.frame.width, height: 120),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
       p.isOpaque = false
       p.backgroundColor = .clear
@@ -44,7 +53,7 @@ final class LiveDrawer {
     // The hosting controller sizes the window to the content (rows come
     // and go); the resize observer keeps its top edge under the popover.
     let root = content
-      .frame(width: host.frame.width)
+      .frame(width: anchorRect?.width ?? host.frame.width)
       .background(VisualEffectBackground())
       .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     let hosting = NSHostingController(rootView: AnyView(root))
@@ -72,10 +81,10 @@ final class LiveDrawer {
   }
 
   private func reposition() {
-    guard let panel, let host else { return }
+    guard let panel, let r = anchorRect else { return }
     // Origin only: the hosting controller owns the size (the list scrolls
-    // past six rows, so it stays compact).
-    panel.setFrameOrigin(NSPoint(x: host.frame.minX, y: host.frame.minY - gap - panel.frame.height))
+    // past six rows, so it stays compact). Aligned to the popover content.
+    panel.setFrameOrigin(NSPoint(x: r.minX, y: r.minY - gap - panel.frame.height))
   }
 }
 

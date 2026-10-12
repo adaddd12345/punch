@@ -79,6 +79,28 @@ struct PresetStrip: View {
   }
 }
 
+/// Icon + label with one consistent rule everywhere: the glyph is 0.85× the
+/// text size, sits centred in a fixed box 1.3× the text size (so labels line
+/// up whatever the glyph's width), with 4 pt between box and text.
+struct IconText: View {
+  let title: String
+  let symbol: String
+  var size: CGFloat = 11
+  var weight: Font.Weight = .semibold
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 4) {
+      Image(systemName: symbol)
+        .font(.system(size: (size * 0.85).rounded(), weight: weight))
+        .frame(width: (size * 1.3).rounded(), height: (size * 1.3).rounded())
+      Text(title)
+        .font(.system(size: size, weight: weight, design: .rounded))
+        .lineLimit(1)
+        .fixedSize()
+    }
+  }
+}
+
 struct Chip<Icon: View>: View {
   let title: String
   let selected: Bool
