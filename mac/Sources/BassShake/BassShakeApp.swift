@@ -105,7 +105,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     item.button?.image = MenuBarIcon.image
     item.button?.imagePosition = .imageOnly
     item.button?.target = self
-    item.button?.action = #selector(togglePopover(_:))
+    item.button?.action = #selector(statusClicked(_:))
+    item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
     statusItem = item
 
     let host = NSHostingController(rootView: PopoverView(controller: controller).environmentObject(updates))
@@ -116,21 +117,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applyPopoverBehavior() {
-    popover.behavior = controller.pinned ? .applicationDefined : .transient
+    // We close it ourselves on outside clicks (below), so the popover itself
+    // never auto-closes; that also stops the icon click racing a transient
+    // close and reopening it.
+    popover.behavior = .applicationDefined
     popover.animates = controller.settings.fadeWindows
   }
 
-  @objc private func togglePopover(_ sender: Any?) {
+  private var outsideClickMonitors: [Any] = []
+
+  @objc private func statusClicked(_ sender: Any?) {
+    if NSApp.currentEvent?.type == .rightMouseUp {
+      showStatusMenu()
+    } else {
+      togglePopover(sender)
+    }
+  }
+
+  private func togglePopover(_ sender: Any?) {
     if popover.isShown {
-      popover.performClose(sender)
+      closePopover()
     } else if let button = statusItem?.button {
       applyPopoverBehavior()
       popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
       // A menu-bar-only app must activate for the popover to take keys.
       NSApp.activate(ignoringOtherApps: true)
       popover.contentViewController?.view.window?.makeKey()
+      installOutsideClickMonitors()
     }
   }
+
+  private func closePopover() {
+    removeOutsideClickMonitors()
+    popover.performClose(nil)
+  }
+
+  /// Unpinned: any click outside the popover (another app, the desktop, our
+  /// own other windows) hides it. Clicks on the status icon go through
+  /// statusClicked; clicks in the drop-down tray count as inside.
+  private func installOutsideClickMonitors() {
+    removeOutsideClickMonitors()
+    let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+    if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
+      guard let self, !self.controller.pinned else { return }
+      self.closePopover()
+    }) { outsideClickMonitors.append(g) }
+    if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
+      guard let self, !self.controller.pinned, let w = event.window else { return event }
+      let popoverWindow = self.popover.contentViewController?.view.window
+      let isInside = w === popoverWindow || w.parent === popoverWindow
+      let isStatusItem = w === self.statusItem?.button?.window
+      if !isInside && !isStatusItem { self.closePopover() }
+      return event
+    }) { outsideClickMonitors.append(l) }
+  }
+
+  private func removeOutsideClickMonitors() {
+    outsideClickMonitors.forEach { NSEvent.removeMonitor($0) }
+    outsideClickMonitors = []
+  }
+
+  // MARK: Right-click menu
+
+  private func showStatusMenu() {
+    let menu = NSMenu()
+    menu.addItem(withTitle: popover.isShown ? "Hide The Bass Shaker" : "Open The Bass Shaker",
+                 action: #selector(menuToggle), keyEquivalent: "").target = self
+    let pin = menu.addItem(withTitle: controller.pinned ? "Unpin" : "Pin Open", action: #selector(menuPin), keyEquivalent: "")
+    pin.target = self
+    menu.addItem(.separator())
+    menu.addItem(withTitle: "Quit", action: #selector(menuQuit), keyEquivalent: "q").target = self
+    let force = menu.addItem(withTitle: "Force Quit", action: #selector(menuForceQuit), keyEquivalent: "")
+    force.target = self
+    force.toolTip = "Ends The Bass Shaker immediately, even if it's stuck. Your Mac's sound goes back to normal."
+    statusItem?.menu = menu
+    statusItem?.button?.performClick(nil)   // pops the menu at the icon
+    statusItem?.menu = nil                  // left-click keeps toggling the popover
+  }
+
+  @objc private func menuToggle() { togglePopover(nil) }
+  @objc private func menuPin() { controller.setPinned(!controller.pinned, from: nil) }
+  @objc private func menuQuit() { NSApp.terminate(nil) }
+  /// Immediate, no cleanup (works even when the app is wedged in Core
+  /// Audio): coreaudiod frees our taps and aggregates when the process dies.
+  @objc private func menuForceQuit() { kill(getpid(), SIGKILL) }
 
   func showWindow() {
     if window == nil {
