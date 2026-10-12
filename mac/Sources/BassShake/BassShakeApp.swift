@@ -150,22 +150,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   private var cancellables = Set<AnyCancellable>()
   private var lastProblem: String?
 
-  private var resignObserver: Any?
-  /// Belt and braces for click-away: when the popover's window stops being
-  /// key (another app, the desktop, Mission Control), close it unless the
-  /// new key window is ours (the drop-down tray, a Sparkle dialog).
-  private func watchPopoverKey() {
-    if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
-    guard let w = popover.contentViewController?.view.window else { return }
-    resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: w, queue: .main) { [weak self] _ in
-      DispatchQueue.main.async {
-        guard let self, self.popover.isShown, !self.controller.pinned else { return }
-        if let k = NSApp.keyWindow, k === w || k.parent === w { return }
-        self.closePopover()
-      }
-    }
-  }
-
   private func closeIfUnpinned() {
     if popover.isShown && !controller.pinned { closePopover() }
   }
@@ -257,7 +241,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       popover.contentViewController?.view.window?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
       button.highlight(true)
       installOutsideClickMonitors()
-      watchPopoverKey()
     }
   }
 

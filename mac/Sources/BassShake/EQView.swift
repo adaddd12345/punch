@@ -69,6 +69,7 @@ struct EQView: View {
         }
       }
       .focusable()
+      .focusEffectDisabled()   // no blue outline round the EQ box
       .focused($focused)
       .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .space, .delete]) { press in
         handleKey(press)
