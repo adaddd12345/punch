@@ -34,6 +34,7 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   maxFrames_ = std::max(maxFrames, 16);
 
   correction_.prepare(sampleRate, numChannels_);
+  hearing_.prepare(sampleRate);
   eq_.prepare(sampleRate, numChannels_);
   bass_.prepare(sampleRate, numChannels_);
   stereo_.prepare(sampleRate);
@@ -60,6 +61,8 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   mailbox_.read(live_);
   applySnapshot(live_);
   correction_.snapToTargets();
+  hearing_.snapToTargets();
+  hearing_.reset();
   correction_.reset();
   eq_.snapToTargets();
   eq_.reset();
@@ -103,6 +106,7 @@ void Engine::applySnapshot(const EngineParams& p) {
     for (auto& b : flat.bands) b.enabled = false;
     flat.preampDb = 0.f;
     correction_.setParams(flat);
+    hearing_.setParams({});
     eq_.setParams(flat);
     bass_.setParams({});
     stereo_.setParams({});
@@ -124,6 +128,7 @@ void Engine::applySnapshot(const EngineParams& p) {
     return;
   }
   correction_.setParams(p.correction);
+  hearing_.setParams(p.hearing);
   eq_.setParams(p.eq);
   bass_.setParams(p.bass);
   stereo_.setParams(p.stereo);
@@ -152,6 +157,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   for (int c = 0; c < std::min(numChannels, 2); ++c) atomicMax(inPeak_[c], blockPeak(ch[c], numFrames));
 
   correction_.process(ch, numChannels, numFrames);
+  hearing_.process(ch, numChannels, numFrames);
   eq_.process(ch, numChannels, numFrames);
   // Saturate after EQ (mud already cut), compress after saturation, add
   // psychoacoustic bass after both so its harmonics don't pump or re-distort.
@@ -186,6 +192,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   if (!finite) {
     for (int c = 0; c < numChannels; ++c) std::fill(ch[c], ch[c] + numFrames, 0.f);
     correction_.reset();
+    hearing_.reset();
     eq_.reset();
     bass_.reset();
     stereo_.reset();

@@ -95,6 +95,14 @@ void punch_set_loudness_guard(PunchEngine* e, bool enabled, float over_db, float
 float punch_loudness_guard_cut_db(const PunchEngine* e) { return e->engine.loudnessGuardCutDb(); }
 
 void punch_set_spike_guard(PunchEngine* e, bool enabled) { e->engine.edit().spike.enabled = enabled; }
+void punch_set_hearing(PunchEngine* e, bool enabled, const float* left6, const float* right6) {
+  auto& h = e->engine.edit().hearing;
+  h.enabled = enabled;
+  for (int b = 0; b < punch::kHearingBands; ++b) {
+    h.gainDb[0][b] = left6 ? std::clamp(left6[b], 0.f, punch::kHearingMaxDb) : 0.f;
+    h.gainDb[1][b] = right6 ? std::clamp(right6[b], 0.f, punch::kHearingMaxDb) : 0.f;
+  }
+}
 uint32_t punch_spike_guard_events(const PunchEngine* e) { return e->engine.spikeEvents(); }
 
 void punch_set_dj(PunchEngine* e, bool low_kill, bool mid_kill, bool high_kill, float filter, bool echo, bool crush,

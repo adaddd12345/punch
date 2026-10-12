@@ -453,6 +453,8 @@ struct Settings: Codable, Equatable {
   var fairLevelPinned: Set<String> = []
   /// Sound Like…: tilt the sound toward a famous headphone's tuning.
   var soundLike: SoundLikeChoice?
+  /// Hearing Fit: per-ear compensation (nil = never set up).
+  var hearing: HearingProfile?
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -523,6 +525,7 @@ struct Settings: Codable, Equatable {
     fairLevel = (try? c.decodeIfPresent(Bool.self, forKey: .fairLevel)) ?? d.fairLevel
     fairLevelPinned = ((try? c.decodeIfPresent(Set<String>.self, forKey: .fairLevelPinned)) ?? nil) ?? d.fairLevelPinned
     soundLike = (try? c.decodeIfPresent(SoundLikeChoice.self, forKey: .soundLike)) ?? nil
+    hearing = (try? c.decodeIfPresent(HearingProfile.self, forKey: .hearing)) ?? nil
   }
 
   static func load() -> Settings {

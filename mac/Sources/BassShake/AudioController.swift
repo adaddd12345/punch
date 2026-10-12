@@ -1002,6 +1002,7 @@ final class AudioController: ObservableObject {
     let width = s.centerLock == .off ? c.width : min(c.width, s.centerLock.width)
     punch_set_stereo_width(e, abs(width - 1) > 0.001, Float(width))
     punch_set_spike_guard(e, s.earProtector)
+    HearingProfile.apply(e, s.hearing)
     punch_set_crossfeed(e, headphones && c.crossfeed > 0.001, Float(c.crossfeed))
     let noiseOn = s.mode != .off && s.noiseOn
     punch_set_noise(e, noiseOn, Int32(s.noiseColor.rawValue), Float(s.noiseDb + fade.noiseDb))

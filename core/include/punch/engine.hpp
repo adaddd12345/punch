@@ -22,6 +22,7 @@
 #include "punch/character.hpp"
 #include "punch/enhancers.hpp"
 #include "punch/fx.hpp"
+#include "punch/hearing.hpp"
 #include "punch/limiter.hpp"
 #include "punch/lockfree.hpp"
 #include "punch/parametric_eq.hpp"
@@ -30,6 +31,7 @@ namespace punch {
 
 struct EngineParams {
   EqParams correction;  // per-output-device (headphone/speaker) correction
+  HearingParams hearing;  // Hearing Fit: per-ear compensation
   EqParams eq;          // user preset / graphic EQ
   bool autoPreamp = true;  // preamp = min(user preamps, -combined EQ peak boost)
   BassEnhancerParams bass;
@@ -99,6 +101,7 @@ class Engine {
   EngineParams live_;
 
   ParametricEq correction_;
+  HearingFit hearing_;
   ParametricEq eq_;
   BassEnhancer bass_;
   StereoWidener stereo_;

@@ -18,6 +18,7 @@
 #include "punch/engine.hpp"
 #include "punch/fx.hpp"
 #include "punch/lockfree.hpp"
+#include "punch/punch_c.h"
 #include "punch/svf.hpp"
 
 // ---------------------------------------------------------------------------
@@ -969,6 +970,78 @@ TEST(night_guard_recovers_at_192k) {
   }
   CHECK(cutAt30 < -6.f);     // it acted on the jump
   CHECK(cutAtEnd > -2.5f);   // and let go as the new level became normal
+}
+
+static double toneRmsRatio(HearingFit& h, int c, double hz, double fs) {
+  const int n = 24000;
+  std::vector<float> l(n), r(n);
+  for (int i = 0; i < n; ++i) l[size_t(i)] = r[size_t(i)] = 0.1f * float(std::sin(2 * 3.14159265358979 * hz * i / fs));
+  float* p[2] = {l.data(), r.data()};
+  for (int s = 0; s < n; s += 256) { float* q[2] = {p[0] + s, p[1] + s}; h.process(q, 2, std::min(256, n - s)); }
+  double a = 0, b = 0;
+  const auto& y = c == 0 ? l : r;
+  for (int i = n / 2; i < n; ++i) { a += double(y[size_t(i)]) * y[size_t(i)]; const double x = 0.1 * std::sin(2 * 3.14159265358979 * hz * i / fs); b += x * x; }
+  return 10 * std::log10(a / b);
+}
+
+TEST(hearing_disabled_is_bit_exact) {
+  HearingFit h;
+  h.prepare(48000);
+  HearingParams p;
+  p.enabled = false;
+  for (auto& ch : p.gainDb) for (auto& g : ch) g = 8.f;
+  h.setParams(p);
+  std::vector<float> l(512), r(512);
+  for (int i = 0; i < 512; ++i) { l[size_t(i)] = float(std::sin(i * 0.1)); r[size_t(i)] = float(std::cos(i * 0.07)); }
+  auto l0 = l, r0 = r;
+  float* q[2] = {l.data(), r.data()};
+  h.process(q, 2, 512);
+  CHECK(l == l0 && r == r0);
+  // Also bit-exact after turning on then off again once settled.
+  p.enabled = true; h.setParams(p); h.process(q, 2, 512);
+  p.enabled = false; h.setParams(p);
+  for (int k = 0; k < 200; ++k) h.process(q, 2, 512);
+  l = l0; r = r0;
+  h.process(q, 2, 512);
+  CHECK(l == l0 && r == r0);
+}
+
+TEST(hearing_left_right_independent_and_capped) {
+  HearingFit h;
+  h.prepare(48000);
+  HearingParams p;
+  p.enabled = true;
+  p.gainDb[0][4] = 6.f;   // left +6 at 4 kHz
+  p.gainDb[1][2] = 25.f;  // right: request beyond cap at 1 kHz
+  h.setParams(p);
+  h.snapToTargets();
+  CHECK_NEAR(h.magnitudeDb(0, 4000), 6.0, 0.6);
+  CHECK_NEAR(h.magnitudeDb(1, 4000), 0.0, 1.5);
+  CHECK_NEAR(h.magnitudeDb(0, 1000), 0.0, 0.5);
+  CHECK(h.magnitudeDb(1, 1000) <= 10.6);
+  CHECK(h.magnitudeDb(1, 1000) > 9.0);
+  HearingFit h2; h2.prepare(48000); h2.setParams(p);
+  CHECK_NEAR(toneRmsRatio(h2, 0, 4000, 48000), 6.0, 0.7);
+  HearingFit h3; h3.prepare(48000); h3.setParams(p);
+  CHECK_NEAR(toneRmsRatio(h3, 0, 1000, 48000), 0.0, 0.5);
+  HearingFit h4; h4.prepare(48000); h4.setParams(p);
+  CHECK(toneRmsRatio(h4, 1, 1000, 48000) <= 10.6);
+  // Negative requests clamp to 0 (boost-only).
+  HearingParams n; n.enabled = true; n.gainDb[0][3] = -9.f;
+  HearingFit h5; h5.prepare(48000); h5.setParams(n); h5.snapToTargets();
+  CHECK(!h5.active());
+}
+
+TEST(engine_hearing_c_api) {
+  PunchEngine* e = punch_engine_create();
+  punch_engine_prepare(e, 48000, 2, 256);
+  const float L[6] = {0, 0, 0, 0, 30, 0}, R[6] = {0, 0, 0, 0, 0, 0};
+  punch_set_hearing(e, true, L, R);
+  punch_engine_publish(e);
+  punch_set_hearing(e, false, nullptr, nullptr);
+  punch_engine_publish(e);
+  punch_engine_destroy(e);
+  CHECK(true);
 }
 
 int main() {

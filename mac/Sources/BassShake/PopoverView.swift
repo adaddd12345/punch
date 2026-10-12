@@ -22,6 +22,7 @@ struct PopoverView: View {
   @State private var showDJ = false
   @ObservedObject private var latencyLab = LatencyLab.shared
   @State private var showLatencyLab = false
+  @State private var showHearingFit = false
 
   /// Where this copy of the controls lives.
   enum Role { case menuBar, launchWindow, pinned }
@@ -41,6 +42,8 @@ struct PopoverView: View {
   var body: some View {
     if controller.needsOnboarding {
       OnboardingView(controller: controller)
+    } else if showHearingFit {
+      HearingFitView(controller: controller) { withAnimation { showHearingFit = false } }
     } else if showLatencyLab {
       LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
     } else {
@@ -444,6 +447,12 @@ struct PopoverView: View {
                                                                         set: { controller.settings.earProtector = $0 }))
         Toggle("Fair Level (even out loudness between apps)", isOn: Binding(get: { controller.settings.fairLevel },
                                                                             set: { controller.settings.fairLevel = $0 }))
+        Button("Hearing Fit…") { withAnimation { showHearingFit = true } }
+        if controller.settings.hearing != nil {
+          Toggle("Hearing Fit On", isOn: Binding(get: { controller.settings.hearing?.enabled ?? false },
+                                                 set: { controller.settings.hearing?.enabled = $0 }))
+          Button("Remove Hearing Fit") { controller.settings.hearing = nil }
+        }
         Picker("Center Lock", selection: Binding(get: { controller.settings.centerLock },
                                                   set: { controller.settings.centerLock = $0 })) {
           ForEach(CenterLock.allCases) { Text($0.title).tag($0) }
