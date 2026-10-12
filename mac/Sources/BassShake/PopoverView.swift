@@ -11,6 +11,9 @@ struct PopoverView: View {
   @State private var showDrivers = false
   @State private var showLive = false
   @State private var loginOn = LoginItem.isOn
+  @State private var confirmReset = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.colorSchemeContrast) private var contrast
   @State private var showDJ = false
   @ObservedObject private var latencyLab = LatencyLab.shared
   @State private var showLatencyLab = false
@@ -62,7 +65,13 @@ struct PopoverView: View {
         footer
       }
     }
-    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: size)
+    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.86), value: size)
+    .confirmationDialog("Reset all settings?", isPresented: $confirmReset) {
+      Button("Reset Everything", role: .destructive) { controller.resetAllSettings() }
+    } message: {
+      Text("Your EQ, presets and options go back to how they were on first launch.")
+    }
+    .background(sizeShortcuts)
     .onChange(of: controller.settings.viewSize) { _, new in
       // Mini has no footer, so no Live/DJ tray either.
       if new == .mini { showLive = false; showDJ = false }
@@ -112,6 +121,19 @@ struct PopoverView: View {
       // A pad held while the popover closed never gets its release event.
       controller.dj.held = []
     }
+  }
+
+  /// ⌘1/⌘2/⌘3: Full, Compact, Mini.
+  private var sizeShortcuts: some View {
+    HStack {
+      ForEach(Array(ViewSize.allCases.enumerated()), id: \.offset) { i, v in
+        Button("") { controller.settings.viewSize = v }
+          .keyboardShortcut(KeyEquivalent(Character(String(i + 1))), modifiers: .command)
+      }
+    }
+    .frame(width: 0, height: 0)
+    .opacity(0)
+    .accessibilityHidden(true)
   }
 
   // MARK: - Sections
@@ -198,13 +220,23 @@ struct PopoverView: View {
     case _ where controller.balanceIsOff && !controller.settings.balanceLock:
       Banner(symbol: "dial.low", tint: .orange,
              text: "Your sound is panned to the \((controller.balance ?? 0.5) < 0.5 ? "left" : "right") by macOS's balance setting, so one side is quieter or silent.",
-             action: ("Centre It", controller.centerBalance),
-             secondary: ("Keep Centred", { controller.settings.balanceLock = true; controller.centerBalance() }))
+             action: ("Center It", controller.centerBalance),
+             secondary: ("Keep Centered", { controller.settings.balanceLock = true; controller.centerBalance() }))
+    case .starting:
+      HStack(spacing: 6) {
+        ProgressView().controlSize(.small)
+        Text("Connecting to your speakers or headphones…").font(.system(size: 11)).foregroundStyle(.secondary)
+      }
     case .failed(let msg):
       Banner(symbol: "exclamationmark.triangle", tint: .red, text: msg,
              action: ("Retry", controller.retry), secondary: nil)
     case .unsupported:
       Banner(symbol: "xmark.octagon", tint: .red, text: "Requires macOS 14.4 or later.", action: nil, secondary: nil)
+    case _ where updates.justUpdatedTo != nil:
+      Banner(symbol: "sparkles", tint: .accentColor,
+             text: "Updated to \(updates.justUpdatedTo ?? ""). Enjoy the new build.",
+             action: ("OK", { updates.justUpdatedTo = nil }),
+             secondary: ("What's New", { Links.open(.help); updates.justUpdatedTo = nil }))
     default:
       EmptyView()
     }
@@ -399,13 +431,35 @@ struct PopoverView: View {
           withAnimation { showDrivers = true }
         }
         Divider()
-        Button("Copy Diagnostics") { controller.copyDiagnostics() }
-        Button("Report a Bug…") { controller.reportBug() }
-        Button("Undo Sound Change") { controller.undo() }.disabled(!controller.canUndo)
+        Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
+        Menu("Presets & Settings") {
+          Button("Export Presets…") { controller.exportPresets() }
+          Button("Import Presets…") { controller.importPresets() }
+          Divider()
+          Button("Reset All Settings…") { confirmReset = true }
+        }
         Toggle("Open at Login", isOn: Binding(get: { loginOn }, set: { LoginItem.set($0); loginOn = LoginItem.isOn }))
+        if LoginItem.runningTranslocated {
+          Text("Move The Bass Shaker to Applications to open it at login")
+        }
+        Text("Open/Close Anywhere: \(GlobalHotkey.openLabel)")
+        if let c = controller.hotkeyConflict { Text("Shortcut in use by another app: \(c)") }
+        Divider()
+        Menu("Updates") {
+          Button("Check for Updates…") { updates.checkNow() }
+          Toggle("Check Automatically", isOn: Binding(get: { updates.automaticChecks }, set: { updates.automaticChecks = $0 }))
+          Toggle("Install Automatically", isOn: Binding(get: { updates.automaticDownloads }, set: { updates.automaticDownloads = $0 }))
+          if let err = updates.startError { Text("Updates unavailable: \(err)") }
+        }
+        Menu("Help") {
+          Button("Help") { Links.open(.help) }
+          Button("Report a Bug…") { controller.reportBug() }
+          Button("Copy Diagnostics") { controller.copyDiagnostics() }
+          Button("Privacy") { Links.open(.privacy) }
+          Divider()
+          Button("Uninstall…") { Uninstaller.run() }
+        }
         Button("About The Bass Shaker") { AboutPanel.show() }
-        Button("Check for Updates…") { updates.checkNow() }
-        if let err = updates.startError { Text("Updates unavailable: \(err)") }
         Text("Version \(updates.currentVersion)")
         Divider()
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
@@ -451,6 +505,7 @@ private struct LabeledSlider: View {
 }
 
 private struct Banner: View {
+  @Environment(\.colorSchemeContrast) private var contrast
   let symbol: String
   let tint: Color
   let text: String
@@ -461,7 +516,7 @@ private struct Banner: View {
     VStack(alignment: .leading, spacing: 6) {
       Label(text, systemImage: symbol)
         .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(tint)
+        .foregroundStyle(contrast == .increased ? Color.primary : tint)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
         if let a = action { Button(a.0, action: a.1).controlSize(.small) }
@@ -470,7 +525,7 @@ private struct Banner: View {
     }
     .padding(10)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.12)))
+    .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(contrast == .increased ? 0.28 : 0.12)))
   }
 }
 

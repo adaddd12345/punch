@@ -62,9 +62,9 @@ def main() -> int:
     xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Bass Shake</title>
+    <title>The Bass Shaker</title>
     <item>
-      <title>Bass Shake {html.escape(a.short)}</title>
+      <title>The Bass Shaker {html.escape(a.short)}</title>
       <pubDate>{email.utils.formatdate(usegmt=True)}</pubDate>
       <sparkle:version>{html.escape(a.version)}</sparkle:version>
       <sparkle:shortVersionString>{html.escape(a.short)}</sparkle:shortVersionString>

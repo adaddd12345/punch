@@ -58,12 +58,34 @@ final class Updates: NSObject, ObservableObject, SPUStandardUserDriverDelegate {
     controller.updater.checkForUpdatesInBackground()
   }
 
-  // A menu-bar app has no Dock icon, so bring Sparkle's window to the front
-  // when a scheduled check finds an update.
+  var automaticChecks: Bool {
+    get { controller.updater.automaticallyChecksForUpdates }
+    set { controller.updater.automaticallyChecksForUpdates = newValue; objectWillChange.send() }
+  }
+  var automaticDownloads: Bool {
+    get { controller.updater.automaticallyDownloadsUpdates }
+    set { controller.updater.automaticallyDownloadsUpdates = newValue; objectWillChange.send() }
+  }
+
+  /// One-time "What's New" after an update (nil on first install / no change).
+  @Published var justUpdatedTo: String? = {
+    let key = "BassShake.lastSeenVersion"
+    let now = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
+    let last = UserDefaults.standard.string(forKey: key)
+    UserDefaults.standard.set(now, forKey: key)
+    return (last != nil && last != now) ? now : nil
+  }()
+
+  /// Scheduled checks never pull a window over what the user is doing; the
+  /// update waits until they choose to look (⋯ → Check for Updates).
   var supportsGentleScheduledUpdateReminders: Bool { true }
+
+  func standardUserDriverShouldHandleShowingScheduledUpdate(_ update: SUAppcastItem, andInImmediateFocus immediateFocus: Bool) -> Bool {
+    immediateFocus
+  }
 
   func standardUserDriverWillHandleShowingUpdate(_ handleShowingUpdate: Bool, forUpdate update: SUAppcastItem,
                                                  state: SPUUserUpdateState) {
-    NSApp.activate()
+    if state.userInitiated { NSApp.activate(ignoringOtherApps: true) }
   }
 }

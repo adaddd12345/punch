@@ -5,6 +5,7 @@ import SwiftUI
 /// ask, and what that permission does *not* mean, then lets the user
 /// trigger the real system prompt with one click.
 struct OnboardingView: View {
+  @State private var loginOn = LoginItem.isOn
   @ObservedObject var controller: AudioController
   @State private var showWhy = false
 
@@ -61,6 +62,9 @@ struct OnboardingView: View {
           .font(.system(size: 11, weight: .medium))
       }
 
+      Toggle("Open The Bass Shaker at login", isOn: Binding(get: { loginOn }, set: { LoginItem.set($0); loginOn = LoginItem.isOn }))
+        .font(.system(size: 11))
+        .toggleStyle(.checkbox)
       Button {
         controller.completeOnboarding()
       } label: {

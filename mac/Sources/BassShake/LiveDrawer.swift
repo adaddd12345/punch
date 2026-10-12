@@ -65,7 +65,7 @@ final class LiveDrawer {
     panel.alphaValue = 0
     panel.orderFront(nil)
     NSAnimationContext.runAnimationGroup { ctx in
-      ctx.duration = 0.18
+      ctx.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
       panel.animator().alphaValue = 1
     }
   }
@@ -84,7 +84,11 @@ final class LiveDrawer {
     guard let panel, let r = anchorRect else { return }
     // Origin only: the hosting controller owns the size (the list scrolls
     // past six rows, so it stays compact). Aligned to the popover content.
-    panel.setFrameOrigin(NSPoint(x: r.minX, y: r.minY - gap - panel.frame.height))
+    var y = r.minY - gap - panel.frame.height
+    // Keep it on screen: on a short display, overlap the popover's bottom
+    // rather than run off the edge.
+    if let vis = (panel.parent ?? panel).screen?.visibleFrame { y = max(y, vis.minY + 4) }
+    panel.setFrameOrigin(NSPoint(x: r.minX, y: y))
   }
 }
 

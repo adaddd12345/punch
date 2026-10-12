@@ -19,7 +19,7 @@ struct BassShakeApp: App {
   }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSWindowDelegate, UNUserNotificationCenterDelegate {
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "app")
   let controller: AudioController
   let updates: Updates
@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
     if controller.needsOnboarding { showWindow() }
     setUpStatusItem()
     controller.onPinChange = { [weak self] _, _ in self?.applyPopoverBehavior() }
+    controller.onOpenHotkey = { [weak self] in self?.togglePopover(nil) }
     DispatchQueue.main.async { [controller] in controller.bootstrap() }
     // Start auto-updates only once the UI is up, and never block on it.
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }
@@ -142,12 +143,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
     // never auto-closes; that also stops the icon click racing a transient
     // close and reopening it.
     popover.behavior = .applicationDefined
-    popover.animates = controller.settings.fadeWindows
+    popover.animates = controller.settings.fadeWindows && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
   }
 
   private var outsideClickMonitors: [Any] = []
   private var cancellables = Set<AnyCancellable>()
   private var lastProblem: String?
+
+  private var resignObserver: Any?
+  /// Belt and braces for click-away: when the popover's window stops being
+  /// key (another app, the desktop, Mission Control), close it unless the
+  /// new key window is ours (the drop-down tray, a Sparkle dialog).
+  private func watchPopoverKey() {
+    if let o = resignObserver { NotificationCenter.default.removeObserver(o) }
+    guard let w = popover.contentViewController?.view.window else { return }
+    resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: w, queue: .main) { [weak self] _ in
+      DispatchQueue.main.async {
+        guard let self, self.popover.isShown, !self.controller.pinned else { return }
+        if let k = NSApp.keyWindow, k === w || k.parent === w { return }
+        self.closePopover()
+      }
+    }
+  }
 
   private func closeIfUnpinned() {
     if popover.isShown && !controller.pinned { closePopover() }
@@ -206,6 +223,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
     completionHandler()
   }
 
+  func windowWillClose(_ notification: Notification) {
+    if (notification.object as? NSWindow) === window { NSApp.setActivationPolicy(.accessory) }
+  }
+
   func popoverDidClose(_ notification: Notification) {
     removeOutsideClickMonitors()
     statusItem?.button?.highlight(false)
@@ -236,13 +257,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
       popover.contentViewController?.view.window?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
       button.highlight(true)
       installOutsideClickMonitors()
+      watchPopoverKey()
     }
   }
 
   private func closePopover() {
     removeOutsideClickMonitors()
     statusItem?.button?.highlight(false)
-    popover.performClose(nil)
+    // close(), not performClose(): with .applicationDefined behaviour
+    // performClose can be refused, which left the popover stuck open.
+    popover.close()
+    LiveDrawer.shared.hide()
   }
 
   /// Unpinned: any click outside the popover (another app, the desktop, our
@@ -307,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
     menu.addItem(.separator())
     add("Check for Updates…", #selector(menuUpdates))
     add("About The Bass Shaker", #selector(menuAbout))
+    add("Help", #selector(menuHelp))
     menu.addItem(.separator())
     add("Quit", #selector(menuQuit), key: "q")
     let force = menu.addItem(withTitle: "Force Quit", action: #selector(menuForceQuit), keyEquivalent: "")
@@ -325,6 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
   @objc private func menuLogin() { LoginItem.set(!LoginItem.isOn) }
   @objc private func menuUpdates() { updates.checkNow() }
   @objc private func menuAbout() { AboutPanel.show() }
+  @objc private func menuHelp() { Links.open(.help) }
   @objc private func menuToggle() { togglePopover(nil) }
   @objc private func menuPin() { controller.setPinned(!controller.pinned, from: nil) }
   @objc private func menuQuit() { NSApp.terminate(nil) }
@@ -337,11 +364,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
       let host = NSHostingController(rootView: MainWindowView(controller: controller).environmentObject(updates))
       let w = NSWindow(contentViewController: host)
       w.title = "The Bass Shaker"
-      w.styleMask = [.titled, .closable, .miniaturizable]
+      w.styleMask = [.titled, .closable]
       w.isReleasedWhenClosed = false
       w.center()
+      w.setFrameAutosaveName("BassShakeMain")
+      w.delegate = self
       window = w
     }
+    // While the window is open it gets a Dock icon and ⌘-Tab entry, so it
+    // can't get lost behind other windows; it goes back to menu-bar-only on close.
+    NSApp.setActivationPolicy(.regular)
     // macOS 14+ treats activate() as a polite request and ignores it when
     // another app (e.g. Terminal or Finder) launched us, which left the
     // window behind other windows. Force it to the front.

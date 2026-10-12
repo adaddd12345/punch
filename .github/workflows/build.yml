@@ -28,7 +28,7 @@ jobs:
           ctest --test-dir core/build-asan --output-on-failure
 
   mac-app:
-    name: Bass Shake.app (macOS)
+    name: The Bass Shaker.app (macOS)
     runs-on: macos-15
     # Publish releases and the update feed in push order.
     concurrency:
@@ -58,26 +58,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0-beta.${{ github.run_number }}
-          name: Bass Shake 0.1.0 beta ${{ github.run_number }}
+          name: The Bass Shaker 0.1.0 beta ${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: build/BassShake-*.zip
           body: |
-            Bass Shake beta build from `${{ github.ref_name }}` @ ${{ github.sha }}.
+            The Bass Shaker beta build from `${{ github.ref_name }}` @ ${{ github.sha }}.
 
             **Install (macOS 15+)**
-            1. Download `BassShake-*.zip`, unzip, drag **Bass Shake.app** to Applications.
+            1. Download `BassShake-*.zip`, unzip, drag **The Bass Shaker.app** to Applications.
             2. Double-click it → "Apple could not verify…" → **Done**.
             3. System Settings → Privacy & Security → scroll to Security → **Open Anyway** → password.
-            4. The Bass Shake window and the salt shaker in the menu bar appear. Allow **System Audio Recording**.
+            4. The Bass Shaker window and the salt shaker in the menu bar appear. Allow **System Audio Recording**.
 
             Or skip 2–3 in Terminal:
-            `xattr -dr com.apple.quarantine "/Applications/Bass Shake.app" && open "/Applications/Bass Shake.app"`
+            `xattr -dr com.apple.quarantine "/Applications/The Bass Shaker.app" && open "/Applications/The Bass Shaker.app"`
 
             Troubleshooting: see the README (menu-bar icon hidden behind the notch, macOS 26 Menu Bar settings, permissions).
 
             Requires macOS 14.4 or later. No driver is installed and no restart is needed;
-            quitting Bass Shake instantly returns your Mac's audio to normal.
+            quitting The Bass Shaker instantly returns your Mac's audio to normal.
       - name: Sign update + write Sparkle appcast
         if: github.event_name != 'pull_request'
         env:
@@ -109,5 +109,5 @@ jobs:
           files: build/appcast.xml
           overwrite_files: true
           body: |
-            Machine-readable update feed for Bass Shake's built-in updater (Sparkle).
+            Machine-readable update feed for The Bass Shaker's built-in updater (Sparkle).
             This is not an app download; get the app from the newest v0.1.0-beta.N release.

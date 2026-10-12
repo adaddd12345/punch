@@ -4,7 +4,9 @@ import SwiftUI
 /// Six draggable nodes on a live response curve.
 ///   drag        frequency + gain (Shift = fine)
 ///   scroll      Q (bandwidth) of the hovered / grabbed node
-///   double-click  reset that node to 0 dB
+///   double-click  reset that node to 0 dB;  ⌥-click: reset it fully
+///   keyboard    ←/→ pick a node, ↑/↓ gain (⇧ fine), ⌥←/→ frequency,
+///               Space/Delete reset
 /// Gain snaps to 0 dB with a trackpad haptic tick.
 struct EQView: View {
   @ObservedObject var controller: AudioController
@@ -14,6 +16,9 @@ struct EQView: View {
   @State private var dragOrigin: (band: EQBand, point: CGPoint)?
   @State private var snapped = false
   @State private var scrollMonitor: Any?
+  @State private var kbBand = 0
+  @FocusState private var focused: Bool
+  @Environment(\.colorSchemeContrast) private var contrast
 
   private static let colors: [Color] = [
     Color(red: 1.00, green: 0.36, blue: 0.36),
@@ -42,7 +47,7 @@ struct EQView: View {
             .allowsHitTesting(false)
             .transition(.opacity)
         }
-        if let i = grabbed ?? hovered, i < bands.count {
+        if let i = grabbed ?? hovered ?? (focused ? kbBand : nil), i < bands.count {
           let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
           let ny: CGFloat = y(bands[i].gain, size.height)
           readout(bands[i], color: Self.colors[i])
@@ -62,6 +67,11 @@ struct EQView: View {
               .accessibilityValue("\(String(format: "%.1f", bands[i].gain)) decibels")
           }
         }
+      }
+      .focusable()
+      .focused($focused)
+      .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .space, .delete]) { press in
+        handleKey(press)
       }
       .gesture(dragGesture(size: size))
       .simultaneousGesture(TapGesture(count: 2).onEnded { resetHovered() })
@@ -118,7 +128,7 @@ struct EQView: View {
     for g in [-6.0, 6] {
       grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
     }
-    ctx.stroke(grid, with: .color(.primary.opacity(0.06)), lineWidth: 1)
+    ctx.stroke(grid, with: .color(.primary.opacity(contrast == .increased ? 0.18 : 0.06)), lineWidth: 1)
     var zero = Path()
     zero.move(to: CGPoint(x: 0, y: y(0, h))); zero.addLine(to: CGPoint(x: w, y: y(0, h)))
     ctx.stroke(zero, with: .color(.primary.opacity(0.14)), lineWidth: 1)
@@ -208,6 +218,11 @@ struct EQView: View {
           guard let i = nearest(v.startLocation, size: size) else { return }
           grabbed = i
           controller.pushUndo()
+          if NSEvent.modifierFlags.contains(.option), EQBand.defaults.indices.contains(i) {
+            controller.update(band: i, to: EQBand.defaults[i], animated: true)   // ⌥-click: reset fully
+            dragOrigin = nil
+            return
+          }
           dragOrigin = (controller.settings.bands[i], v.startLocation)
           snapped = abs(controller.settings.bands[i].gain) < 0.01
         }
@@ -235,6 +250,29 @@ struct EQView: View {
         grabbed = nil
         dragOrigin = nil
       }
+  }
+
+  private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+    let bands = controller.settings.bands
+    guard !bands.isEmpty else { return .ignored }
+    kbBand = min(kbBand, bands.count - 1)
+    var b = bands[kbBand]
+    let alt = press.modifiers.contains(.option), fine = press.modifiers.contains(.shift)
+    switch press.key {
+    case .leftArrow where !alt: kbBand = (kbBand + bands.count - 1) % bands.count; return .handled
+    case .rightArrow where !alt: kbBand = (kbBand + 1) % bands.count; return .handled
+    case .leftArrow, .rightArrow:
+      let f = press.key == .rightArrow ? 1.06 : 1 / 1.06
+      b.freq = min(EQBand.freqRange.upperBound, max(EQBand.freqRange.lowerBound, b.freq * f))
+    case .upArrow, .downArrow:
+      let step = (fine ? 0.1 : 0.5) * (press.key == .upArrow ? 1 : -1)
+      b.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, b.gain + step))
+    default:
+      b.gain = 0
+    }
+    controller.pushUndo()
+    controller.update(band: kbBand, to: b)
+    return .handled
   }
 
   private func resetHovered() {

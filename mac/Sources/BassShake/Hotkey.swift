@@ -7,6 +7,8 @@ import Foundation
 final class GlobalHotkey {
   private var ref: EventHotKeyRef?
   private let id: UInt32
+  /// False when another app already owns this shortcut.
+  private(set) var registered = false
   private static var actions: [UInt32: () -> Void] = [:]
   private static var handlerInstalled = false
 
@@ -15,7 +17,7 @@ final class GlobalHotkey {
     Self.installHandler()
     Self.actions[id] = action
     let hk = EventHotKeyID(signature: OSType(0x4253_4B59), id: id)  // 'BSKY'
-    RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), hk, GetApplicationEventTarget(), 0, &ref)
+    registered = RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), hk, GetApplicationEventTarget(), 0, &ref) == noErr
   }
 
   deinit {
@@ -41,4 +43,7 @@ final class GlobalHotkey {
   static let bypassKeyCode = kVK_ANSI_B
   static let bypassModifiers = controlKey | optionKey | cmdKey
   static let bypassLabel = "⌃⌥⌘B"
+  /// ⌃⌥⌘S: open or close the controls (for when the icon is hidden).
+  static let openKeyCode = kVK_ANSI_S
+  static let openLabel = "⌃⌥⌘S"
 }

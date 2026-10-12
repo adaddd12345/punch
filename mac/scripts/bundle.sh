@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Bass Shake.app (universal) from the SwiftPM package and zips it.
+# Builds The Bass Shaker.app (universal) from the SwiftPM package and zips it.
 #   mac/scripts/bundle.sh [version] [build-number]
 # Signing: ad-hoc by default. Set SIGN_IDENTITY="Developer ID Application: …"
 # for a notarizable build (then run notarytool + stapler).
@@ -8,7 +8,7 @@ cd "$(dirname "$0")/../.."
 
 VERSION="${1:-0.1.0}"
 BUILD="${2:-1}"
-APP="build/Bass Shake.app"
+APP="build/The Bass Shaker.app"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 swift build -c release --arch arm64 --arch x86_64

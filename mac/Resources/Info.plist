@@ -27,6 +27,6 @@
   <key>SUEnableAutomaticChecks</key><true/>
   <key>SUScheduledCheckInterval</key><integer>3600</integer>
   <key>SUAllowsAutomaticUpdates</key><true/>
-  <key>NSHumanReadableCopyright</key><string>The Bass Shaker beta</string>
+  <key>NSHumanReadableCopyright</key><string>© 2026 The Bass Shaker</string>
 </dict>
 </plist>

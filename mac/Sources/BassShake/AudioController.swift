@@ -4,6 +4,7 @@ import BassShakeRT
 import Combine
 import CoreAudio
 import Foundation
+import UniformTypeIdentifiers
 import PunchCore
 import os
 
@@ -26,7 +27,12 @@ final class AudioController: ObservableObject {
   }
 
   @Published private(set) var status: Status = .off {
-    didSet { if status != oldValue { log.notice("status: \(String(describing: self.status), privacy: .public)") } }
+    didSet {
+      if status != oldValue {
+        log.notice("status: \(String(describing: self.status), privacy: .public)")
+        updatePermissionPoll()
+      }
+    }
   }
   @Published private(set) var devices: [OutputDevice] = []
   /// First run: explain what Bass Shake does and why macOS will ask for
@@ -60,6 +66,12 @@ final class AudioController: ObservableObject {
   @Published private(set) var pinned = false
   /// Set by the app delegate: shows/hides the pinned panel at a frame.
   var onPinChange: ((Bool, NSRect?) -> Void)?
+  /// Set by the app delegate: the open/close hotkey.
+  var onOpenHotkey: (() -> Void)?
+  private var openHotkey: GlobalHotkey?
+  /// A shortcut another app already owns (shown in the ⋯ menu).
+  @Published private(set) var hotkeyConflict: String?
+  private var permissionPoll: Timer?
 
   func setPinned(_ on: Bool, from window: NSWindow?) {
     guard on != pinned else { return }
@@ -459,10 +471,74 @@ final class AudioController: ObservableObject {
 
   private func updateHotkey() {
     bypassHotkey = nil
-    guard settings.bypassHotkey else { return }
-    bypassHotkey = GlobalHotkey(keyCode: GlobalHotkey.bypassKeyCode, modifiers: GlobalHotkey.bypassModifiers, id: 1) { [weak self] in
-      guard let self, self.settings.enabled else { return }
-      self.bypassed.toggle()
+    openHotkey = nil
+    var conflicts: [String] = []
+    if openHotkey == nil {
+      let h = GlobalHotkey(keyCode: GlobalHotkey.openKeyCode, modifiers: GlobalHotkey.bypassModifiers, id: 2) { [weak self] in
+        self?.onOpenHotkey?()
+      }
+      if !h.registered { conflicts.append(GlobalHotkey.openLabel) }
+      openHotkey = h
+    }
+    if settings.bypassHotkey {
+      let h = GlobalHotkey(keyCode: GlobalHotkey.bypassKeyCode, modifiers: GlobalHotkey.bypassModifiers, id: 1) { [weak self] in
+        guard let self, self.settings.enabled else { return }
+        self.bypassed.toggle()
+      }
+      if !h.registered { conflicts.append(GlobalHotkey.bypassLabel) }
+      bypassHotkey = h
+    }
+    hotkeyConflict = conflicts.isEmpty ? nil : conflicts.joined(separator: ", ")
+  }
+
+  // MARK: - Reset, export, import
+
+  /// Everything back to first-run defaults (presets included).
+  func resetAllSettings() {
+    UserDefaults.standard.removeObject(forKey: Settings.key)
+    settings = Settings()
+  }
+
+  func exportPresets() {
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = "Bass Shaker Presets.json"
+    panel.allowedContentTypes = [.json]
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    let enc = JSONEncoder()
+    enc.outputFormatting = [.prettyPrinted]
+    try? enc.encode(settings.userPresets).write(to: url)
+  }
+
+  func importPresets() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.json]
+    NSApp.activate(ignoringOtherApps: true)
+    guard panel.runModal() == .OK, let url = panel.url,
+          let data = try? Data(contentsOf: url),
+          let list = try? JSONDecoder().decode([UserPreset].self, from: data) else { return }
+    pushUndo()
+    let have = Set(settings.userPresets.map(\.id))
+    settings.userPresets += list.filter { !have.contains($0.id) }
+  }
+
+  /// "Resumes automatically": a menu-bar app isn't activated when the user
+  /// leaves System Settings, so poll while waiting for the permission.
+  private func updatePermissionPoll() {
+    if status == .needsPermission {
+      guard permissionPoll == nil else { return }
+      let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+        guard let self, self.status == .needsPermission else { return }
+        AudioCapturePermission.preflightAsync { state in
+          if state == .granted { self.retry() }
+        }
+      }
+      t.tolerance = 0.5
+      RunLoop.main.add(t, forMode: .common)
+      permissionPoll = t
+    } else {
+      permissionPoll?.invalidate()
+      permissionPoll = nil
     }
   }
 
@@ -937,7 +1013,7 @@ final class AudioController: ObservableObject {
         self.pipelineStop(fade: true)
         let name = (try? HAL.string(defaultID, .global(kAudioObjectPropertyName))) ?? "this output"
         DispatchQueue.main.async {
-          self.status = .failed(devs.isEmpty ? "No output device"
+          self.status = .failed(devs.isEmpty ? "No speakers or headphones found. Plug some in or pick an output in Sound settings; The Bass Shaker picks them up automatically."
             : "“\(name)” is a virtual or multi-output device, which The Bass Shaker can't shape. Your audio plays normally; pick speakers or headphones to use it.")
         }
         return
@@ -975,7 +1051,8 @@ final class AudioController: ObservableObject {
             self.status = .starting
             self.scheduleRebuild(delay: delays[self.startFailures - 1])
           } else {
-            self.status = .failed("Couldn't start on this device (\(error)). Your audio is playing normally without The Bass Shaker.")
+            self.log.error("start failed: \(String(describing: error), privacy: .public)")
+            self.status = .failed("The Bass Shaker couldn't start on this output. Your audio is playing normally without it. Try Retry, or pick another output.")
           }
         }
       }
@@ -1171,7 +1248,7 @@ final class AudioController: ObservableObject {
     stalledStreak = 0
     everHeardAudio = false
     let t = DispatchSource.makeTimerSource(queue: audioQueue)
-    t.schedule(deadline: .now() + 1, repeating: 1)
+    t.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
     t.setEventHandler { [weak self] in self?.watchdogTick() }
     t.resume()
     audioWatchdog = t
