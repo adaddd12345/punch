@@ -106,7 +106,7 @@ struct MainWindowView: View {
           .renderingMode(.template)
           .resizable()
           .frame(width: 18, height: 18)
-          .foregroundStyle(Mono.ink)
+          .foregroundStyle(Color.accentColor)
         VStack(alignment: .leading, spacing: 3) {
           Text("The Bass Shaker lives in your menu bar")
             .font(.system(size: 12, weight: .semibold))
@@ -120,7 +120,7 @@ struct MainWindowView: View {
       .frame(width: 360, alignment: .leading)
       .background(Color.primary.opacity(0.04))
       Divider()
-      PopoverView(controller: controller)
+      PopoverView(controller: controller, ownsDrawer: false)
     }
   }
 }

@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Footer tab: `LIVE 3`. Click to pull the Live Channels sheet out of the
-/// popover's bottom edge.
+/// Compact header chip: "● 3 Live". Click to show the Live Channels list.
 struct LiveChannelsButton: View {
   @ObservedObject var model: LiveChannels
   @Binding var expanded: Bool
@@ -10,16 +9,31 @@ struct LiveChannelsButton: View {
   var body: some View {
     let n = model.liveCount
     let mutedCount = model.mutedPresentCount
-    HStack(spacing: 4) {
-      TypeWord("Live", isOn: expanded, badge: n > 0 ? "\(n)" : nil) {
-        expanded.toggle()
+    Button {
+      withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expanded.toggle() }
+    } label: {
+      HStack(spacing: 4) {
+        Circle()
+          .fill(n > 0 ? MeterModel.zones[0].color : Color.secondary.opacity(0.45))
+          .frame(width: 6, height: 6)
+        Text(n > 0 ? "\(n) Live" : "Live")
+          .font(.system(size: 10, weight: .bold, design: .rounded))
+          .monospacedDigit()
+        if mutedCount > 0 {
+          Image(systemName: "speaker.slash.fill")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(Color.orange)
+        }
+        Image(systemName: "chevron.down")
+          .font(.system(size: 7, weight: .bold))
+          .foregroundStyle(.secondary)
+          .rotationEffect(.degrees(expanded ? 180 : 0))
       }
-      if mutedCount > 0 {
-        Image(systemName: "speaker.slash")
-          .font(.system(size: 8, weight: .semibold))
-          .foregroundStyle(Mono.mid)
-      }
+      .padding(.horizontal, 7).padding(.vertical, 3)
+      .foregroundStyle(Color.primary)
+      .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
     }
+    .buttonStyle(.plain)
     .help(helpText(n, mutedCount))
   }
 
@@ -30,50 +44,52 @@ struct LiveChannelsButton: View {
   }
 }
 
-/// The Live Channels sheet: every app outputting audio, where it plays, a
-/// live level, the Shaker bypass and a one-click mute. Metering runs only
-/// while this is on screen.
+/// The expanded list: every app outputting audio, where it plays, a live
+/// level and a one-click mute. Metering runs only while this is on screen.
 struct LiveChannelsPanel: View {
   @ObservedObject var model: LiveChannels
-  private static let rowHeight: CGFloat = 28
+  private static let rowHeight: CGFloat = 30
   private static let maxVisibleRows = 6
 
   var body: some View {
-    let idle = model.mutedIdle
-    let rowCount = model.apps.count + idle.count
-    SheetScaffold("Live channels", closeTitle: "Hide", onClose: { LiveDrawer.shared.dismiss() }, scrolls: false,
-                  accessory: {
-                    Image(systemName: "info.circle")
-                      .font(.system(size: 9, weight: .semibold))
-                      .foregroundStyle(Mono.dim)
-                      .help(LiveChannels.tabsNote)
-                  }) {
-      VStack(alignment: .leading, spacing: 6) {
-        if rowCount == 0 {
-          Text("Nothing is playing.")
-            .font(Mono.note)
-            .foregroundStyle(Mono.dim)
-            .frame(height: Self.rowHeight)
-        } else if rowCount > Self.maxVisibleRows {
-          ScrollView(.vertical, showsIndicators: true) { rows(idle) }
-            .frame(height: Self.rowHeight * CGFloat(Self.maxVisibleRows))
-        } else {
-          rows(idle)
-        }
-        if let problem = model.meterProblem {
-          Text(problem)
-            .font(Mono.note)
-            .foregroundStyle(Mono.mid)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 4) {
+        Text("LIVE CHANNELS")
+          .font(.system(size: 9, weight: .bold, design: .rounded))
+          .foregroundStyle(.secondary)
+        Spacer()
+        Image(systemName: "info.circle")
+          .font(.system(size: 9, weight: .semibold))
+          .foregroundStyle(.tertiary)
+          .help(LiveChannels.tabsNote)
+      }
+      let idle = model.mutedIdle
+      let rowCount = model.apps.count + idle.count
+      if rowCount == 0 {
+        Text("Nothing is playing right now.")
+          .font(.system(size: 10, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
+          .padding(.vertical, 4)
+      } else if rowCount > Self.maxVisibleRows {
+        ScrollView(.vertical, showsIndicators: true) { rows(idle) }
+          .frame(height: Self.rowHeight * CGFloat(Self.maxVisibleRows))
+      } else {
+        rows(idle)
+      }
+      if let problem = model.meterProblem {
+        Text(problem)
+          .font(.system(size: 9, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
       }
     }
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .onAppear { model.setMetering(true) }
     .onDisappear { model.setMetering(false) }
   }
 
   private func rows(_ idle: [String]) -> some View {
-    VStack(spacing: 0) {
+    VStack(spacing: 2) {
       ForEach(model.apps) { app in
         LiveChannelRow(app: app,
                        level: model.levels[app.id],
@@ -111,24 +127,47 @@ private struct LiveChannelRow: View {
   var body: some View {
     HStack(spacing: 8) {
       Button(action: onOpen) { appLabel }
-        .buttonStyle(TypeButtonStyle())
+        .buttonStyle(.plain)
         .help("Open \(app.name)")
       Spacer(minLength: 4)
       LiveLevelMeter(db: app.isPlaying ? level : nil)
-        .frame(width: 48, height: 2)
-        .opacity(muted ? 0.35 : 1)
+        .frame(width: 54, height: 5)
+        .opacity(muted ? 0.4 : 1)
       Text(dbText)
-        .font(Mono.micro(9))
-        .foregroundStyle(Mono.mid)
-        .frame(width: 22, alignment: .trailing)
-      TypeWord("FX", isOn: shakerOn, action: onShaker)
-        .help(shakerOn ? "The Bass Shaker is shaping \(app.name). Click to let it play untouched."
-                       : "\(app.name) plays untouched. Click to run it through The Bass Shaker again.")
-      TypeWord("Mute", isOn: muted, action: onToggle)
-        .help(muteHelp)
+        .font(.system(size: 9, weight: .medium, design: .rounded))
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
+        .frame(width: 24, alignment: .trailing)
+      Button(action: onShaker) {
+        Image(nsImage: MenuBarIcon.image)
+          .renderingMode(.template)
+          .resizable()
+          .interpolation(.high)
+          .frame(width: 11, height: 11)
+          .frame(width: 28, height: 18)
+          .foregroundStyle(shakerOn ? Color.white : Color.secondary)
+          .background(Capsule().fill(shakerOn ? Color.accentColor : Color.primary.opacity(0.08)))
+          .overlay {
+            if !shakerOn {
+              Image(systemName: "line.diagonal").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
+            }
+          }
+      }
+      .buttonStyle(.plain)
+      .help(shakerOn ? "The Bass Shaker is shaping \(app.name). Click to let it play untouched."
+                     : "\(app.name) plays untouched. Click to run it through The Bass Shaker again.")
+      Button(action: onToggle) {
+        Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+          .font(.system(size: 9, weight: .bold))
+          .frame(width: 28, height: 18)
+          .foregroundStyle(muted ? Color.white : Color.primary)
+          .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
+      }
+      .buttonStyle(.plain)
+      .help(muteHelp)
     }
     .padding(.horizontal, 4)
-    .background(Rectangle().fill(hover ? Mono.wash : Color.clear))
+    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.06 : 0)))
     .onHover { hover = $0 }
     .help(rowHelp)
   }
@@ -138,19 +177,21 @@ private struct LiveChannelRow: View {
       Image(nsImage: icon)
         .resizable()
         .interpolation(.high)
-        .frame(width: 16, height: 16)
-        .saturation(0)
-        .opacity(muted ? 0.4 : 0.9)
-      VStack(alignment: .leading, spacing: 0) {
+        .frame(width: 18, height: 18)
+        .opacity(muted ? 0.5 : 1)
+      VStack(alignment: .leading, spacing: 1) {
         Text(app.name)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(muted ? Mono.dim : Mono.ink)
+          .font(.system(size: 11, weight: .semibold, design: .rounded))
           .lineLimit(1)
-        Text(deviceText)
-          .font(Mono.micro(9))
-          .foregroundStyle(Mono.dim)
-          .lineLimit(1)
-          .truncationMode(.tail)
+        HStack(spacing: 3) {
+          Image(systemName: muted ? "speaker.slash" : "speaker.wave.2")
+            .font(.system(size: 7, weight: .semibold))
+          Text(deviceText)
+            .font(.system(size: 9, weight: .medium, design: .rounded))
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        .foregroundStyle(.secondary)
       }
     }
     .contentShape(Rectangle())
@@ -188,7 +229,7 @@ private struct LiveChannelRow: View {
   }
 }
 
-/// A mute for an app that isn't using audio right now.
+/// A saved mute for an app that isn't using audio right now.
 private struct MutedIdleRow: View {
   let name: String
   let icon: NSImage
@@ -199,40 +240,49 @@ private struct MutedIdleRow: View {
       Image(nsImage: icon)
         .resizable()
         .interpolation(.high)
-        .frame(width: 16, height: 16)
-        .saturation(0)
+        .frame(width: 18, height: 18)
         .opacity(0.4)
-      VStack(alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: 1) {
         Text(name)
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(Mono.dim)
+          .font(.system(size: 11, weight: .semibold, design: .rounded))
+          .foregroundStyle(.secondary)
           .lineLimit(1)
         Text("Muted · not playing")
-          .font(Mono.micro(9))
-          .foregroundStyle(Mono.dim)
+          .font(.system(size: 9, weight: .medium, design: .rounded))
+          .foregroundStyle(.tertiary)
       }
       Spacer(minLength: 4)
-      TypeAction("Unmute", glyph: nil, emphasized: true, action: onUnmute)
-        .help("Unmute \(name).")
+      Button(action: onUnmute) {
+        Image(systemName: "speaker.slash.fill")
+          .font(.system(size: 9, weight: .bold))
+          .frame(width: 28, height: 18)
+          .foregroundStyle(Color.white)
+          .background(Capsule().fill(Color.orange.opacity(0.7)))
+      }
+      .buttonStyle(.plain)
+      .help("Unmute \(name). Mutes last until you unmute or quit The Bass Shaker.")
     }
-    .padding(.horizontal, 4)
   }
 }
 
-/// Tiny single-bar level meter, −90...0 dBFS: grey, red only past the
-/// main meter's danger line.
+/// Tiny single-bar level meter, −90...0 dBFS, coloured by Meters.swift's
+/// zones so it reads like the main meter.
 struct LiveLevelMeter: View {
   let db: Double?
 
   var body: some View {
     Canvas { ctx, size in
-      ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.primary.opacity(0.10)))
+      let r = size.height / 2
+      let track = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: r)
+      ctx.fill(track, with: .color(.primary.opacity(0.08)))
       guard let db, db > LiveChannels.floorDb else { return }
-      let w = max(1, size.width * CGFloat(LiveChannels.position(db)))
-      ctx.fill(Path(CGRect(x: 0, y: 0, width: w, height: size.height)), with: .color(MeterModel.color(db)))
+      let w = max(size.height, size.width * CGFloat(LiveChannels.position(db)))
+      ctx.fill(Path(roundedRect: CGRect(x: 0, y: 0, width: w, height: size.height), cornerRadius: r),
+               with: .color(MeterModel.color(db)))
     }
   }
 }
+
 
 /// Always-visible line in the popover while any present app is muted, so a
 /// mute can never quietly kill someone's music. One click unmutes all.
@@ -242,21 +292,23 @@ struct MutedNotice: View {
   var body: some View {
     let names = model.apps.filter { model.muted.contains($0.id) }.map(\.name)
     if !names.isEmpty {
-      HStack(spacing: 8) {
-        Rectangle().fill(Mono.ink).frame(width: 2, height: 14)
-        Image(systemName: "speaker.slash")
-          .font(.system(size: 9, weight: .semibold))
-          .foregroundStyle(Mono.ink)
+      HStack(spacing: 6) {
+        Image(systemName: "speaker.slash.fill").font(.system(size: 9, weight: .bold))
         Text("Muted: \(names.joined(separator: ", "))")
-          .font(Mono.note)
-          .foregroundStyle(Mono.ink)
+          .font(.system(size: 10, weight: .semibold, design: .rounded))
           .lineLimit(1)
           .truncationMode(.tail)
         Spacer(minLength: 4)
-        TypeAction("Unmute", glyph: nil, emphasized: true) {
+        Button("Unmute") {
           for id in model.muted { model.setMuted(false, id: id) }
         }
+        .buttonStyle(.plain)
+        .font(.system(size: 10, weight: .bold, design: .rounded))
+        .underline()
       }
+      .foregroundStyle(.primary)
+      .padding(.horizontal, 10).padding(.vertical, 6)
+      .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
       .help("The Bass Shaker is muting these apps. Mutes last until you unmute or quit.")
     }
   }

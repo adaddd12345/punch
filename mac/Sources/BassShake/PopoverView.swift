@@ -1,101 +1,80 @@
 import AppKit
 import SwiftUI
 
-/// Secondary surfaces that cut over from the popover's right edge.
-enum EdgeSheetKind: Hashable {
-  case settings
-  case latency
-  case drivers
-  case preset(PresetEditor.Mode)
-}
-
 struct PopoverView: View {
   @ObservedObject var controller: AudioController
   @ObservedObject var meters: MeterModel
   @EnvironmentObject var updates: Updates
-  @ObservedObject private var latencyLab = LatencyLab.shared
   private let meterTimer = Timer.publish(every: 1.0 / 60, on: .main, in: .common).autoconnect()
   @State private var visible = false
-  @State private var sheet: EdgeSheetKind?
+  @State private var editor: PresetEditor.Mode?
+  @State private var showDrivers = false
   @State private var showLive = false
   @State private var showDJ = false
-  /// This view's own window (menu-bar popover or main window). A box, so
-  /// capturing it never triggers a redraw.
-  @State private var window = WindowBox()
-  @State private var bodyHeight: CGFloat = 380
+  @ObservedObject private var latencyLab = LatencyLab.shared
+  @State private var showLatencyLab = false
 
-  private static let headerHeight: CGFloat = 40
-  private static let footerHeight: CGFloat = 32
-  /// Hard ceiling for the whole popover so it fits a 13" display.
-  private static let maxTotalHeight: CGFloat = 560
+  /// The menu-bar popover owns the drop-down drawer; the copy shown in the
+  /// launch window must not (two owners made the drawer flicker between
+  /// windows).
+  private let ownsDrawer: Bool
 
-  init(controller: AudioController) {
+  init(controller: AudioController, ownsDrawer: Bool = true) {
     self.controller = controller
     self.meters = controller.meters
+    self.ownsDrawer = ownsDrawer
   }
 
   var body: some View {
     if controller.needsOnboarding {
       OnboardingView(controller: controller)
+    } else if showLatencyLab {
+      LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
     } else {
       controls
     }
   }
 
-  private var enabled: Bool { controller.settings.enabled }
-
-  /// Height available to the scrolling middle: never more than the 560 pt
-  /// budget, nor more than the screen allows.
-  private var maxBodyHeight: CGFloat {
-    let screen = (window.window?.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
-    let total = min(Self.maxTotalHeight, screen - 40)
-    return max(160, total - Self.headerHeight - Self.footerHeight - 2 * Mono.hairline)
-  }
-
   private var controls: some View {
-    VStack(alignment: .leading, spacing: 0) {
+    VStack(alignment: .leading, spacing: 12) {
       header
-        .padding(.horizontal, Mono.gutter)
-        .frame(height: Self.headerHeight)
-      Hairline()
-      ScrollView(.vertical, showsIndicators: false) {
-        mainBody
-          .background(GeometryReader { g in
-            Color.clear.preference(key: BodyHeightKey.self, value: g.size.height)
-          })
-      }
-      .scrollDisabled(bodyHeight <= maxBodyHeight)
-      .frame(height: min(bodyHeight, maxBodyHeight))
-      .onPreferenceChange(BodyHeightKey.self) { bodyHeight = $0 }
-      Hairline()
+      statusBanner
+      MutedNotice(model: controller.live)
+      driverSection
+      EQView(controller: controller)
+        .frame(height: 150)
+        .opacity(controller.settings.enabled ? 1 : 0.45)
+      presetStrip
+      MeterView(model: meters)
+      sliders
+      ModesView(controller: controller)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.settings.mode)
+      Divider().opacity(0.5)
       footer
-        .padding(.horizontal, Mono.gutter)
-        .frame(height: Self.footerHeight)
     }
-    .frame(width: Mono.width)
-    .background(HostWindowReader { window.window = $0 })
-    .overlay { sheetLayer }
+    .padding(14)
+    .frame(width: 360)
     .onReceive(meterTimer) { _ in
-      // Only one PopoverView (the key one) polls, so the menu-bar popover
-      // and the main window never split the meter/analyzer feed.
-      guard visible, window.ownsMeters else { return }
+      guard visible else { return }
       meters.update(controller.pollMeters())
-      if controller.settings.waveform { controller.waveform.pull(controller) }
     }
+    .background(HostWindowReader { w in
+      // Only the menu-bar popover, and only on a real change (updateNSView
+      // runs every frame while the meters animate).
+      if ownsDrawer, let w, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
+    })
     .onChange(of: showLive) { _, on in
       if on {
         showDJ = false
-        prepareDrawer()
-        LiveDrawer.shared.show(model: controller.live, from: window.window)
+        LiveDrawer.shared.show(model: controller.live)
       } else if !showDJ {
         LiveDrawer.shared.hide()
       }
     }
     .onChange(of: showDJ) { _, on in
+      LiveDrawer.shared.onHide = { [weak controller] in controller?.dj.held = [] }
       if on {
-        showLive = false
-        prepareDrawer()
-        LiveDrawer.shared.show(DJView(controller: controller), from: window.window)
+        LiveDrawer.shared.show(DJView(controller: controller))
       } else if !showLive {
         LiveDrawer.shared.hide()
       }
@@ -108,127 +87,135 @@ struct PopoverView: View {
     .onDisappear {
       visible = false
       meters.reset()
-      sheet = nil
       showLive = false
       showDJ = false
-      if LiveDrawer.shared.host == nil || LiveDrawer.shared.host === window.window {
-        LiveDrawer.shared.hide()
-      }
-      controller.dj.held = []
+      if ownsDrawer { LiveDrawer.shared.hide() }
       controller.live.setMetering(false)
-    }
-  }
-
-  private func prepareDrawer() {
-    LiveDrawer.shared.onDismiss = {
-      showLive = false
-      showDJ = false
-    }
-    LiveDrawer.shared.onHide = { [controller] in
-      if !controller.dj.held.isEmpty { controller.dj.held = [] }
-    }
-  }
-
-  private var mainBody: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      VStack(alignment: .leading, spacing: 8) {
-        statusBanner
-        MutedNotice(model: controller.live)
-        driverBanner
-        EQView(controller: controller)
-          .frame(height: 132)
-          .opacity(enabled ? 1 : 0.4)
-        PresetStrip(controller: controller) { open(.preset($0)) }
-        MeterView(model: meters)
-      }
-      .padding(.horizontal, Mono.gutter)
-      .padding(.vertical, 10)
-      Hairline()
-      sliders
-        .padding(.horizontal, Mono.gutter)
-        .padding(.vertical, 8)
-      Hairline()
-      ModesView(controller: controller)
-        .padding(.horizontal, Mono.gutter)
-        .padding(.vertical, 8)
-    }
-  }
-
-  // MARK: - Sheets
-
-  private func open(_ kind: EdgeSheetKind) {
-    sheet = kind
-  }
-
-  private func closeSheet() {
-    sheet = nil
-  }
-
-  /// Dimmed main surface + the sheet sliding in from the right edge. Lives
-  /// in an overlay, so it is exactly the popover's size and never grows it.
-  private var sheetLayer: some View {
-    ZStack(alignment: .trailing) {
-      if sheet != nil {
-        Mono.scrim
-          .contentShape(Rectangle())
-          .onTapGesture { closeSheet() }
-          .transition(.opacity)
-      }
-      if let sheet {
-        EdgeSheetPanel { sheetContent(sheet) }
-          .padding(.leading, 24)
-          .id(sheet)
-          .transition(.move(edge: .trailing))
-      }
-    }
-    .clipped()
-    .animation(Mono.spring, value: sheet)
-  }
-
-  @ViewBuilder private func sheetContent(_ kind: EdgeSheetKind) -> some View {
-    switch kind {
-    case .settings:
-      SettingsSheet(controller: controller, onOpen: { open($0) }, onClose: closeSheet)
-    case .latency:
-      LatencyLabView(lab: latencyLab, onClose: closeSheet)
-    case .drivers:
-      DriverCleanupView(controller: controller, onDone: closeSheet)
-    case .preset(let mode):
-      PresetEditor(controller: controller, mode: mode, onDone: closeSheet)
+      // A pad held while the popover closed never gets its release event.
+      controller.dj.held = []
     }
   }
 
   // MARK: - Sections
 
   private var header: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: 8) {
       Image(nsImage: MenuBarIcon.image)
         .renderingMode(.template)
         .resizable()
         .interpolation(.high)
-        .frame(width: 14, height: 14)
-        .foregroundStyle(enabled ? Mono.ink : Mono.dim)
+        .frame(width: 16, height: 16)
+        .foregroundStyle(controller.settings.enabled ? Color.accentColor : .secondary)
       Text("The Bass Shaker")
-        .font(Mono.title)
-        .foregroundStyle(enabled ? Mono.ink : Mono.mid)
-        .lineLimit(1)
-        .layoutPriority(1)
-      Spacer(minLength: 6)
+        .font(.system(size: 14, weight: .bold, design: .rounded))
+      Spacer(minLength: 4)
       deviceMenu
-      if enabled {
-        TypeWord(controller.bypassed ? "Original" : "A/B", isOn: controller.bypassed) {
-          controller.bypassed.toggle()
+      if controller.settings.enabled {
+        Button { controller.bypassed.toggle() } label: {
+          Text(controller.bypassed ? "Original" : "A/B")
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .foregroundStyle(controller.bypassed ? Color.white : Color.primary)
+            .background(Capsule().fill(controller.bypassed ? Color.orange : Color.primary.opacity(0.08)))
         }
+        .buttonStyle(.plain)
         .help("Compare with the original sound (\(GlobalHotkey.bypassLabel) from anywhere)")
       }
-      TypeWord(enabled ? "On" : "Off", isOn: enabled) {
-        controller.settings.enabled.toggle()
-      }
-      .help(enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
+      Toggle("", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .labelsHidden()
+        .help(controller.settings.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
     }
   }
 
-  /// Output picker: follows and sets the system default output.
+  @ViewBuilder private var statusBanner: some View {
+    switch controller.status {
+    case .needsPermission:
+      Banner(symbol: "lock.shield", tint: .orange,
+             text: "The Bass Shaker can't hear your Mac yet. In System Settings, open Privacy & Security → Screen & System Audio Recording, and under “System Audio Recording Only” turn on The Bass Shaker. It resumes automatically when you come back.",
+             action: ("Open System Settings", controller.openPermissionSettings),
+             secondary: ("Try Again", controller.retry))
+    case .audioServiceStuck:
+      Banner(symbol: "speaker.slash", tint: .orange,
+             text: "macOS's audio service isn't responding, so The Bass Shaker can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
+             action: ("Restart macOS Audio", controller.restartAudioService),
+             secondary: nil)
+    case _ where controller.channelNotice != nil:
+      Banner(symbol: "speaker.wave.2", tint: .blue, text: controller.channelNotice ?? "", action: nil, secondary: nil)
+    case _ where controller.balanceIsOff && !controller.settings.balanceLock:
+      Banner(symbol: "dial.low", tint: .orange,
+             text: "Your sound is panned to the \((controller.balance ?? 0.5) < 0.5 ? "left" : "right") by macOS's balance setting, so one side is quieter or silent.",
+             action: ("Centre It", controller.centerBalance),
+             secondary: ("Keep Centred", { controller.settings.balanceLock = true; controller.centerBalance() }))
+    case .failed(let msg):
+      Banner(symbol: "exclamationmark.triangle", tint: .red, text: msg,
+             action: ("Retry", controller.retry), secondary: nil)
+    case .unsupported:
+      Banner(symbol: "xmark.octagon", tint: .red, text: "Requires macOS 14.4 or later.", action: nil, secondary: nil)
+    default:
+      EmptyView()
+    }
+  }
+
+  @ViewBuilder private var driverSection: some View {
+    if showDrivers {
+      DriverCleanupView(controller: controller) { withAnimation { showDrivers = false } }
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    } else if controller.settings.checkDrivers, !controller.driverBannerDismissed,
+              let d = controller.conflictingDrivers.first {
+      Banner(symbol: "exclamationmark.triangle", tint: .orange,
+             text: "Found an old audio driver (\(d.name)\(controller.conflictingDrivers.count > 1 ? " and \(controller.conflictingDrivers.count - 1) more" : "")). It can freeze macOS audio and fight with The Bass Shaker.",
+             action: ("Review & Clean Up", { withAnimation { showDrivers = true } }),
+             secondary: ("Not Now", { controller.driverBannerDismissed = true }))
+    }
+  }
+
+  private var presetStrip: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      PresetStrip(controller: controller, editor: $editor)
+      if let mode = editor {
+        PresetEditor(controller: controller, mode: mode) {
+          withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = nil }
+        }
+        .id(mode == .create ? "create" : "edit")
+        .transition(.opacity.combined(with: .move(edge: .top)))
+      }
+    }
+    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
+  }
+
+  private var sliders: some View {
+    VStack(spacing: 8) {
+      LabeledSlider(title: "Strength", symbol: "waveform.path",
+                    value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
+                    range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
+                    help: "Psychoacoustic bass: adds harmonics so small speakers sound deeper without distorting.")
+      LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
+                    value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
+                    range: 0...12, format: { String(format: "+%.0f dB", $0) },
+                    help: controller.settings.limit
+                      ? "Extra loudness. With Limit on, the bass is held back first when there's no room, so vocals don't duck."
+                      : "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping.")
+      HStack(spacing: 6) {
+        Spacer()
+        Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
+          Label("Limit", systemImage: "rectangle.compress.vertical")
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .foregroundStyle(controller.settings.limit ? Color.orange : Color.secondary)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .help("Off: nothing holds the sound back. EQ and Boost go straight to your speakers, and loud peaks can clip (red meters). On: when there's no room left, the bass is held back first so vocals never duck, and the EQ shows how much is being restricted. Sleep mode always limits.")
+      }
+    }
+  }
+
+  private var currentInputName: String {
+    controller.inputs.first(where: { $0.id == controller.currentInputID })?.name ?? "None"
+  }
+
+  /// Output picker (top right): follows and sets the system default output.
   private var deviceMenu: some View {
     Menu {
       ForEach(controller.devices) { d in
@@ -244,257 +231,137 @@ struct PopoverView: View {
       }
     } label: {
       let current = controller.devices.first { $0.id == controller.currentDeviceID }
-      Text((current?.name ?? "Output").uppercased())
-        .font(Mono.label())
-        .tracking(1.0)
-        .foregroundStyle(Mono.mid)
+      Label(current?.name ?? "Output", systemImage: current?.symbolName ?? "speaker.wave.2")
+        .font(.system(size: 10, weight: .medium))
         .lineLimit(1)
-        .truncationMode(.tail)
-        .frame(maxWidth: 84, alignment: .trailing)
-        .contentShape(Rectangle())
     }
-    .typeMenu()
+    .menuStyle(.borderlessButton)
+    .frame(maxWidth: 96)
+    .fixedSize(horizontal: false, vertical: true)
     .help("Output device")
   }
 
-  @ViewBuilder private var statusBanner: some View {
-    switch controller.status {
-    case .needsPermission:
-      StatusLine("The Bass Shaker can't hear your Mac yet. In System Settings, open Privacy & Security → Screen & System Audio Recording, and under “System Audio Recording Only” turn on The Bass Shaker. It resumes automatically when you come back.",
-                 actions: [("Open System Settings", controller.openPermissionSettings), ("Try Again", controller.retry)])
-    case .audioServiceStuck:
-      StatusLine("macOS's audio service isn't responding, so The Bass Shaker can't reach your speakers or headphones. Often caused by old audio drivers (like Boom 2's). Restarting it takes a second.",
-                 actions: [("Restart macOS Audio", controller.restartAudioService)])
-    case _ where controller.channelNotice != nil:
-      StatusLine(controller.channelNotice ?? "")
-    case _ where controller.balanceIsOff && !controller.settings.balanceLock:
-      StatusLine("macOS's balance setting pans your sound to the \((controller.balance ?? 0.5) < 0.5 ? "left" : "right"), so one side is quieter or silent.",
-                 actions: [("Centre It", controller.centerBalance),
-                           ("Keep Centred", { controller.settings.balanceLock = true; controller.centerBalance() })])
-    case .failed(let msg):
-      StatusLine(msg, actions: [("Retry", controller.retry)])
-    case .unsupported:
-      StatusLine("Requires macOS 14.4 or later.")
-    default:
-      EmptyView()
-    }
-  }
-
-  @ViewBuilder private var driverBanner: some View {
-    if controller.settings.checkDrivers, !controller.driverBannerDismissed,
-       let d = controller.conflictingDrivers.first {
-      StatusLine("Found an old audio driver (\(d.name)\(controller.conflictingDrivers.count > 1 ? " and \(controller.conflictingDrivers.count - 1) more" : "")). It can freeze macOS audio and fight with The Bass Shaker.",
-                 actions: [("Review", { open(.drivers) }),
-                           ("Not Now", { controller.driverBannerDismissed = true })])
-    }
-  }
-
-  private var sliders: some View {
-    VStack(spacing: 4) {
-      ValueRow("Strength", value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
-               in: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
-        .help("Psychoacoustic bass: adds harmonics so small speakers sound deeper without distorting.")
-      ValueRow("Boost", value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
-               in: 0...12, format: { String(format: "+%.0f dB", $0) })
-        .help(controller.settings.limit
-              ? "Extra loudness. With Limit on, the bass is held back first when there's no room, so vocals don't duck."
-              : "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping.")
-    }
-  }
-
-  /// Edge strip: LIVE · DJ on the left pull their sheets out of the bottom
-  /// edge; sample rate and the settings glyph on the right.
   private var footer: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: 8) {
       LiveChannelsButton(model: controller.live, expanded: $showLive)
-      Text("·").font(Mono.label()).foregroundStyle(Mono.dim)
-      TypeWord("DJ", isOn: showDJ, marked: controller.dj.anyActive) {
-        if showDJ { showDJ = false } else { showDJ = true }
+      Button {
+        if showDJ { showDJ = false } else { showLive = false; showDJ = true }
+      } label: {
+        HStack(spacing: 3) {
+          Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
+          Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded))
+        }
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .foregroundStyle(controller.dj.anyActive ? Color.white : Color.primary)
+        .background(Capsule().fill(controller.dj.anyActive ? Color.purple
+                                   : (showDJ ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08))))
       }
+      .buttonStyle(.plain)
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
-      Spacer(minLength: 8)
-      LatencyChip(lab: latencyLab) { open(.latency) }
+      LatencyChip(lab: latencyLab) { withAnimation { showLatencyLab = true } }
+      Spacer()
       if case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
-          .font(Mono.micro(9))
-          .foregroundStyle(Mono.dim)
+          .font(.system(size: 9, weight: .medium, design: .rounded))
+          .foregroundStyle(.tertiary)
       }
-      Button {
-        sheet = sheet == .settings ? nil : .settings
-      } label: {
-        Image(systemName: "gearshape")
-          .font(.system(size: 11, weight: .regular))
-          .foregroundStyle(sheet == .settings ? Mono.ink : Mono.mid)
-          .frame(width: 20, height: 20)
-      }
-      .buttonStyle(TypeButtonStyle())
-      .keyboardShortcut(",", modifiers: .command)
-      .help("Settings, updates and Quit (⌘,)")
-    }
-  }
-}
-
-private struct BodyHeightKey: PreferenceKey {
-  static var defaultValue: CGFloat = 0
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
-
-// MARK: - Settings sheet
-
-/// Everything that used to live in the ⋯ menu, as typographic rows.
-/// Toggles read ON / OFF; actions end in an arrow.
-private struct SettingsSheet: View {
-  @ObservedObject var controller: AudioController
-  @EnvironmentObject var updates: Updates
-  let onOpen: (EdgeSheetKind) -> Void
-  let onClose: () -> Void
-  @State private var copied = false
-
-  private var s: Settings { controller.settings }
-
-  var body: some View {
-    SheetScaffold("Settings", onClose: onClose) {
-      VStack(alignment: .leading, spacing: 0) {
-        toggleRow("Remember sound per device", isOn: s.perDevice) {
-          controller.settings.perDevice.toggle()
-        }
+      Menu {
+        Toggle("Remember Sound per Device", isOn: Binding(get: { controller.settings.perDevice },
+                                                           set: { controller.settings.perDevice = $0 }))
         if let d = controller.currentDevice {
-          toggleRow("No processing on \(d.name)", isOn: controller.currentDeviceBypassed,
-                    help: "Leave \(d.name) completely untouched") {
-            controller.setBypassOnCurrentDevice(!controller.currentDeviceBypassed)
+          Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
+                                                             set: { controller.setBypassOnCurrentDevice($0) }))
+        }
+        Menu("Microphone: \(currentInputName)") {
+          ForEach(controller.inputs) { d in
+            Button {
+              controller.selectInput(d)
+            } label: {
+              if d.id == controller.currentInputID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
+            }
           }
+          Divider()
+          Button("Sound Settings…") { controller.openSoundSettings() }
         }
-        toggleRow("A/B hotkey  \(GlobalHotkey.bypassLabel)", isOn: s.bypassHotkey,
-                  help: "Compare with the original sound from anywhere") {
-          controller.settings.bypassHotkey.toggle()
-        }
-        toggleRow("Live waveform on EQ", isOn: s.waveform) {
-          controller.settings.waveform.toggle()
-        }
-        toggleRow("Balance lock", isOn: s.balanceLock, help: "Keep left/right centred") {
-          controller.settings.balanceLock.toggle()
-          if controller.settings.balanceLock { controller.centerBalance() }
-        }
-        microphoneRow
-        rule
-        actionRow("Latency Lab", help: "Measure Bluetooth delay for recording") { onOpen(.latency) }
-        actionRow("Audio drivers", help: "Find old audio drivers that can freeze macOS audio") {
+        Button("Latency Lab… (Bluetooth delay for recording)") { withAnimation { showLatencyLab = true } }
+        Toggle("Balance Lock (keep left/right centred)", isOn: Binding(get: { controller.settings.balanceLock },
+                                                                       set: { controller.settings.balanceLock = $0
+                                                                              if $0 { controller.centerBalance() } }))
+        Divider()
+        Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
+                                                                       set: { controller.settings.bypassHotkey = $0 }))
+        Divider()
+        Button("Find Old Audio Drivers…") {
           controller.scanDrivers()
-          onOpen(.drivers)
+          withAnimation { showDrivers = true }
         }
-        rule
-        actionRow("Copy diagnostics", trailing: copied ? "COPIED" : "→") {
-          controller.copyDiagnostics()
-          copied = true
-          DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copied = false }
-        }
-        actionRow("Check for updates") { updates.checkNow() }
-        if let err = updates.startError {
-          Text("Updates unavailable: \(err)")
-            .font(Mono.note)
-            .foregroundStyle(Mono.dim)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 4)
-        }
-        SettingsRow(title: "Version", action: nil) {
-          Text(updates.currentVersion).font(Mono.value).foregroundStyle(Mono.mid)
-        }
-        rule
-        actionRow("Quit The Bass Shaker", trailing: "⌘Q") { NSApp.terminate(nil) }
-          .keyboardShortcut("q", modifiers: .command)
+        Divider()
+        Button("Copy Diagnostics") { controller.copyDiagnostics() }
+        Button("Check for Updates…") { updates.checkNow() }
+        if let err = updates.startError { Text("Updates unavailable: \(err)") }
+        Text("Version \(updates.currentVersion)")
+        Divider()
+        Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
+      } label: {
+        Image(systemName: "ellipsis.circle")
       }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .help("Updates, version and Quit")
+      Button("Quit") { NSApp.terminate(nil) }
+        .buttonStyle(.plain)
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
     }
-  }
-
-  private var rule: some View {
-    Hairline().padding(.vertical, 4)
-  }
-
-  private var currentInputName: String {
-    controller.inputs.first(where: { $0.id == controller.currentInputID })?.name ?? "None"
-  }
-
-  private var microphoneRow: some View {
-    Menu {
-      ForEach(controller.inputs) { d in
-        Button {
-          controller.selectInput(d)
-        } label: {
-          if d.id == controller.currentInputID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
-        }
-      }
-      Divider()
-      Button("Sound Settings…") { controller.openSoundSettings() }
-    } label: {
-      HStack(spacing: 8) {
-        Text("Microphone").font(Mono.body).foregroundStyle(Mono.ink)
-        Spacer(minLength: 8)
-        Text(currentInputName)
-          .font(Mono.note)
-          .foregroundStyle(Mono.mid)
-          .lineLimit(1)
-          .truncationMode(.middle)
-        Image(systemName: "chevron.down").font(.system(size: 6, weight: .bold)).foregroundStyle(Mono.dim)
-      }
-      .frame(maxWidth: .infinity)
-      .frame(height: 28)
-      .contentShape(Rectangle())
-    }
-    .menuStyle(.button)
-    .buttonStyle(.plain)
-    .menuIndicator(.hidden)
-    .help("Input device")
-  }
-
-  private func toggleRow(_ title: String, isOn: Bool, help: String? = nil,
-                         action: @escaping () -> Void) -> some View {
-    SettingsRow(title: title, action: action) {
-      Text(isOn ? "ON" : "OFF")
-        .font(Mono.label())
-        .tracking(1.2)
-        .foregroundStyle(isOn ? Mono.ink : Mono.dim)
-    }
-    .help(help ?? title)
-  }
-
-  private func actionRow(_ title: String, trailing: String = "→", help: String? = nil,
-                         action: @escaping () -> Void) -> some View {
-    SettingsRow(title: title, action: action) {
-      Text(trailing)
-        .font(trailing.count > 2 ? Mono.label() : .system(size: 11, weight: .medium))
-        .tracking(trailing.count > 2 ? 1.2 : 0)
-        .foregroundStyle(Mono.mid)
-    }
-    .help(help ?? title)
   }
 }
 
-private struct SettingsRow<Trailing: View>: View {
+private struct LabeledSlider: View {
   let title: String
-  let action: (() -> Void)?
-  @ViewBuilder let trailing: () -> Trailing
-  @State private var hover = false
+  let symbol: String
+  @Binding var value: Double
+  let range: ClosedRange<Double>
+  let format: (Double) -> String
+  let help: String
 
   var body: some View {
-    let row = HStack(spacing: 8) {
-      Text(title)
-        .font(Mono.body)
-        .foregroundStyle(Mono.ink)
-        .lineLimit(1)
-        .truncationMode(.middle)
-      Spacer(minLength: 8)
-      trailing()
+    HStack(spacing: 8) {
+      Label(title, systemImage: symbol)
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
+        .frame(width: 70, alignment: .leading)
+      Slider(value: $value, in: range)
+        .controlSize(.small)
+      Text(format(value))
+        .font(.system(size: 10, weight: .medium, design: .rounded))
+        .monospacedDigit()
+        .foregroundStyle(.secondary)
+        .frame(width: 44, alignment: .trailing)
     }
-    .frame(height: 28)
-    .contentShape(Rectangle())
-    if let action {
-      Button(action: action) {
-        row.background(hover ? Mono.wash : Color.clear)
+    .help(help)
+  }
+}
+
+private struct Banner: View {
+  let symbol: String
+  let tint: Color
+  let text: String
+  let action: (String, () -> Void)?
+  let secondary: (String, () -> Void)?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Label(text, systemImage: symbol)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(tint)
+        .fixedSize(horizontal: false, vertical: true)
+      HStack {
+        if let a = action { Button(a.0, action: a.1).controlSize(.small) }
+        if let s = secondary { Button(s.0, action: s.1).controlSize(.small) }
       }
-      .buttonStyle(TypeButtonStyle())
-      .onHover { hover = $0 }
-    } else {
-      row
     }
+    .padding(10)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.12)))
   }
 }

@@ -1,35 +1,52 @@
 import AppKit
 import SwiftUI
 
-/// Latency Lab edge sheet: measure the output → input round trip, see how
-/// stable it is, and get a number for the DAW. The test engine runs only
-/// while this view is on screen.
+/// Latency Lab panel: measure the output → input round trip, see how
+/// stable it is, and get a number for the DAW. It replaces the popover's
+/// controls while open. The test engine runs only while this view is on
+/// screen.
 struct LatencyLabView: View {
   @ObservedObject var lab: LatencyLab
   let onClose: () -> Void
 
   var body: some View {
-    SheetScaffold("Latency Lab", onClose: onClose) {
-      VStack(alignment: .leading, spacing: 10) {
-        devices
-        guidance
-        runControls
-        LatencySparkline(samples: lab.samples, duration: lab.period.rawValue)
-          .frame(height: 54)
-        statsRow
-        patchCard
-        Hairline()
-        roadCard
-      }
+    VStack(alignment: .leading, spacing: 10) {
+      header
+      devices
+      guidance
+      runControls
+      LatencySparkline(samples: lab.samples, duration: lab.period.rawValue)
+        .frame(height: 54)
+      statsRow
+      patchCard
+      roadCard
     }
+    .padding(14)
+    .frame(width: 360)
     .onAppear { lab.panelOpened() }
     .onDisappear { lab.panelClosed() }
   }
 
   // MARK: Sections
 
+  private var header: some View {
+    HStack(spacing: 6) {
+      Image(systemName: "metronome")
+        .font(.system(size: 12, weight: .semibold))
+      Text("Latency Lab")
+        .font(.system(size: 13, weight: .bold, design: .rounded))
+      Spacer()
+      Button(action: onClose) {
+        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+      .keyboardShortcut(.cancelAction)
+      .help("Close Latency Lab")
+    }
+  }
+
   private var devices: some View {
-    VStack(alignment: .leading, spacing: 4) {
+    VStack(alignment: .leading, spacing: 5) {
       deviceRow(label: "Output", symbol: lab.output?.isBluetooth == true ? "headphones" : "speaker.wave.2",
                 name: lab.output?.name ?? "—")
       HStack(spacing: 6) {
@@ -44,13 +61,12 @@ struct LatencyLabView: View {
             }
           }
         } label: {
-          HStack(spacing: 3) {
-            MonoLabel("Change")
-            Image(systemName: "chevron.down").font(.system(size: 6, weight: .bold)).foregroundStyle(Mono.dim)
-          }
-          .contentShape(Rectangle())
+          Text("Change")
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
         }
-        .typeMenu()
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
         .disabled(lab.phase.isBusy)
         .help("Sets the macOS input device")
       }
@@ -61,58 +77,67 @@ struct LatencyLabView: View {
         warning("AirPlay adds about 2 s of delay, more than this lab can measure (up to 950 ms).")
       }
     }
+    .padding(9)
+    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
   }
 
   private func deviceRow(label: String, symbol: String, name: String) -> some View {
     HStack(spacing: 6) {
-      MonoLabel(label, color: Mono.dim)
-        .frame(width: 48, alignment: .leading)
-      Image(systemName: symbol).font(.system(size: 9)).foregroundStyle(Mono.mid)
+      Text(label)
+        .font(.system(size: 10, weight: .semibold, design: .rounded))
+        .foregroundStyle(.secondary)
+        .frame(width: 40, alignment: .leading)
+      Image(systemName: symbol).font(.system(size: 10))
       Text(name)
-        .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(Mono.ink)
+        .font(.system(size: 11, weight: .medium, design: .rounded))
         .lineLimit(1)
         .truncationMode(.middle)
     }
   }
 
   private func warning(_ text: String) -> some View {
-    StatusLine(text)
+    Label(text, systemImage: "exclamationmark.triangle")
+      .font(.system(size: 10, weight: .medium, design: .rounded))
+      .foregroundStyle(.orange)
+      .fixedSize(horizontal: false, vertical: true)
   }
 
   private var guidance: some View {
     Text("Hold an ear cup, or the speaker, right next to the mic. Pause your music and keep the room quiet. Short, quiet chirps will play twice a second. Nothing is recorded or saved.")
-      .font(Mono.note)
-      .foregroundStyle(Mono.mid)
+      .font(.system(size: 10, design: .rounded))
+      .foregroundStyle(.secondary)
       .fixedSize(horizontal: false, vertical: true)
   }
 
   @ViewBuilder private var runControls: some View {
-    HStack(spacing: 8) {
-      TypeStrip(LatencyLab.Period.allCases.map { StripItem(id: $0, title: $0.label) },
-                selection: lab.period) { lab.period = $0 }
-        .disabled(lab.phase.isBusy)
+    HStack(spacing: 6) {
+      ForEach(LatencyLab.Period.allCases) { p in
+        capsule(p.label, selected: lab.period == p) { lab.period = p }
+          .disabled(lab.phase.isBusy)
+      }
       Spacer()
       if lab.phase.isBusy {
-        TypeAction("Stop", glyph: "■", emphasized: true) { lab.stop() }
+        capsule("Stop", symbol: "stop.fill", selected: true, tint: .orange) { lab.stop() }
       } else {
-        TypeAction(lab.pairChangedSinceRun ? "Re-measure" : "Measure", emphasized: true) { lab.measure() }
-          .disabled(lab.input == nil || lab.output == nil)
+        capsule(lab.pairChangedSinceRun ? "Re-measure" : "Measure", symbol: "waveform", selected: true) {
+          lab.measure()
+        }
+        .disabled(lab.input == nil || lab.output == nil)
       }
     }
     if lab.phase.isBusy {
-      GeometryReader { g in
-        ZStack(alignment: .leading) {
-          Rectangle().fill(Mono.faint)
-          Rectangle().fill(Mono.ink).frame(width: g.size.width * CGFloat(min(max(lab.progress, 0), 1)))
-        }
-      }
-      .frame(height: 1)
+      ProgressView(value: lab.progress)
+        .progressViewStyle(.linear)
+        .controlSize(.mini)
+        .tint(Color.secondary)
     }
     switch lab.phase {
     case .permissionDenied:
-      StatusLine("Microphone access is off. Turn on The Bass Shaker under Privacy & Security › Microphone. It's used only to time the test chirps.",
-                 actions: [("Open Privacy Settings", { _ = NSWorkspace.shared.open(LatencyLab.privacySettingsURL) })])
+      VStack(alignment: .leading, spacing: 4) {
+        warning("Microphone access is off. Turn on The Bass Shaker under Privacy & Security › Microphone. It's used only to time the test chirps.")
+        Button("Open Privacy Settings") { NSWorkspace.shared.open(LatencyLab.privacySettingsURL) }
+          .controlSize(.small)
+      }
     case .failed(let message):
       warning(message)
     case .finished where lab.stats.detected == 0:
@@ -138,11 +163,13 @@ struct LatencyLabView: View {
   }
 
   private func stat(_ title: String, _ value: String, help: String? = nil) -> some View {
-    VStack(alignment: .leading, spacing: 2) {
-      MonoLabel(title, size: 8, color: Mono.dim)
+    VStack(alignment: .leading, spacing: 1) {
+      Text(title)
+        .font(.system(size: 9, weight: .semibold, design: .rounded))
+        .foregroundStyle(.secondary)
       Text(value)
-        .font(Mono.value)
-        .foregroundStyle(Mono.ink)
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
+        .monospacedDigit()
         .lineLimit(1)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
@@ -156,28 +183,37 @@ struct LatencyLabView: View {
       let value = lab.patchKind == .dawOffset ? run.extraMs ?? 0 : run.roundTripMs ?? 0
       let samples = Int((value / 1000 * run.inputSampleRate).rounded())
       VStack(alignment: .leading, spacing: 6) {
-        Hairline()
-        TypeStrip(LatencyLab.PatchKind.allCases.map { StripItem(id: $0, title: $0.label) },
-                  selection: lab.patchKind) { lab.patchKind = $0 }
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-          Text(String(format: "%.1f ms", value))
-            .font(Mono.bigValue)
-            .foregroundStyle(Mono.ink)
-          Text("\(samples) samples @ \(String(format: "%g", run.inputSampleRate / 1000)) kHz")
-            .font(Mono.micro(9))
-            .foregroundStyle(Mono.mid)
+        HStack(spacing: 6) {
+          ForEach(LatencyLab.PatchKind.allCases) { k in
+            capsule(k.label, selected: lab.patchKind == k) { lab.patchKind = k }
+          }
           Spacer()
         }
-        HStack(spacing: 14) {
-          TypeAction("Copy ms") { lab.copyToPasteboard(String(format: "%.1f", value)) }
-          TypeAction("Copy samples") { lab.copyToPasteboard("\(samples)") }
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+          Text(String(format: "%.1f ms", value))
+            .font(.system(size: 18, weight: .bold, design: .rounded))
+            .monospacedDigit()
+          Text("\(samples) samples @ \(String(format: "%g", run.inputSampleRate / 1000)) kHz")
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+          Spacer()
+        }
+        HStack(spacing: 6) {
+          capsule("Copy ms", symbol: "doc.on.doc", selected: false) {
+            lab.copyToPasteboard(String(format: "%.1f", value))
+          }
+          capsule("Copy samples", symbol: "doc.on.doc", selected: false) {
+            lab.copyToPasteboard("\(samples)")
+          }
           Spacer()
         }
         Text(patchHint(run))
-          .font(Mono.note)
-          .foregroundStyle(Mono.mid)
+          .font(.system(size: 10, design: .rounded))
+          .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
+      .padding(9)
+      .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.05)))
     }
   }
 
@@ -193,25 +229,36 @@ struct LatencyLabView: View {
   // MARK: On-the-road
 
   private var roadCard: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      TypeToggle("On-the-road recording", isOn: lab.onTheRoad) { lab.onTheRoad.toggle() }
-        .help("Remembers the offset for each output + input pair and shows it in the footer when that pair is active.")
+    VStack(alignment: .leading, spacing: 5) {
+      Toggle(isOn: Binding(get: { lab.onTheRoad }, set: { lab.onTheRoad = $0 })) {
+        Label("On-the-Road Recording", systemImage: "car")
+          .font(.system(size: 11, weight: .semibold, design: .rounded))
+      }
+      .toggleStyle(.switch)
+      .controlSize(.mini)
+      .help("Remembers the offset for each output + input pair and shows it in the menu when that pair is active.")
       if lab.onTheRoad {
-        TypeToggle("Re-measure automatically when devices change (while this sheet is open)",
-                   isOn: lab.autoRemeasure, caps: false) { lab.autoRemeasure.toggle() }
+        Toggle(isOn: Binding(get: { lab.autoRemeasure }, set: { lab.autoRemeasure = $0 })) {
+          Text("Re-measure automatically when devices change (while this panel is open)")
+            .font(.system(size: 10, design: .rounded))
+        }
+        .toggleStyle(.checkbox)
+        .controlSize(.mini)
         if let saved = lab.savedForCurrentPair {
-          HStack(alignment: .firstTextBaseline, spacing: 6) {
+          HStack(spacing: 6) {
             Text(String(format: "Saved for this pair: %.1f ms DAW offset, %.1f ms round trip", saved.extraMs, saved.roundTripMs))
-              .font(Mono.note)
-              .foregroundStyle(Mono.mid)
-              .fixedSize(horizontal: false, vertical: true)
+              .font(.system(size: 10, design: .rounded))
+              .foregroundStyle(.secondary)
             Spacer(minLength: 0)
-            TypeAction("Forget", glyph: nil) { lab.forgetCurrentPair() }
+            Button("Forget") { lab.forgetCurrentPair() }
+              .buttonStyle(.plain)
+              .font(.system(size: 10, weight: .semibold, design: .rounded))
+              .foregroundStyle(.secondary)
           }
         } else {
           Text("Nothing saved for this pair yet. Measure to save it.")
-            .font(Mono.note)
-            .foregroundStyle(Mono.dim)
+            .font(.system(size: 10, design: .rounded))
+            .foregroundStyle(.secondary)
         }
       }
     }
@@ -220,6 +267,22 @@ struct LatencyLabView: View {
   // MARK: Pieces
 
   private func ms(_ v: Double?) -> String { v.map { String(format: "%.1f ms", $0) } ?? "—" }
+
+  /// Capsule button in the PresetViews `Chip` style.
+  private func capsule(_ title: String, symbol: String? = nil, selected: Bool, tint: Color = .accentColor,
+                       action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 4) {
+        if let symbol { Image(systemName: symbol).font(.system(size: 9, weight: .semibold)) }
+        Text(title).font(.system(size: 11, weight: .semibold, design: .rounded)).lineLimit(1)
+      }
+      .padding(.horizontal, 9)
+      .padding(.vertical, 4)
+      .foregroundStyle(selected ? Color.white : Color.primary)
+      .background(Capsule().fill(selected ? tint : Color.primary.opacity(0.07)))
+    }
+    .buttonStyle(.plain)
+  }
 }
 
 /// Latency over time. Detections are a line with dots, jumps are hollow
@@ -232,11 +295,11 @@ struct LatencySparkline: View {
   var body: some View {
     Canvas { ctx, size in
       let rect = CGRect(origin: .zero, size: size)
-      ctx.stroke(Path(rect.insetBy(dx: 0.25, dy: 0.25)), with: .color(.primary.opacity(0.14)), lineWidth: 0.5)
+      ctx.fill(Path(roundedRect: rect, cornerRadius: 8), with: .color(.primary.opacity(0.05)))
 
       let values = samples.compactMap(\.latencyMs)
       guard !samples.isEmpty else {
-        let t = ctx.resolve(Text("LATENCY OVER TIME").font(.system(size: 8, weight: .semibold)).tracking(1.2).foregroundColor(.secondary))
+        let t = ctx.resolve(Text("Latency over time").font(.system(size: 10, design: .rounded)).foregroundColor(.secondary))
         ctx.draw(t, at: CGPoint(x: size.width / 2, y: size.height / 2))
         return
       }
@@ -286,34 +349,38 @@ struct LatencySparkline: View {
       }
 
       let label = ctx.resolve(Text(String(format: "%.0f–%.0f ms", lo, hi))
-        .font(.system(size: 8, weight: .medium)).monospacedDigit().foregroundColor(.secondary))
+        .font(.system(size: 8, weight: .medium, design: .rounded)).foregroundColor(.secondary))
       ctx.draw(label, at: CGPoint(x: rect.maxX - 4, y: rect.minY + 3), anchor: .topTrailing)
     }
   }
 }
 
-/// Footer reminder: the saved offset for the active pair, as text.
+/// Reminder chip for the popover: the saved offset for the active pair.
 /// Shows only with On-the-Road Recording on. Click opens the lab.
 struct LatencyChip: View {
   @ObservedObject var lab: LatencyLab
   let onOpen: () -> Void
-  @State private var hover = false
 
   var body: some View {
     if lab.onTheRoad {
       Button(action: onOpen) {
-        HStack(spacing: 3) {
-          Image(systemName: "metronome").font(.system(size: 8, weight: .semibold))
+        HStack(spacing: 4) {
+          Image(systemName: "metronome").font(.system(size: 9, weight: .semibold))
           if let saved = lab.savedForCurrentPair {
-            Text(String(format: "%.0f ms", saved.extraMs)).font(Mono.micro(9))
+            Text(String(format: "%.0f ms", saved.extraMs))
+              .font(.system(size: 10, weight: .semibold, design: .rounded))
+              .monospacedDigit()
           } else {
-            Text("MEASURE").font(Mono.label(8)).tracking(0.8)
+            Text("Measure")
+              .font(.system(size: 10, weight: .semibold, design: .rounded))
           }
         }
-        .foregroundStyle(hover ? Mono.ink : (lab.savedForCurrentPair == nil ? Mono.dim : Mono.mid))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .foregroundStyle(lab.savedForCurrentPair == nil ? Color.secondary : Color.primary)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
       }
-      .buttonStyle(TypeButtonStyle())
-      .onHover { hover = $0 }
+      .buttonStyle(.plain)
       .help(helpText)
       .onAppear { lab.startMonitoring() }
     }

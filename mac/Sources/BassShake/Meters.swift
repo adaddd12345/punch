@@ -61,14 +61,15 @@ final class MeterModel: ObservableObject {
     return pow(x, 1.7)
   }
 
-  /// Above this the output is riding the −1 dBFS limiter: the one place
-  /// the UI uses colour.
-  static let dangerDb = -1.2
-
-  /// Monochrome zones: grey up to the danger line, red beyond it.
+  /// Playback-tuned level zones (recording-style −18/−6 thresholds would
+  /// leave normal music permanently "hot"). Output is limited at −1 dBFS,
+  /// so red means exactly one thing: you are riding the limiter.
   static let zones: [(upTo: Double, color: Color)] = [
-    (dangerDb, Mono.ink.opacity(0.8)),
-    (.infinity, Mono.danger),
+    (-12, Color(red: 0.16, green: 0.80, blue: 0.62)),   // teal-green: comfortable
+    (-6, Color(red: 0.55, green: 0.86, blue: 0.30)),    // lime
+    (-3, Color(red: 1.00, green: 0.80, blue: 0.20)),    // yellow: loud
+    (-1.2, Color(red: 1.00, green: 0.55, blue: 0.16)),  // orange: near the ceiling
+    (.infinity, Color(red: 1.00, green: 0.24, blue: 0.30)),  // red: limiting
   ]
 
   static func color(_ db: Double) -> Color {
@@ -80,15 +81,15 @@ struct MeterView: View {
   @ObservedObject var model: MeterModel
 
   var body: some View {
-    VStack(spacing: 3) {
+    VStack(spacing: 5) {
       ForEach(0..<2, id: \.self) { i in
         HStack(spacing: 6) {
           Text(i == 0 ? "L" : "R")
-            .font(Mono.micro())
-            .foregroundStyle(Mono.dim)
-            .frame(width: 8, alignment: .leading)
+            .font(.system(size: 9, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .frame(width: 8)
           MeterBar(channel: model.channels[i])
-            .frame(height: 3)
+            .frame(height: 7)
         }
       }
       HStack(spacing: 6) {
@@ -96,32 +97,44 @@ struct MeterView: View {
         MeterScale()
         LimitPill(active: model.limiting, reductionDb: model.gainReductionDb)
       }
-      .padding(.top, 1)
     }
   }
 }
 
-/// Square-ended bar: grey fill, red only past the danger line, a thin
-/// peak-hold tick.
 private struct MeterBar: View {
   let channel: MeterModel.Channel
 
   var body: some View {
     Canvas { ctx, size in
-      ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.primary.opacity(0.08)))
-      let dangerX = size.width * CGFloat(MeterModel.position(MeterModel.dangerDb))
+      let r = size.height / 2
+      let track = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: r)
+      ctx.fill(track, with: .color(.primary.opacity(0.08)))
+
+      // Fill: a gradient through the zones, revealed up to the level, so
+      // colour always tells you how hot you are — not just the bar tip.
       let w = size.width * CGFloat(MeterModel.position(channel.level))
       if w > 0.5 {
-        ctx.fill(Path(CGRect(x: 0, y: 0, width: min(w, dangerX), height: size.height)),
-                 with: .color(MeterModel.zones[0].color))
-        if w > dangerX {
-          ctx.fill(Path(CGRect(x: dangerX, y: 0, width: w - dangerX, height: size.height)),
-                   with: .color(Mono.danger))
+        // Each zone is solid with ~1 dB blended edges.
+        var stops: [Gradient.Stop] = []
+        var lo = MeterModel.floorDb
+        for z in MeterModel.zones {
+          let hi = min(0, z.upTo)
+          let a = MeterModel.position(lo + (lo == MeterModel.floorDb ? 0 : 0.5))
+          let b = MeterModel.position(max(lo, hi - 0.5))
+          stops.append(Gradient.Stop(color: z.color, location: CGFloat(a)))
+          stops.append(Gradient.Stop(color: z.color, location: CGFloat(b)))
+          lo = hi
         }
+        let fillRect = CGRect(x: 0, y: 0, width: max(w, size.height), height: size.height)
+        ctx.clip(to: track)
+        ctx.fill(Path(roundedRect: fillRect, cornerRadius: r),
+                 with: .linearGradient(Gradient(stops: stops), startPoint: .zero,
+                                       endPoint: CGPoint(x: size.width, y: 0)))
       }
+      // Peak-hold tick in the colour of its zone.
+      let hx = size.width * CGFloat(MeterModel.position(channel.hold))
       if channel.hold > MeterModel.floorDb + 0.5 {
-        let hx = size.width * CGFloat(MeterModel.position(channel.hold))
-        ctx.fill(Path(CGRect(x: max(0, hx - 0.75), y: -1, width: 1.5, height: size.height + 2)),
+        ctx.fill(Path(CGRect(x: max(0, hx - 1.5), y: 0, width: 3, height: size.height)),
                  with: .color(MeterModel.color(channel.hold)))
       }
     }
@@ -133,13 +146,13 @@ private struct MeterScale: View {
   var body: some View {
     GeometryReader { geo in
       ForEach(marks, id: \.self) { db in
-        Text(db == 0 ? "0" : "\(Int(db))".replacingOccurrences(of: "-", with: "\u{2212}"))
-          .font(Mono.micro(7.5))
-          .foregroundStyle(Mono.dim)
-          .position(x: geo.size.width * CGFloat(MeterModel.position(db)), y: 4.5)
+        Text(db == 0 ? "0" : "\(Int(db))")
+          .font(.system(size: 8, weight: .medium, design: .rounded))
+          .foregroundStyle(.tertiary)
+          .position(x: geo.size.width * CGFloat(MeterModel.position(db)), y: 5)
       }
     }
-    .frame(height: 9)
+    .frame(height: 10)
   }
 }
 
@@ -147,15 +160,14 @@ private struct LimitPill: View {
   let active: Bool
   let reductionDb: Double
   var body: some View {
-    HStack(spacing: 4) {
-      Tick(on: active, size: 4)
-      Text(active ? String(format: "LIMIT %.0f", reductionDb).replacingOccurrences(of: "-", with: "\u{2212}") : "LIMIT")
-        .font(Mono.label(8))
-        .tracking(0.8)
-        .monospacedDigit()
-        .foregroundStyle(active ? Mono.ink : Mono.dim)
-    }
-    .animation(Mono.quick, value: active)
-    .help("Lights up when the limiter is holding peaks under −1 dBFS.")
+    Text(active ? String(format: "LIMIT %.0f", reductionDb) : "LIMIT")
+      .font(.system(size: 8, weight: .bold, design: .rounded))
+      .monospacedDigit()
+      .padding(.horizontal, 5)
+      .padding(.vertical, 1.5)
+      .foregroundStyle(active ? .white : .secondary)
+      .background(Capsule().fill(active ? Color(red: 1, green: 0.23, blue: 0.23) : .primary.opacity(0.08)))
+      .animation(.easeOut(duration: 0.15), value: active)
+      .help("Lights up when the limiter is holding peaks under −1 dBFS.")
   }
 }
