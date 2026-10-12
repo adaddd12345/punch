@@ -298,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     }
     add(popover.isShown ? "Hide The Bass Shaker" : "Open The Bass Shaker", #selector(menuToggle))
     menu.addItem(.separator())
+    add("Check & Fix Sound Issues", #selector(menuFix))
     add("On", #selector(menuEnabled), on: controller.settings.enabled)
     if controller.settings.enabled { add("Original Sound (A/B)", #selector(menuBypass), on: controller.bypassed) }
     let presets = NSMenuItem(title: "Preset", action: nil, keyEquivalent: "")
@@ -327,6 +328,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   }
 
   @objc private func menuEnabled() { controller.toggle() }
+  @objc private func menuFix() {
+    controller.checkAndFix()
+    if !popover.isShown { togglePopover(nil) }   // show what it found
+  }
   @objc private func menuBypass() { controller.bypassed.toggle() }
   @objc private func menuPreset(_ sender: NSMenuItem) {
     if let p = Preset.all.first(where: { $0.name == sender.title }) { controller.apply(preset: p) }

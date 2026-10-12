@@ -810,6 +810,68 @@ final class AudioController: ObservableObject {
     NSWorkspace.shared.open(AudioCapturePermission.settingsURL)
   }
 
+  // MARK: - Check & Fix
+
+  /// What the last Check & Fix found and did (shown as a banner).
+  @Published var doctorReport: [String]?
+  @Published private(set) var doctorRunning = false
+
+  /// One click for "it came back muffled / silent / one-sided". The usual
+  /// culprit after sleep is a Bluetooth headset stuck in call mode (HFP:
+  /// 8-24 kHz mono, sounds muffled) because its own microphone is the
+  /// default input; moving the input to the Mac's mic lets it return to
+  /// full-quality stereo (A2DP) without re-pairing. Then a fresh audio
+  /// connection, like quitting and reopening. `auto` (after wake) only does
+  /// the safe parts and stays quiet unless it fixed something.
+  func checkAndFix(auto: Bool = false) {
+    guard !doctorRunning else { return }
+    doctorRunning = true
+    let balanceOff = balanceIsOff
+    audioQueue.async {
+      var notes: [String] = []
+      var waitForBluetooth = false
+      let outID = Devices.defaultOutput()
+      let out = Devices.allOutputs().first { $0.id == outID }
+      let rate = Devices.nominalSampleRate(outID)
+      let ins = Devices.allInputs()
+      let input = ins.first { $0.id == Devices.defaultInput() }
+      if let out, out.isBluetooth, (input?.isBluetooth ?? false) || (rate > 0 && rate < 32000) {
+        if let mic = ins.first(where: { $0.isBuiltIn }) ?? ins.first(where: { !$0.isBluetooth }) {
+          try? Devices.setDefaultInput(mic.id)
+          waitForBluetooth = true
+          notes.append("\(out.name) was stuck in call mode (muffled). Switched the microphone to \(mic.name) so it returns to full quality.")
+        } else {
+          notes.append("\(out.name) is in call mode (muffled). Quit apps using its microphone (FaceTime, Zoom, Discord) or reconnect it.")
+        }
+      }
+      let mute = AudioObjectPropertyAddress.output(kAudioDevicePropertyMute)
+      if !auto, HAL.has(outID, mute), ((try? HAL.get(outID, mute, default: UInt32(0))) ?? 0) != 0 {
+        try? HAL.set(outID, mute, UInt32(0))
+        notes.append("Your output was muted. Unmuted it.")
+      }
+      DispatchQueue.main.async {
+        if !auto {
+          if balanceOff { self.centerBalance(); notes.append("Left/right balance was off. Centered it.") }
+          if self.bypassed { self.bypassed = false; notes.append("A/B was on Original. Switched back.") }
+          if self.dj.anyActive { self.dj = DJState(); notes.append("Turned off DJ effects.") }
+          if case .audioServiceStuck = self.status {
+            notes.append("macOS's audio service isn't responding. Use Restart macOS Audio below.")
+          }
+          if !self.conflictingDrivers.isEmpty { notes.append("An old audio driver is installed. ⋯ → Sound → Find Old Audio Drivers.") }
+        }
+        if self.settings.enabled && (!auto || waitForBluetooth) {
+          self.startFailures = 0
+          self.scheduleRebuild(delay: waitForBluetooth ? 1.5 : 0.1)
+          if !auto { notes.append("Reconnected The Bass Shaker's audio.") }
+        }
+        if !auto && notes.count <= 1 { notes.insert("Everything looked fine.", at: 0) }
+        self.doctorRunning = false
+        if !notes.isEmpty { self.doctorReport = notes }
+        self.log.notice("check & fix (auto \(auto)): \(notes.joined(separator: " | "), privacy: .public)")
+      }
+    }
+  }
+
   func retry() {
     if settings.enabled { start() } else { settings.enabled = true }
   }
@@ -1144,6 +1206,11 @@ final class AudioController: ObservableObject {
     observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
       self?.isSleeping = false
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.5) }
+      // Bluetooth reconnects a few seconds after wake, sometimes in call mode.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+        guard let self, self.settings.autoFixAfterSleep, !self.isSleeping else { return }
+        self.checkAndFix(auto: true)
+      }
     })
   }
 

@@ -233,6 +233,11 @@ struct PopoverView: View {
              text: "macOS's audio service isn't responding, so The Bass Shaker can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
              action: ("Restart macOS Audio", controller.restartAudioService),
              secondary: nil)
+    case _ where controller.doctorReport != nil:
+      Banner(symbol: "stethoscope", tint: .green,
+             text: (controller.doctorReport ?? []).joined(separator: "\n"),
+             action: ("OK", { controller.doctorReport = nil }),
+             secondary: controller.status == .audioServiceStuck ? ("Restart macOS Audio", controller.restartAudioService) : nil)
     case _ where controller.channelNotice != nil:
       Banner(symbol: "speaker.wave.2", tint: .blue, text: controller.channelNotice ?? "", action: nil, secondary: nil)
     case _ where controller.balanceIsOff && !controller.settings.balanceLock:
@@ -410,7 +415,21 @@ struct PopoverView: View {
           .font(.system(size: 9, weight: .medium, design: .rounded))
           .foregroundStyle(.tertiary)
       }
+      Button {
+        controller.checkAndFix()
+      } label: {
+        Image(systemName: controller.doctorRunning ? "hourglass" : "stethoscope")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Check and fix sound issues")
+      .help("Check & Fix: muffled, silent or one-sided sound (e.g. after sleep or Bluetooth trouble)")
       Menu {
+        Button("Check & Fix Sound Issues") { controller.checkAndFix() }
+        Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
+                                                               set: { controller.settings.autoFixAfterSleep = $0 }))
+        Divider()
         Menu("Sound") {
           Toggle("Remember Sound per Device", isOn: Binding(get: { controller.settings.perDevice },
                                                              set: { controller.settings.perDevice = $0 }))

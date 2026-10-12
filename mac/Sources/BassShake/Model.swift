@@ -410,6 +410,7 @@ struct Settings: Codable, Equatable {
   var nightGuard = false
   /// Quick fade when the controls appear and disappear.
   var fadeWindows = true
+  var autoFixAfterSleep = true                    // Check & Fix runs itself after wake
   /// Live oscilloscope trace behind the EQ curve.
   var waveform = true
   var scopeColor: ScopeColor = .accent
@@ -475,6 +476,7 @@ struct Settings: Codable, Equatable {
     limit = try c.decodeIfPresent(Bool.self, forKey: .limit) ?? d.limit
     nightGuard = try c.decodeIfPresent(Bool.self, forKey: .nightGuard) ?? d.nightGuard
     fadeWindows = try c.decodeIfPresent(Bool.self, forKey: .fadeWindows) ?? d.fadeWindows
+    autoFixAfterSleep = (try? c.decodeIfPresent(Bool.self, forKey: .autoFixAfterSleep)) ?? d.autoFixAfterSleep
     waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
