@@ -175,6 +175,7 @@ final class HearingFitTest: ObservableObject {
   private var stepStart = Date()
   private var task: Task<Void, Never>?
   private weak var controller: AudioController?
+  private var wasBypassed = false
 
   init(controller: AudioController) {
     self.controller = controller
@@ -186,6 +187,10 @@ final class HearingFitTest: ObservableObject {
   func begin() {
     // Test with Hearing Fit out of the chain so an old profile can't skew it.
     controller?.settings.hearing = nil
+    // Test on the untouched signal: Center Lock / crossfeed / width would
+    // leak the one-ear tone into the other ear and skew the result.
+    wasBypassed = controller?.bypassed ?? false
+    controller?.bypassed = true
     tone.start()
     index = 0
     phase = .testing
@@ -229,6 +234,7 @@ final class HearingFitTest: ObservableObject {
 
   private func finish() {
     tone.stop()
+    controller?.bypassed = wasBypassed
     let p = HearingProfile.fromThresholds(left: thresholds[0], right: thresholds[1])
     result = p
     controller?.settings.hearing = p.isFlat ? nil : p
@@ -241,6 +247,7 @@ final class HearingFitTest: ObservableObject {
   func revert() {
     task?.cancel()
     tone.stop()
+    if phase == .testing { controller?.bypassed = wasBypassed }
     phase = .intro
     controller?.settings.hearing = previous
   }
