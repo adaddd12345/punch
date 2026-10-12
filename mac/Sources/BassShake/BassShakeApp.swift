@@ -274,10 +274,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     }) { outsideClickMonitors.append(k) }
     if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
       guard let self, !self.controller.pinned, let w = event.window else { return event }
-      let popoverWindow = self.popover.contentViewController?.view.window
-      let isInside = w === popoverWindow || w.parent === popoverWindow
-      let isStatusItem = w === self.statusItem?.button?.window
-      if !isInside && !isStatusItem { self.closePopover() }
+      // Only our launch window counts as "outside". Menus, pickers, the
+      // drop-down tray and Sparkle are windows of ours too: closing on those
+      // made the ⋯ menu flicker and the trays unopenable.
+      if w === self.window { self.closePopover() }
       return event
     }) { outsideClickMonitors.append(l) }
   }
