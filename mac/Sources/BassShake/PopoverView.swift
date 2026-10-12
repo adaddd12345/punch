@@ -3,7 +3,9 @@ import SwiftUI
 
 struct PopoverView: View {
   @ObservedObject var controller: AudioController
-  @ObservedObject var meters: MeterModel
+  /// Not observed here: only MeterView redraws with the meters (observing
+  /// it here redrew the whole popup at 60 Hz, which made open menus flicker).
+  let meters: MeterModel
   @EnvironmentObject var updates: Updates
   @State private var ticker = MeterTicker()
   @State private var visible = false
@@ -409,68 +411,74 @@ struct PopoverView: View {
           .foregroundStyle(.tertiary)
       }
       Menu {
-        Toggle("Remember Sound per Device", isOn: Binding(get: { controller.settings.perDevice },
-                                                           set: { controller.settings.perDevice = $0 }))
-        if let d = controller.currentDevice {
-          Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
-                                                             set: { controller.setBypassOnCurrentDevice($0) }))
-        }
-        Menu("Microphone: \(currentInputName)") {
-          ForEach(controller.inputs) { d in
-            Button {
-              controller.selectInput(d)
-            } label: {
-              if d.id == controller.currentInputID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
-            }
+        Menu("Sound") {
+          Toggle("Remember Sound per Device", isOn: Binding(get: { controller.settings.perDevice },
+                                                             set: { controller.settings.perDevice = $0 }))
+          if let d = controller.currentDevice {
+            Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
+                                                               set: { controller.setBypassOnCurrentDevice($0) }))
           }
+          Toggle("Balance Lock (keep left/right centered)", isOn: Binding(get: { controller.settings.balanceLock },
+                                                                          set: { controller.settings.balanceLock = $0
+                                                                                 if $0 { controller.centerBalance() } }))
           Divider()
-          Button("Sound Settings…") { controller.openSoundSettings() }
+          Menu("Microphone: \(currentInputName)") {
+            ForEach(controller.inputs) { d in
+              Button {
+                controller.selectInput(d)
+              } label: {
+                if d.id == controller.currentInputID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
+              }
+            }
+            Divider()
+            Button("Sound Settings…") { controller.openSoundSettings() }
+          }
+          Button("Latency Lab… (Bluetooth delay for recording)") { withAnimation { showLatencyLab = true } }
+          Button("Find Old Audio Drivers…") {
+            controller.scanDrivers()
+            withAnimation { showDrivers = true }
+          }
         }
-        Button("Latency Lab… (Bluetooth delay for recording)") { withAnimation { showLatencyLab = true } }
-        Toggle("Balance Lock (keep left/right centred)", isOn: Binding(get: { controller.settings.balanceLock },
-                                                                       set: { controller.settings.balanceLock = $0
-                                                                              if $0 { controller.centerBalance() } }))
-        Divider()
-        Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
-                                            set: { controller.settings.waveform = $0 }))
-        Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
-                                                 set: { controller.settings.backgroundStyle = $0 })) {
-          ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }
+        Menu("Look") {
+          Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
+                                                   set: { controller.settings.backgroundStyle = $0 })) {
+            ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }
+          }
+          Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
+                                              set: { controller.settings.waveform = $0 }))
+          Picker("Scope Color", selection: Binding(get: { controller.settings.scopeColor },
+                                                    set: { controller.settings.scopeColor = $0 })) {
+            ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
+          }
+          Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
+                                                set: { controller.settings.fadeWindows = $0 }))
         }
-        Picker("Scope Color", selection: Binding(get: { controller.settings.scopeColor },
-                                                  set: { controller.settings.scopeColor = $0 })) {
-          ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
+        Menu("Shortcuts") {
+          Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
+                                                                         set: { controller.settings.bypassHotkey = $0 }))
+          Text("Open/Close Anywhere: \(GlobalHotkey.openLabel)")
+          if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
         }
-        Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
-                                              set: { controller.settings.fadeWindows = $0 }))
-        Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
-                                                                       set: { controller.settings.bypassHotkey = $0 }))
-        Divider()
-        Button("Find Old Audio Drivers…") {
-          controller.scanDrivers()
-          withAnimation { showDrivers = true }
-        }
-        Divider()
-        Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
         Menu("Presets & Settings") {
+          Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
+          Divider()
           Button("Export Presets…") { controller.exportPresets() }
           Button("Import Presets…") { controller.importPresets() }
           Divider()
           Button("Reset All Settings…") { confirmReset = true }
         }
-        Toggle("Open at Login", isOn: Binding(get: { loginOn }, set: { LoginItem.set($0); loginOn = LoginItem.isOn }))
-        if LoginItem.runningTranslocated {
-          Text("Move The Bass Shaker to Applications to open it at login")
-        }
-        Text("Open/Close Anywhere: \(GlobalHotkey.openLabel)")
-        if let c = controller.hotkeyConflict { Text("Shortcut in use by another app: \(c)") }
         Divider()
-        Menu("Updates") {
-          Button("Check for Updates…") { updates.checkNow() }
+        Button("Check for Updates…") { updates.checkNow() }
+        Menu("Update Options") {
           Toggle("Check Automatically", isOn: Binding(get: { updates.automaticChecks }, set: { updates.automaticChecks = $0 }))
           Toggle("Install Automatically", isOn: Binding(get: { updates.automaticDownloads }, set: { updates.automaticDownloads = $0 }))
           if let err = updates.startError { Text("Updates unavailable: \(err)") }
         }
+        Toggle("Open at Login", isOn: Binding(get: { loginOn }, set: { LoginItem.set($0); loginOn = LoginItem.isOn }))
+        if LoginItem.runningTranslocated {
+          Text("Move to Applications to open at login")
+        }
+        Divider()
         Menu("Help") {
           Button("Help") { Links.open(.help) }
           Button("Report a Bug…") { controller.reportBug() }
@@ -479,8 +487,7 @@ struct PopoverView: View {
           Divider()
           Button("Uninstall…") { Uninstaller.run() }
         }
-        Button("About The Bass Shaker") { AboutPanel.show() }
-        Text("Version \(updates.currentVersion)")
+        Button("About The Bass Shaker (\(updates.currentVersion))") { AboutPanel.show() }
         Divider()
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       } label: {
