@@ -64,15 +64,7 @@ struct ModesView: View {
           .monospacedDigit()
           .foregroundStyle(.secondary)
         Spacer(minLength: 2)
-        if controller.nightGuardCutDb < -0.5 {
-          Text(String(format: "−%.0f dB", -controller.nightGuardCutDb))
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-            .monospacedDigit()
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .foregroundStyle(.white)
-            .background(Capsule().fill(Color.indigo))
-            .help("Night Guard is turning things down right now")
-        }
+        NightGuardChip(model: controller.nightGuard)
       }
     }
   }
@@ -181,6 +173,24 @@ struct ModesView: View {
           }
         }
       }
+    }
+  }
+}
+
+
+/// Night Guard's live "−N dB" chip. Observes only its own readout, so the
+/// rest of the popover doesn't redraw as the reduction moves.
+private struct NightGuardChip: View {
+  @ObservedObject var model: NightGuardReadout
+  var body: some View {
+    if model.cutDb <= -1 {
+      Text(String(format: "−%.0f dB", -model.cutDb))
+        .font(.system(size: 9, weight: .bold, design: .rounded))
+        .monospacedDigit()
+        .padding(.horizontal, 5).padding(.vertical, 1)
+        .foregroundStyle(.white)
+        .background(Capsule().fill(Color.indigo))
+        .help("Night Guard is turning things down right now")
     }
   }
 }

@@ -123,7 +123,10 @@ struct PopoverView: View {
         }
       }
       // 60 Hz meters only while this is on screen (nothing runs when closed).
-      ticker.start { [controller, meters, role] in
+      ticker.start { [controller, meters, role, window] in
+        // A hidden or fully covered window (NSPopover/launch window kept
+        // alive off screen) draws nothing: don't drive SwiftUI updates.
+        if let w = window.window, !w.isVisible || !w.occlusionState.contains(.visible) { return }
         meters.update(controller.pollMeters())
         if controller.settings.waveform && role != .launchWindow { controller.waveform.pull(controller) }
       }

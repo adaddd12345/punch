@@ -6,7 +6,7 @@ import SwiftUI
 /// tune: instant attack, linear-in-dB release, peak hold, then a faster
 /// fall of the hold marker.
 final class MeterModel: ObservableObject {
-  struct Channel {
+  struct Channel: Equatable {
     var level: Double = MeterModel.floorDb      // displayed level, dBFS
     var hold: Double = MeterModel.floorDb       // peak-hold marker, dBFS
     var holdUntil: TimeInterval = 0
@@ -32,7 +32,7 @@ final class MeterModel: ObservableObject {
       let db = max(Self.floorDb, 20 * log10(max(Double(peaks[i]), 1e-6)))
       var c = next[i]
       c.level = db >= c.level ? db : max(db, c.level - Self.releaseDbPerSec * dt)
-      if db >= c.hold {
+      if db > c.hold || (db == c.hold && db > Self.floorDb) {
         c.hold = db
         c.holdUntil = now + Self.holdSeconds
       } else if now > c.holdUntil {
@@ -40,12 +40,16 @@ final class MeterModel: ObservableObject {
       }
       next[i] = c
     }
-    channels = next
+    // Publish only real changes: in silence the meters sit still and
+    // nothing downstream needs to redraw.
+    if next != channels { channels = next }
 
     let gr = Double(m.gain_reduction_db)
-    gainReductionDb = gr <= gainReductionDb ? gr : min(0, gainReductionDb + 12 * dt)
+    let nextGR = gr <= gainReductionDb ? gr : min(0, gainReductionDb + 12 * dt)
+    if nextGR != gainReductionDb { gainReductionDb = nextGR }
     if gr < -0.5 { limitingUntil = now + 0.6 }
-    limiting = now < limitingUntil
+    let lim = now < limitingUntil
+    if lim != limiting { limiting = lim }
   }
 
   func reset() {

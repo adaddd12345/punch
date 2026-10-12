@@ -38,16 +38,24 @@ private struct AmbientSmoke: View {
     Canvas { ctx, size in
       let base = scheme == .dark ? Color(red: 0.02, green: 0.05, blue: 0.14) : Color(red: 0.86, green: 0.91, blue: 1.0)
       ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(base.opacity(0.55)))
-      ctx.addFilter(.blur(radius: 46))
+      // Soft plumes as radial gradients: same smoky look as the old
+      // full-frame blur(46), which cost tens of % CPU at 20 fps.
       let m = max(size.width, size.height)
       for (i, p) in Self.plumes.enumerated() {
         let ph = t * p.s * 2 * .pi + Double(i) * 1.7
         let cx = (p.x + p.r * sin(ph)) * size.width
         let cy = (p.y + p.r * cos(ph * 0.8)) * size.height
-        let d = m * p.size * (0.9 + 0.1 * sin(ph * 1.3))
+        let d = m * p.size * (0.9 + 0.1 * sin(ph * 1.3)) * 1.5
         let breathe = 0.20 + 0.08 * sin(ph * 0.6)
-        ctx.fill(Path(ellipseIn: CGRect(x: cx - d / 2, y: cy - d * 0.35, width: d, height: d * 0.7)),
-                 with: .color(p.c.opacity(scheme == .dark ? breathe + 0.1 : breathe)))
+        let a = scheme == .dark ? breathe + 0.1 : breathe
+        ctx.drawLayer { l in
+          // Squash a circular gradient into the plume's ellipse.
+          l.translateBy(x: cx, y: cy)
+          l.scaleBy(x: 1, y: 0.7)
+          l.fill(Path(ellipseIn: CGRect(x: -d / 2, y: -d / 2, width: d, height: d)),
+                 with: .radialGradient(Gradient(colors: [p.c.opacity(a), p.c.opacity(a * 0.45), p.c.opacity(0)]),
+                                       center: .zero, startRadius: 0, endRadius: d / 2))
+        }
       }
     }
   }

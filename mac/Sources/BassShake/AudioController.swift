@@ -50,8 +50,10 @@ final class AudioController: ObservableObject {
   @Published private(set) var balance: Double?
   /// Shown when one channel dropped out and we restarted the audio.
   @Published private(set) var channelNotice: String?
-  /// Night Guard's live reduction, dB (<= 0), for the UI.
-  @Published private(set) var nightGuardCutDb: Double = 0
+  /// Night Guard's live reduction for the UI. Its own object (not a
+  /// @Published here): it moves every meter tick, and publishing it on the
+  /// controller re-rendered the whole popover at 60 Hz.
+  let nightGuard = NightGuardReadout()
   /// DJ pads (not saved).
   @Published var dj = DJState() {
     didSet { if dj != oldValue { pushParams() } }
@@ -191,8 +193,8 @@ final class AudioController: ObservableObject {
       DispatchQueue.main.async {
         self.halResponded = true
         if self.status == .audioServiceStuck { self.status = .off }
-        self.devices = devs
-        self.currentDeviceID = current
+        if self.devices != devs { self.devices = devs }
+        if self.currentDeviceID != current { self.currentDeviceID = current }
         self.pushParams()  // crossfeed follows headphones vs speakers
         self.log.notice("devices: \(devs.count, privacy: .public)")
         AudioCapturePermission.preflightAsync { state in
@@ -330,8 +332,9 @@ final class AudioController: ObservableObject {
   func pollMeters() -> PunchMeters {
     let m = punch_take_meters(engine)
     checkChannels(m)
-    let cut = Double(punch_loudness_guard_cut_db(engine))
-    if abs(cut - nightGuardCutDb) > 0.05 { nightGuardCutDb = cut }
+    // Whole dB only (the chip shows "−N dB"), so it publishes rarely.
+    let cut = Double(punch_loudness_guard_cut_db(engine)).rounded()
+    if cut != nightGuard.cutDb { nightGuard.cutDb = cut }
     return m
   }
 
@@ -416,8 +419,8 @@ final class AudioController: ObservableObject {
     let ins = Devices.allInputs()
     let cur = Devices.defaultInput()
     DispatchQueue.main.async {
-      self.inputs = ins
-      self.currentInputID = cur
+      if self.inputs != ins { self.inputs = ins }
+      if self.currentInputID != cur { self.currentInputID = cur }
     }
   }
 
@@ -1088,8 +1091,8 @@ final class AudioController: ObservableObject {
       let devs = Devices.allOutputs()
       let defaultID = Devices.defaultOutput()
       DispatchQueue.main.async {
-        self.devices = devs
-        self.currentDeviceID = defaultID
+        if self.devices != devs { self.devices = devs }
+        if self.currentDeviceID != defaultID { self.currentDeviceID = defaultID }
         self.pushParams()  // crossfeed follows headphones vs speakers
       }
       guard let device = devs.first(where: { $0.id == defaultID }) else {
@@ -1163,8 +1166,8 @@ final class AudioController: ObservableObject {
       let devs = Devices.allOutputs()
       let current = Devices.defaultOutput()
       DispatchQueue.main.async {
-        self.devices = devs
-        self.currentDeviceID = current
+        if self.devices != devs { self.devices = devs }
+        if self.currentDeviceID != current { self.currentDeviceID = current }
         self.pushParams()  // crossfeed follows headphones vs speakers
         // A device that wasn't ready at login (USB DAC, coreaudiod still
         // waking) can come alive later: give a failed start another go.
@@ -1270,7 +1273,7 @@ final class AudioController: ObservableObject {
     volumeListeners = PropertyListeners(queue: AudioController.listenerQueue)
     let addr = AudioObjectPropertyAddress.output(kAudioHardwareServiceDeviceProperty_VirtualMainVolume)
     guard HAL.has(device.id, addr) else {
-      DispatchQueue.main.async { self.deviceVolume = nil }
+      DispatchQueue.main.async { if self.deviceVolume != nil { self.deviceVolume = nil } }
       return
     }
     let read: () -> Void = { [weak self] in
@@ -1289,14 +1292,14 @@ final class AudioController: ObservableObject {
     balanceListeners = PropertyListeners(queue: AudioController.listenerQueue)
     let addr = AudioObjectPropertyAddress.output(kAudioHardwareServiceDeviceProperty_VirtualMainBalance)
     guard HAL.has(device.id, addr) else {
-      DispatchQueue.main.async { self.balance = nil }
+      DispatchQueue.main.async { if self.balance != nil { self.balance = nil } }
       return
     }
     let read: () -> Void = { [weak self] in
       guard let v = try? HAL.get(device.id, addr, default: Float32(0.5)) else { return }
       DispatchQueue.main.async {
         guard let self else { return }
-        self.balance = Double(v)
+        if self.balance != Double(v) { self.balance = Double(v) }
         if self.settings.balanceLock && self.balanceIsOff {
           self.log.notice("balance drifted to \(v, privacy: .public); recentring")
           self.centerBalance()
@@ -1308,7 +1311,7 @@ final class AudioController: ObservableObject {
   }
 
   private func volumeChanged(_ v: Double) {
-    deviceVolume = v
+    if deviceVolume != v { deviceVolume = v }
     quietFloorVolumeChanged(v)
     guard settings.autoLoudness, !volumePushPending else { return }
     volumePushPending = true
@@ -1350,12 +1353,17 @@ final class AudioController: ObservableObject {
   /// input on the Mac's own mic so the headset stays in full-quality stereo.
   /// Call apps can still pick the headset mic explicitly.
   private func keepBluetoothInStereo() {
-    let outID = Devices.defaultOutput()
-    guard let out = Devices.allOutputs().first(where: { $0.id == outID }), out.isBluetooth else { return }
+    // Three cheap property reads first; enumerate devices only when it may act.
+    func isBT(_ id: AudioObjectID) -> Bool {
+      let t = (try? HAL.get(id, .global(kAudioDevicePropertyTransportType), default: UInt32(0))) ?? 0
+      return t == UInt32(kAudioDeviceTransportTypeBluetooth) || t == UInt32(kAudioDeviceTransportTypeBluetoothLE)
+    }
+    let outID = Devices.defaultOutput(), inID = Devices.defaultInput()
+    guard outID != 0, inID != 0, isBT(outID), isBT(inID) else { return }
+    let running = (try? HAL.get(inID, .global(kAudioDevicePropertyDeviceIsRunningSomewhere), default: UInt32(0))) ?? 0
+    guard running == 0 else { return }
     let ins = Devices.allInputs()
-    guard let input = ins.first(where: { $0.id == Devices.defaultInput() }), input.isBluetooth else { return }
-    let running = (try? HAL.get(input.id, .global(kAudioDevicePropertyDeviceIsRunningSomewhere), default: UInt32(0))) ?? 0
-    guard running == 0, let mic = ins.first(where: { $0.isBuiltIn }) else { return }
+    guard let input = ins.first(where: { $0.id == inID }), let mic = ins.first(where: { $0.isBuiltIn }) else { return }
     try? Devices.setDefaultInput(mic.id)
     log.notice("HQ guard: default input \(input.name, privacy: .public) -> \(mic.name, privacy: .public)")
     refreshInputsOffMain()
@@ -1477,6 +1485,13 @@ final class AudioController: ObservableObject {
 
 
 /// Tiny lock-protected Bool for cross-queue flags (no HAL, never contended).
+/// Night Guard's current reduction in whole dB (<= 0). Observed only by
+/// the small chip that shows it.
+final class NightGuardReadout: ObservableObject {
+  @Published var cutDb: Double = 0
+}
+
+
 final class AtomicFlag {
   private let lock = NSLock()
   private var value = false
