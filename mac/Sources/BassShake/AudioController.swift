@@ -55,6 +55,18 @@ final class AudioController: ObservableObject {
   private var lastChannelFix: TimeInterval = 0
   private var balanceListeners = PropertyListeners(queue: AudioController.listenerQueue)
 
+  /// Pinned: the controls live in a floating panel that stays put when you
+  /// click elsewhere (the menu-bar popover always closes). Not saved.
+  @Published private(set) var pinned = false
+  /// Set by the app delegate: shows/hides the pinned panel at a frame.
+  var onPinChange: ((Bool, NSRect?) -> Void)?
+
+  func setPinned(_ on: Bool, from window: NSWindow?) {
+    guard on != pinned else { return }
+    pinned = on
+    onPinChange?(on, window?.frame)
+  }
+
   /// Instant A/B: the tap keeps running, the engine passes audio untouched.
   @Published var bypassed = false {
     didSet { if bypassed != oldValue { pushParams() } }

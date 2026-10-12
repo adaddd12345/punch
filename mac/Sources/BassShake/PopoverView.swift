@@ -14,15 +14,19 @@ struct PopoverView: View {
   @ObservedObject private var latencyLab = LatencyLab.shared
   @State private var showLatencyLab = false
 
-  /// The menu-bar popover owns the drop-down drawer; the copy shown in the
-  /// launch window must not (two owners made the drawer flicker between
-  /// windows).
-  private let ownsDrawer: Bool
+  /// Where this copy of the controls lives.
+  enum Role { case menuBar, launchWindow, pinned }
+  /// The visible owner (menu-bar popover, or the pinned panel) runs the
+  /// drop-down drawer; the launch window's copy must not (two owners made
+  /// the drawer flicker between windows).
+  private let role: Role
+  private var ownsDrawer: Bool { role == .pinned || (role == .menuBar && !controller.pinned) }
+  @State private var window = WindowRef()
 
-  init(controller: AudioController, ownsDrawer: Bool = true) {
+  init(controller: AudioController, ownsDrawer: Bool = true, role: Role? = nil) {
     self.controller = controller
     self.meters = controller.meters
-    self.ownsDrawer = ownsDrawer
+    self.role = role ?? (ownsDrawer ? .menuBar : .launchWindow)
   }
 
   var body: some View {
@@ -59,9 +63,13 @@ struct PopoverView: View {
       meters.update(controller.pollMeters())
     }
     .background(HostWindowReader { w in
-      // Only the menu-bar popover, and only on a real change (updateNSView
-      // runs every frame while the meters animate).
-      if ownsDrawer, let w, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
+      guard let w, window.window !== w else { return }  // only real changes (runs every frame)
+      window.window = w
+      if role == .menuBar {
+        // Quick system fade on close; the appear fade is in onAppear.
+        w.animationBehavior = controller.settings.fadeWindows ? .utilityWindow : .none
+      }
+      if ownsDrawer, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
     })
     .onChange(of: showLive) { _, on in
       if on {
@@ -81,6 +89,14 @@ struct PopoverView: View {
     }
     .onAppear {
       visible = true
+      if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
+      if role == .menuBar, controller.settings.fadeWindows, let w = window.window {
+        w.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { ctx in
+          ctx.duration = 0.12
+          w.animator().alphaValue = 1
+        }
+      }
       latencyLab.startMonitoring()
       updates.checkInBackgroundIfStale()
     }
@@ -110,6 +126,21 @@ struct PopoverView: View {
         .font(.system(size: 14, weight: .bold, design: .rounded))
       Spacer(minLength: 4)
       deviceMenu
+      if role != .launchWindow {
+        Button {
+          let pinning = !controller.pinned
+          controller.setPinned(pinning, from: window.window)
+          // From the menu-bar popover, the pinned panel takes over: close it.
+          if pinning && role == .menuBar { window.window?.orderOut(nil) }
+        } label: {
+          Image(systemName: controller.pinned ? "pin.fill" : "pin")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(controller.pinned ? Color.accentColor : Color.secondary)
+            .rotationEffect(.degrees(controller.pinned ? 0 : 45))
+        }
+        .buttonStyle(.plain)
+        .help(controller.pinned ? "Unpin: close the floating controls" : "Pin: keep the controls open when you click elsewhere")
+      }
       if controller.settings.enabled {
         Button { controller.bypassed.toggle() } label: {
           Text(controller.bypassed ? "Original" : "A/B")
@@ -288,6 +319,8 @@ struct PopoverView: View {
                                                                        set: { controller.settings.balanceLock = $0
                                                                               if $0 { controller.centerBalance() } }))
         Divider()
+        Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
+                                              set: { controller.settings.fadeWindows = $0 }))
         Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
                                                                        set: { controller.settings.bypassHotkey = $0 }))
         Divider()
@@ -364,4 +397,10 @@ private struct Banner: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.12)))
   }
+}
+
+
+/// Holds the hosting window without triggering SwiftUI updates.
+final class WindowRef {
+  weak var window: NSWindow?
 }

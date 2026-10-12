@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   let controller: AudioController
   let updates: Updates
   private var window: NSWindow?
+  private var pinnedPanel: NSPanel?
 
   override init() {
     // Local logger: stored properties can't be read before super.init().
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // settings. Always show the controls in a window on launch.
     showWindow()
     log.notice("window shown")
+    controller.onPinChange = { [weak self] on, frame in self?.setPinned(on, at: frame) }
     DispatchQueue.main.async { [controller] in controller.bootstrap() }
     // Start auto-updates only once the UI is up, and never block on it.
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }
@@ -74,6 +76,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     // Release the tap so the original audio resumes immediately.
     controller.shutdown()
+  }
+
+  /// Pinned controls: a floating panel at the popover's spot that stays put
+  /// when you click elsewhere (MenuBarExtra popovers always close).
+  private func setPinned(_ on: Bool, at frame: NSRect?) {
+    let fade = controller.settings.fadeWindows
+    if on {
+      let panel = pinnedPanel ?? makePinnedPanel()
+      pinnedPanel = panel
+      if let frame {
+        panel.setFrameTopLeftPoint(NSPoint(x: frame.minX, y: frame.maxY))
+      } else {
+        panel.center()
+      }
+      panel.alphaValue = fade ? 0 : 1
+      panel.makeKeyAndOrderFront(nil)
+      if fade {
+        NSAnimationContext.runAnimationGroup { ctx in
+          ctx.duration = 0.12
+          panel.animator().alphaValue = 1
+        }
+      }
+    } else if let panel = pinnedPanel {
+      LiveDrawer.shared.hide()
+      if fade {
+        NSAnimationContext.runAnimationGroup({ ctx in
+          ctx.duration = 0.12
+          panel.animator().alphaValue = 0
+        }, completionHandler: { panel.orderOut(nil) })
+      } else {
+        panel.orderOut(nil)
+      }
+    }
+  }
+
+  private func makePinnedPanel() -> NSPanel {
+    let host = NSHostingController(rootView: PopoverView(controller: controller, role: .pinned).environmentObject(updates))
+    host.sizingOptions = [.preferredContentSize]
+    let p = PinnedPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 500),
+                        styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+    p.contentViewController = host
+    p.titlebarAppearsTransparent = true
+    p.titleVisibility = .hidden
+    p.isMovableByWindowBackground = true
+    p.level = .floating
+    p.hidesOnDeactivate = false
+    p.isReleasedWhenClosed = false
+    p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    p.onClose = { [weak self] in self?.controller.setPinned(false, from: nil) }
+    return p
   }
 
   func showWindow() {
@@ -191,5 +244,16 @@ struct ShakerIcon: View {
     inner.close()
     path.append(inner)
     return path
+  }
+}
+
+
+/// Floating panel for pinned controls; closing it unpins.
+final class PinnedPanel: NSPanel {
+  var onClose: (() -> Void)?
+  override var canBecomeKey: Bool { true }  // text fields (preset names) need focus
+  override func close() {
+    onClose?()
+    super.close()
   }
 }
