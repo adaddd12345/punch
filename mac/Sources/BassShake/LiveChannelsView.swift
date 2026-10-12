@@ -260,7 +260,7 @@ private struct MutedIdleRow: View {
           .background(Capsule().fill(Color.orange.opacity(0.7)))
       }
       .buttonStyle(.plain)
-      .help("Unmute \(name). It stays muted until you do, even after relaunching.")
+      .help("Unmute \(name). Mutes last until you unmute or quit The Bass Shaker.")
     }
   }
 }
@@ -279,6 +279,37 @@ struct LiveLevelMeter: View {
       let w = max(size.height, size.width * CGFloat(LiveChannels.position(db)))
       ctx.fill(Path(roundedRect: CGRect(x: 0, y: 0, width: w, height: size.height), cornerRadius: r),
                with: .color(MeterModel.color(db)))
+    }
+  }
+}
+
+
+/// Always-visible line in the popover while any present app is muted, so a
+/// mute can never quietly kill someone's music. One click unmutes all.
+struct MutedNotice: View {
+  @ObservedObject var model: LiveChannels
+
+  var body: some View {
+    let names = model.apps.filter { model.muted.contains($0.id) }.map(\.name)
+    if !names.isEmpty {
+      HStack(spacing: 6) {
+        Image(systemName: "speaker.slash.fill").font(.system(size: 9, weight: .bold))
+        Text("Muted: \(names.joined(separator: ", "))")
+          .font(.system(size: 10, weight: .semibold, design: .rounded))
+          .lineLimit(1)
+          .truncationMode(.tail)
+        Spacer(minLength: 4)
+        Button("Unmute") {
+          for id in model.muted { model.setMuted(false, id: id) }
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 10, weight: .bold, design: .rounded))
+        .underline()
+      }
+      .foregroundStyle(.primary)
+      .padding(.horizontal, 10).padding(.vertical, 6)
+      .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
+      .help("The Bass Shaker is muting these apps. Mutes last until you unmute or quit.")
     }
   }
 }

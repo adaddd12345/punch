@@ -174,7 +174,10 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   if (target == 0.f && ctx->fadeGain == 0.f) atomic_store_explicit(&ctx->fadedOut, true, memory_order_relaxed);
   // Watchdog signal: sound came in but nothing usable went out (and we're
   // not deliberately fading). The Swift side steps aside if this persists.
-  if (!silent && target == 1.f && (outPeak < 1e-6f || isinf(outPeak))) bump(&ctx->deadOutputCallbacks);
+  // Exactly zero only: the engine's quietest legitimate setting (sleep fade,
+  // -60 dB floor) still leaves non-zero samples; the Swift side additionally
+  // ignores states that are silent by design (all DJ kills, sleep fade).
+  if (!silent && target == 1.f && (outPeak == 0.f || isinf(outPeak))) bump(&ctx->deadOutputCallbacks);
   atomic_fetch_add_explicit(&ctx->frames, frames, memory_order_relaxed);
   return noErr;
 }
