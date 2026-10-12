@@ -5,7 +5,9 @@ import SwiftUI
 ///   drag        frequency + gain (Shift = fine)
 ///   scroll      Q (bandwidth) of the hovered / grabbed node
 ///   double-click  reset that node to 0 dB
-/// Gain snaps to 0 dB with a trackpad haptic tick.
+///   arrow keys  nudge the selected node (↑↓ gain, ←→ frequency; Shift = fine)
+/// Gain snaps to 0 dB with a trackpad haptic tick. Monochrome: nodes are
+/// small squares, identified by number in the readout.
 struct EQView: View {
   @ObservedObject var controller: AudioController
 
@@ -14,15 +16,8 @@ struct EQView: View {
   @State private var dragOrigin: (band: EQBand, point: CGPoint)?
   @State private var snapped = false
   @State private var scrollMonitor: Any?
-
-  private static let colors: [Color] = [
-    Color(red: 1.00, green: 0.36, blue: 0.36),
-    Color(red: 1.00, green: 0.62, blue: 0.22),
-    Color(red: 1.00, green: 0.85, blue: 0.25),
-    Color(red: 0.35, green: 0.85, blue: 0.55),
-    Color(red: 0.30, green: 0.70, blue: 1.00),
-    Color(red: 0.68, green: 0.50, blue: 1.00),
-  ]
+  @State private var selected: Int?
+  @FocusState private var focused: Bool
   private let hitRadius: CGFloat = 22
   private let gainSpan = 12.0
 
@@ -43,10 +38,10 @@ struct EQView: View {
             .allowsHitTesting(false)
             .transition(.opacity)
         }
-        if let i = grabbed ?? hovered, i < bands.count {
-          let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
+        if let i = grabbed ?? hovered ?? (focused ? selected : nil), i < bands.count {
+          let nx: CGFloat = min(max(x(bands[i].freq, size.width), 64), size.width - 64)
           let ny: CGFloat = y(bands[i].gain, size.height)
-          readout(bands[i], color: Self.colors[i])
+          readout(bands[i], index: i)
             .position(x: nx, y: ny < 30 ? ny + 24 : ny - 22)
             .allowsHitTesting(false)
             .transition(.opacity)
@@ -64,11 +59,13 @@ struct EQView: View {
       .onAppear { installScrollMonitor() }
       .onDisappear { removeScrollMonitor() }
     }
-    .background(
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .fill(Color.primary.opacity(0.045))
-    )
-    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .background(Rectangle().fill(Mono.wash))
+    .clipped()
+    .overlay(Rectangle().strokeBorder(Mono.rule, lineWidth: Mono.hairline))
+    .focusable()
+    .focused($focused)
+    .focusEffectDisabled()
+    .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in nudge(press) }
     .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
   }
 
@@ -108,12 +105,12 @@ struct EQView: View {
     for g in [-6.0, 6] {
       grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
     }
-    ctx.stroke(grid, with: .color(.primary.opacity(0.06)), lineWidth: 1)
+    ctx.stroke(grid, with: .color(.primary.opacity(0.05)), lineWidth: 0.5)
     var zero = Path()
     zero.move(to: CGPoint(x: 0, y: y(0, h))); zero.addLine(to: CGPoint(x: w, y: y(0, h)))
-    ctx.stroke(zero, with: .color(.primary.opacity(0.14)), lineWidth: 1)
-    for (f, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")] {
-      ctx.draw(Text(label).font(.system(size: 8, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
+    ctx.stroke(zero, with: .color(.primary.opacity(0.16)), lineWidth: 0.5)
+    for (f, label) in [(100.0, "100"), (1_000.0, "1K"), (10_000.0, "10K")] {
+      ctx.draw(Text(label).font(.system(size: 7.5, weight: .medium)).tracking(0.8).foregroundColor(.primary.opacity(0.38)),
                at: CGPoint(x: x(f, w) + 3, y: h - 7), anchor: .leading)
     }
 
@@ -122,7 +119,7 @@ struct EQView: View {
       let cx = x(b.freq, w)
       let rect = CGRect(x: cx - 40, y: 0, width: 80, height: h)
       ctx.fill(Path(rect), with: .radialGradient(
-        Gradient(colors: [Self.colors[i].opacity(0.10 * min(1, abs(b.gain) / 6)), .clear]),
+        Gradient(colors: [Color.primary.opacity(0.06 * min(1, abs(b.gain) / 6)), .clear]),
         center: CGPoint(x: cx, y: y(b.gain, h)), startRadius: 0, endRadius: 44))
     }
 
@@ -138,55 +135,51 @@ struct EQView: View {
     fill.addLine(to: CGPoint(x: w, y: y(0, h)))
     fill.addLine(to: CGPoint(x: 0, y: y(0, h)))
     fill.closeSubpath()
-    // "Smart" shading: warm where you boost, cool where you cut, hotter the
-    // further you go.
+    // Monochrome shading: denser the further from 0 dB, boosts a touch
+    // heavier than cuts.
     let shade = Gradient(stops: [
-      .init(color: Color(red: 1.0, green: 0.30, blue: 0.30).opacity(0.45), location: 0.0),
-      .init(color: Color(red: 1.0, green: 0.62, blue: 0.20).opacity(0.25), location: 0.30),
-      .init(color: Color.accentColor.opacity(0.05), location: 0.5),
-      .init(color: Color(red: 0.25, green: 0.60, blue: 1.0).opacity(0.25), location: 0.70),
-      .init(color: Color(red: 0.45, green: 0.35, blue: 1.0).opacity(0.40), location: 1.0),
+      .init(color: .primary.opacity(0.16), location: 0.0),
+      .init(color: .primary.opacity(0.03), location: 0.5),
+      .init(color: .primary.opacity(0.10), location: 1.0),
     ])
     ctx.fill(fill, with: .linearGradient(shade, startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
                                          endPoint: CGPoint(x: 0, y: y(-gainSpan, h))))
-    let stroke = Gradient(stops: [
-      .init(color: Color(red: 1.0, green: 0.32, blue: 0.32), location: 0.0),
-      .init(color: Color(red: 1.0, green: 0.70, blue: 0.25), location: 0.32),
-      .init(color: .primary.opacity(0.85), location: 0.5),
-      .init(color: Color(red: 0.35, green: 0.70, blue: 1.0), location: 0.68),
-      .init(color: Color(red: 0.55, green: 0.45, blue: 1.0), location: 1.0),
-    ])
-    ctx.stroke(curve, with: .linearGradient(stroke, startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
-                                            endPoint: CGPoint(x: 0, y: y(-gainSpan, h))),
-               style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+    ctx.stroke(curve, with: .color(.primary.opacity(0.9)),
+               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
 
-    // Nodes.
+    // Nodes: small squares, knocked out of the curve with the background.
+    let knockout = Color(nsColor: .windowBackgroundColor)
     for (i, b) in bands.enumerated() {
       let c = CGPoint(x: x(b.freq, w), y: y(b.gain, h))
       let active = grabbed == i || hovered == i
-      let r: CGFloat = active ? 7.5 : 5.5
-      if active {
-        ctx.fill(Path(ellipseIn: CGRect(x: c.x - 14, y: c.y - 14, width: 28, height: 28)),
-                 with: .color(Self.colors[i].opacity(0.18)))
+      let isSelected = focused && selected == i
+      let r: CGFloat = active ? 4.5 : 3.5
+      if active || isSelected {
+        let ring = CGRect(x: c.x - 9, y: c.y - 9, width: 18, height: 18)
+        ctx.stroke(Path(ring), with: .color(.primary.opacity(active ? 0.4 : 0.6)),
+                   style: StrokeStyle(lineWidth: 0.75, dash: isSelected && !active ? [2, 2] : []))
       }
-      ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
-               with: .color(Self.colors[i]))
-      ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
-                 with: .color(.white.opacity(0.85)), lineWidth: 1.2)
+      let sq = CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)
+      ctx.fill(Path(sq.insetBy(dx: -1.25, dy: -1.25)), with: .color(knockout))
+      ctx.fill(Path(sq), with: .color(.primary.opacity(abs(b.gain) > 0.05 || active ? 0.95 : 0.6)))
     }
   }
 
-  private func readout(_ b: EQBand, color: Color) -> some View {
+  private func readout(_ b: EQBand, index: Int) -> some View {
     let f = b.freq >= 1000 ? String(format: "%.1fk", b.freq / 1000) : String(format: "%.0f", b.freq)
-    return HStack(spacing: 4) {
-      Circle().fill(color).frame(width: 6, height: 6)
-      Text("\(f) Hz  \(String(format: "%+.1f", b.gain)) dB  Q \(String(format: "%.1f", b.q))")
-        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-        .monospacedDigit()
+    let g = String(format: "%+.1f", b.gain).replacingOccurrences(of: "-", with: "\u{2212}")
+    return HStack(spacing: 6) {
+      Text("\(index + 1)")
+        .font(Mono.label(8))
+        .foregroundStyle(Mono.dim)
+      Text("\(f) Hz  \(g) dB  Q \(String(format: "%.1f", b.q))")
+        .font(Mono.micro(9))
+        .foregroundStyle(Mono.ink)
     }
-    .padding(.horizontal, 7)
+    .padding(.horizontal, 6)
     .padding(.vertical, 3)
-    .background(.regularMaterial, in: Capsule())
+    .background(.regularMaterial, in: Rectangle())
+    .overlay(Rectangle().strokeBorder(Mono.rule, lineWidth: Mono.hairline))
   }
 
   // MARK: - Interaction
@@ -197,6 +190,8 @@ struct EQView: View {
         if grabbed == nil {
           guard let i = nearest(v.startLocation, size: size) else { return }
           grabbed = i
+          selected = i
+          focused = true
           dragOrigin = (controller.settings.bands[i], v.startLocation)
           snapped = abs(controller.settings.bands[i].gain) < 0.01
         }
@@ -224,6 +219,29 @@ struct EQView: View {
         grabbed = nil
         dragOrigin = nil
       }
+  }
+
+  /// Arrow keys move the selected node: ↑↓ 0.5 dB, ←→ 1/6 octave;
+  /// Shift for 0.1 dB / 1/24 octave.
+  private func nudge(_ press: KeyPress) -> KeyPress.Result {
+    guard let i = selected, i < controller.settings.bands.count else { return .ignored }
+    let fine = press.modifiers.contains(.shift)
+    let octave = pow(2.0, fine ? 1.0 / 24 : 1.0 / 6)
+    var b = controller.settings.bands[i]
+    switch press.key {
+    case .upArrow:
+      b.gain = min(EQBand.gainRange.upperBound, b.gain + (fine ? 0.1 : 0.5))
+    case .downArrow:
+      b.gain = max(EQBand.gainRange.lowerBound, b.gain - (fine ? 0.1 : 0.5))
+    case .rightArrow:
+      b.freq = min(EQBand.freqRange.upperBound, b.freq * octave)
+    case .leftArrow:
+      b.freq = max(EQBand.freqRange.lowerBound, b.freq / octave)
+    default:
+      return .ignored
+    }
+    controller.update(band: i, to: b)
+    return .handled
   }
 
   private func resetHovered() {
@@ -267,31 +285,41 @@ private struct LimitOverlay: View {
     let gr = min(12, max(0, -meters.gainReductionDb))
     let active = meters.limiting && gr > 0.1
     let top = yFor(12)
-    let lid = yFor(12 - gr)
+    let lid = max(yFor(12 - gr), top + 2)
     ZStack(alignment: .topLeading) {
-      // Restricted zone over the bass.
-      Path { p in
-        p.addRect(CGRect(x: 0, y: 0, width: bassEdgeX, height: max(lid, top + 2)))
+      // Restricted zone over the bass: a light wash plus architectural
+      // hatching, denser while it is actually holding the bass back.
+      Canvas { ctx, _ in
+        let zone = CGRect(x: 0, y: 0, width: bassEdgeX, height: lid)
+        ctx.fill(Path(zone), with: .color(.primary.opacity(active ? 0.10 : 0.04)))
+        var hatch = Path()
+        var k: CGFloat = -lid
+        while k < bassEdgeX {
+          hatch.move(to: CGPoint(x: k, y: lid))
+          hatch.addLine(to: CGPoint(x: k + lid, y: 0))
+          k += 6
+        }
+        ctx.clip(to: Path(zone))
+        ctx.stroke(hatch, with: .color(.primary.opacity(active ? 0.16 : 0.07)), lineWidth: 0.5)
       }
-      .fill(LinearGradient(colors: [Color.orange.opacity(active ? 0.30 : 0.10), Color.orange.opacity(0.02)],
-                           startPoint: .top, endPoint: .bottom))
       // The lid itself.
       Path { p in
-        p.move(to: CGPoint(x: 0, y: max(lid, top + 2)))
-        p.addLine(to: CGPoint(x: bassEdgeX, y: max(lid, top + 2)))
+        p.move(to: CGPoint(x: 0, y: lid))
+        p.addLine(to: CGPoint(x: bassEdgeX, y: lid))
       }
-      .stroke(Color.orange.opacity(active ? 0.9 : 0.45), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+      .stroke(Color.primary.opacity(active ? 0.85 : 0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
       // Badge.
-      HStack(spacing: 3) {
-        Image(systemName: "rectangle.compress.vertical").font(.system(size: 8, weight: .bold))
-        Text(active ? String(format: "LIMIT −%.1f dB", gr) : "LIMIT")
-          .font(.system(size: 9, weight: .bold, design: .rounded))
+      HStack(spacing: 4) {
+        Tick(on: active, size: 4)
+        Text(active ? String(format: "LIMIT \u{2212}%.1f dB", gr) : "LIMIT")
+          .font(Mono.label(8))
+          .tracking(0.8)
           .monospacedDigit()
+          .foregroundStyle(active ? Mono.ink : Mono.dim)
       }
-      .padding(.horizontal, 6).padding(.vertical, 2)
-      .foregroundStyle(active ? Color.white : Color.orange)
-      .background(Capsule().fill(active ? Color.orange : Color.orange.opacity(0.15)))
-      .position(x: size.width - 46, y: 12)
+      .padding(.horizontal, 5).padding(.vertical, 2)
+      .background(.regularMaterial, in: Rectangle())
+      .position(x: size.width - 48, y: 11)
     }
     .frame(width: size.width, height: size.height)
     .animation(.easeOut(duration: 0.12), value: gr)
