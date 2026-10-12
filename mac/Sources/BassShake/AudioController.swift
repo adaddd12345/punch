@@ -687,6 +687,7 @@ final class AudioController: ObservableObject {
   }
 
   private func pushParams() {
+    silenceExpected.store((dj.isOn(.low) && dj.isOn(.mid) && dj.isOn(.high)) || fade.musicDb < -20 || sleepFinished)
     let s = settings
     let e = engine
     let live = liveState
@@ -1034,6 +1035,8 @@ final class AudioController: ObservableObject {
   private var stalledStreak = 0
   private var everHeardAudio = false
   private var deadStreak = 0
+  /// Main writes, audioQueue reads: is silent output expected right now?
+  private let silenceExpected = AtomicFlag()
   private var lastDeadRebuild: TimeInterval = 0
 
   /// audioQueue only. Detects (a) a tap that has gone "silently dead" while
@@ -1068,7 +1071,10 @@ final class AudioController: ObservableObject {
     // numbers). First restart once; if it happens again within a minute,
     // step aside so the Mac plays normally, and say why.
     let audible = dCallbacks &- dSilent
-    if audible > 0 && dDead * 10 >= audible * 9 { deadStreak += 1 } else { deadStreak = 0 }
+    // Silence by design never counts: all three DJ kills held, or the sleep
+    // timer's fade. (Stepping aside then would blast unprocessed audio.)
+    let silentByDesign = silenceExpected.load()
+    if audible > 0 && dDead * 10 >= audible * 9 && !silentByDesign { deadStreak += 1 } else { deadStreak = 0 }
     if deadStreak >= 2 {
       deadStreak = 0
       let now = ProcessInfo.processInfo.systemUptime
@@ -1108,4 +1114,13 @@ final class AudioController: ObservableObject {
       stalledStreak = 0
     }
   }
+}
+
+
+/// Tiny lock-protected Bool for cross-queue flags (no HAL, never contended).
+final class AtomicFlag {
+  private let lock = NSLock()
+  private var value = false
+  func store(_ v: Bool) { lock.lock(); value = v; lock.unlock() }
+  func load() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
 }
