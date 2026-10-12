@@ -162,15 +162,16 @@ enum DelayEstimator {
       let z = [Float](repeating: 0, count: n)
       var padded = z
       for i in 0..<min(reference.count, n) { padded[i] = reference[i] }
-      let spectrum = fwd.transform(inputReal: padded, inputImaginary: z)
+      var sr = z, si = z
+      fwd.transform(inputReal: padded, inputImaginary: z, outputReal: &sr, outputImaginary: &si)
 
       length = n
       referenceCount = reference.count
       forward = fwd
       inverse = inv
       zeros = z
-      refReal = spectrum.real
-      refImag = spectrum.imaginary
+      refReal = sr
+      refImag = si
     }
 
     /// c[τ] for τ = 0 ... maxLag (needs maxLag + referenceCount ≤ length).
@@ -178,21 +179,24 @@ enum DelayEstimator {
       precondition(maxLag + referenceCount <= length, "window too long for this correlator")
       var padded = zeros
       for i in 0..<min(x.count, length) { padded[i] = x[i] }
-      let spectrum = forward.transform(inputReal: padded, inputImaginary: zeros)
+      // (inout form: the returning variant needs a newer SDK than CI's.)
+      var specReal = zeros, specImag = zeros
+      forward.transform(inputReal: padded, inputImaginary: zeros, outputReal: &specReal, outputImaginary: &specImag)
 
       // C = X · conj(R): (a + ib)(c − id) = (ac + bd) + i(bc − ad)
       var productReal = zeros
       var productImag = zeros
       for k in 0..<length {
-        let a = spectrum.real[k], b = spectrum.imaginary[k]
+        let a = specReal[k], b = specImag[k]
         let c = refReal[k], d = refImag[k]
         productReal[k] = a * c + b * d
         productImag[k] = b * c - a * d
       }
       // vDSP's inverse DFT is unnormalised, so divide by N.
-      let result = inverse.transform(inputReal: productReal, inputImaginary: productImag)
+      var outReal = zeros, outImag = zeros
+      inverse.transform(inputReal: productReal, inputImaginary: productImag, outputReal: &outReal, outputImaginary: &outImag)
       let scale = 1 / Float(length)
-      return (0...maxLag).map { result.real[$0] * scale }
+      return (0...maxLag).map { outReal[$0] * scale }
     }
 
     func estimate(_ x: [Float], maxLag: Int, exclusion: Int) -> Estimate? {
