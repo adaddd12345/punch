@@ -67,6 +67,14 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
 
 void Engine::publish() {
   EngineParams snap = pending_;
+  // Never let a bad control value (NaN/Inf) silence or unlimit the output.
+  auto fin = [](float& v, float fallback) { if (!std::isfinite(v)) v = fallback; };
+  fin(snap.outputGainDb, 0.f);
+  fin(snap.limiter.ceilingDb, -1.f);
+  fin(snap.eq.preampDb, 0.f);
+  fin(snap.correction.preampDb, 0.f);
+  fin(snap.dj.filter, 0.f);
+  fin(snap.guard.overDb, 8.f);
   // All headroom is applied once, at the correction stage's preamp; the
   // user stage runs at unity preamp.
   effectivePreampDb_ = double(snap.correction.preampDb) + double(snap.eq.preampDb);
@@ -126,9 +134,11 @@ void Engine::applySnapshot(const EngineParams& p) {
   guard_.setParams(p.guard);
   outGain_.setTarget(dbToGain(std::clamp(p.outputGainDb, -60.f, 24.f)));
   limiter_.setParams(p.limiter);
-  bassPriority_ = p.limiter.enabled;
+  // Both limiter stages always run (constant latency); "off" crossfades to a
+  // plain delay inside each, so toggling Limit never jumps or replays.
+  bassPriority_ = true;
   bassLimiter_.setParams(p.limiter.ceilingDb, p.limiter.bassPriorityHz > 0.f ? p.limiter.bassPriorityHz : 120.f, 100.f,
-                         p.limiter.bassPriorityHz > 0.f);
+                         p.limiter.enabled && p.limiter.bassPriorityHz > 0.f);
 }
 
 void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
@@ -204,6 +214,10 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
 }
 
 void Engine::processInterleaved(const float* in, float* out, int numChannels, int numFrames) {
+  if (maxFrames_ <= 0 || scratchPtrs_.empty()) {  // not prepared: pass through
+    if (out != in) std::copy(in, in + size_t(numFrames) * size_t(std::max(0, numChannels)), out);
+    return;
+  }
   const int nc = std::min(numChannels, numChannels_);
   for (int start = 0; start < numFrames; start += maxFrames_) {
     const int n = std::min(maxFrames_, numFrames - start);

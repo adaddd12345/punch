@@ -21,9 +21,9 @@ void LoudnessGuard::prepare(double sampleRate) {
   attackCoeff_ = coeffFor(0.06, sampleRate);
   releaseCoeff_ = coeffFor(1.5, sampleRate);
   // The average moves per sample too, but in dB, slowly.
-  riseCoeff_ = coeffFor(60.0, sampleRate);
-  fallCoeff_ = coeffFor(15.0, sampleRate);
-  warmCoeff_ = coeffFor(0.75, sampleRate);
+  riseCoeff_ = 1.0 - std::exp(-1.0 / (60.0 * sampleRate));
+  fallCoeff_ = 1.0 - std::exp(-1.0 / (15.0 * sampleRate));
+  warmCoeff_ = 1.0 - std::exp(-1.0 / (0.75 * sampleRate));
   active_.prepare(sampleRate, 50.0);
   setParams(p_);
   active_.snap(active_.target());
@@ -34,13 +34,20 @@ void LoudnessGuard::reset() {
   for (auto& s : hpState_) s.reset();
   for (auto& s : shelfState_) s.reset();
   power_ = 0.0;
-  meanDb_ = -200.f;
+  meanDb_ = -200.0;
   warmSamples_ = 0;
   gainDb_ = 0.f;
   cutDb_.store(0.f, std::memory_order_relaxed);
 }
 
 void LoudnessGuard::setParams(const LoudnessGuardParams& p) {
+  // Switched on from idle: start fresh (no hours-old cut or average).
+  if (p.enabled && !p_.enabled && active_.settled() && active_.current() == 0.f) {
+    power_ = 0.0;
+    meanDb_ = -200.0;
+    warmSamples_ = 0;
+    gainDb_ = 0.f;
+  }
   p_ = p;
   active_.setTarget(p.enabled ? 1.f : 0.f);
 }
@@ -66,12 +73,12 @@ void LoudnessGuard::process(float* const* ch, int numChannels, int numFrames) {
     // act), so starting playback isn't treated as a jump.
     const int warmup = int(4.0 * sampleRate_);
     if (shortDb > -60.f) {
-      if (meanDb_ < -150.f) meanDb_ = shortDb;
-      const float c = warmSamples_ < warmup ? warmCoeff_ : (shortDb > meanDb_ ? riseCoeff_ : fallCoeff_);
-      meanDb_ += (shortDb - meanDb_) * c;
+      if (meanDb_ < -150.0) meanDb_ = shortDb;
+      const double c = warmSamples_ < warmup ? warmCoeff_ : (shortDb > meanDb_ ? riseCoeff_ : fallCoeff_);
+      meanDb_ += (double(shortDb) - meanDb_) * c;
       if (warmSamples_ < warmup) ++warmSamples_;
     }
-    const float excess = meanDb_ > -150.f && warmSamples_ >= warmup ? shortDb - (meanDb_ + over) : 0.f;
+    const float excess = meanDb_ > -150.0 && warmSamples_ >= warmup ? shortDb - float(meanDb_ + over) : 0.f;
     const float target = -std::clamp(excess, 0.f, maxCut);
     gainDb_ += (target - gainDb_) * (target < gainDb_ ? attackCoeff_ : releaseCoeff_);
     const float a = active_.next();
@@ -108,7 +115,8 @@ void DjFx::prepare(double sampleRate, int numChannels) {
 
 void DjFx::reset() {
   for (auto& s : iso_) s = IsoChan{};  // NOLINT
-  for (auto& s : filtState_) s.reset();
+  for (auto& s : lpState_) s.reset();
+  for (auto& s : hpState_) s.reset();
   for (auto& s : echoToneState_) s.reset();
   for (auto& d : delay_) std::fill(d.begin(), d.end(), 0.f);
   delayPos_ = 0;
@@ -125,7 +133,7 @@ void DjFx::setParams(const DjParams& p) {
   isoWet_.setTarget(p.lowKill || p.midKill || p.highKill ? 1.f : 0.f);
   const float f = std::clamp(p.filter, -1.f, 1.f);
   // Keep the last position while fading out so the sweep doesn't jump.
-  if (std::fabs(f) > 0.01f) filterPos_.setTarget(f);
+  filterPos_.setTarget(f);
   filterWet_.setTarget(std::fabs(f) > 0.01f ? 1.f : 0.f);
   echoSend_.setTarget(p.echo ? 1.f : 0.f);
   crushMix_.setTarget(p.crush ? 1.f : 0.f);
@@ -133,12 +141,13 @@ void DjFx::setParams(const DjParams& p) {
 }
 
 void DjFx::updateFilter(float v) {
-  // v < 0: low-pass from 20 kHz down to 150 Hz; v > 0: high-pass from 20 Hz
+  // Left: low-pass from 20 kHz down to 150 Hz; right: high-pass from 20 Hz
   // up to 6 kHz. Exponential so equal knob travel = equal musical steps.
-  const double a = std::fabs(double(v));
-  const bool lp = v < 0.f;
-  const double fc = lp ? 20000.0 * std::pow(150.0 / 20000.0, a) : 20.0 * std::pow(6000.0 / 20.0, a);
-  filt_ = SvfCoeffs::make({lp ? FilterType::LowPass : FilterType::HighPass, fc, 0.0, 1.3, true}, sampleRate_);
+  const double l = std::max(0.0, -double(v)), h = std::max(0.0, double(v));
+  const double nyq = 0.45 * sampleRate_;
+  lpF_ = SvfCoeffs::make({FilterType::LowPass, std::min(nyq, 20000.0 * std::pow(150.0 / 20000.0, l)), 0.0, 1.3, true},
+                         sampleRate_);
+  hpF_ = SvfCoeffs::make({FilterType::HighPass, 20.0 * std::pow(6000.0 / 20.0, h), 0.0, 1.3, true}, sampleRate_);
   filtFor_ = v;
 }
 
@@ -192,9 +201,15 @@ void DjFx::process(float* const* ch, int numChannels, int numFrames) {
           const float bands = gl * lo + gm * mid + gh * hi;
           x += iw * (bands - x);
         }
-        // Sweep filter.
-        const float f = filtState_[size_t(c)].tick(filt_, x);
-        x += fw * (f - x);
+        // Sweep filter: each side fades in over the first 10% of its travel.
+        if (fw > 0.f) {
+          const float lp = lpState_[size_t(c)].tick(lpF_, x);
+          const float hp = hpState_[size_t(c)].tick(hpF_, x);
+          const float pos = filterPos_.current();
+          const float wl = std::min(1.f, std::max(0.f, -pos) * 10.f);
+          const float wh = std::min(1.f, std::max(0.f, pos) * 10.f);
+          x += fw * (wl * (lp - x) + wh * (hp - x));
+        }
         // Drive: hard tanh with level trim.
         if (dm > 0.f) {
           const float d = std::tanh(6.f * x) * 0.6f;

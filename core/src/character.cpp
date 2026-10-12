@@ -73,9 +73,11 @@ void Compressor::process(float* const* ch, int numChannels, int numFrames) {
 
 namespace {
 // log(cosh(u)), stable for large |u|.
-inline float logCosh(float u) {
-  const float a = std::fabs(u);
-  return a + std::log1p(std::exp(-2.f * a)) - 0.69314718f;
+// Double: the ADAA difference logCosh(u) - logCosh(prev) cancels badly in
+// float near waveform peaks.
+inline double logCosh(double u) {
+  const double a = std::fabs(u);
+  return a + std::log1p(std::exp(-2.0 * a)) - 0.6931471805599453;
 }
 }  // namespace
 
@@ -128,7 +130,7 @@ void Saturator::process(float* const* ch, int numChannels, int numFrames) {
       const float h = splitBand_ ? s.split.tick(split_, x) : x;
       const float u = gain_ * h + bias_;
       const float du = u - s.prevU;
-      const float y = std::fabs(du) > 1e-5f ? (logCosh(u) - logCosh(s.prevU)) / du
+      const float y = std::fabs(du) > 1e-5f ? float((logCosh(u) - logCosh(s.prevU)) / double(du))
                                             : std::tanh(0.5f * (u + s.prevU));
       s.prevU = u;
       float wet = (y - biasOut_) * norm_;

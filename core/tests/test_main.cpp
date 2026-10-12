@@ -846,6 +846,95 @@ TEST(analysis_process_is_allocation_free) {
   CHECK(g_allocCount.load() == 0);
 }
 
+// ---- review regressions
+
+TEST(smoothed_lands_exactly_on_large_targets) {
+  for (double fs : {48000.0, 192000.0}) {
+    Smoothed sm;
+    sm.prepare(fs, 30.0);
+    sm.snap(2.f);
+    sm.setTarget(1.f);
+    for (int i = 0; i < int(fs); ++i) sm.next();
+    CHECK(sm.current() == 1.f);
+    CHECK(sm.settled());
+  }
+}
+
+TEST(limit_toggle_keeps_latency_and_never_jumps) {
+  const double fs = 48000;
+  Engine e;
+  e.prepare(fs, 2, 512);
+  e.edit().limiter = {-1.f, 80.f, true, 0.f, 0.f, 150.f};
+  e.publish();
+  const int lat = e.latencyFrames();
+  const size_t n = size_t(fs);
+  std::vector<float> l(n), r(n);
+  for (size_t i = 0; i < n; ++i) l[i] = r[i] = float(0.5 * std::sin(2 * std::numbers::pi * 997 * double(i) / fs));
+  float maxStep = 0, prev = 0;
+  for (size_t s = 0; s < n; s += 512) {
+    if (s == n / 2) {  // switch Limit off mid-stream
+      e.edit().limiter.enabled = false;
+      e.publish();
+    }
+    float* p[2] = {l.data() + s, r.data() + s};
+    e.processPlanar(p, 2, int(std::min<size_t>(512, n - s)));
+    for (size_t i = s; i < std::min(n, s + 512); ++i) {
+      if (i > size_t(lat) + 10) maxStep = std::max(maxStep, std::fabs(l[i] - prev));
+      prev = l[i];
+    }
+  }
+  CHECK(e.latencyFrames() == lat);
+  // A 997 Hz sine at 0.5 changes by at most ~0.066 per sample.
+  CHECK(maxStep < 0.08f);
+}
+
+TEST(dj_filter_through_centre_does_not_click) {
+  const double fs = 48000;
+  DjFx d;
+  d.prepare(fs, 2);
+  const size_t n = size_t(fs);
+  std::vector<float> l(n), r(n);
+  for (size_t i = 0; i < n; ++i) l[i] = r[i] = float(0.5 * std::sin(2 * std::numbers::pi * 100 * double(i) / fs));
+  float maxStep = 0, prev = 0;
+  for (size_t s = 0; s < n; s += 256) {
+    DjParams p;
+    p.filter = s < n / 2 ? -0.4f : 0.4f;  // jump across centre
+    d.setParams(p);
+    float* q[2] = {l.data() + s, r.data() + s};
+    d.process(q, 2, int(std::min<size_t>(256, n - s)));
+    for (size_t i = s; i < std::min(n, s + 256); ++i) {
+      if (i > 2000) maxStep = std::max(maxStep, std::fabs(l[i] - prev));
+      prev = l[i];
+    }
+  }
+  CHECK(maxStep < 0.02f);  // 100 Hz at 0.5: ~0.0065 per sample
+}
+
+TEST(night_guard_recovers_at_192k) {
+  const double fs = 192000;
+  LoudnessGuard g;
+  g.prepare(fs);
+  g.setParams({8.f, 20.f, true});
+  std::mt19937 rng(5);
+  std::normal_distribution<float> nd(0.f, 1.f);
+  // 10 s quiet, then a sustained louder programme: the average must climb
+  // so the cut eases off (it froze at 192 kHz in float).
+  std::vector<float> l(4096), r(4096);
+  float cutAt30 = 0, cutAtEnd = 0;
+  const int blocks = int(fs * 400 / 4096);
+  for (int b = 0; b < blocks; ++b) {
+    const double t = double(b) * 4096 / fs;
+    const float a = t < 10 ? dbToGain(-32.f) : dbToGain(-12.f);
+    for (size_t i = 0; i < l.size(); ++i) { l[i] = a * nd(rng); r[i] = a * nd(rng); }
+    float* p[2] = {l.data(), r.data()};
+    g.process(p, 2, 4096);
+    if (t < 30) cutAt30 = g.cutDb();
+    cutAtEnd = g.cutDb();
+  }
+  CHECK(cutAt30 < -6.f);     // it acted on the jump
+  CHECK(cutAtEnd > -2.5f);   // and let go as the new level became normal
+}
+
 int main() {
   for (const auto& t : registry()) {
     const int before = g_failures;

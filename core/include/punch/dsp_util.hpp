@@ -60,7 +60,10 @@ class Smoothed {
     const float d = target_ - current_;
     // Land exactly on the target so "settled" fast paths engage and
     // neutral settings become bit-transparent.
-    current_ = std::fabs(d) < 1e-5f ? target_ : current_ + coeff_ * d;
+    // (Also land when the step has fallen below float resolution, which
+    // happens near targets >= ~0.5 well before |d| < 1e-5.)
+    const float n = current_ + coeff_ * d;
+    current_ = (std::fabs(d) < 1e-5f || n == current_) ? target_ : n;
     return current_;
   }
 

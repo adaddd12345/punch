@@ -42,11 +42,13 @@ class LoudnessGuard {
   SvfCoeffs kHp_, kShelf_;
   std::array<SvfState, kMaxChannels> hpState_{}, shelfState_{};
   double power_ = 0.0;
-  float meanDb_ = -200.f;  // not yet initialised
-  float warmCoeff_ = 0.f;
+  double meanDb_ = -200.0;  // not yet initialised (double: at 192 kHz the
+                            // 60 s coefficient is ~1e-7, below float resolution)
+  double warmCoeff_ = 0.0;
   int warmSamples_ = 0;    // audible samples seen; the average learns fast at first
   float gainDb_ = 0.f;
-  float powerCoeff_ = 0.f, riseCoeff_ = 0.f, fallCoeff_ = 0.f, attackCoeff_ = 0.f, releaseCoeff_ = 0.f;
+  float powerCoeff_ = 0.f, attackCoeff_ = 0.f, releaseCoeff_ = 0.f;
+  double riseCoeff_ = 0.0, fallCoeff_ = 0.0;
   Smoothed active_;
   std::atomic<float> cutDb_{0.f};
 };
@@ -84,11 +86,13 @@ class DjFx {
   struct IsoChan { SvfState a1, a2, b1, b2, c1, c2, d1, d2, e1, e2, f1, f2; };
   std::array<IsoChan, kMaxChannels> iso_{};
   Smoothed gLow_, gMid_, gHigh_, isoWet_;
-  // Sweep filter.
+  // Sweep filter: a low-pass and a high-pass that both keep running, each
+  // weighted by its side of the knob, so sweeping through centre never
+  // swaps one filter's state into the other (no click).
   Smoothed filterPos_, filterWet_;
-  SvfCoeffs filt_;
-  float filtFor_ = 0.f;
-  std::array<SvfState, kMaxChannels> filtState_{};
+  SvfCoeffs lpF_, hpF_;
+  float filtFor_ = 1e9f;
+  std::array<SvfState, kMaxChannels> lpState_{}, hpState_{};
   // Echo.
   std::array<std::vector<float>, kMaxChannels> delay_;
   int delayPos_ = 0, delayLen_ = 1;

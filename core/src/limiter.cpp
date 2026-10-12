@@ -16,7 +16,9 @@ void Limiter::prepare(double sampleRate, int numChannels, float lookaheadMs) {
   dqVal_.assign(size_t(window_ + 1), 1.f);
   dqIdx_.assign(size_t(window_ + 1), 0);
   boxBuf_.assign(size_t(window_), 1.f);
+  active_.prepare(sampleRate, 20.0);
   setParams(params_);
+  active_.snap(active_.target());
   reset();
 }
 
@@ -35,7 +37,10 @@ void Limiter::reset() {
 
 void Limiter::setParams(const LimiterParams& p) {
   params_ = p;
-  ceiling_ = dbToGain(std::min(p.ceilingDb, 0.f));
+  // Off still runs the delay line (constant latency, no stale audio when it
+  // comes back) and fades the gain riding out instead of jumping.
+  active_.setTarget(p.enabled ? 1.f : 0.f);
+  ceiling_ = dbToGain(std::min(std::isfinite(p.ceilingDb) ? p.ceilingDb : -1.f, 0.f));
   releaseCoeff_ = float(1.0 - std::exp(-1.0 / (0.001 * std::max(1.f, p.releaseMs) * sampleRate_)));
   slowCoeff_ = p.slowReleaseMs > 0.f
                    ? float(1.0 - std::exp(-1.0 / (0.001 * double(p.slowReleaseMs) * sampleRate_)))
@@ -86,7 +91,6 @@ void Limiter::process(float* const* ch, int numChannels, int numFrames) {
 
 void Limiter::process(float* const* ch, int numChannels, int numFrames, const float* ceilingPerFrame) {
   numChannels = std::min(numChannels, numChannels_);
-  if (!params_.enabled) return;
   const float invWindow = 1.f / float(window_);
   float minGain = 1.f;
 
@@ -118,16 +122,17 @@ void Limiter::process(float* const* ch, int numChannels, int numFrames, const fl
     boxPos_ = boxPos_ + 1 == window_ ? 0 : boxPos_ + 1;
     // Guard against accumulated rounding pushing the average above a value
     // it mathematically cannot exceed.
-    const float gain = std::min(float(boxSum_) * invWindow, 1.f);
+    const float a = active_.next();
+    const float gain = 1.f + a * (std::min(float(boxSum_) * invWindow, 1.f) - 1.f);
     minGain = std::min(minGain, gain);
 
     for (int c = 0; c < numChannels; ++c) {
       float& slot = delay_[size_t(c)][size_t(delayPos_)];
       const float delayed = slot;
       slot = ch[c][i];
-      // Final safety clamp handles float rounding in the averaging only;
-      // it should essentially never engage.
-      ch[c][i] = std::clamp(delayed * gain, -ceiling_, ceiling_);
+      // Final safety clamp (only when fully on) handles float rounding in
+      // the averaging; it should essentially never engage.
+      ch[c][i] = a == 1.f ? std::clamp(delayed * gain, -ceiling_, ceiling_) : delayed * gain;
     }
     delayPos_ = delayPos_ + 1 == lookahead_ ? 0 : delayPos_ + 1;
   }

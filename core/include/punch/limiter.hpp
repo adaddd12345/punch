@@ -74,6 +74,7 @@ class Limiter {
   long long t_ = 0;
 
   float released_ = 1.f;
+  Smoothed active_;  // 0 = off (pure delay, constant latency), 1 = limiting
   float slow_ = 1.f;
   float slowCoeff_ = 0.f;
   float clipKnee_ = 1.f;   // linear, absolute (ceiling * knee)

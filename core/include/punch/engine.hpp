@@ -110,7 +110,7 @@ class Engine {
   LoudnessGuard guard_;
   Limiter limiter_;
   BassPriorityLimiter bassLimiter_;
-  bool bassPriority_ = false;
+  bool bassPriority_ = true;
 
   std::vector<std::vector<float>> scratch_;
   std::vector<float*> scratchPtrs_;
