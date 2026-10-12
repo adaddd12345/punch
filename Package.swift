@@ -43,6 +43,7 @@ let package = Package(
         .linkedFramework("CoreAudio"),
         .linkedFramework("AudioToolbox"),
         .linkedFramework("Accelerate"),
+        .linkedFramework("AVFoundation"),  // Latency Lab (AVAudioEngine, mic access)
         .linkedFramework("AppKit"),
         .linkedFramework("SwiftUI"),
       ]

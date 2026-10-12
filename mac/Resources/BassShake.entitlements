@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Required with the hardened runtime for Core Audio taps (audio input);
-       harmless for ad-hoc beta builds. -->
+  <!-- Required with the hardened runtime for Core Audio taps and for the
+       microphone (Latency Lab); harmless for ad-hoc beta builds. -->
   <key>com.apple.security.device.audio-input</key><true/>
 </dict>
 </plist>

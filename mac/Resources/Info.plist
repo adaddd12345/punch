@@ -18,6 +18,8 @@
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSAudioCaptureUsageDescription</key>
   <string>The Bass Shaker adds bass and EQ to your Mac’s sound as it plays. Audio is processed live and is never recorded, saved, or sent anywhere.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Latency Lab listens to the microphone only while you measure, to time short test chirps and work out your recording delay. Nothing is recorded, saved, or sent anywhere.</string>
   <key>SUFeedURL</key><string>https://github.com/adaddd12345/punch/releases/download/updates/appcast.xml</string>
   <key>SUPublicEDKey</key><string>cSo3MWPriyIcFg42hMuJHhk2nLwVCNqO62OHV4Enjig=</string>
   <key>SUEnableAutomaticChecks</key><true/>
