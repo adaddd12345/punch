@@ -72,6 +72,10 @@ final class AudioController: ObservableObject {
     didSet {
       guard settings != oldValue else { return }
       if settings.enabled != oldValue.enabled {
+        // Fresh start each time: no stale A/B or finished sleep fade (which
+        // would otherwise leave the output silent after off/on).
+        bypassed = false
+        if sleepFinished { stopSleepTimer() }
         settings.enabled ? start() : stop()
       }
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
@@ -98,6 +102,11 @@ final class AudioController: ObservableObject {
   private var saveWork: DispatchWorkItem?
   private var observers: [NSObjectProtocol] = []
   private var morphTimer: Timer?
+  /// Between willSleep and didWake: listener noise must not rebuild.
+  private var isSleeping = false
+  /// Where a running preset glide is heading; saved instead of the
+  /// half-way bands if a device switch or save lands mid-glide.
+  private var morphTarget: [EQBand]?
   /// `log stream --predicate 'subsystem == "app.bassshake.BassShake"'`
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "audio")
 
@@ -128,7 +137,9 @@ final class AudioController: ObservableObject {
     bootstrapped = true
     log.notice("bootstrap")
     BSCrashGuardInstall()
-    live.onMutedProcessesChanged = { [weak self] in self?.scheduleRebuild(delay: 0.3) }
+    // Debounced: browsers add and drop helper processes, and each change to
+    // the excluded set means a pipeline rebuild.
+    live.onMutedProcessesChanged = { [weak self] in self?.scheduleRebuild(delay: 1.0) }
     live.start()
     installAppObservers()
     updateHotkey()
@@ -351,7 +362,7 @@ final class AudioController: ObservableObject {
   var currentDevice: OutputDevice? { devices.first { $0.id == currentDeviceID } }
 
   private var currentSound: Settings.DeviceSound {
-    .init(bands: settings.bands, bass: settings.bass, boostDb: settings.boostDb, character: settings.character,
+    .init(bands: morphTarget ?? settings.bands, bass: settings.bass, boostDb: settings.boostDb, character: settings.character,
           presetName: settings.presetName, userPresetID: settings.userPresetID, studioEars: settings.studioEars)
   }
 
@@ -460,8 +471,8 @@ final class AudioController: ObservableObject {
     guard mode != settings.mode else { return }
     var s = settings
     if s.mode == .off {
-      s.beforeMode = .init(bands: s.bands, bass: s.bass, character: s.character,
-                           presetName: s.presetName, userPresetID: s.userPresetID)
+      s.beforeMode = .init(bands: morphTarget ?? s.bands, bass: s.bass, character: s.character,
+                           presetName: s.presetName, userPresetID: s.userPresetID, deviceUID: currentDevice?.uid)
     }
     s.mode = mode
     var target = s.bands
@@ -472,12 +483,26 @@ final class AudioController: ObservableObject {
       s.userPresetID = nil
       s.noiseDb = mode.defaultNoiseDb
       target = p.bands()
-    } else if let b = s.beforeMode {
-      s.bass = b.bass
-      s.character = b.character
-      s.presetName = b.presetName
-      s.userPresetID = b.userPresetID
-      target = b.bands
+    } else {
+      // Back to what this device had: the snapshot if the mode started on
+      // this output, else the device's own remembered sound, else Bass Shake.
+      let uid = currentDevice?.uid
+      if let b = s.beforeMode, b.deviceUID == nil || b.deviceUID == uid || !s.perDevice {
+        s.bass = b.bass; s.character = b.character; s.presetName = b.presetName; s.userPresetID = b.userPresetID
+        target = b.bands
+      } else if s.perDevice, let uid, let d = s.deviceSounds[uid] {
+        s.bass = d.bass; s.boostDb = d.boostDb; s.character = d.character
+        s.presetName = d.presetName; s.userPresetID = d.userPresetID; s.studioEars = d.studioEars
+        target = d.bands
+      } else if let b = s.beforeMode {
+        s.bass = b.bass; s.character = b.character; s.presetName = b.presetName; s.userPresetID = b.userPresetID
+        target = b.bands
+      } else {
+        let p = Preset.all[1]
+        s.bass = p.bass; s.character = p.character; s.presetName = p.name; s.userPresetID = nil
+        target = p.bands()
+      }
+      target = EQBand.normalized(target)
       s.beforeMode = nil
       s.noiseOn = false
     }
@@ -605,8 +630,10 @@ final class AudioController: ObservableObject {
   /// hear morphs exactly like what you see.
   private func morph(to target: [EQBand], duration: Double = 0.35) {
     morphTimer?.invalidate()
+    let target = EQBand.normalized(target)
+    morphTarget = target
     let start = settings.bands
-    guard start.count == target.count else { settings.bands = target; return }
+    guard start.count == target.count else { morphTarget = nil; settings.bands = target; return }
     let t0 = ProcessInfo.processInfo.systemUptime
     let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
       guard let self else { t.invalidate(); return }
@@ -615,6 +642,7 @@ final class AudioController: ObservableObject {
       self.settings.bands = zip(start, target).map { $0.lerp(to: $1, e) }
       if p >= 1 {
         t.invalidate()
+        self.morphTarget = nil
         self.settings.bands = target
       }
     }
@@ -821,7 +849,7 @@ final class AudioController: ObservableObject {
 
   /// Debounced full rebuild on the current default output device.
   private func scheduleRebuild(delay: Double = 0.3) {
-    guard settings.enabled else { return }
+    guard settings.enabled, !isSleeping else { return }
     rebuildWork?.cancel()
     let w = DispatchWorkItem { [weak self] in self?.rebuildNow() }
     rebuildWork = w
@@ -846,8 +874,16 @@ final class AudioController: ObservableObject {
         self.currentDeviceID = defaultID
         self.pushParams()  // crossfeed follows headphones vs speakers
       }
-      guard let device = devs.first(where: { $0.id == defaultID }) ?? devs.first else {
-        DispatchQueue.main.async { self.status = .failed("No output device") }
+      guard let device = devs.first(where: { $0.id == defaultID }) else {
+        // The default output is a virtual / multi-output / aggregate device
+        // (BlackHole, Zoom, Multi-Output…), which we deliberately don't tap.
+        // Never fall back to some other device: step aside instead.
+        self.pipelineStop(fade: true)
+        let name = (try? HAL.string(defaultID, .global(kAudioObjectPropertyName))) ?? "this output"
+        DispatchQueue.main.async {
+          self.status = .failed(devs.isEmpty ? "No output device"
+            : "“\(name)” is a virtual or multi-output device, which The Bass Shaker can't shape. Your audio plays normally; pick speakers or headphones to use it.")
+        }
         return
       }
       self.pipelineStop(fade: true)
@@ -861,6 +897,11 @@ final class AudioController: ObservableObject {
         self.watchDevice(device)
         self.log.notice("running on \(info.deviceName, privacy: .public) @ \(info.sampleRate, privacy: .public) Hz")
         DispatchQueue.main.async {
+          // Turned off while this rebuild was in flight: undo it.
+          guard self.settings.enabled else {
+            self.audioQueue.async { self.pipelineStop(fade: true) }
+            return
+          }
           self.startFailures = 0
           self.status = .running(device: info.deviceName, sampleRate: info.sampleRate)
         }
@@ -926,8 +967,16 @@ final class AudioController: ObservableObject {
       DispatchQueue.main.async { self?.refreshDevices() }
     }
     listeners.add(systemObject, .global(kAudioHardwarePropertyServiceRestarted)) { [weak self] in
-      // coreaudiod restarted: every tap, aggregate and object ID is gone.
-      DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.0) }
+      // coreaudiod restarted: every tap, aggregate and object ID is gone
+      // (and IDs may be reused), so drop ours without destroying anything.
+      guard let self else { return }
+      self.audioQueue.async {
+        if #available(macOS 14.2, *), let p = self.audioPipeline as? TapPipeline { p.abandon() }
+        self.audioPipeline = nil
+        self.audioWatchdog?.cancel()
+        self.audioWatchdog = nil
+      }
+      DispatchQueue.main.async { self.scheduleRebuild(delay: 1.5) }
     }
   }
 
@@ -936,6 +985,7 @@ final class AudioController: ObservableObject {
     let ws = NSWorkspace.shared.notificationCenter
     observers.append(ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
       guard let self else { return }
+      self.isSleeping = true
       self.rebuildWork?.cancel()
       self.audioQueue.async { self.pipelineStop(fade: false) }
     })
@@ -948,6 +998,7 @@ final class AudioController: ObservableObject {
       }
     })
     observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.isSleeping = false
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.5) }
     })
   }
@@ -960,7 +1011,8 @@ final class AudioController: ObservableObject {
     deviceListeners = PropertyListeners(queue: AudioController.listenerQueue)
     for sel in [kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamConfiguration] {
       deviceListeners.add(device.id, .global(sel)) { [weak self] in
-        DispatchQueue.main.async { self?.scheduleRebuild(delay: 0.5) }
+        // Fast: until the rebuild the engine runs at the old rate (EQ off-pitch).
+        DispatchQueue.main.async { self?.scheduleRebuild(delay: 0.1) }
       }
     }
     deviceListeners.add(device.id, .global(kAudioDevicePropertyDeviceIsAlive)) { [weak self] in
@@ -1035,6 +1087,8 @@ final class AudioController: ObservableObject {
   private var stalledStreak = 0
   private var everHeardAudio = false
   private var deadStreak = 0
+  private var watchdogRebuilds: [TimeInterval] = []   // audioQueue
+  private var watchdogPausedUntil: TimeInterval = 0   // audioQueue
   /// Main writes, audioQueue reads: is silent output expected right now?
   private let silenceExpected = AtomicFlag()
   private var lastDeadRebuild: TimeInterval = 0
@@ -1102,16 +1156,31 @@ final class AudioController: ObservableObject {
     if othersPlaying && dCallbacks > 0 && dSilent == dCallbacks { silentStreak += 1 }
     if othersPlaying && dCallbacks == 0 { stalledStreak += 1 } else { stalledStreak = 0 }
 
-    if !everHeardAudio && silentStreak >= 5 {
+    if !everHeardAudio {
       // Audio is playing, but not a single non-zero sample has reached us:
       // almost certainly no capture permission. Release the tap so the user
-      // gets their (unprocessed) sound back.
-      pipelineStop(fade: false)
-      DispatchQueue.main.async { [weak self] in self?.status = .needsPermission }
+      // gets their (unprocessed) sound back. (Checked before any rebuild, or
+      // the rebuild would always win and this could never trigger.)
+      if silentStreak >= 5 {
+        pipelineStop(fade: false)
+        DispatchQueue.main.async { [weak self] in self?.status = .needsPermission }
+      }
     } else if silentStreak >= 4 || stalledStreak >= 3 {
-      DispatchQueue.main.async { [weak self] in self?.scheduleRebuild(delay: 0) }
       silentStreak = 0
       stalledStreak = 0
+      // Back off: an app whose output runs silently (a call app, a WebAudio
+      // tab) can look like a dead tap forever. Three rebuilds in two
+      // minutes, then pause automatic rebuilds for five.
+      let now = ProcessInfo.processInfo.systemUptime
+      watchdogRebuilds = watchdogRebuilds.filter { now - $0 < 120 }
+      if now < watchdogPausedUntil { return }
+      if watchdogRebuilds.count >= 3 {
+        watchdogPausedUntil = now + 300
+        log.notice("watchdog: repeated silent-tap rebuilds; pausing automatic rebuilds for 5 min")
+        return
+      }
+      watchdogRebuilds.append(now)
+      DispatchQueue.main.async { [weak self] in self?.scheduleRebuild(delay: 0) }
     }
   }
 }

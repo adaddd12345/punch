@@ -126,6 +126,38 @@ struct SoundCharacter: Codable, Equatable {
   var ceilingDb: Double = -1    // limiter ceiling
 
   static let neutral = SoundCharacter()
+
+  init(compressor: Compressor? = nil, saturator: Saturator? = nil, ambience: Ambience? = nil,
+       width: Double = 1.0, crossfeed: Double = 0, ceilingDb: Double = -1) {
+    self.compressor = compressor; self.saturator = saturator; self.ambience = ambience
+    self.width = width; self.crossfeed = crossfeed; self.ceilingDb = ceilingDb
+  }
+
+  // Tolerant: a field added later must not make the whole settings blob
+  // (user presets included) fail to load.
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    compressor = try? c.decodeIfPresent(Compressor.self, forKey: .compressor)
+    saturator = try? c.decodeIfPresent(Saturator.self, forKey: .saturator)
+    ambience = try? c.decodeIfPresent(Ambience.self, forKey: .ambience)
+    width = (try? c.decodeIfPresent(Double.self, forKey: .width)) ?? 1.0
+    crossfeed = (try? c.decodeIfPresent(Double.self, forKey: .crossfeed)) ?? 0
+    ceilingDb = (try? c.decodeIfPresent(Double.self, forKey: .ceilingDb)) ?? -1
+  }
+}
+
+extension EQBand {
+  /// Always exactly the six default nodes (ids 0...5): stored band lists
+  /// from older betas or corrupt JSON can't crash the EQ view.
+  static func normalized(_ bands: [EQBand]) -> [EQBand] {
+    if bands.count == defaults.count && bands.enumerated().allSatisfy({ $0.offset == $0.element.id }) { return bands }
+    return defaults.enumerated().map { i, d in
+      guard i < bands.count else { return d }
+      var b = bands[i]
+      b.id = d.id
+      return b
+    }
+  }
 }
 
 /// Listening modes layered on top of the sound. Their EQ and character come
@@ -365,6 +397,7 @@ struct Settings: Codable, Equatable {
     var character: SoundCharacter
     var presetName: String?
     var userPresetID: UUID?
+    var deviceUID: String?   // which output was active when the mode started
   }
 
   static let key = "BassShake.settings.v1"
@@ -407,13 +440,36 @@ struct Settings: Codable, Equatable {
 
   static func load() -> Settings {
     guard let data = UserDefaults.standard.data(forKey: key),
-          let s = try? JSONDecoder().decode(Settings.self, from: data), s.bands.count == EQBand.defaults.count
+          var s = try? JSONDecoder().decode(Settings.self, from: data)
     else {
       var s = Settings()
       s.bands = Preset.all[1].bands()
       return s
     }
+    s.sanitize()
     return s
+  }
+
+  /// Repairs anything a stored blob could hold that the app can't handle.
+  mutating func sanitize() {
+    bands = EQBand.normalized(bands)
+    userPresets = userPresets.map { var p = $0; p.bands = EQBand.normalized(p.bands); return p }
+    deviceSounds = deviceSounds.mapValues { var d = $0; d.bands = EQBand.normalized(d.bands); return d }
+    if var b = beforeMode { b.bands = EQBand.normalized(b.bands); beforeMode = b }
+    // A mode never survives a relaunch: its timer and context are gone, and
+    // waking up to pink noise and a dark, capped sound would be baffling.
+    if mode != .off {
+      if let b = beforeMode {
+        bands = b.bands; bass = b.bass; character = b.character
+        presetName = b.presetName; userPresetID = b.userPresetID
+      } else {
+        bands = Preset.all[1].bands(); bass = Preset.all[1].bass; character = .neutral
+        presetName = Preset.all[1].name; userPresetID = nil
+      }
+      mode = .off
+      beforeMode = nil
+    }
+    noiseOn = false
   }
 
   func save() {

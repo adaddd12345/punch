@@ -124,10 +124,12 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   // ---- watchdog signal: a live tap is essentially never bit-exact zero
   // for a whole cycle while something is playing.
   const float* src = (const float*)tap->mData;
-  bool silent = true;
+  float inPeak = 0.f;
   for (UInt32 i = 0, n = frames * inCh; i < n; ++i) {
-    if (src[i] != 0.f) { silent = false; break; }
+    const float a = fabsf(src[i]);
+    if (a > inPeak) inPeak = a;
   }
+  const bool silent = inPeak == 0.f;
   if (silent) bump(&ctx->silentCallbacks);
 
   // ---- process in chunks and scatter into the device's buffer layout
@@ -177,7 +179,9 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   // Exactly zero only: the engine's quietest legitimate setting (sleep fade,
   // -60 dB floor) still leaves non-zero samples; the Swift side additionally
   // ignores states that are silent by design (all DJ kills, sleep fade).
-  if (!silent && target == 1.f && (outPeak == 0.f || isinf(outPeak))) bump(&ctx->deadOutputCallbacks);
+  // Only clearly audible input counts (dither and reverb tails can sit
+  // below what survives processing).
+  if (inPeak > 1e-4f && target == 1.f && (outPeak == 0.f || isinf(outPeak))) bump(&ctx->deadOutputCallbacks);
   atomic_fetch_add_explicit(&ctx->frames, frames, memory_order_relaxed);
   return noErr;
 }
@@ -230,7 +234,12 @@ static void guardTeardown(void) {
 }
 
 static void guardHandler(int sig) {
-  guardTeardown();
+  // Polite signals (quit, Ctrl-C, logout): the process is healthy, tear down.
+  // Crash signals: don't call into Core Audio from a crashed thread (it may
+  // be the IO thread, and HAL calls there can deadlock, leaving the process
+  // hung with the tap muting the Mac). Just die: coreaudiod releases a dead
+  // client's private taps and aggregates, and the next launch sweeps leftovers.
+  if (sig == SIGTERM || sig == SIGINT || sig == SIGHUP || sig == SIGQUIT) guardTeardown();
   // Re-raise with the default action so crash reports / exit codes stay normal.
   signal(sig, SIG_DFL);
   raise(sig);

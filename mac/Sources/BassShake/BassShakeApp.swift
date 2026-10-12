@@ -34,6 +34,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    // One instance only: two copies would each tap the other's output and
+    // feed back. A relaunch (update, audio restart) overlaps briefly with the
+    // old copy shutting down, so give it a few seconds to go first.
+    if let id = Bundle.main.bundleIdentifier {
+      let deadline = Date().addingTimeInterval(4)
+      var others = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0 != .current }
+      while !others.isEmpty && Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        others = others.filter { !$0.isTerminated }
+      }
+      if let other = others.first {
+        log.notice("another instance is running; handing over to it")
+        other.activate(options: [])
+        NSApp.terminate(nil)
+        return
+      }
+    }
     log.notice("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")
     // A menu-bar-only app is invisible when launched from Finder, and its
     // icon can be hidden behind the notch or by macOS 26's menu bar

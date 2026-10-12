@@ -139,6 +139,20 @@ final class TapPipeline {
 
   /// Fades out (so the hand-back to the unprocessed signal doesn't click)
   /// and destroys everything in reverse order.
+  /// coreaudiod restarted: every object ID we hold is dead and may already
+  /// be reused for someone else's tap, so forget them without destroying.
+  func abandon() {
+    procID = nil
+    aggregateID = unknownObject
+    tapID = unknownObject
+    BSCrashGuardClear()
+    if let ctx = context {
+      BSRenderContextDestroy(ctx)  // the dead daemon won't call the IOProc again
+      context = nil
+    }
+    info = nil
+  }
+
   func stop(fade: Bool = true) {
     if fade, let ctx = context, procID != nil, let sr = info?.sampleRate {
       BSRenderContextFadeOut(ctx, sr, 40)
