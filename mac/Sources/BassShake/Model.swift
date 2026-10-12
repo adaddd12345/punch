@@ -451,6 +451,8 @@ struct Settings: Codable, Equatable {
   var fairLevel = false
   /// Bundle IDs Fair Level leaves alone.
   var fairLevelPinned: Set<String> = []
+  /// Sound Like…: tilt the sound toward a famous headphone's tuning.
+  var soundLike: SoundLikeChoice?
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -520,6 +522,7 @@ struct Settings: Codable, Equatable {
     quietFloorDismissed = (try? c.decodeIfPresent(Set<String>.self, forKey: .quietFloorDismissed)) ?? []
     fairLevel = (try? c.decodeIfPresent(Bool.self, forKey: .fairLevel)) ?? d.fairLevel
     fairLevelPinned = ((try? c.decodeIfPresent(Set<String>.self, forKey: .fairLevelPinned)) ?? nil) ?? d.fairLevelPinned
+    soundLike = (try? c.decodeIfPresent(SoundLikeChoice.self, forKey: .soundLike)) ?? nil
   }
 
   static func load() -> Settings {

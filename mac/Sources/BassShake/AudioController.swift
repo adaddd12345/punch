@@ -941,13 +941,15 @@ final class AudioController: ObservableObject {
     var bypass = false
     var volume: Double?   // device volume 0...1, when known
     var fairDb = 0.0      // Fair Level gain
+    var deviceName: String?
   }
 
   private var liveState: LiveState {
     let uid = currentDevice?.uid
     return LiveState(dj: dj, fade: fade, headphones: isHeadphones,
                      bypass: bypassed || (uid.map { settings.bypassDevices.contains($0) } ?? false),
-                     volume: deviceVolume, fairDb: settings.fairLevel ? fairLevelDb : 0)
+                     volume: deviceVolume, fairDb: settings.fairLevel ? fairLevelDb : 0,
+                     deviceName: currentDevice?.name)
   }
 
   private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, _ live: LiveState = LiveState()) {
@@ -964,6 +966,9 @@ final class AudioController: ObservableObject {
     if s.autoLoudness, s.mode != .sleep, let v = live.volume {
       correction += Loudness.bands(volume: v)
       loudnessMakeup = Loudness.makeupDb(volume: v)
+    }
+    if let sl = s.soundLike, s.mode != .sleep {
+      correction += SoundLike.bands(sl, deviceName: live.deviceName, presetName: s.presetName)
     }
     punch_set_correction_num_bands(e, Int32(correction.count))
     for (i, b) in correction.enumerated() {

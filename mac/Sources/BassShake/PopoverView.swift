@@ -498,6 +498,7 @@ struct PopoverView: View {
           Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
                                                 set: { controller.settings.fadeWindows = $0 }))
         }
+        SoundLikeMenu(controller: controller)
         Menu("Shortcuts") {
           Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
                                                                          set: { controller.settings.bypassHotkey = $0 }))
