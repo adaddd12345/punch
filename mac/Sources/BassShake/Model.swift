@@ -326,9 +326,20 @@ enum CenterLock: String, Codable, CaseIterable, Identifiable {
 }
 
 enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
-  case system, ambientBlue
+  case system, ambientBlue, coffee, irishGreen, ember, violet, rose, arctic
   var id: String { rawValue }
-  var title: String { self == .system ? "System Grey" : "Ambient Blue" }
+  var title: String {
+    switch self {
+    case .system: return "System Grey"
+    case .ambientBlue: return "Ambient Blue"
+    case .coffee: return "Coffee Brown"
+    case .irishGreen: return "Irish Green"
+    case .ember: return "Ember"
+    case .violet: return "Midnight Violet"
+    case .rose: return "Rose Quartz"
+    case .arctic: return "Arctic Teal"
+    }
+  }
 }
 
 enum ScopeColor: String, Codable, CaseIterable, Identifiable {
