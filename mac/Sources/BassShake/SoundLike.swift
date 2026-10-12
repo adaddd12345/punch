@@ -1,3 +1,4 @@
+import PunchCore
 import SwiftUI
 
 /// Saved "Sound Like…" choice: which target, and how much of it (0...1).
@@ -127,23 +128,30 @@ enum SoundLike {
     return out
   }
 
-  /// RBJ cookbook magnitude in dB.
+  /// RBJ cookbook magnitude in dB. (Split into small steps: the one-line
+  /// formulas were too much for the Swift type checker.)
   static func response(_ band: Band, _ f: Double) -> Double {
-    let (type, f0, gain, q) = band
-    let A = pow(10, gain / 40), w0 = 2 * Double.pi * f0 / fs
-    let alpha = sin(w0) / (2 * q), cw = cos(w0)
-    let b0, b1, b2, a0, a1, a2: Double
-    if type == PUNCH_LOW_SHELF {
-      let s = 2 * sqrt(A) * alpha
-      b0 = A * ((A + 1) - (A - 1) * cw + s); b1 = 2 * A * ((A - 1) - (A + 1) * cw); b2 = A * ((A + 1) - (A - 1) * cw - s)
-      a0 = (A + 1) + (A - 1) * cw + s; a1 = -2 * ((A - 1) + (A + 1) * cw); a2 = (A + 1) + (A - 1) * cw - s
-    } else if type == PUNCH_HIGH_SHELF {
-      let s = 2 * sqrt(A) * alpha
-      b0 = A * ((A + 1) + (A - 1) * cw + s); b1 = -2 * A * ((A - 1) + (A + 1) * cw); b2 = A * ((A + 1) + (A - 1) * cw - s)
-      a0 = (A + 1) - (A - 1) * cw + s; a1 = 2 * ((A - 1) - (A + 1) * cw); a2 = (A + 1) - (A - 1) * cw - s
-    } else if type == PUNCH_BELL {
-      b0 = 1 + alpha * A; b1 = -2 * cw; b2 = 1 - alpha * A
-      a0 = 1 + alpha / A; a1 = -2 * cw; a2 = 1 - alpha / A
+    let kind: UInt32 = band.0.rawValue
+    let f0: Double = band.1, gain: Double = band.2, q: Double = band.3
+    let A: Double = pow(10.0, gain / 40.0)
+    let w0: Double = 2.0 * Double.pi * f0 / fs
+    let alpha: Double = sin(w0) / (2.0 * q)
+    let cw: Double = cos(w0)
+    let ap1: Double = A + 1.0, am1: Double = A - 1.0
+    let sq: Double = 2.0 * sqrt(A) * alpha
+    var b0 = 0.0, b1 = 0.0, b2 = 0.0, a0 = 1.0, a1 = 0.0, a2 = 0.0
+    if kind == PUNCH_LOW_SHELF.rawValue {
+      let p: Double = ap1 - am1 * cw, m: Double = ap1 + am1 * cw
+      b0 = A * (p + sq); b1 = 2.0 * A * (am1 - ap1 * cw); b2 = A * (p - sq)
+      a0 = m + sq; a1 = -2.0 * (am1 + ap1 * cw); a2 = m - sq
+    } else if kind == PUNCH_HIGH_SHELF.rawValue {
+      let p: Double = ap1 + am1 * cw, m: Double = ap1 - am1 * cw
+      b0 = A * (p + sq); b1 = -2.0 * A * (am1 + ap1 * cw); b2 = A * (p - sq)
+      a0 = m + sq; a1 = 2.0 * (am1 - ap1 * cw); a2 = m - sq
+    } else if kind == PUNCH_BELL.rawValue {
+      let aA: Double = alpha * A, aOverA: Double = alpha / A
+      b0 = 1.0 + aA; b1 = -2.0 * cw; b2 = 1.0 - aA
+      a0 = 1.0 + aOverA; a1 = -2.0 * cw; a2 = 1.0 - aOverA
     } else {
       return 0
     }
