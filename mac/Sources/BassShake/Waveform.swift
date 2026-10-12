@@ -11,6 +11,12 @@ final class WaveformModel: ObservableObject {
   static let window = 2880          // samples shown (~60 ms at 48 kHz)
   @Published private(set) var mins = [Float](repeating: 0, count: WaveformModel.columns)
   @Published private(set) var maxs = [Float](repeating: 0, count: WaveformModel.columns)
+  /// Auto-ranging, like a scope's volts/div: signal at the ear is often
+  /// -30...-40 dBFS here, which at true scale is a 1-pixel line. The
+  /// display scales to the recent peak (fast up, ~1.5 s down), capped so
+  /// silence and hiss stay flat.
+  @Published private(set) var scale: Float = 1
+  private var envelope: Float = 0
 
   private var ring = [Float](repeating: 0, count: 16384)
   private var ringPos = 0
@@ -68,6 +74,9 @@ final class WaveformModel: ObservableObject {
     }
     mins = lo
     maxs = hi
+    let peak = max(lo.map(abs).max() ?? 0, hi.map(abs).max() ?? 0)
+    envelope = max(peak, envelope * 0.97)               // ~1.5 s fall at 60 fps
+    scale = 0.85 / max(envelope, 0.004)                  // at most ~48 dB of zoom
   }
 }
 
@@ -94,7 +103,8 @@ struct WaveformView: View {
       let mid = size.height / 2
       let amp = mid - 6
       let step = size.width / CGFloat(n - 1)
-      func y(_ v: Float) -> CGFloat { mid - CGFloat(max(-1, min(1, v))) * amp }
+      let k = model.scale
+      func y(_ v: Float) -> CGFloat { mid - CGFloat(max(-1, min(1, v * k))) * amp }
       var path = Path()
       for i in 0..<n {
         let x = CGFloat(i) * step

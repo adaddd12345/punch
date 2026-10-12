@@ -356,7 +356,9 @@ private struct LabeledSlider: View {
     HStack(spacing: 8) {
       Label(title, systemImage: symbol)
         .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .frame(width: 70, alignment: .leading)
+        .lineLimit(1)
+        .fixedSize()
+        .frame(width: 84, alignment: .leading)
       Slider(value: $value, in: range)
         .controlSize(.small)
       Text(format(value))
