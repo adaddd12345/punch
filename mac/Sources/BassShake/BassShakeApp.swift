@@ -7,13 +7,9 @@ struct BassShakeApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
   var body: some Scene {
-    MenuBarExtra {
-      PopoverView(controller: appDelegate.controller)
-        .environmentObject(appDelegate.updates)
-    } label: {
-      Image(nsImage: MenuBarIcon.image)
-    }
-    .menuBarExtraStyle(.window)
+    // The menu-bar item and popover are AppKit (see AppDelegate); this scene
+    // only satisfies SwiftUI's need for one.
+    Settings { EmptyView() }
   }
 }
 
@@ -22,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   let controller: AudioController
   let updates: Updates
   private var window: NSWindow?
-  private var pinnedPanel: NSPanel?
 
   override init() {
     // Local logger: stored properties can't be read before super.init().
@@ -58,7 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // settings. Always show the controls in a window on launch.
     showWindow()
     log.notice("window shown")
-    controller.onPinChange = { [weak self] on, frame in self?.setPinned(on, at: frame) }
+    setUpStatusItem()
+    controller.onPinChange = { [weak self] _, _ in self?.applyPopoverBehavior() }
     DispatchQueue.main.async { [controller] in controller.bootstrap() }
     // Start auto-updates only once the UI is up, and never block on it.
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }
@@ -78,55 +74,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     controller.shutdown()
   }
 
-  /// Pinned controls: a floating panel at the popover's spot that stays put
-  /// when you click elsewhere (MenuBarExtra popovers always close).
-  private func setPinned(_ on: Bool, at frame: NSRect?) {
-    let fade = controller.settings.fadeWindows
-    if on {
-      let panel = pinnedPanel ?? makePinnedPanel()
-      pinnedPanel = panel
-      if let frame {
-        panel.setFrameTopLeftPoint(NSPoint(x: frame.minX, y: frame.maxY))
-      } else {
-        panel.center()
-      }
-      panel.alphaValue = fade ? 0 : 1
-      panel.makeKeyAndOrderFront(nil)
-      if fade {
-        NSAnimationContext.runAnimationGroup { ctx in
-          ctx.duration = 0.12
-          panel.animator().alphaValue = 1
-        }
-      }
-    } else if let panel = pinnedPanel {
-      LiveDrawer.shared.hide()
-      if fade {
-        NSAnimationContext.runAnimationGroup({ ctx in
-          ctx.duration = 0.12
-          panel.animator().alphaValue = 0
-        }, completionHandler: { panel.orderOut(nil) })
-      } else {
-        panel.orderOut(nil)
-      }
-    }
+  // MARK: - Menu bar popover
+
+  /// Our own status item + NSPopover (instead of SwiftUI's MenuBarExtra,
+  /// which always closes on an outside click): pinning switches the popover
+  /// to application-defined behaviour so it stays open, and NSPopover's own
+  /// animation gives the quick fade in and out.
+  private var statusItem: NSStatusItem?
+  private let popover = NSPopover()
+
+  private func setUpStatusItem() {
+    let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    item.button?.image = MenuBarIcon.image
+    item.button?.imagePosition = .imageOnly
+    item.button?.target = self
+    item.button?.action = #selector(togglePopover(_:))
+    statusItem = item
+
+    let host = NSHostingController(rootView: PopoverView(controller: controller).environmentObject(updates))
+    host.sizingOptions = [.preferredContentSize]
+    popover.contentViewController = host
+    applyPopoverBehavior()
   }
 
-  private func makePinnedPanel() -> NSPanel {
-    let host = NSHostingController(rootView: PopoverView(controller: controller, role: .pinned).environmentObject(updates))
-    host.sizingOptions = [.preferredContentSize]
-    let p = PinnedPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 500),
-                        styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-    p.contentViewController = host
-    p.titlebarAppearsTransparent = true
-    p.titleVisibility = .hidden
-    p.isMovableByWindowBackground = true
-    p.level = .floating
-    p.hidesOnDeactivate = false
-    p.isReleasedWhenClosed = false
-    p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    p.onClose = { [weak self] in self?.controller.setPinned(false, from: nil) }
-    return p
+  func applyPopoverBehavior() {
+    popover.behavior = controller.pinned ? .applicationDefined : .transient
+    popover.animates = controller.settings.fadeWindows
+  }
+
+  @objc private func togglePopover(_ sender: Any?) {
+    if popover.isShown {
+      popover.performClose(sender)
+    } else if let button = statusItem?.button {
+      applyPopoverBehavior()
+      popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+      // A menu-bar-only app must activate for the popover to take keys.
+      NSApp.activate(ignoringOtherApps: true)
+      popover.contentViewController?.view.window?.makeKey()
+    }
   }
 
   func showWindow() {
@@ -248,12 +233,3 @@ struct ShakerIcon: View {
 }
 
 
-/// Floating panel for pinned controls; closing it unpins.
-final class PinnedPanel: NSPanel {
-  var onClose: (() -> Void)?
-  override var canBecomeKey: Bool { true }  // text fields (preset names) need focus
-  override func close() {
-    onClose?()
-    super.close()
-  }
-}

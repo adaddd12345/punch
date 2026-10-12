@@ -630,6 +630,8 @@ final class AudioController: ObservableObject {
     }
   }
 
+  var currentOutputIsHeadphones: Bool { isHeadphones }
+
   private var isHeadphones: Bool {
     guard let d = devices.first(where: { $0.id == currentDeviceID }) else { return false }
     let n = d.name.lowercased()

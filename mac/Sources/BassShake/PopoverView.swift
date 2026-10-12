@@ -65,10 +65,6 @@ struct PopoverView: View {
     .background(HostWindowReader { w in
       guard let w, window.window !== w else { return }  // only real changes (runs every frame)
       window.window = w
-      if role == .menuBar {
-        // Quick system fade on close; the appear fade is in onAppear.
-        w.animationBehavior = controller.settings.fadeWindows ? .utilityWindow : .none
-      }
       if ownsDrawer, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
     })
     .onChange(of: showLive) { _, on in
@@ -90,13 +86,6 @@ struct PopoverView: View {
     .onAppear {
       visible = true
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
-      if role == .menuBar, controller.settings.fadeWindows, let w = window.window {
-        w.alphaValue = 0
-        NSAnimationContext.runAnimationGroup { ctx in
-          ctx.duration = 0.12
-          w.animator().alphaValue = 1
-        }
-      }
       latencyLab.startMonitoring()
       updates.checkInBackgroundIfStale()
     }
@@ -116,22 +105,21 @@ struct PopoverView: View {
 
   private var header: some View {
     HStack(spacing: 8) {
-      Image(nsImage: MenuBarIcon.image)
-        .renderingMode(.template)
+      // The full app logo (the Liquid Glass shaker), not the menu-bar glyph.
+      Image(nsImage: NSApp.applicationIconImage)
         .resizable()
         .interpolation(.high)
-        .frame(width: 16, height: 16)
-        .foregroundStyle(controller.settings.enabled ? Color.accentColor : .secondary)
+        .aspectRatio(contentMode: .fit)
+        .frame(width: 26, height: 26)
+        .saturation(controller.settings.enabled ? 1 : 0)
+        .opacity(controller.settings.enabled ? 1 : 0.6)
       Text("The Bass Shaker")
         .font(.system(size: 14, weight: .bold, design: .rounded))
       Spacer(minLength: 4)
       deviceMenu
       if role != .launchWindow {
         Button {
-          let pinning = !controller.pinned
-          controller.setPinned(pinning, from: window.window)
-          // From the menu-bar popover, the pinned panel takes over: close it.
-          if pinning && role == .menuBar { window.window?.orderOut(nil) }
+          controller.setPinned(!controller.pinned, from: window.window)
         } label: {
           Image(systemName: controller.pinned ? "pin.fill" : "pin")
             .font(.system(size: 10, weight: .semibold))
@@ -139,7 +127,7 @@ struct PopoverView: View {
             .rotationEffect(.degrees(controller.pinned ? 0 : 45))
         }
         .buttonStyle(.plain)
-        .help(controller.pinned ? "Unpin: close the floating controls" : "Pin: keep the controls open when you click elsewhere")
+        .help(controller.pinned ? "Unpin: close when you click elsewhere" : "Pin: keep this open when you click elsewhere")
       }
       if controller.settings.enabled {
         Button { controller.bypassed.toggle() } label: {
@@ -261,15 +249,14 @@ struct PopoverView: View {
         }
       }
     } label: {
-      let current = controller.devices.first { $0.id == controller.currentDeviceID }
-      Label(current?.name ?? "Output", systemImage: current?.symbolName ?? "speaker.wave.2")
-        .font(.system(size: 10, weight: .medium))
-        .lineLimit(1)
+      // Icon only: headphones or speaker (the name is in the menu and tooltip).
+      Image(systemName: controller.currentOutputIsHeadphones ? "headphones" : "hifispeaker")
+        .font(.system(size: 11, weight: .semibold))
     }
     .menuStyle(.borderlessButton)
-    .frame(maxWidth: 96)
-    .fixedSize(horizontal: false, vertical: true)
-    .help("Output device")
+    .menuIndicator(.hidden)
+    .fixedSize()
+    .help(controller.currentDevice?.name ?? "Output device")
   }
 
   private var footer: some View {
