@@ -377,6 +377,8 @@ struct Settings: Codable, Equatable {
   var nightGuard = false
   /// Quick fade when the controls appear and disappear.
   var fadeWindows = true
+  /// Live oscilloscope trace behind the EQ curve.
+  var waveform = true
   var nightGuardDb: Double = 8
   /// Balance Lock: keep the system's left/right balance centred.
   var balanceLock = false
@@ -434,6 +436,7 @@ struct Settings: Codable, Equatable {
     limit = try c.decodeIfPresent(Bool.self, forKey: .limit) ?? d.limit
     nightGuard = try c.decodeIfPresent(Bool.self, forKey: .nightGuard) ?? d.nightGuard
     fadeWindows = try c.decodeIfPresent(Bool.self, forKey: .fadeWindows) ?? d.fadeWindows
+    waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
   }

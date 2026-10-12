@@ -98,6 +98,7 @@ final class AudioController: ObservableObject {
   let meters = MeterModel()
   /// Live Channels: apps making sound, their levels, one-click mute.
   let live = LiveChannels()
+  let waveform = WaveformModel()
 
   private let engine: OpaquePointer
   private let curveEngine: OpaquePointer

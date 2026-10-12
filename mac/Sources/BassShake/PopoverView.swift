@@ -61,6 +61,7 @@ struct PopoverView: View {
     .onReceive(meterTimer) { _ in
       guard visible else { return }
       meters.update(controller.pollMeters())
+      if controller.settings.waveform && role != .launchWindow { controller.waveform.pull(controller) }
     }
     .background(HostWindowReader { w in
       guard let w, window.window !== w else { return }  // only real changes (runs every frame)
@@ -306,6 +307,8 @@ struct PopoverView: View {
                                                                        set: { controller.settings.balanceLock = $0
                                                                               if $0 { controller.centerBalance() } }))
         Divider()
+        Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
+                                            set: { controller.settings.waveform = $0 }))
         Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
                                               set: { controller.settings.fadeWindows = $0 }))
         Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },

@@ -31,6 +31,10 @@ struct EQView: View {
       let size = geo.size
       let bands = controller.settings.bands
       ZStack {
+        if controller.settings.waveform && controller.settings.enabled {
+          WaveformView(model: controller.waveform)
+            .allowsHitTesting(false)
+        }
         Canvas { ctx, size in draw(ctx, size: size, bands: bands) }
         if controller.settings.limit && controller.settings.enabled {
           LimitOverlay(meters: controller.meters, size: size, bassEdgeX: x(150, size.width),
