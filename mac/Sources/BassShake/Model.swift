@@ -306,6 +306,12 @@ enum ViewSize: String, Codable, CaseIterable {
 }
 
 /// Scope trace colour: the Mac's accent colour, or a fixed one.
+enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
+  case system, ambientBlue
+  var id: String { rawValue }
+  var title: String { self == .system ? "System Grey" : "Ambient Blue" }
+}
+
 enum ScopeColor: String, Codable, CaseIterable, Identifiable {
   case accent, yellow, green, cyan, magenta, white
   var id: String { rawValue }
@@ -407,6 +413,7 @@ struct Settings: Codable, Equatable {
   /// Live oscilloscope trace behind the EQ curve.
   var waveform = true
   var scopeColor: ScopeColor = .accent
+  var backgroundStyle: BackgroundStyle = .system
   /// Popover size: everything, compact, or just the sliders.
   var viewSize: ViewSize = .full
   /// The bottom tray (modes) is open.
@@ -470,6 +477,7 @@ struct Settings: Codable, Equatable {
     fadeWindows = try c.decodeIfPresent(Bool.self, forKey: .fadeWindows) ?? d.fadeWindows
     waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
+    backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb

@@ -12,6 +12,9 @@ struct PopoverView: View {
   @State private var showLive = false
   @State private var loginOn = LoginItem.isOn
   @State private var confirmReset = false
+  @State private var splash = false
+  /// The logo splash shows once per launch, on the first popup.
+  private static var splashShown = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorSchemeContrast) private var contrast
   @State private var showDJ = false
@@ -78,6 +81,12 @@ struct PopoverView: View {
     }
     .padding(12)
     .frame(width: 360)
+    .background(PopupBackground(style: controller.settings.backgroundStyle))
+    .overlay {
+      if splash {
+        LaunchSplash().transition(.opacity)
+      }
+    }
     .background(HostWindowReader { w in
       guard let w, window.window !== w else { return }  // only real changes (runs every frame)
       window.window = w
@@ -101,6 +110,13 @@ struct PopoverView: View {
     }
     .onAppear {
       visible = true
+      if !Self.splashShown {
+        Self.splashShown = true
+        splash = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+          withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.35)) { splash = false }
+        }
+      }
       // 60 Hz meters only while this is on screen (nothing runs when closed).
       ticker.start { [controller, meters, role] in
         meters.update(controller.pollMeters())
@@ -417,6 +433,10 @@ struct PopoverView: View {
         Divider()
         Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
                                             set: { controller.settings.waveform = $0 }))
+        Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
+                                                 set: { controller.settings.backgroundStyle = $0 })) {
+          ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }
+        }
         Picker("Scope Color", selection: Binding(get: { controller.settings.scopeColor },
                                                   set: { controller.settings.scopeColor = $0 })) {
           ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
