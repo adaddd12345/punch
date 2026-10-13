@@ -507,6 +507,12 @@ struct Settings: Codable, Equatable {
   var nowPlayingNoteSeen = false
   /// What's Playing's pause for apps other than Spotify / Music with a song.
   var pauseRoute: PauseRoute = .ask
+  /// App Details (AutomationGate): apps What's Playing has seen that it may script.
+  var automationSeen: [String] = []
+  /// Apps whose Automation prompt was raised once without a click (never again from polling).
+  var automationAsked: [String] = []
+  /// Apps switched off in App Details (or denied in macOS's prompt): no scripts, no Accessibility reads.
+  var automationOff: [String] = []
   /// The preset the current sound was edited from (nil once a preset is picked or saved).
   var editedFrom: String? = nil
   /// The bottom tray (modes) is open.
@@ -622,6 +628,9 @@ struct Settings: Codable, Equatable {
     showNowPlaying = (try? c.decodeIfPresent(Bool.self, forKey: .showNowPlaying)) ?? d.showNowPlaying
     nowPlayingNoteSeen = (try? c.decodeIfPresent(Bool.self, forKey: .nowPlayingNoteSeen)) ?? d.nowPlayingNoteSeen
     pauseRoute = (try? c.decodeIfPresent(PauseRoute.self, forKey: .pauseRoute)) ?? d.pauseRoute
+    automationSeen = (try? c.decodeIfPresent([String].self, forKey: .automationSeen)) ?? d.automationSeen
+    automationAsked = (try? c.decodeIfPresent([String].self, forKey: .automationAsked)) ?? d.automationAsked
+    automationOff = (try? c.decodeIfPresent([String].self, forKey: .automationOff)) ?? d.automationOff
     editedFrom = (try? c.decodeIfPresent(String.self, forKey: .editedFrom)) ?? nil
     trayOpen = (try? c.decodeIfPresent(Bool.self, forKey: .trayOpen)) ?? d.trayOpen
     nightGuardDb = (try? c.decodeIfPresent(Double.self, forKey: .nightGuardDb)) ?? d.nightGuardDb

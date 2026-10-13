@@ -961,6 +961,8 @@ struct PopoverView: View {
           // Off by default; the first time it's turned on, a one-time note explains it.
           Toggle("Show What's Playing", isOn: Binding(get: { controller.settings.showNowPlaying },
                                                       set: { controller.settings.showNowPlaying = $0 }))
+          // Per-app Automation (AutomationGate): which apps What's Playing may script.
+          AppDetailsMenu(controller: controller)
           // Mini: the app you hear most leads (its icon plays and pauses).
           Toggle("Show Playing App in Mini", isOn: Binding(get: { controller.settings.showPlayingChannel },
                                                            set: { controller.settings.showPlayingChannel = $0 }))
@@ -1178,4 +1180,34 @@ final class MeterTicker {
   }
   func stop() { timer?.invalidate(); timer = nil; tick = nil }
   deinit { timer?.invalidate() }
+}
+
+/// ⋯ › Presets & Settings › App Details: one switch per app What's Playing
+/// has seen, with macOS's Automation state. Off reads nothing from that app.
+struct AppDetailsMenu: View {
+  @ObservedObject var controller: AudioController
+  @ObservedObject private var gate = AutomationGate.shared
+
+  var body: some View {
+    Menu("App Details") {
+      let seen = controller.settings.automationSeen
+      if seen.isEmpty {
+        Text("Apps appear here once What's Playing sees them")
+      }
+      ForEach(seen, id: \.self) { id in
+        Toggle("\(AutomationGate.name(id)): \(Self.label(gate.state(id)))",
+               isOn: Binding(get: { gate.isOn(id) }, set: { NowPlaying.shared.setAutomation(id, on: $0) }))
+      }
+    }
+    .help("Reads each app's song or playing tab; off reads nothing.")
+  }
+
+  static func label(_ s: AutomationGate.State) -> String {
+    switch s {
+    case .allowed: return "Allowed"
+    case .notAsked: return "Not asked yet"
+    case .blocked: return "Blocked in System Settings"
+    case .off: return "Off"
+    }
+  }
 }

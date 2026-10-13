@@ -221,6 +221,10 @@ final class NowPlaying: ObservableObject {
   private var stillLoading: Set<String> = []
   private var browserBusy = false
   private let scriptQueue = DispatchQueue(label: "bassshake.nowplaying", qos: .utility)
+  /// Automation permission for every scripted app (Spotify, Music, browsers).
+  private let gate = AutomationGate.shared
+  /// Apps with a click-raised prompt still on the script queue.
+  private var asking: Set<String> = []
   private let bridge = NowPlayingScripts()   // scriptQueue only
   private lazy var artSession = URLSession(configuration: .ephemeral, delegate: ArtRedirectGuard(), delegateQueue: nil)
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "nowplaying")
@@ -229,6 +233,7 @@ final class NowPlaying: ObservableObject {
   func attach(_ c: AudioController) {
     guard controller == nil else { return }
     controller = c
+    gate.controller = c
     // Bento Full/Compact: What's Playing. Mini (Classic and Bento): the
     // playing channel, on by default; song and cover still need What's Playing.
     c.$settings
@@ -277,7 +282,13 @@ final class NowPlaying: ObservableObject {
     if let p = pending, p.id == app.id, p.intent == .play { return false }
     return true
   }
-  func open(_ app: NowApp) { controller?.live.open(app.liveApp) }
+  /// A click on the app's tile or icon: brings it to the front. Undecided
+  /// Automation: macOS's prompt again first (off main), then the jump anyway.
+  func open(_ app: NowApp) {
+    if askOnClick(app.bundleID, then: { [weak self] in self?.jump(app) }) { return }
+    jump(app)
+  }
+  private func jump(_ app: NowApp) { controller?.live.open(app.liveApp) }
   func icon(_ app: NowApp) -> NSImage {
     controller?.live.icon(id: app.id, pid: app.pid, bundleID: app.bundleID) ?? NSImage()
   }
@@ -329,6 +340,7 @@ final class NowPlaying: ObservableObject {
       // A grant in System Settings is picked up on the next open (a denial costs one fast event).
       denied.removeAll()
       refreshAccess(now: activeSince)
+      refreshAutomation()
       let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
       RunLoop.main.add(t, forMode: .common)
       timer = t
@@ -471,7 +483,7 @@ final class NowPlaying: ObservableObject {
     // A click made while the meter was still building, now that the state is real.
     if let app = deferredClick {
       deferredClick = nil
-      if hero?.id == app.id || others.contains(app) { primary(app) }
+      if hero?.id == app.id || others.contains(app) { primaryAction(app) }
     }
 
     checkPending(now: now)
@@ -568,7 +580,13 @@ final class NowPlaying: ObservableObject {
   }
 
   /// The big button: script, media key or mute, whichever this app can honour.
+  /// Undecided Automation: the click also raises macOS's prompt again (off main).
   func primary(_ app: NowApp) {
+    askOnClick(app.bundleID)
+    primaryAction(app)
+  }
+
+  private func primaryAction(_ app: NowApp) {
     switch route(app) {
     case .script:
       playPause(app)
@@ -700,7 +718,8 @@ final class NowPlaying: ObservableObject {
   private func shownPlayers() -> [NowPlayer] {
     guard mayAsk else { return [] }
     let shown = ([hero].compactMap { $0 } + others).compactMap(\.player)
-    return shown.filter { !denied.contains($0.rawValue) && $0.isRunning }
+    gate.markSeen(shown.map(\.rawValue))
+    return shown.filter { !denied.contains($0.rawValue) && gate.isOn($0.rawValue) && $0.isRunning }
   }
 
   private func pollPlayers() {
@@ -712,14 +731,22 @@ final class NowPlaying: ObservableObject {
     guard !players.isEmpty else { return }
     polling = true
     let serial = commandSerial
+    let autoAsk = Set(players.map(\.rawValue).filter { !gate.wasAsked($0) })
     scriptQueue.async { [bridge] in
       var results: [NowPlayer: NowPlayingScripts.State] = [:]
+      var codes: [String: Int] = [:]
       for p in players {
         // Re-checked right before the script: an event to a quit app would relaunch it.
         guard p.isLive else { results[p] = .stopped; continue }
-        results[p] = bridge.state(p)
+        let r = Self.gated(p.rawValue, ask: autoAsk.contains(p.rawValue)) { bridge.state(p) }
+        codes[p.rawValue] = r.code
+        // Not allowed (yet): nothing read, as if stopped.
+        results[p] = r.value ?? (r.code == AutomationGate.denied ? .denied : .stopped)
       }
-      DispatchQueue.main.async { self.apply(results, serial: serial) }
+      DispatchQueue.main.async {
+        for (id, code) in codes { self.gate.record(id, code) }
+        self.apply(results, serial: serial)
+      }
     }
   }
 
@@ -727,10 +754,13 @@ final class NowPlaying: ObservableObject {
     polling = false
     // Record denials even when the popup closed under the Automation prompt.
     for (p, r) in results {
-      if case .denied = r, !denied.contains(p.rawValue) {
-        log.notice("automation not allowed for \(p.rawValue, privacy: .public)")
-        denied.insert(p.rawValue)
-        tracks[p.rawValue] = nil
+      if case .denied = r {
+        gate.record(p.rawValue, AutomationGate.denied)
+        if !denied.contains(p.rawValue) {
+          log.notice("automation not allowed for \(p.rawValue, privacy: .public)")
+          denied.insert(p.rawValue)
+          tracks[p.rawValue] = nil
+        }
       }
     }
     guard active else { return }
@@ -837,10 +867,11 @@ final class NowPlaying: ObservableObject {
   /// Browsers on screen right now that may be asked (running, not denied).
   private func shownBrowsers() -> [(NowBrowser, String)] {
     guard mayAsk else { return [] }
-    return ([hero].compactMap { $0 } + others).compactMap { a in
-      guard let b = a.bundleID.flatMap(NowBrowser.init(rawValue:)), !denied.contains(b.rawValue), b.isRunning else { return nil }
-      return (b, a.id)
+    let shown = ([hero].compactMap { $0 } + others).compactMap { a in
+      a.bundleID.flatMap(NowBrowser.init(rawValue:)).map { ($0, a.id) }
     }
+    gate.markSeen(shown.map(\.0.rawValue))
+    return shown.filter { b, _ in !denied.contains(b.rawValue) && gate.isOn(b.rawValue) && b.isRunning }
   }
 
   private func pollBrowsers() {
@@ -850,26 +881,37 @@ final class NowPlaying: ObservableObject {
     if pruned.count != items.count { items = pruned }
     guard !browsers.isEmpty, !browserBusy else { return }
     browserBusy = true
+    let autoAsk = Set(browsers.map(\.0.rawValue).filter { !gate.wasAsked($0) })
     scriptQueue.async { [bridge] in
       var results: [(NowBrowser, String, NowPlayingScripts.TabsState, (names: [String], windows: Int)?)] = []
+      var codes: [String: Int] = [:]
       for (b, appID) in browsers {
         guard b.isLive else { results.append((b, appID, .stopped, nil)); continue }
-        let state = bridge.tabs(b)
+        let r = Self.gated(b.rawValue, ask: autoAsk.contains(b.rawValue)) { bridge.tabs(b) }
+        codes[b.rawValue] = r.code
+        // Not allowed (yet): no tabs and no Accessibility read, just the app tile.
+        let state = r.value ?? (r.code == AutomationGate.denied ? .denied : .stopped)
         // Only after the tabs were read: an Automation denial reads nothing more.
         var ax: (names: [String], windows: Int)? = nil
         if case .tabs = state, b.hasTabStripAudio, let pid = b.pid { ax = BrowserAX.tabNames(pid: pid) }
         results.append((b, appID, state, ax))
       }
-      DispatchQueue.main.async { self.applyBrowsers(results) }
+      DispatchQueue.main.async {
+        for (id, code) in codes { self.gate.record(id, code) }
+        self.applyBrowsers(results)
+      }
     }
   }
 
   private func applyBrowsers(_ results: [(NowBrowser, String, NowPlayingScripts.TabsState, (names: [String], windows: Int)?)]) {
     browserBusy = false
     for (b, _, r, _) in results {
-      if case .denied = r, !denied.contains(b.rawValue) {
-        log.notice("automation not allowed for \(b.rawValue, privacy: .public)")
-        denied.insert(b.rawValue)
+      if case .denied = r {
+        gate.record(b.rawValue, AutomationGate.denied)
+        if !denied.contains(b.rawValue) {
+          log.notice("automation not allowed for \(b.rawValue, privacy: .public)")
+          denied.insert(b.rawValue)
+        }
       }
     }
     guard active, mayAsk else { return }
@@ -942,8 +984,8 @@ final class NowPlaying: ObservableObject {
   /// Falls back to just opening the app when the tab can't be named.
   func focus(_ item: NowItem) {
     let parts = item.id.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-    guard mayAsk, let b = NowBrowser(rawValue: item.appID), !denied.contains(b.rawValue), b.isRunning,
-          parts.count >= 3, !item.id.hasPrefix(item.appID + ":ax:") else {
+    guard mayAsk, let b = NowBrowser(rawValue: item.appID), !denied.contains(b.rawValue), gate.isOn(b.rawValue),
+          b.isRunning, parts.count >= 3, !item.id.hasPrefix(item.appID + ":ax:") else {
       if let app = ([hero].compactMap { $0 } + others).first(where: { $0.id == item.appID }) { open(app) }
       return
     }
@@ -953,11 +995,84 @@ final class NowPlaying: ObservableObject {
       let code: Int? = b.isLive ? bridge.focus(b, window: window, tab: tab, index: index) : 0
       DispatchQueue.main.async {
         if code == NowPlayingScripts.notPermitted {
+          self.gate.record(b.rawValue, AutomationGate.denied)
           self.denied.insert(b.rawValue)
           self.items[item.appID] = nil
-        } else if code != nil, let app = ([self.hero].compactMap { $0 } + self.others).first(where: { $0.id == item.appID }) {
-          self.open(app)
         }
+        // The tab couldn't be named or reached (or Automation said no): the app anyway.
+        if code != nil, let app = ([self.hero].compactMap { $0 } + self.others).first(where: { $0.id == item.appID }) {
+          self.jump(app)
+        }
+      }
+    }
+  }
+
+  // MARK: - Automation permission (AutomationGate; checks off main)
+
+  /// Script queue only. Runs `read` when macOS allows it, or when it's
+  /// undecided and `ask` (the read raises macOS's prompt). nil when it didn't
+  /// run; `code` is the status afterwards. A dismissed or unanswered prompt
+  /// stays undecided.
+  private static func gated<T>(_ id: String, ask: Bool, _ read: () -> T) -> (value: T?, code: Int) {
+    let code = AutomationGate.check(id, ask: false)
+    if code == AutomationGate.allowed { return (read(), code) }
+    guard code == AutomationGate.undecided, ask else { return (nil, code) }
+    // Recorded before the prompt can block: at most once from polling, ever.
+    DispatchQueue.main.async { AutomationGate.shared.markAsked(id) }
+    let value = read()
+    return (value, AutomationGate.check(id, ask: false))
+  }
+
+  /// A click on an undecided app's tile or icon: its prompt again, off main;
+  /// `then` on main once answered (or dismissed). false when nothing to ask.
+  @discardableResult
+  private func askOnClick(_ id: String?, then: (() -> Void)? = nil) -> Bool {
+    guard mayAsk, let id, AutomationGate.isTarget(id), gate.isUndecided(id), !asking.contains(id) else { return false }
+    asking.insert(id)
+    scriptQueue.async { [bridge] in
+      let r = Self.gated(id, ask: true) { bridge.probe(id) }
+      DispatchQueue.main.async {
+        self.asking.remove(id)
+        self.gate.record(id, r.code)
+        if r.code == AutomationGate.allowed { self.denied.remove(id); self.lastPoll = 0 }
+        then?()
+      }
+    }
+    return true
+  }
+
+  /// Statuses for App Details on each open (no prompt; a quit app keeps its last).
+  private func refreshAutomation() {
+    guard let seen = controller?.settings.automationSeen, !seen.isEmpty else { return }
+    let running = seen.filter { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty }
+    guard !running.isEmpty else { return }
+    scriptQueue.async {
+      let codes = running.map { ($0, AutomationGate.check($0, ask: false)) }
+      DispatchQueue.main.async { for (id, code) in codes { self.gate.record(id, code) } }
+    }
+  }
+
+  /// App Details switch. Off: no scripts or Accessibility reads for that app.
+  /// On: asks if macOS is undecided; over a standing denial, opens Privacy › Automation.
+  func setAutomation(_ id: String, on: Bool) {
+    gate.setOff(id, !on)
+    if !on {
+      tracks[id] = nil
+      let ids = Set(([hero].compactMap { $0 } + others).filter { $0.bundleID == id }.map(\.id))
+      let kept = items.filter { !ids.contains($0.key) }
+      if kept.count != items.count { items = kept }
+      return
+    }
+    denied.remove(id)
+    guard mayAsk else { return }
+    scriptQueue.async { [bridge] in
+      let before = AutomationGate.check(id, ask: false)
+      let r = Self.gated(id, ask: true) { bridge.probe(id) }
+      DispatchQueue.main.async {
+        if before == AutomationGate.denied { self.gate.openSettings(for: id) }
+        if before == AutomationGate.undecided { self.gate.markAsked(id) }
+        self.gate.record(id, r.code)
+        self.lastPoll = 0
       }
     }
   }
@@ -968,7 +1083,7 @@ final class NowPlaying: ObservableObject {
   func nextTrack(_ app: NowApp) { send(app, .next) }
 
   private func send(_ app: NowApp, _ cmd: NowPlayingScripts.Command) {
-    guard mayAsk, let p = app.player, !denied.contains(p.rawValue), p.isRunning else { return }
+    guard mayAsk, let p = app.player, !denied.contains(p.rawValue), gate.isOn(p.rawValue), p.isRunning else { return }
     // One command per player at a time: clicks behind a hung app must not pile up and run late.
     guard !commandBusy.contains(p.rawValue) else { return }
     commandBusy.insert(p.rawValue)
@@ -982,6 +1097,7 @@ final class NowPlaying: ObservableObject {
       DispatchQueue.main.async {
         self.commandBusy.remove(p.rawValue)
         if code == NowPlayingScripts.notPermitted {
+          self.gate.record(p.rawValue, AutomationGate.denied)
           self.denied.insert(p.rawValue)
           self.tracks[p.rawValue] = nil
         }
@@ -1111,6 +1227,12 @@ final class NowPlayingScripts {
     case .success: return nil
     case .failure(let code): return code
     }
+  }
+
+  /// The app's own read-only poll (raises macOS's Automation prompt when undecided).
+  func probe(_ id: String) {
+    if let p = NowPlayer(rawValue: id) { _ = state(p) }
+    else if let b = NowBrowser(rawValue: id) { _ = tabs(b) }
   }
 
   enum Outcome {
