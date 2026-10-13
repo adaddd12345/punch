@@ -1632,19 +1632,30 @@ final class AudioController: ObservableObject {
     checkEarProtector()
     hqGuardTick &+= 1
     if hqGuardTick % 3 == 0 && hqGuardOn.load() { keepBluetoothInStereo(afterInputChange: false) }
-    let dCallbacks = s.callbacks &- lastStats.callbacks
-    let dSilent = s.silentCallbacks &- lastStats.silentCallbacks
-    let dDead = s.deadOutputCallbacks &- lastStats.deadOutputCallbacks
+    // A rebuilt pipeline starts its counters from zero. Comparing them with
+    // the old pipeline's wrapped to ~2^64 and the overflow-checked math below
+    // trapped (crash on beta.105 after two quick device switches). A counter
+    // that went backwards means a new pipeline: re-baseline and skip a tick.
+    if s.callbacks < lastStats.callbacks || s.silentCallbacks < lastStats.silentCallbacks
+        || s.deadOutputCallbacks < lastStats.deadOutputCallbacks {
+      lastStats = s
+      deadStreak = 0
+      return
+    }
+    let dCallbacks = s.callbacks - lastStats.callbacks
+    let dSilent = s.silentCallbacks - lastStats.silentCallbacks
+    let dDead = s.deadOutputCallbacks - lastStats.deadOutputCallbacks
     lastStats = s
 
     // Fail-safe: music is coming in but our output is silent (or broken
     // numbers). First restart once; if it happens again within a minute,
     // step aside so the Mac plays normally, and say why.
-    let audible = dCallbacks &- dSilent
+    let audible = dCallbacks > dSilent ? dCallbacks - dSilent : 0
     // Silence by design never counts: all three DJ kills held, or the sleep
     // timer's fade. (Stepping aside then would blast unprocessed audio.)
     let silentByDesign = silenceExpected.load()
-    if audible > 0 && dDead * 10 >= audible * 9 && !silentByDesign { deadStreak += 1 } else { deadStreak = 0 }
+    // Ratio in Double: never overflows, whatever the counters do.
+    if audible > 0 && Double(dDead) * 10 >= Double(audible) * 9 && !silentByDesign { deadStreak += 1 } else { deadStreak = 0 }
     if deadStreak >= 2 {
       deadStreak = 0
       let now = ProcessInfo.processInfo.systemUptime
