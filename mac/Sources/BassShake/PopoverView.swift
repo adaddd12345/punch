@@ -676,9 +676,14 @@ private struct Banner: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      Label(text, systemImage: symbol)
+      // Text in the primary color, the tint only on the glyph: tinted text on
+      // a same-hue wash over a colorful blur was unreadable.
+      Label {
+        Text(text).foregroundStyle(Color.primary)
+      } icon: {
+        Image(systemName: symbol).foregroundStyle(contrast == .increased ? Color.primary : tint)
+      }
         .font(.system(size: 11, weight: .medium))
-        .foregroundStyle(contrast == .increased ? Color.primary : tint)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
         if let a = action { Button(a.0, action: a.1).controlSize(.small).lineLimit(1).fixedSize() }
@@ -687,7 +692,12 @@ private struct Banner: View {
     }
     .padding(10)
     .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(contrast == .increased ? 0.28 : 0.12)))
+    .background {
+      let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+      shape.fill(.thinMaterial)
+        .overlay(shape.fill(tint.opacity(contrast == .increased ? 0.22 : 0.10)))
+        .overlay(shape.strokeBorder(tint.opacity(contrast == .increased ? 0.8 : 0.35), lineWidth: contrast == .increased ? 1 : 0.5))
+    }
   }
 }
 

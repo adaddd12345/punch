@@ -116,8 +116,19 @@ struct Chip<Icon: View>: View {
   let action: () -> Void
   @Environment(\.labelLevel) private var labels
 
+  @Environment(\.bentoChips) private var bento
+  @Environment(\.colorScheme) private var scheme
+
+  /// Classic: accent blue. Bento: dark ink (white in dark mode).
+  private var selectedFill: Color {
+    guard bento else { return Color.accentColor }
+    return scheme == .dark ? Color.white.opacity(0.85) : BentoInk.miniFill
+  }
+
+  private var selectedText: Color { bento && scheme == .dark ? Color.black : Color.white }
+
   var body: some View {
-    Button(action: action) {
+    styled(Button(action: action) {
       HStack(spacing: 4) {
         icon()
         if labels == .full || (labels == .half && !compact) {
@@ -126,14 +137,29 @@ struct Chip<Icon: View>: View {
       }
       .padding(.horizontal, 9)
       .padding(.vertical, 5)
-      .foregroundStyle(selected ? Color.white : Color.primary)
-      .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
-    }
-    .buttonStyle(.plain)
+      .foregroundStyle(selected ? selectedText : Color.primary)
+      .background(Capsule().fill(selected ? selectedFill : Color.primary.opacity(0.07)))
+    })
     .help(labels == .full ? "" : title)
     .accessibilityLabel(title)
     .accessibilityAddTraits(selected ? .isSelected : [])
     .animation(.easeOut(duration: 0.15), value: selected)
+  }
+
+  @ViewBuilder private func styled<B: View>(_ b: Button<B>) -> some View {
+    if bento { b.buttonStyle(BentoPressStyle()) } else { b.buttonStyle(.plain) }
+  }
+}
+
+/// Set by the Bento layout so preset pills use its ink and press style.
+private struct BentoChipsKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
+extension EnvironmentValues {
+  var bentoChips: Bool {
+    get { self[BentoChipsKey.self] }
+    set { self[BentoChipsKey.self] = newValue }
   }
 }
 

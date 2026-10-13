@@ -1,20 +1,24 @@
+import AppKit
 import SwiftUI
 
-/// The Bento layout of the main block: translucent pastel tiles on the 8 pt
-/// grid, one big number or word per tile. Same controls as the classic stack
+/// The Bento layout of the main block: translucent tiles on the 8 pt grid,
+/// one big number or word per tile. Same controls as the classic stack
 /// (the header and footer stay as they are, around this).
 ///
-///   ┌──────────── Hero: preset name · output · power ────────────┐
+///   ┌──────── Hero: preset name · modes · output · power · L/R lines ──────┐
 ///   ├──────────────────────── EQ curve ──────────────────────────┤
 ///   ├──── Strength 55% (drag) ───┬──── Boost +3 dB (drag) ───────┤
 ///   ├──────────────────────── Presets ───────────────────────────┤
 ///   ├─ Studio Ears ─┬─ Loudness ──┬─ Night Guard ────────────────┤
 ///   ├─ Study ───────┬─ Sleep ─────┬─ Check & Fix ────────────────┤
-///   ├─ (mode details, when a mode with settings is on) ──────────┤
-///   └──────────────────────── Meters (Full) ─────────────────────┘
+///   └─ (mode details, when a mode with settings is on) ──────────┘
 ///
-/// Observes only `AudioController` (slow state). Meters and the scope stay
-/// in their own small observed views.
+/// Colour has one meaning each: the hero wears the active preset's pastel
+/// (or Study/Sleep's), Strength and Boost share the bass hue, every mode owns
+/// a hue used nowhere else, and EQ / presets are neutral frosted glass.
+///
+/// Observes only `AudioController` (slow state). Meters, the Night Guard cut
+/// and timers stay in their own small observed views.
 struct BentoView: View {
   @ObservedObject var controller: AudioController
   let meters: MeterModel
@@ -22,96 +26,184 @@ struct BentoView: View {
   let size: ViewSize
 
   @Environment(\.labelLevel) private var labels
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   private var s: Settings { controller.settings }
+  private var live: Bool { s.enabled }
+  /// Every tile but the hero turns calm graphite when the app is off.
+  private func tint(_ t: BentoTint) -> BentoTint { live ? t : .graphite }
 
   var body: some View {
     VStack(spacing: 8) {
       hero
-      BentoTile(tint: .sky, padding: 0) {
+      BentoTile(tint: tint(.frost), padding: 0) {
         EQView(controller: controller, chrome: false)
           .frame(height: size == .full ? 132 : 100)
       }
       .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
-      .opacity(s.enabled ? 1 : 0.45)
       HStack(spacing: 8) {
-        ScrubTile(title: "Strength", symbol: "waveform.path", tint: .peach,
-                  value: s.bass, range: 0...1, defaultValue: 0.55,
-                  format: { ("\(Int(($0 * 100).rounded()))", "%") },
+        ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
+                  value: s.bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
+                  format: { ("", "\(Int(($0 * 100).rounded()))", "%") },
                   help: "Psychoacoustic bass: adds harmonics so small speakers sound deeper without distorting. Drag left or right; double-click to reset.") {
           controller.settings.bass = $0
         } accessory: { EmptyView() }
-        ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: .pink,
-                  value: s.boostDb, range: 0...12, defaultValue: 0,
-                  format: { ("+\(Int($0.rounded()))", " dB") },
+        ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
+                  value: s.boostDb, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
+                  format: { ("+", "\(Int($0.rounded()))", " dB") },
                   help: s.limit
                     ? "Extra loudness. With Limit on, the bass is held back first when there's no room, so vocals don't duck."
                     : "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping.") {
           controller.settings.boostDb = $0
         } accessory: { limitCard }
       }
-      .opacity(s.enabled ? 1 : 0.6)
       presets
       modeGrid
       modeDetails
-      if size == .full {
-        BentoTile(tint: .graphite) { MeterView(model: meters) }
-      }
     }
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
+    .animation(.easeOut(duration: 0.2), value: live)
   }
 
   // MARK: - Hero
 
-  private var heroName: String {
-    if !s.enabled { return "Off" }
-    if s.mode != .off { return s.mode.title }
-    if let id = s.userPresetID, let p = s.userPresets.first(where: { $0.id == id }) { return p.name }
-    return s.presetName ?? "Custom"
+  /// The preset in effect. While Study or Sleep is on, the preset you came
+  /// from (the mode is listed underneath instead).
+  private var presetSource: (name: String?, userID: UUID?) {
+    if s.mode != .off { return (s.beforeMode?.presetName, s.beforeMode?.userPresetID) }
+    return (s.presetName, s.userPresetID)
   }
+
+  private var userPreset: UserPreset? {
+    guard let id = presetSource.userID else { return nil }
+    return s.userPresets.first(where: { $0.id == id })
+  }
+
+  private var heroWord: String {
+    if !live { return "Off" }
+    if let p = userPreset { return p.name }
+    return presetSource.name ?? "Custom"
+  }
+
+  /// "+ Study · Studio Ears · Night Guard"; empty when nothing is on.
+  private var modesLine: String {
+    var on: [String] = []
+    if s.mode != .off { on.append(s.mode.title) }
+    if s.studioEars { on.append("Studio Ears") }
+    if s.autoLoudness { on.append("Loudness") }
+    if s.nightGuard { on.append("Night Guard") }
+    return on.isEmpty ? "" : "+ " + on.joined(separator: " · ")
+  }
+
+  private var modeCount: Int { [s.mode != .off, s.studioEars, s.autoLoudness, s.nightGuard].filter { $0 }.count }
+
+  private var heroTint: BentoTint {
+    switch s.mode {
+    case .study: return .lime
+    case .sleep: return .lilac
+    case .off: return userPreset.map { BentoTint.forUserPreset($0.id) } ?? BentoTint.forPreset(presetSource.name)
+    }
+  }
+
+  /// What a preset sets Strength / Boost to: the haptic "detent" while dragging.
+  private var presetBass: Double {
+    if let p = s.mode.preset { return p.bass }
+    if let p = userPreset { return p.bass }
+    return Preset.all.first(where: { $0.name == presetSource.name })?.bass ?? 0.55
+  }
+
+  private var presetBoost: Double { userPreset?.boostDb ?? 0 }
 
   @ViewBuilder private var heroGlyph: some View {
     if s.mode != .off {
       Image(systemName: s.mode.symbol)
-    } else if let id = s.userPresetID, let p = s.userPresets.first(where: { $0.id == id }) {
-      PresetIconView(id: p.icon, size: 64)
+    } else if let p = userPreset {
+      PresetIconView(id: p.icon, size: 110)
     } else {
-      Image(systemName: Preset.all.first(where: { $0.name == s.presetName })?.symbol ?? "slider.horizontal.3")
+      Image(systemName: Preset.all.first(where: { $0.name == presetSource.name })?.symbol ?? "slider.horizontal.3")
     }
   }
 
+  private var heroWordTransition: AnyTransition {
+    if reduceMotion { return .opacity }
+    return .asymmetric(
+      insertion: .modifier(active: BlurRise(amount: 1), identity: BlurRise(amount: 0)),
+      removal: .modifier(active: BlurRise(amount: -1), identity: BlurRise(amount: 0)))
+  }
+
   private var hero: some View {
-    BentoTile(tint: .butter, emphasis: s.enabled) {
-      VStack(alignment: .leading, spacing: 4) {
-        HStack(spacing: 8) {
-          TileLabel(title: "Your Sound", symbol: "sparkles", tint: .butter)
-          Spacer(minLength: 4)
-          deviceCard
-        }
-        HStack(alignment: .center, spacing: 8) {
-          Text(heroName)
-            .font(.system(size: 30, weight: .heavy, design: .rounded))
+    let t = heroTint
+    let dark = scheme == .dark
+    let shape = RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous)
+    return VStack(alignment: .leading, spacing: 4) {
+      HStack(alignment: .center, spacing: 8) {
+        ZStack(alignment: .leading) {
+          Text(heroWord)
+            .font(.system(size: 38, weight: .heavy, design: .rounded))
+            .tracking(-0.8)
             .lineLimit(1)
             .minimumScaleFactor(0.5)
-            .contentTransition(.opacity)
-            .foregroundStyle(s.enabled ? Color.primary : Color.secondary)
-          Spacer(minLength: 4)
-          powerButton
+            .foregroundStyle(Color.primary)
+            .shadow(color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10)
+            .id(heroWord)
+            .transition(heroWordTransition)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.easeOut(duration: 0.25), value: heroWord)
+        .accessibilityElement(children: .combine)
+        powerButton
+      }
+      HStack(alignment: .center, spacing: 8) {
+        if live && !modesLine.isEmpty {
+          ViewThatFits(in: .horizontal) {
+            Text(modesLine).lineLimit(1).fixedSize()
+            Text(modeCount == 1 ? "+ 1 mode" : "+ \(modeCount) modes").lineLimit(1)
+          }
+          .font(.system(size: 11, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
+          .layoutPriority(1)
+          .transition(.opacity)
+        }
+        Spacer(minLength: 4)
+        deviceCard
+      }
+      .animation(.easeOut(duration: 0.2), value: modesLine)
+    }
+    .padding(16)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background {
+      ZStack {
+        BentoFill(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
+          .id(t.name)
+          .transition(.opacity)
+      }
+      .overlay(alignment: .bottomTrailing) {
+        // The giant faded glyph, cropped by the tile edge. An overlay, so it
+        // never sizes the hero.
+        ZStack {
+          heroGlyph
+            .font(.system(size: 110, weight: .black))
+            .foregroundStyle(dark ? t.pastel : t.ink)
+            .opacity(0.05)
+            .fixedSize()
+            .offset(x: 22, y: 30)
+            .id("glyph-" + t.name)
+            .transition(.opacity)
         }
       }
+      .overlay(alignment: .bottom) {
+        if live {
+          BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 4)
+        }
+      }
+      .animation(.easeInOut(duration: 0.3), value: t.name)
+      .clipShape(shape)
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
     }
-    .overlay(alignment: .bottomTrailing) {
-      // The giant faded glyph behind, bento style.
-      heroGlyph
-        .font(.system(size: 64, weight: .black))
-        .foregroundStyle(Color.primary)
-        .opacity(0.07)
-        .offset(x: -56, y: 12)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-    .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
-    .animation(.easeOut(duration: 0.15), value: heroName)
   }
 
   /// Dark inset mini-card: the output device (menu picks another).
@@ -133,7 +225,7 @@ struct BentoView: View {
             .font(.system(size: 10, weight: .bold, design: .rounded))
             .lineLimit(1)
             .truncationMode(.middle)
-            .frame(maxWidth: 150, alignment: .leading)
+            .frame(maxWidth: live && !modesLine.isEmpty ? 96 : 150, alignment: .leading)
         }
       }
       .miniCard()
@@ -141,7 +233,7 @@ struct BentoView: View {
     .menuStyle(.button)
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
-    .fixedSize(horizontal: false, vertical: true)
+    .fixedSize()
     .help(controller.currentDevice?.name ?? "Output device")
   }
 
@@ -152,26 +244,29 @@ struct BentoView: View {
       Image(systemName: "power")
         .font(.system(size: 14, weight: .heavy))
         .frame(width: 34, height: 34)
-        .foregroundStyle(s.enabled ? BentoTint.butter.pastel : Color.secondary)
-        .background(Circle().fill(s.enabled ? Color.black.opacity(0.78) : Color.primary.opacity(0.08)))
+        .foregroundStyle(live ? heroTint.pastel : Color.secondary)
+        .background(Circle().fill(live ? BentoInk.miniFill : Color.primary.opacity(0.08)))
+        .contentShape(Circle())
     }
-    .buttonStyle(.plain)
-    .accessibilityLabel(s.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
-    .help(s.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
+    .buttonStyle(BentoPressStyle())
+    .accessibilityLabel(live ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
+    .help(live ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
   }
 
   private var limitCard: some View {
     Button { controller.settings.limit.toggle() } label: {
       HStack(spacing: 3) {
-        Image(systemName: "ear").font(.system(size: 8, weight: .bold))
-        if labels != .icons { Text("Limit").font(.system(size: 9, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
+        Image(systemName: "ear").font(.system(size: 9, weight: .bold))
+        if labels != .icons { Text("Limit").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
       }
-      .foregroundStyle(s.limit ? Color.orange : Color.primary.opacity(0.6))
       .padding(.horizontal, 8)
       .frame(height: 20)
-      .background(Capsule().fill(s.limit ? Color.black.opacity(0.78) : Color.primary.opacity(0.08)))
+      .foregroundStyle(s.limit ? Color.white : Color.primary.opacity(0.6))
+      .background(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
+        .fill(s.limit ? BentoInk.miniFill : Color.primary.opacity(0.08)))
+      .contentShape(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(BentoPressStyle())
     .accessibilityLabel("Limit")
     .accessibilityValue(s.limit ? "On" : "Off")
     .help("Off: nothing holds the sound back. EQ and Boost go straight to your speakers, and loud peaks can clip (red meters). On: when there's no room left, the bass is held back first so vocals never duck, and the EQ shows how much is being restricted. Sleep mode always limits.")
@@ -181,10 +276,11 @@ struct BentoView: View {
 
   private var presets: some View {
     VStack(spacing: 8) {
-      BentoTile(tint: .lilac, padding: 0) {
+      BentoTile(tint: tint(.frost), padding: 0) {
         PresetStrip(controller: controller, editor: $editor)
           .contentMargins(.horizontal, 8, for: .scrollContent)
           .padding(.vertical, 8)
+          .environment(\.bentoChips, true)
       }
       .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
       if let mode = editor {
@@ -203,48 +299,56 @@ struct BentoView: View {
   private var modeGrid: some View {
     VStack(spacing: 8) {
       HStack(spacing: 8) {
-        ModeTile(title: "Studio Ears", symbol: "ear.badge.waveform", tint: .pink, on: s.studioEars,
+        ModeTile(title: "Studio Ears", symbol: "ear.badge.waveform", tint: tint(.pink), on: s.studioEars,
                  help: "Leans hard into sub-bass and trap highs (808 body, hats, air) on top of any preset. A 22 Hz guard keeps rumble out.") {
           controller.settings.studioEars.toggle()
-        } badge: { EmptyView() }
-        ModeTile(title: "Loudness", symbol: "speaker.wave.2.bubble", tint: .peach, on: s.autoLoudness,
+        } fact: { EmptyView() }
+        ModeTile(title: "Loudness", symbol: "speaker.wave.2.bubble", tint: tint(.peach), on: s.autoLoudness,
                  help: "Auto Loudness: at low volume your ears lose bass and treble first. This adds them back as you turn the volume down, and does nothing at high volume.") {
           controller.settings.autoLoudness.toggle()
-        } badge: { EmptyView() }
-        ModeTile(title: "Night Guard", symbol: "moon.haze", tint: .indigo, on: s.nightGuard,
+        } fact: { EmptyView() }
+        ModeTile(title: "Night Guard", symbol: "moon.haze", tint: tint(.indigo), on: s.nightGuard,
                  help: "Turns down anything that gets suddenly louder than what you've been listening to, like a booming title sequence after quiet dialogue. Quiet parts are left alone.") {
           controller.settings.nightGuard.toggle()
-        } badge: { if s.nightGuard { BentoNightGuardBadge(model: controller.nightGuard) } }
+        } fact: { NightGuardFact(model: controller.nightGuard, allowDb: s.nightGuardDb) }
       }
+      .fixedSize(horizontal: false, vertical: true)
       HStack(spacing: 8) {
         ForEach([ListeningMode.study, .sleep]) { m in
-          ModeTile(title: m.title, symbol: m.symbol, tint: m == .study ? .lime : .lilac, on: s.mode == m,
+          ModeTile(title: m.title, symbol: m.symbol, tint: tint(m == .study ? .lime : .lilac), on: s.mode == m,
                    help: m == .study ? "Lo-fi study sound: warm, soft highs, gentle tape character." : "Sleep: dark, soft and level, with a fade-out timer.") {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
               controller.setMode(s.mode == m ? .off : m)
             }
-          } badge: { EmptyView() }
+          } fact: {
+            if m == .study {
+              StudyFact(endsAt: controller.pomodoroEndsAt, onBreak: controller.pomodoroOnBreak)
+            } else {
+              SleepFact(endsAt: controller.sleepEndsAt, finished: controller.sleepFinished)
+            }
+          }
         }
         ModeTile(title: "Check & Fix", symbol: controller.doctorRunning ? "hourglass" : "stethoscope",
-                 tint: .mint, on: controller.doctorRunning,
+                 tint: .graphite, on: controller.doctorRunning, outline: true, reserveFact: true,
                  help: "Check & Fix: muffled, silent or one-sided sound (e.g. after sleep or Bluetooth trouble)") {
           controller.checkAndFix()
-        } badge: { EmptyView() }
+        } fact: { BentoFactText(text: "Checking…") }
         .contextMenu {
           Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
                                                                  set: { controller.settings.autoFixAfterSleep = $0 }))
         }
       }
+      .fixedSize(horizontal: false, vertical: true)
     }
   }
 
   @ViewBuilder private var modeDetails: some View {
     if s.nightGuard {
-      BentoTile(tint: .indigo) { nightGuardRow }
+      BentoTile(tint: tint(.indigo)) { nightGuardRow }
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
     if s.mode != .off {
-      BentoTile(tint: s.mode == .study ? .lime : .lilac) {
+      BentoTile(tint: tint(s.mode == .study ? .lime : .lilac)) {
         VStack(alignment: .leading, spacing: 8) {
           if s.mode == .sleep { sleepRow } else { studyRow }
           noiseRow
@@ -382,54 +486,147 @@ struct BentoView: View {
 /// dark text. Dark mode: the same hues deeper and fainter, with light text.
 /// Always translucent so the smoky background shows through.
 struct BentoTint: Equatable {
+  let name: String
   let pastel: Color
   let ink: Color   // the hue as a readable glyph colour on a light fill
+  /// Dark-mode wash strength relative to a pastel (frosted glass is fainter).
+  var darkScale = 1.0
 
-  static let butter = BentoTint(pastel: Color(red: 1.00, green: 0.84, blue: 0.40), ink: Color(red: 0.62, green: 0.45, blue: 0.00))
-  static let sky = BentoTint(pastel: Color(red: 0.56, green: 0.76, blue: 1.00), ink: Color(red: 0.12, green: 0.40, blue: 0.80))
-  static let peach = BentoTint(pastel: Color(red: 1.00, green: 0.68, blue: 0.52), ink: Color(red: 0.78, green: 0.33, blue: 0.12))
-  static let pink = BentoTint(pastel: Color(red: 1.00, green: 0.60, blue: 0.78), ink: Color(red: 0.78, green: 0.20, blue: 0.48))
-  static let lilac = BentoTint(pastel: Color(red: 0.74, green: 0.64, blue: 1.00), ink: Color(red: 0.42, green: 0.28, blue: 0.85))
-  static let mint = BentoTint(pastel: Color(red: 0.52, green: 0.90, blue: 0.74), ink: Color(red: 0.08, green: 0.52, blue: 0.38))
-  static let lime = BentoTint(pastel: Color(red: 0.78, green: 0.93, blue: 0.42), ink: Color(red: 0.36, green: 0.52, blue: 0.05))
-  static let indigo = BentoTint(pastel: Color(red: 0.58, green: 0.62, blue: 1.00), ink: Color(red: 0.25, green: 0.28, blue: 0.80))
-  static let graphite = BentoTint(pastel: Color(white: 0.62), ink: Color(white: 0.30))
+  // Modes: each owns its hue.
+  static let pink = BentoTint(name: "pink", pastel: Color(red: 1.00, green: 0.60, blue: 0.78), ink: Color(red: 0.78, green: 0.20, blue: 0.48))
+  static let peach = BentoTint(name: "peach", pastel: Color(red: 1.00, green: 0.68, blue: 0.52), ink: Color(red: 0.78, green: 0.33, blue: 0.12))
+  static let indigo = BentoTint(name: "indigo", pastel: Color(red: 0.62, green: 0.56, blue: 0.96), ink: Color(red: 0.30, green: 0.22, blue: 0.70))
+  static let lime = BentoTint(name: "lime", pastel: Color(red: 0.78, green: 0.93, blue: 0.42), ink: Color(red: 0.36, green: 0.52, blue: 0.05))
+  static let lilac = BentoTint(name: "lilac", pastel: Color(red: 0.90, green: 0.64, blue: 1.00), ink: Color(red: 0.62, green: 0.25, blue: 0.80))
+  // Strength + Boost: the bass hue.
+  static let bass = BentoTint(name: "bass", pastel: Color(red: 0.56, green: 0.76, blue: 1.00), ink: Color(red: 0.12, green: 0.40, blue: 0.80))
+  // Presets (the hero only).
+  static let butter = BentoTint(name: "butter", pastel: Color(red: 1.00, green: 0.84, blue: 0.40), ink: Color(red: 0.62, green: 0.45, blue: 0.00))
+  static let mint = BentoTint(name: "mint", pastel: Color(red: 0.52, green: 0.90, blue: 0.74), ink: Color(red: 0.08, green: 0.52, blue: 0.38))
+  static let aqua = BentoTint(name: "aqua", pastel: Color(red: 0.50, green: 0.88, blue: 0.94), ink: Color(red: 0.05, green: 0.48, blue: 0.58))
+  static let sand = BentoTint(name: "sand", pastel: Color(red: 0.94, green: 0.82, blue: 0.66), ink: Color(red: 0.55, green: 0.40, blue: 0.20))
+  // Neutrals.
+  static let frost = BentoTint(name: "frost", pastel: Color(white: 1.0), ink: Color(white: 0.35), darkScale: 0.4)
+  static let graphite = BentoTint(name: "graphite", pastel: Color(white: 0.62), ink: Color(white: 0.30))
+
+  static let presetPalette: [BentoTint] = [.butter, .mint, .aqua, .sand]
+
+  /// Built-in presets: a fixed pastel each. Anything else (headphone
+  /// presets, Custom) hashes its name to one, the same every launch.
+  static func forPreset(_ name: String?) -> BentoTint {
+    switch name {
+    case "Bass Shake", "Bass Boost", "Basic Enhance": return .butter
+    case "Laptop", "Treble", "Ambience": return .aqua
+    case "Vocal", "Podcast": return .mint
+    case "Flat", "Loudness", "Underground Rap", nil: return .sand
+    case let n?: return presetPalette[stableIndex(n)]
+    }
+  }
+
+  static func forUserPreset(_ id: UUID) -> BentoTint { presetPalette[stableIndex(id.uuidString)] }
+
+  /// djb2: unlike `hashValue`, stable across launches.
+  private static func stableIndex(_ s: String) -> Int {
+    var h: UInt64 = 5381
+    for b in s.utf8 { h = (h &* 33) &+ UInt64(b) }
+    return Int(h % UInt64(presetPalette.count))
+  }
 }
 
-/// One tile: soft diagonal pastel wash, hairline edge, continuous corners.
+enum BentoLook: Equatable {
+  /// Resting wash.
+  case base
+  /// A stronger wash (the hero while on).
+  case strong
+  /// On: full pastel plus a soft inner glow (mode tiles).
+  case lit
+  /// Off: the hue at ~8%.
+  case quiet
+  /// Hairline only, no wash (one-shot actions).
+  case outline
+  /// The tile is the fader: the wash fills from the left to this fraction.
+  case fader(Double)
+}
+
+/// One tile: soft diagonal wash, top-lit rim, continuous corners.
 struct BentoTile<Content: View>: View {
-  // corner radius: BentoRadius.tile
   let tint: BentoTint
-  /// "On": a stronger wash (mode tiles light up; the hero dims when off).
-  var emphasis = false
+  var look: BentoLook = .base
   var padding: CGFloat = 8
+  var radius: CGFloat = BentoRadius.tile
   @ViewBuilder let content: () -> Content
 
   var body: some View {
     content()
       .padding(padding)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(BentoFill(tint: tint, emphasis: emphasis))
+      .background(BentoFill(tint: tint, look: look, radius: radius))
   }
 }
 
 private struct BentoFill: View {
   let tint: BentoTint
-  let emphasis: Bool
+  let look: BentoLook
+  var radius: CGFloat = BentoRadius.tile
   @Environment(\.colorScheme) private var scheme
   @Environment(\.colorSchemeContrast) private var contrast
 
-  var body: some View {
-    let dark = scheme == .dark
-    let base = dark ? (emphasis ? 0.40 : 0.18) : (emphasis ? 0.72 : 0.40)
-    let a = min(1, base + (contrast == .increased ? 0.15 : 0))
-    let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
-    shape
-      .fill(LinearGradient(colors: [tint.pastel.opacity(a), tint.pastel.opacity(a * 0.62)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing))
-      .overlay(shape.strokeBorder(Color.white.opacity(dark ? 0.08 : 0.45), lineWidth: 0.5))
-      .animation(.easeOut(duration: 0.15), value: emphasis)
+  private var dark: Bool { scheme == .dark }
+
+  private func alpha(strong: Bool) -> Double {
+    let a = dark ? (strong ? 0.40 : 0.18) * tint.darkScale : (strong ? 0.72 : 0.50)
+    return min(1, a + (contrast == .increased ? 0.15 : 0))
   }
+
+  private func wash(_ a: Double) -> LinearGradient {
+    LinearGradient(colors: [tint.pastel.opacity(a), tint.pastel.opacity(a * 0.62)],
+                   startPoint: .topLeading, endPoint: .bottomTrailing)
+  }
+
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+    let rim = LinearGradient(colors: [Color.white.opacity(dark ? 0.18 : 0.65), Color.white.opacity(dark ? 0.03 : 0.12)],
+                             startPoint: .top, endPoint: .bottom)
+    ZStack {
+      switch look {
+      case .outline:
+        shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.26), Color.primary.opacity(0.10)],
+                                          startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
+      case .fader(let f):
+        shape.fill(wash(dark ? 0.08 : 0.20))
+          .shadow(color: Color.black.opacity(dark ? 0 : 0.05), radius: 1.5, y: 1)
+        GeometryReader { g in
+          Rectangle()
+            .fill(wash(alpha(strong: true)))
+            .frame(width: g.size.width * CGFloat(min(1, max(0, f))))
+        }
+        .clipShape(shape)
+        shape.strokeBorder(rim, lineWidth: 0.75)
+      default:
+        let a: Double = {
+          switch look {
+          case .quiet: return 0.08
+          case .strong, .lit: return alpha(strong: true)
+          default: return alpha(strong: false)
+          }
+        }()
+        shape.fill(wash(a))
+          .shadow(color: Color.black.opacity(dark ? 0 : 0.05), radius: 1.5, y: 1)
+        if look == .lit {
+          shape.stroke(tint.pastel.opacity(dark ? 0.75 : 0.95), lineWidth: 8)
+            .blur(radius: 6)
+            .clipShape(shape)
+        }
+        shape.strokeBorder(rim, lineWidth: 0.75)
+      }
+    }
+    .animation(.easeOut(duration: 0.15), value: look == .lit)
+  }
+}
+
+/// The one family of small dark controls: same fill, white ink, 20 pt.
+enum BentoInk {
+  static let miniFill = Color.black.opacity(0.72)
 }
 
 private extension View {
@@ -438,7 +635,7 @@ private extension View {
     padding(.horizontal, 8)
       .frame(height: 20)
       .foregroundStyle(Color.white)
-      .background(Capsule().fill(Color.black.opacity(0.72)))
+      .background(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous).fill(BentoInk.miniFill))
   }
 }
 
@@ -446,7 +643,6 @@ private extension View {
 private struct TileLabel: View {
   let title: String
   let symbol: String
-  let tint: BentoTint
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
 
@@ -461,16 +657,38 @@ private struct TileLabel: View {
           .fixedSize()
       }
     }
-    .foregroundStyle(scheme == .dark ? tint.pastel : Color.primary.opacity(0.75))
+    .foregroundStyle(Color.primary.opacity(scheme == .dark ? 0.85 : 0.7))
     .help(labels == .full ? "" : title)
     .accessibilityHidden(true)
   }
 }
 
+/// Mode tiles, pills and Power: press to 0.96, spring back.
+struct BentoPressStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .scaleEffect(configuration.isPressed ? 0.96 : 1)
+      .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+  }
+}
+
+/// The hero word's entrance/exit: blur plus a small rise.
+private struct BlurRise: ViewModifier {
+  /// 0 = settled; 1 = below (entering); -1 = above (leaving).
+  let amount: Double
+  func body(content: Content) -> some View {
+    content
+      .blur(radius: CGFloat(abs(amount) * 6))
+      .offset(y: CGFloat(amount * 7))
+      .opacity(1 - abs(amount))
+  }
+}
+
 // MARK: - Tiles
 
-/// A big number you drag left/right (160 pt = the full range), with a thin
-/// fill bar. Double-click resets. Keyboard/VoiceOver get a real slider.
+/// A big number you drag left/right (160 pt = the full range). The tile is
+/// the fader: its wash fills from the left to the value. Double-click resets.
+/// Keyboard/VoiceOver get a real slider.
 private struct ScrubTile<Accessory: View>: View {
   let title: String
   let symbol: String
@@ -478,127 +696,164 @@ private struct ScrubTile<Accessory: View>: View {
   let value: Double
   let range: ClosedRange<Double>
   let defaultValue: Double
-  /// (number, unit): the unit is drawn smaller.
-  let format: (Double) -> (String, String)
+  /// The active preset's value: a stronger haptic bump when crossed.
+  let detent: Double
+  /// A light haptic tick every this much.
+  let tickStep: Double
+  /// (sign, digits, unit): sign and unit are drawn small.
+  let format: (Double) -> (String, String, String)
   let help: String
   let set: (Double) -> Void
   @ViewBuilder let accessory: () -> Accessory
 
   private let travel: CGFloat = 160
   @State private var start: Double?
+  @State private var last: Double?
+  @State private var band: CGFloat = 0
   @State private var hover = false
   @State private var cursorPushed = false
-  @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   private var fraction: Double { (value - range.lowerBound) / (range.upperBound - range.lowerBound) }
+
+  private func tick(_ v: Double) -> Int { Int(((v - range.lowerBound) / tickStep + 1e-6).rounded(.down)) }
+
+  private func haptics(from old: Double, to new: Double) {
+    guard old != new else { return }
+    let performer = NSHapticFeedbackManager.defaultPerformer
+    // Strictly crossing the detent, or landing on it (Boost's detent is often
+    // its 0 end). Leaving it does not bump, so up and down feel the same.
+    let a = old - detent, b = new - detent
+    let hit = (a < 0 && b > 0) || (a > 0 && b < 0) || (b == 0 && a != 0)
+    if hit {
+      performer.perform(.levelChange, performanceTime: .now)
+    } else if tick(old) != tick(new) {
+      performer.perform(.alignment, performanceTime: .now)
+    }
+  }
 
   var body: some View {
     let f = format(value)
     let dragging = start != nil
-    BentoTile(tint: tint, emphasis: dragging) {
-      VStack(alignment: .leading, spacing: 4) {
-        HStack(spacing: 4) {
-          TileLabel(title: title, symbol: symbol, tint: tint)
-          Spacer(minLength: 2)
-          accessory()
-        }
-        .frame(height: 20)
-        VStack(alignment: .leading, spacing: 4) {
+    let motion = !reduceMotion
+    BentoTile(tint: tint, look: .fader(fraction), padding: 12) {
+      VStack(alignment: .leading, spacing: 6) {
+        TileLabel(title: title, symbol: symbol)
+          .frame(maxWidth: .infinity, minHeight: 20, maxHeight: 20, alignment: .leading)
+        HStack(alignment: .firstTextBaseline, spacing: 1) {
           HStack(alignment: .firstTextBaseline, spacing: 1) {
-            Text(f.0)
-              .font(.system(size: 30, weight: .heavy, design: .rounded))
-              .contentTransition(.numericText())
+            if !f.0.isEmpty {
+              Text(f.0)
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+            }
             Text(f.1)
-              .font(.system(size: 14, weight: .heavy, design: .rounded))
+              .font(.system(size: 28, weight: .bold, design: .rounded))
+              .contentTransition(.numericText())
+            Text(f.2)
+              .font(.system(size: 12, weight: .bold, design: .rounded))
               .foregroundStyle(.secondary)
-            Spacer(minLength: 0)
-            Image(systemName: "chevron.left.chevron.right")
-              .font(.system(size: 9, weight: .bold))
-              .foregroundStyle(.secondary)
-              .opacity(hover || dragging ? 1 : 0)
           }
-          .monospacedDigit()
-          .lineLimit(1)
-          GeometryReader { g in
-            Capsule().fill(Color.primary.opacity(0.10))
-              .overlay(alignment: .leading) {
-                Capsule().fill(scheme == .dark ? tint.pastel : tint.ink)
-                  .frame(width: max(4, g.size.width * fraction))
-              }
-          }
-          .frame(height: 4)
+          .scaleEffect(dragging && motion ? 1.04 : 1, anchor: .leading)
+          .offset(x: motion ? band : 0)
+          .animation(.spring(response: 0.25, dampingFraction: 0.55), value: dragging)
+          .animation(.spring(response: 0.3, dampingFraction: 0.5), value: band)
+          Spacer(minLength: 0)
+          Image(systemName: "chevron.left.chevron.right")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.secondary)
+            .opacity(hover || dragging ? 1 : 0)
         }
-        .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 1)
-          .onChanged { g in
-            if start == nil { start = value }
-            let span = range.upperBound - range.lowerBound
-            let v = (start ?? value) + Double(g.translation.width / travel) * span
-            set(min(range.upperBound, max(range.lowerBound, v)))
-          }
-          .onEnded { _ in start = nil })
-        .simultaneousGesture(TapGesture(count: 2).onEnded { set(defaultValue) })
-        .onHover { h in
-          hover = h
-          if h && !cursorPushed {
-            NSCursor.resizeLeftRight.push()
-            cursorPushed = true
-          } else if !h && cursorPushed {
-            NSCursor.pop()
-            cursorPushed = false
-          }
-        }
-        .onDisappear {
-          if cursorPushed { NSCursor.pop(); cursorPushed = false }
-          start = nil
-        }
+        .monospacedDigit()
+        .lineLimit(1)
         .accessibilityRepresentation {
           Slider(value: Binding(get: { value }, set: { set($0) }), in: range)
             .accessibilityLabel(title)
-            .accessibilityValue(f.0 + f.1)
+            .accessibilityValue(f.0 + f.1 + f.2)
         }
       }
+    }
+    .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
+    .gesture(DragGesture(minimumDistance: 1)
+      .onChanged { g in
+        if start == nil { start = value; last = value }
+        let span = range.upperBound - range.lowerBound
+        let raw = (start ?? value) + Double(g.translation.width / travel) * span
+        let v = min(range.upperBound, max(range.lowerBound, raw))
+        // Rubber band: past either end the number gives a few points.
+        let over = raw - v
+        band = CGFloat(max(-6, min(6, over / span * Double(travel) * 0.15)))
+        haptics(from: last ?? value, to: v)
+        last = v
+        set(v)
+      }
+      .onEnded { _ in start = nil; last = nil; band = 0 })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { set(defaultValue) })
+    .onHover { h in
+      hover = h
+      if h && !cursorPushed {
+        NSCursor.resizeLeftRight.push()
+        cursorPushed = true
+      } else if !h && cursorPushed {
+        NSCursor.pop()
+        cursorPushed = false
+      }
+    }
+    // Outside the drag, double-click and cursor: Limit is its own button.
+    .overlay(alignment: .topTrailing) { accessory().padding([.top, .trailing], 12) }
+    .onDisappear {
+      if cursorPushed { NSCursor.pop(); cursorPushed = false }
+      start = nil
+      last = nil
+      band = 0
     }
     .help(help)
   }
 }
 
-/// Small toggle tile: icon top-left, name bottom-left; fills with its pastel when on.
-private struct ModeTile<Badge: View>: View {
+/// Small toggle tile: glyph in an 18 pt circle, name, and (when on) a live
+/// fact. Off shows its own hue faintly; on lights up with a soft inner glow.
+private struct ModeTile<Fact: View>: View {
   let title: String
   let symbol: String
   let tint: BentoTint
   let on: Bool
+  var outline = false
+  /// Keep the fact line's height while off, so the row never jumps.
+  var reserveFact = false
   let help: String
   let action: () -> Void
-  @ViewBuilder let badge: () -> Badge
+  @ViewBuilder let fact: () -> Fact
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
+    let dark = scheme == .dark
     Button(action: action) {
-      BentoTile(tint: on ? tint : .graphite, emphasis: on) {
+      BentoTile(tint: tint, look: outline ? .outline : (on ? .lit : .quiet)) {
         VStack(alignment: .leading, spacing: 4) {
-          HStack(spacing: 4) {
+          ZStack {
+            Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))
             Image(systemName: symbol)
-              .font(.system(size: 13, weight: .bold))
-              .foregroundStyle(on ? Color.primary : (scheme == .dark ? tint.pastel : tint.ink))
-              .frame(height: 16)
-            Spacer(minLength: 0)
-            badge()
+              .symbolVariant(on ? .fill : .none)
+              .font(.system(size: 9, weight: .bold))
+              .foregroundStyle(on ? Color.white : (dark ? tint.pastel : tint.ink))
           }
+          .frame(width: 18, height: 18)
           if labels != .icons {
             Text(title)
-              .font(.system(size: 11, weight: .bold, design: .rounded))
+              .font(.system(size: 12, weight: .semibold, design: .rounded))
               .lineLimit(1)
-              .fixedSize()
+              .minimumScaleFactor(0.85)
           }
+          if on { fact() } else if reserveFact { Text(" ").bentoFact().hidden() }
         }
+        .frame(maxHeight: .infinity, alignment: .topLeading)
       }
       .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
     }
-    .buttonStyle(.plain)
-    .frame(maxWidth: .infinity)
+    .buttonStyle(BentoPressStyle())
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .help(labels == .icons ? "\(title): \(help)" : help)
     .accessibilityLabel(title)
     .accessibilityAddTraits(on ? .isSelected : [])
@@ -606,25 +861,89 @@ private struct ModeTile<Badge: View>: View {
   }
 }
 
-/// Night Guard's live cut. Observes only its own readout.
-private struct BentoNightGuardBadge: View {
-  @ObservedObject var model: NightGuardReadout
+/// The quiet second line on an active mode tile.
+private struct BentoFactText: View {
+  let text: String
   var body: some View {
-    if model.cutDb <= -1 {
-      Text(String(format: "−%.0f", -model.cutDb))
-        .font(.system(size: 9, weight: .heavy, design: .rounded))
-        .monospacedDigit()
-        .lineLimit(1)
-        .fixedSize()
-        .padding(.horizontal, 4)
-        .frame(height: 16)
-        .foregroundStyle(.white)
-        .background(Capsule().fill(Color.black.opacity(0.72)))
-        .help("Night Guard is turning things down right now (dB)")
+    Text(text).bentoFact()
+  }
+}
+
+private extension Text {
+  func bentoFact() -> some View {
+    font(.system(size: 10, weight: .medium, design: .rounded))
+      .monospacedDigit()
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+      .minimumScaleFactor(0.8)
+  }
+}
+
+/// Night Guard's live cut. Observes only its own readout.
+private struct NightGuardFact: View {
+  @ObservedObject var model: NightGuardReadout
+  let allowDb: Double
+  var body: some View {
+    let cut = Int((-model.cutDb).rounded())
+    Text(cut >= 1 ? "Cutting \(cut) dB" : "Allows +\(Int(allowDb)) dB").bentoFact()
+  }
+}
+
+/// Sleep: minutes left on the fade-out timer, refreshed twice a minute.
+private struct SleepFact: View {
+  let endsAt: Date?
+  let finished: Bool
+  var body: some View {
+    if finished {
+      Text("Faded out").bentoFact()
+    } else if let end = endsAt {
+      TimelineView(.periodic(from: .now, by: 30)) { ctx in
+        let left = max(1, Int((end.timeIntervalSince(ctx.date) / 60).rounded(.up)))
+        Text("\(left) min left").bentoFact()
+      }
+    } else {
+      Text("No timer").bentoFact()
     }
+  }
+}
+
+/// Study: the Pomodoro phase and its countdown.
+private struct StudyFact: View {
+  let endsAt: Date?
+  let onBreak: Bool
+  var body: some View {
+    if let end = endsAt {
+      (Text(onBreak ? "Break " : "Focus ") + Text(end, style: .timer)).bentoFact()
+    } else {
+      Text("No timer").bentoFact()
+    }
+  }
+}
+
+/// L/R output level as two tinted hairlines. Observes only the meters.
+private struct BentoLevelLines: View {
+  @ObservedObject var model: MeterModel
+  let color: Color
+  var body: some View {
+    Canvas { ctx, size in
+      for i in 0..<2 {
+        let w = size.width * CGFloat(MeterModel.position(model.channels[i].level))
+        if w > 0.5 {
+          // Red at the same point the classic meters turn red.
+          let hot = model.limiting || model.channels[i].level > -1.2
+          ctx.fill(Path(CGRect(x: 0, y: CGFloat(i) * 3, width: w, height: 1)),
+                   with: .color(hot ? Color(red: 1.0, green: 0.24, blue: 0.30) : color))
+        }
+      }
+    }
+    .frame(height: 4)
   }
 }
 
 enum BentoRadius {
   static let tile: CGFloat = 14
+  /// Rounded things inside a tile (14 − 8 padding).
+  static let inner: CGFloat = 6
+  /// The hero: 16 pt padding, kept concentric with its inner 6.
+  static let hero: CGFloat = 22
 }
