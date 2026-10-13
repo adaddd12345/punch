@@ -327,7 +327,9 @@ private struct EarsRows: View {
     .animation(.easeOut(duration: 0.25), value: order)
     .onAppear { model.setEarsMetering(true) }
     .onDisappear { model.setEarsMetering(false) }
-    .task {
+    // Restarted when the playing set changes: the loop reads `playing` from
+    // the view value it started with, so a new app must start a new loop.
+    .task(id: playing.map(\.id)) {
       // Main actor; only while the rows are on screen.
       while !Task.isCancelled {
         rerank()

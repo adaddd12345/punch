@@ -10,6 +10,10 @@ on:
       runner:
         required: true
         type: string
+    outputs:
+      started:
+        description: "1 once a runner picked the job up (the fallback is only for runs that never started)"
+        value: ${{ jobs.mac-app.outputs.started }}
 
 jobs:
   mac-app:
@@ -20,7 +24,11 @@ jobs:
     concurrency:
       group: publish-${{ github.ref }}
       cancel-in-progress: false
+    outputs:
+      started: ${{ steps.started.outputs.started }}
     steps:
+      - id: started
+        run: echo "started=1" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
       - name: Toolchain
         run: |

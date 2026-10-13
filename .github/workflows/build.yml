@@ -37,13 +37,15 @@ jobs:
   # GitHub's Apple Silicon Macs sometimes run out ("job was not acquired …
   # capacity constraints") and the job is cancelled after ~15 min. Then build
   # the same universal app on an Intel Mac (same Xcode 26.6) so the beta still
-  # ships. A run cancelled by hand also falls through to here.
+  # ships. A run cancelled by hand before a runner picked it up also falls through.
   mac-app-fallback:
     name: The Bass Shaker.app (macOS, Intel fallback)
     needs: mac-app
     # "Not acquired" can surface as failure or cancelled, so fall back on
-    # anything but success (a real build error just fails again on Intel).
-    if: ${{ always() && needs.mac-app.result != 'success' && needs.mac-app.result != 'skipped' }}
+    # anything but success, but only if no runner ever started the job: a
+    # build, test or launch-smoke-test failure on Apple Silicon must not ship
+    # from Intel (an arm64-only crash would pass the Intel smoke test).
+    if: ${{ always() && needs.mac-app.result != 'success' && needs.mac-app.result != 'skipped' && needs.mac-app.outputs.started != '1' }}
     uses: ./.github/workflows/mac-app.yml
     with:
       runner: macos-26-intel
