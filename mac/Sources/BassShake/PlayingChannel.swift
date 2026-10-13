@@ -48,17 +48,19 @@ struct PlayingChannelMini<Chip: View>: View {
   var art: CGFloat = 32
   var nameSize: CGFloat = 12
   @ViewBuilder let chip: () -> Chip
+  /// The lead tab or song (observed: a new tab changes the words, not the app).
+  @ObservedObject private var stack = NowStack.shared
   @State private var hover = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    let track = model.route(app) == .script ? app.bundleID.flatMap { model.tracks[$0] } : nil
-    let paused = track.map { !$0.playing } ?? model.showsPaused(app)
+    let text = model.describe(stack.entry(for: app))
+    let paused = text.paused
     HStack(alignment: .center, spacing: 8) {
-      disc(track)
+      disc(text.artwork)
       VStack(alignment: .leading, spacing: 1) {
         Button { model.open(app) } label: {
-          Text(track.map { $0.title.isEmpty ? app.name : $0.title } ?? app.name)
+          Text(text.title)
             .font(.system(size: nameSize, weight: .heavy, design: .rounded))
             .tracking(-0.2)
             .lineLimit(1)
@@ -68,7 +70,7 @@ struct PlayingChannelMini<Chip: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .pointerHint(Caption.nowPlaying(app.name, song: track != nil, paused: paused))
+        .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: paused))
         .accessibilityLabel("\(paused ? "Paused" : "Playing"): \(app.name)")
         chip()
       }
@@ -76,7 +78,7 @@ struct PlayingChannelMini<Chip: View>: View {
   }
 
   /// The art, with the action's glyph over it while hovered, paused or muted.
-  private func disc(_ track: NowTrack?) -> some View {
+  private func disc(_ artwork: NSImage?) -> some View {
     let route = model.route(app)
     let muted = model.isMuted(app.id)
     let playing = model.isPlaying(app)
@@ -104,7 +106,7 @@ struct PlayingChannelMini<Chip: View>: View {
                         chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback)
     // A locked key route opens the app: never a permission prompt from Mini.
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
-      NowArt(artwork: track?.artwork, icon: model.icon(app), size: art)
+      NowArt(artwork: artwork, icon: model.icon(app), size: art)
         .overlay {
           if showGlyph {
             ZStack {

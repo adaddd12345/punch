@@ -84,7 +84,7 @@ struct BentoView: View {
         // The editor opens right under the hero when the presets tile is hidden,
         // so "Save Current Sound as Preset…" from the hero menu is seen.
         if !s.shows(.bentoPresets), let mode = editor { editorView(mode) }
-        // What's Playing: other playing apps (nothing while the feature is off).
+        // What's Playing: everything else playing, one small tile per tab or app (NowStack.swift).
         if s.shows(.bentoNowPlaying) {
           NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
         }

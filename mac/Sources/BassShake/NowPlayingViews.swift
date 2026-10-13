@@ -12,13 +12,16 @@ import SwiftUI
 /// playing, otherwise the usual preset rows, unchanged.
 struct NowPlayingSwitch<Standard: View, Playing: View>: View {
   @ObservedObject var model: NowPlaying
+  /// The hero follows the stack's lead, so the hero and the small tiles
+  /// change in one animation (a cover can fly from one to the other).
+  @ObservedObject var stack: NowStack = .shared
   let on: Bool
   @ViewBuilder let standard: () -> Standard
   @ViewBuilder let playing: (NowApp) -> Playing
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    let hero = on ? model.hero : nil
+    let hero = on ? stack.lead?.app : nil
     ZStack(alignment: .topLeading) {
       if let h = hero {
         playing(h)
@@ -28,7 +31,8 @@ struct NowPlayingSwitch<Standard: View, Playing: View>: View {
         standard().transition(.opacity)
       }
     }
-    .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: hero?.id)
+    // Stack changes bring their own spring (NowStack.morph); this covers the setting.
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: on)
   }
 }
 
@@ -48,27 +52,28 @@ struct HiddenWhilePlaying<Content: View>: View {
   }
 }
 
-/// Cover (or app icon), song and artist (or app name). Click opens the app.
-/// A note after a key that missed takes the title's place for a few seconds;
-/// when it offers Accessibility, a click on the note (only) opens that.
+/// The hero's entry: cover (or tab still, or app icon), title and a second
+/// line (artist / site / state). Click brings it forward. A note after a key
+/// that missed takes the words' place for a few seconds; when it offers
+/// Accessibility, a click on the note (only) opens that.
 struct NowPlayingHeadline: View {
   @ObservedObject var model: NowPlaying
+  @ObservedObject var stack: NowStack = .shared
   let app: NowApp
   /// Cover size and title size (Full 48 / 15, Compact 40 / 13).
   var art: CGFloat = 48
   var title: CGFloat = 15
-  @Environment(\.labelLevel) private var labels
 
   var body: some View {
-    let track = model.route(app) == .script ? app.bundleID.flatMap { model.tracks[$0] } : nil
-    let paused = track.map { !$0.playing } ?? model.showsPaused(app)
-    let sub = subtitle(track, paused: paused)
+    let entry = stack.entry(for: app)
+    let text = model.describe(entry)
     let note = model.notice
     Button {
-      model.open(app)
+      NowStack.focus(entry, model: model)
     } label: {
       HStack(alignment: .center, spacing: 8) {
-        NowArt(artwork: track?.artwork, icon: model.icon(app), size: art)
+        NowArt(artwork: text.artwork, icon: model.icon(app), size: art, badge: entry.item != nil ? true : nil)
+          .modifier(NowMorph(id: entry.id))
         VStack(alignment: .leading, spacing: 2) {
           if let n = note {
             if n.settings {
@@ -81,33 +86,35 @@ struct NowPlayingHeadline: View {
               NoticeText(text: n.text).transition(.opacity)
             }
           } else {
-            Text(songTitle(track))
-              .font(.system(size: title, weight: .heavy, design: .rounded))
-              .tracking(-0.3)
-              .lineLimit(1)
-              .minimumScaleFactor(0.85)
-              .foregroundStyle(Color.primary)
-              .transition(.opacity)
-            if !sub.isEmpty {
-              // No line when there's nothing to say: the title centres on the art.
-              Text(sub)
+            // Always two lines: the title, then artist / site / app (or what it's doing).
+            VStack(alignment: .leading, spacing: 2) {
+              Text(text.title)
+                .font(.system(size: title, weight: .heavy, design: .rounded))
+                .tracking(-0.3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .foregroundStyle(Color.primary)
+              Text(text.subtitle)
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .foregroundStyle(.secondary)
-                .transition(.opacity)
             }
+            // A new song or tab cross-fades its words.
+            .id(entry.id + "\u{1}" + text.title)
+            .transition(.opacity)
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.easeOut(duration: 0.2), value: note?.text)
+        .animation(.easeOut(duration: 0.2), value: text.title)
       }
       .contentShape(Rectangle())
     }
     .buttonStyle(BentoPressStyle())
-    .pointerHint(Caption.nowPlaying(app.name, song: track != nil, paused: paused))
+    .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: text.paused))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(note.map { $0.text } ?? accessibility(track, paused: paused))
+    .accessibilityLabel(note.map { $0.text } ?? accessibility(entry))
     .accessibilityActions {
       if note?.settings == true {
         Button("Open Accessibility Settings") { MediaKeys.openSettings() }
@@ -115,26 +122,9 @@ struct NowPlayingHeadline: View {
     }
   }
 
-  private func accessibility(_ t: NowTrack?, paused: Bool) -> String {
-    let rest = subtitle(t, paused: paused, state: false)
-    return "\(paused ? "Paused" : "Playing"): \(songTitle(t))" + (rest.isEmpty ? "" : ", \(rest)")
-  }
-
-  private func songTitle(_ t: NowTrack?) -> String {
-    guard let t, !t.title.isEmpty else { return app.name }
-    return t.title
-  }
-
-  /// `state`: lead with "Paused" (off for VoiceOver, which says it first).
-  /// No song: "Paused" when the media key paused it, otherwise nothing (the
-  /// app's name is already the title).
-  private func subtitle(_ t: NowTrack?, paused: Bool, state: Bool = true) -> String {
-    guard let t else { return state && paused ? "Paused" : "" }
-    var parts: [String] = []
-    if state && paused { parts.append("Paused") }
-    if !t.artist.isEmpty { parts.append(t.artist) }
-    parts.append(app.name)
-    return parts.joined(separator: " · ")
+  private func accessibility(_ e: NowEntry) -> String {
+    let t = model.describe(e, state: false)
+    return "\(t.paused ? "Paused" : "Playing"): \(t.title), \(t.subtitle)"
   }
 }
 
@@ -279,108 +269,16 @@ private struct NextButton: View {
   }
 }
 
-/// Up to three more playing apps, one small tile each.
-struct NowPlayingTiles: View {
-  @ObservedObject var model: NowPlaying
-  let on: Bool
-  /// The Bass Shaker is on (tiles turn graphite when it's off, like the rest).
-  let active: Bool
-  /// Compact size: one row per tile, no text.
-  var compact: Bool = false
-
-  var body: some View {
-    if on, model.hero != nil, !model.others.isEmpty {
-      HStack(spacing: 8) {
-        ForEach(model.others) { app in
-          NowSubTile(model: model, app: app, active: active, compact: compact)
-            .transition(.opacity.combined(with: .scale(scale: 0.96)))
-        }
-      }
-      .fixedSize(horizontal: false, vertical: true)
-      .animation(.spring(response: 0.3, dampingFraction: 0.86), value: model.others.map(\.id))
-    }
-  }
-}
-
-private struct NowSubTile: View {
-  @ObservedObject var model: NowPlaying
-  let app: NowApp
-  let active: Bool
-  var compact: Bool = false
-  @Environment(\.labelLevel) private var labels
-  @Environment(\.colorScheme) private var scheme
-
-  var body: some View {
-    let track = model.route(app) == .script ? app.bundleID.flatMap { model.tracks[$0] } : nil
-    let paused = track.map { !$0.playing } ?? model.showsPaused(app)
-    let tint: BentoTint = active ? .frost : .graphite
-    let dark = scheme == .dark
-    BentoTile(tint: tint, interactive: true, glassID: "now." + app.id) {
-      if compact {
-        // Compact: art, play/pause, mute in one row; no text.
-        HStack(spacing: 6) {
-          Button { model.open(app) } label: {
-            NowArt(artwork: track?.artwork, icon: model.icon(app), size: 22).contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .pointerHint(Caption.alsoPlaying(app.name, song: track != nil, paused: paused))
-          .accessibilityLabel("\(app.name), \(paused ? "paused" : "also playing")")
-          PrimaryButton(model: model, app: app, size: 22, glyph: 9, fill: dark ? tint.pastel : tint.ink)
-          Spacer(minLength: 0)
-          if model.route(app) != .mute {
-            MuteButton(model: model, app: app, compact: true)
-          }
-        }
-        .frame(height: 22)
-      } else {
-        VStack(alignment: .leading, spacing: 6) {
-          Button { model.open(app) } label: {
-            HStack(spacing: 6) {
-              NowArt(artwork: track?.artwork, icon: model.icon(app), size: 22)
-              if labels != .icons {
-                VStack(alignment: .leading, spacing: 0) {
-                  Text(track.map { $0.title.isEmpty ? app.name : $0.title } ?? app.name)
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                  if labels == .full, let line = track.map({ (paused ? "Paused · " : "") + ($0.artist.isEmpty ? app.name : $0.artist) })
-                      ?? (paused ? "Paused" : nil) {
-                    Text(line)
-                      .font(.system(size: 9, weight: .medium, design: .rounded))
-                      .lineLimit(1)
-                      .truncationMode(.tail)
-                      .foregroundStyle(.secondary)
-                  }
-                }
-              }
-              Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .pointerHint(Caption.alsoPlaying(app.name, song: track != nil, paused: paused))
-          .accessibilityLabel("\(app.name), \(paused ? "paused" : "also playing")")
-          HStack(spacing: 4) {
-            PrimaryButton(model: model, app: app, size: 22, glyph: 9, fill: dark ? tint.pastel : tint.ink)
-            Spacer(minLength: 0)
-            if model.route(app) != .mute {
-              MuteButton(model: model, app: app, compact: true)
-            }
-          }
-          .frame(height: 22)
-        }
-      }
-    }
-    .frame(maxWidth: .infinity)
-    .pointerHintTint(scheme == .dark ? BentoTint.frost.pastel : BentoTint.frost.ink)
-  }
-}
+// The small tiles under the hero (NowPlayingTiles) live in NowStack.swift.
 
 /// Cover art with the app's icon as a small badge, or just the app's icon.
 struct NowArt: View {
   let artwork: NSImage?
   let icon: NSImage
   let size: CGFloat
+  /// The app's icon on the art's corner. nil: only from 30 pt up (a browser
+  /// tab's still asks for it at any size, so the browser always shows).
+  var badge: Bool? = nil
   @Environment(\.powerSaver) private var powerSaver
 
   var body: some View {
@@ -395,7 +293,7 @@ struct NowArt: View {
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
-        if size >= 30 {
+        if badge ?? (size >= 30) {
           Image(nsImage: icon)
             .resizable()
             .interpolation(.high)
@@ -417,7 +315,7 @@ struct NowArt: View {
 /// Mute just this app: a speaker, slashed when muted. The same per-app mute
 /// as Live Channels. (Replaced "Shaped / Untouched", which nobody could read;
 /// skipping effects per app stays in Live Channels.)
-private struct MuteButton: View {
+struct MuteButton: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
   let compact: Bool
@@ -487,7 +385,7 @@ struct NowPlayingNote: View {
   /// Only what a beginner can't guess: what the tile shows, and the one-time
   /// macOS question about Spotify / Music. (Turn Off is the button below.)
   private func message(bento: Bool, mini: Bool, channel: Bool) -> String {
-    var t = "The top tile shows the loudest app. If your Mac asks to let The Bass Shaker control Spotify or Music, say OK to see the song and cover. Nothing is saved or shared."
+    var t = "The top tile shows the loudest app. If your Mac asks to let The Bass Shaker control Spotify, Music or your browser (Chrome, Safari…), say OK to see the song or video. Nothing is saved or shared."
     if mini {
       // Mini's playing channel shows the song too (Classic and Bento).
       if !channel { t += " Hidden at Mini size." }
@@ -515,7 +413,7 @@ extension Caption {
       return PointerHint(name, does: "Stays here up to three minutes so you can press play.",
                          gestures: ["Click opens \(name)"])
     }
-    return PointerHint(name, does: "Up to three more apps show here; the loudest gets the top tile.",
+    return PointerHint(name, does: "The loudest app takes the top tile; the rest wait here.",
                        gestures: ["Click opens \(name)"])
   }
 
