@@ -67,6 +67,12 @@ struct NowItem: Equatable, Identifiable {
   var artwork: NSImage?
   /// Heard right now (the tab's own audio indicator), not just open.
   var playing: Bool
+  /// `playing` comes from the browser's own tab audio indicator (Chromium tab
+  /// strip via Accessibility). false: a guess (a media-site tab, active tab
+  /// first) and `playing` is false because we can't tell.
+  var certain: Bool = true
+  /// The browser muted this tab (it plays, silently).
+  var muted: Bool = false
 }
 
 /// "What's Playing" for the Bento hero.
@@ -81,6 +87,12 @@ struct NowItem: Equatable, Identifiable {
 /// every ~2 s for the title, artist, state and cover, and play/pause/next on
 /// click. Denied: that app silently stays at layer A. The only network use is
 /// Spotify's own artwork URL (ephemeral session: nothing cached on disk).
+///
+/// Browsers (Chrome / Brave / Edge / Vivaldi / Arc / Safari, same gates): the
+/// tabs' titles and URLs by AppleScript (no JavaScript), and, when the app is
+/// already trusted for Accessibility (never prompted here), Chromium's tab strip
+/// says which tabs are playing ("<title> - Audio playing"). Result: `items`, one
+/// per playing tab; YouTube stills come from i.ytimg.com (same ephemeral session).
 ///
 /// Main-thread state. AppleScript runs on `scriptQueue` (serial), never main;
 /// nothing here touches Core Audio (levels come from LiveChannels' atomics).
@@ -201,6 +213,13 @@ final class NowPlaying: ObservableObject {
   private var commandSerial = 0
   private var artCache: [String: NSImage] = [:]
   private var artLoading: Set<String> = []
+  // Browsers (main)
+  /// When each item was first seen (stable tile order).
+  private var itemSeen: [String: TimeInterval] = [:]
+  /// YouTube stills by video id.
+  private var stillCache: [String: NSImage] = [:]
+  private var stillLoading: Set<String> = []
+  private var browserBusy = false
   private let scriptQueue = DispatchQueue(label: "bassshake.nowplaying", qos: .utility)
   private let bridge = NowPlayingScripts()   // scriptQueue only
   private lazy var artSession = URLSession(configuration: .ephemeral, delegate: ArtRedirectGuard(), delegateQueue: nil)
@@ -275,6 +294,10 @@ final class NowPlaying: ObservableObject {
       hero = nil
       others = []
       tracks = [:]
+      items = [:]
+      itemSeen = [:]
+      stillCache.removeAll()
+      stillLoading.removeAll()
       lastHeard = [:]
       known = [:]
       firstSeen = [:]
@@ -455,11 +478,13 @@ final class NowPlaying: ObservableObject {
 
     // What's Playing turned off while Mini's channel runs on: no song or cover.
     if !mayAsk && !tracks.isEmpty { tracks = [:] }
+    if !mayAsk && !items.isEmpty { items = [:] }
     // Layer B, only while the popup is really visible.
     // Not before the one-time note is acknowledged: the Automation prompt would hide it.
     if now - lastPoll >= Self.pollEvery, now - lastVisible < 1.0, !polling, mayAsk {
       lastPoll = now
       pollPlayers()
+      pollBrowsers()
     }
   }
 
@@ -807,6 +832,135 @@ final class NowPlaying: ObservableObject {
     return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
   }
 
+  // MARK: - Browsers: which tab is playing (AppleScript + Accessibility, off main)
+
+  /// Browsers on screen right now that may be asked (running, not denied).
+  private func shownBrowsers() -> [(NowBrowser, String)] {
+    guard mayAsk else { return [] }
+    return ([hero].compactMap { $0 } + others).compactMap { a in
+      guard let b = a.bundleID.flatMap(NowBrowser.init(rawValue:)), !denied.contains(b.rawValue), b.isRunning else { return nil }
+      return (b, a.id)
+    }
+  }
+
+  private func pollBrowsers() {
+    let browsers = shownBrowsers()
+    let keep = Set(browsers.map(\.1))
+    let pruned = items.filter { keep.contains($0.key) }
+    if pruned.count != items.count { items = pruned }
+    guard !browsers.isEmpty, !browserBusy else { return }
+    browserBusy = true
+    scriptQueue.async { [bridge] in
+      var results: [(NowBrowser, String, NowPlayingScripts.TabsState, [String]?)] = []
+      for (b, appID) in browsers {
+        guard b.isLive else { results.append((b, appID, .stopped, nil)); continue }
+        let state = bridge.tabs(b)
+        // Only after the tabs were read: an Automation denial reads nothing more.
+        var ax: [String]? = nil
+        if case .tabs = state, b.hasTabStripAudio, let pid = b.pid { ax = BrowserAX.tabNames(pid: pid) }
+        results.append((b, appID, state, ax))
+      }
+      DispatchQueue.main.async { self.applyBrowsers(results) }
+    }
+  }
+
+  private func applyBrowsers(_ results: [(NowBrowser, String, NowPlayingScripts.TabsState, [String]?)]) {
+    browserBusy = false
+    for (b, _, r, _) in results {
+      if case .denied = r, !denied.contains(b.rawValue) {
+        log.notice("automation not allowed for \(b.rawValue, privacy: .public)")
+        denied.insert(b.rawValue)
+      }
+    }
+    guard active, mayAsk else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    var next = items
+    for (b, appID, r, ax) in results {
+      switch r {
+      case .denied, .stopped:
+        next[appID] = nil
+        failures[b.rawValue] = nil
+      case .unavailable:
+        let n = (failures[b.rawValue] ?? 0) + 1
+        failures[b.rawValue] = n
+        if n >= 3 { next[appID] = nil }
+      case .tabs(let tabs):
+        failures[b.rawValue] = nil
+        var list = BrowserTabs.items(appID: appID, tabs: tabs, axNames: ax)
+        for i in list.indices {
+          if itemSeen[list[i].id] == nil { itemSeen[list[i].id] = now }
+          if let vid = list[i].url.flatMap({ BrowserTabs.youTubeID($0.absoluteString) }) {
+            if let hit = stillCache[vid] { list[i].artwork = hit } else { loadStill(vid) }
+          }
+        }
+        // Heard tabs first, then a stable order (first seen), so tiles don't shuffle.
+        list = list.enumerated().sorted { x, y in
+          let a = x.element, b = y.element
+          if a.playing != b.playing { return a.playing }
+          if a.muted != b.muted { return !a.muted }
+          let sa = itemSeen[a.id] ?? now, sb = itemSeen[b.id] ?? now
+          return sa != sb ? sa < sb : x.offset < y.offset
+        }.map(\.element)
+        next[appID] = list.isEmpty ? nil : list
+      }
+    }
+    let live = Set(next.values.flatMap { $0.map(\.id) })
+    itemSeen = itemSeen.filter { live.contains($0.key) }
+    if next != items { items = next }
+  }
+
+  /// YouTube's still for a video (the only network use for browsers; ephemeral,
+  /// redirects held to i.ytimg.com).
+  private func loadStill(_ vid: String) {
+    guard !stillLoading.contains(vid), let u = BrowserTabs.stillURL(vid) else { return }
+    stillLoading.insert(vid)
+    artSession.dataTask(with: u) { [weak self] data, resp, _ in
+      let okStatus = (resp as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+      let img = okStatus ? data.flatMap { Self.thumbnail($0) } : nil
+      DispatchQueue.main.async { self?.stillLoaded(img, vid: vid) }
+    }.resume()
+  }
+
+  private func stillLoaded(_ img: NSImage?, vid: String) {
+    stillLoading.remove(vid)
+    guard wanted, let img else { return }
+    if stillCache.count >= 24 { stillCache.removeAll() }
+    stillCache[vid] = img
+    var next = items
+    for (k, list) in next {
+      next[k] = list.map { it in
+        var it = it
+        if it.artwork == nil, it.url.flatMap({ BrowserTabs.youTubeID($0.absoluteString) }) == vid { it.artwork = img }
+        return it
+      }
+    }
+    if next != items { items = next }
+  }
+
+  /// Brings this item's tab to the front of its browser (a tile click).
+  /// Falls back to just opening the app when the tab can't be named.
+  func focus(_ item: NowItem) {
+    let parts = item.id.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+    guard mayAsk, let b = NowBrowser(rawValue: item.appID), !denied.contains(b.rawValue), b.isRunning,
+          parts.count >= 3, !item.id.hasPrefix(item.appID + ":ax:") else {
+      if let app = ([hero].compactMap { $0 } + others).first(where: { $0.id == item.appID }) { open(app) }
+      return
+    }
+    let window = parts[parts.count - 2], tab = parts[parts.count - 1]
+    let index = Int(tab) ?? 1
+    scriptQueue.async { [bridge] in
+      let code: Int? = b.isLive ? bridge.focus(b, window: window, tab: tab, index: index) : 0
+      DispatchQueue.main.async {
+        if code == NowPlayingScripts.notPermitted {
+          self.denied.insert(b.rawValue)
+          self.items[item.appID] = nil
+        } else if code != nil, let app = ([self.hero].compactMap { $0 } + self.others).first(where: { $0.id == item.appID }) {
+          self.open(app)
+        }
+      }
+    }
+  }
+
   // MARK: - Controls (user clicks only)
 
   func playPause(_ app: NowApp) { send(app, .playPause) }
@@ -837,11 +991,15 @@ final class NowPlaying: ObservableObject {
   }
 }
 
-/// Holds a cover download's redirects to Spotify's own image hosts.
+/// Holds a cover download's redirects to the hosts it started on: Spotify's
+/// own image hosts, or i.ytimg.com for YouTube stills.
 final class ArtRedirectGuard: NSObject, URLSessionTaskDelegate {
   func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                   newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-    completionHandler(request.url.flatMap { NowPlaying.isSpotifyArt($0) ? request : nil })
+    guard let to = request.url, let from = task.originalRequest?.url else { completionHandler(nil); return }
+    let ok = (NowPlaying.isSpotifyArt(from) && NowPlaying.isSpotifyArt(to))
+      || (BrowserTabs.isYouTubeStill(from) && BrowserTabs.isYouTubeStill(to))
+    completionHandler(ok ? request : nil)
   }
 }
 
@@ -954,15 +1112,16 @@ final class NowPlayingScripts {
     }
   }
 
-  private enum Outcome {
+  enum Outcome {
     case success(NSAppleEventDescriptor)
     case failure(Int)
   }
 
-  private func run(key: String, _ source: String) -> Outcome {
-    if broken.contains(key) { return .failure(0) }
+  /// `cache: false` for one-off sources (a tab click): compiled, run, dropped.
+  func run(key: String, _ source: String, cache: Bool = true) -> Outcome {
+    if cache && broken.contains(key) { return .failure(0) }
     let script: NSAppleScript
-    if let hit = compiled[key] {
+    if cache, let hit = compiled[key] {
       script = hit
     } else {
       guard let s = NSAppleScript(source: source) else { broken.insert(key); return .failure(0) }
@@ -971,10 +1130,10 @@ final class NowPlayingScripts {
         // Missing dictionary terms (an old app version): don't retry this session.
         let code = (err?[NSAppleScript.errorNumber] as? Int) ?? 0
         log.error("script \(key, privacy: .public) did not compile: \(code, privacy: .public)")
-        broken.insert(key)
+        if cache { broken.insert(key) }
         return .failure(code)
       }
-      compiled[key] = s
+      if cache { compiled[key] = s }
       script = s
     }
     var err: NSDictionary?
