@@ -1123,14 +1123,16 @@ final class AudioController: ObservableObject {
     // Sleep ignores Boost: quieter is the point.
     let boost = s.mode == .sleep ? 0 : s.boostDb
     let fair = s.mode == .sleep ? min(0, live.fairDb) : live.fairDb
-    // Gain safety: Boost, Fair Level and loudness makeup on top of the EQ's
-    // highest node lift at most +12 dB in total, and past +6 dB the limiter
+    // Gain safety: the automatic lifts (Fair Level, loudness makeup) never take
+    // the total past +12 dB over the EQ's highest node; the user's own Boost is
+    // never trimmed. Past +6 dB in total the limiter
     // runs even with Limit off. The toggle stays as the user set it (only
     // the engine's safety net turns on; no auto headroom or compression), and
     // the output gain and the limiter's on/off both glide in the engine.
     let eqPeak = max(0, s.bands.map(\.gain).max() ?? 0)
-    var lift = boost + loudnessMakeup + fair
-    if lift > 0 { lift = min(lift, max(0, Self.maxLiftDb - eqPeak)) }
+    var auto = loudnessMakeup + fair
+    if auto > 0 { auto = min(auto, max(0, Self.maxLiftDb - eqPeak - max(0, boost))) }
+    let lift = boost + auto
     let safetyLimit = eqPeak + max(0, lift) > Self.autoLimitAboveDb
     punch_set_output_gain_db(e, Float(lift + fade.musicDb + currentQuietFloorDb))
     punch_set_loudness_guard(e, s.nightGuard, Float(s.nightGuardDb), 20)
