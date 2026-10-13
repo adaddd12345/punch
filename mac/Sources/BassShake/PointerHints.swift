@@ -6,9 +6,9 @@ import SwiftUI
 /// of decart.com's quiet labels: always there, never in the way).
 ///
 ///   ╭──────────────────────────────╮
-///   │ Strength                 55% │
-///   │ Makes bass feel deeper       │
-///   │ without making it louder.    │
+///   │ Strength                     │
+///   │ Tricks your ear into hearing │
+///   │ deep bass, even on small…    │
 ///   │ (Drag ↔) (Double-click…)     │
 ///   ╰──────────────────────────────╯
 ///
@@ -33,12 +33,25 @@ struct PointerHint: Equatable {
     self.name = name
     self.value = value
     self.sentence = sentence
-    self.gestures = gestures
+    self.gestures = gestures.filter { !Self.isObvious($0) }
     self.live = live
     self.tint = tint
   }
 
   var isEmpty: Bool { name.isEmpty }
+
+  /// Tutorial rule: say only what isn't obvious. Anyone knows a button is
+  /// clicked and a slider dragged, so plain-click chips ("Click", "Click to
+  /// use", "Click to turn on", "Drag the slider") are dropped here, for every
+  /// caption. Kept: drags on things that don't look draggable, double- and
+  /// right-clicks, modifier keys, hotkeys, and clicks that do something
+  /// unexpected ("Click for settings").
+  static func isObvious(_ g: String) -> Bool {
+    let t = g.trimmingCharacters(in: .whitespaces)
+    if t == "Click" || t == "Drag the slider" { return true }
+    guard t.hasPrefix("Click to ") else { return false }
+    return true
+  }
 }
 
 enum PointerHintSpace {
@@ -630,89 +643,80 @@ enum Caption {
   /// Strength. `scrub`: the Bento drag-the-number tile (double-click resets);
   /// otherwise the classic slider.
   static func strength(_ bass: Double, scrub: Bool) -> PointerHint {
-    PointerHint("Strength", value: "\(Int((bass * 100).rounded()))%",
-                does: "Makes bass feel deeper without making it louder.",
-                gestures: scrub ? [drag, resetTap] : ["Drag the slider"])
+    PointerHint("Strength", does: "Tricks your ear into hearing deep bass, even on small speakers.",
+                gestures: scrub ? [drag, resetTap] : [])
   }
 
   static func boost(_ db: Double, scrub: Bool) -> PointerHint {
-    PointerHint("Boost", value: "+\(Int(db.rounded())) dB",
-                does: "Makes everything louder, even past your Mac's max volume.",
-                gestures: scrub ? [drag, resetTap] : ["Drag the slider"])
+    PointerHint("Boost", does: "Goes past your Mac's max volume; without Limit, loud parts can distort.",
+                gestures: scrub ? [drag, resetTap] : [])
   }
 
   static func power(on: Bool) -> PointerHint {
-    PointerHint("Power", value: on ? "On" : "Off",
-                does: "Turns The Bass Shaker on or off. Off: your Mac's normal sound.",
-                gestures: [on ? "Click to turn off" : "Click to turn on"])
+    PointerHint("Power", does: "Off removes every effect; your Mac plays its untouched sound.")
   }
 
   static func output(_ device: String?) -> PointerHint {
     PointerHint("Output", value: device ?? "None",
-                does: "Picks where your sound comes out.",
+                does: "Switches your Mac's output for every app, like the Sound menu.",
                 gestures: ["Click to choose"])
   }
 
   static func checkAndFix(menu: Bool = false) -> PointerHint {
     PointerHint("Check & Fix",
-                does: "Fixes silent, muffled or one-sided sound with a 2-second restart.",
-                gestures: menu ? ["Click", "Right-click for options"] : ["Click"])
+                does: "Fixes silent, muffled or one-sided sound, then reconnects audio.",
+                gestures: menu ? ["Right-click: auto-check after sleep"] : [])
   }
 
   static func studioEars(on: Bool) -> PointerHint {
-    PointerHint("Studio Ears", value: on ? "On" : "Off",
-                does: "Adds deep bass and crisp highs on top of any preset.",
-                gestures: [on ? "Click to turn off" : "Click to turn on"])
+    PointerHint("Studio Ears", does: "Adds deep bass and crisp highs on top of any preset.")
   }
 
   static func loudness(on: Bool) -> PointerHint {
-    PointerHint("Loudness", value: on ? "On" : "Off",
-                does: "Adds more bass and treble the lower your volume goes.",
-                gestures: [on ? "Click to turn off" : "Click to turn on"])
+    PointerHint("Loudness", does: "Adds more bass and treble the lower your volume goes.")
   }
 
   /// `click`: what a click does now ("Click to turn on", "Click for settings"…).
   static func nightGuard(on: Bool, allowDb: Double, click: String) -> PointerHint {
-    PointerHint("Night Guard", value: on ? "+\(Int(allowDb.rounded())) dB max" : "Off",
-                does: "Turns down sudden loud parts, like explosions after quiet talking.",
+    PointerHint("Night Guard", does: "Turns down sudden loud parts, like explosions after quiet talking.",
                 gestures: [click])
   }
 
   static func allow(_ db: Double, scrub: Bool) -> PointerHint {
-    PointerHint("Allow", value: "+\(Int(db.rounded())) dB",
-                does: "How much louder a sudden sound may get before it's turned down.",
-                gestures: scrub ? [drag, resetTap] : ["Drag the slider"])
+    PointerHint("Allow", does: "How far sounds may jump above what you've been hearing.",
+                gestures: scrub ? [drag, resetTap] : [])
   }
 
-  /// Study / Sleep. `state`: "On", "12 min left"…; nil while off.
+  /// Study / Sleep. `state`: "12 min left"…; nil when the lit tile says it all.
   static func mode(_ m: ListeningMode, state: String?, click: String) -> PointerHint {
     let does = m == .sleep
-      ? "Soft sound that can fade out; swaps out your preset until off."
+      ? "Soft, dark sound that fades out on a timer; replaces your preset."
       : "Calm sound for focus; swaps out your preset until turned off."
-    return PointerHint(m.title, value: state ?? "Off", does: does, gestures: [click])
+    return PointerHint(m.title, value: state, does: does, gestures: [click])
   }
 
   static func ab(bypassed: Bool, hotkey: String?) -> PointerHint {
-    PointerHint("A/B Compare", value: bypassed ? "Original" : "Effects on",
-                does: "Quick before-and-after: hear your Mac without effects. Nothing turns off.",
-                gestures: ["Click"] + (hotkey.map { ["Or press \($0)"] } ?? []))
+    PointerHint("A/B Compare", does: "Hear the original sound; your settings stay as they are.",
+                gestures: hotkey.map { ["Or press \($0)"] } ?? [])
   }
 
   static func preset(_ p: Preset) -> PointerHint {
-    PointerHint(p.name, value: "Preset", does: plain[p.name] ?? p.subtitle, gestures: ["Click to use"])
+    PointerHint(p.name, does: plain[p.name] ?? p.subtitle)
   }
 
   static func userPreset(_ name: String) -> PointerHint {
-    PointerHint(name, value: "Your preset", does: "A sound you saved earlier.",
-                gestures: ["Click to use", "Right-click to edit"])
+    PointerHint(name, does: "Your saved sound; unlike built-in presets, it sets Boost too.",
+                gestures: ["Right-click: rename, update, delete"])
   }
 
-  static let savePreset = PointerHint("Save Preset", does: "Saves the sound you hear now, so you can return to it.",
-                                      gestures: ["Click"])
+  static let savePreset = PointerHint("Save Preset", does: "Keeps EQ, Strength and Boost; not Studio Ears, Loudness or Limit.")
 
   /// One plain sentence per built-in preset (their subtitles are for experts).
   private static let plain: [String: String] = [
-    "Flat": "Your Mac's own sound: no bass or treble changes.",
+    // Not "your Mac's own sound": that's Power off. Flat zeroes the EQ and
+    // Strength and ends Study/Sleep; Boost, Limit, Studio Ears and Loudness
+    // keep working.
+    "Flat": "Clears EQ and Strength; Boost, Limit, Studio Ears and Loudness still apply.",
     "Bass Shake": "Deep, punchy bass with a little extra sparkle on top.",
     "Bass Boost": "Lots more low bass; everything else stays the same.",
     "Laptop": "Helps small laptop speakers sound fuller and less thin.",
@@ -732,11 +736,11 @@ enum Caption {
   static func hero(live: Bool, mode: ListeningMode, word: String, editedFrom: String?, unsaved: Bool) -> PointerHint {
     if !live { return PointerHint("Off", does: "Nothing is changed: your Mac plays its normal sound.") }
     if mode != .off { return PointerHint(word, value: "Paused", does: "\(mode.title) plays its own sound until you turn it off.") }
-    if let base = editedFrom {
-      return PointerHint("Edited", value: "from \(base)", does: "You changed the sound; click + below to save it.")
+    if editedFrom != nil {
+      return PointerHint("Edited", does: "Save it with + below, or press ⌘Z to undo.")
     }
-    if unsaved { return PointerHint("My Sound", value: "Not saved", does: "Your own sound; click + below to save it.") }
-    return PointerHint(word, value: "In use", does: "The sound in use; pick another from the presets below.")
+    if unsaved { return PointerHint("My Sound", value: "Not saved", does: "Save it with + below, or press ⌘Z to undo.") }
+    return PointerHint(word, does: plain[word] ?? "Your saved sound; right-click its chip below to update it.")
   }
 
   /// The hero's L/R level lines, polled while showing.
@@ -746,7 +750,7 @@ enum Caption {
       return String(format: "%.0f", v).replacingOccurrences(of: "-", with: "\u{2212}")
     }
     return PointerHint("Level", value: "L \(db(m.channels[0].level))  R \(db(m.channels[1].level)) dB",
-                       does: "How loud it plays right now; red means it's at the top.")
+                       does: "Turns red near the top, or while Limit is turning it down.")
   }
 
   /// One EQ node (empty when none is under the pointer).
@@ -757,7 +761,7 @@ enum Caption {
     let g = String(format: "%+.1f dB", b.gain).replacingOccurrences(of: "-", with: "\u{2212}")
     return PointerHint("\(range) · \(f)", value: g,
                        does: "Turns one range of sounds up or down; sideways picks the range.",
-                       gestures: ["Drag", "Double-click: 0 dB", "Hold ⇧: fine"])
+                       gestures: ["Scroll: width", "Double-click: 0 dB", "⌥-click: reset", "Hold ⇧: fine"])
   }
 }
 
@@ -765,26 +769,23 @@ enum Caption {
 enum LimitHint {
   static func make(on: Bool, meters: MeterModel) -> PointerHint {
     let does = "Keeps loud parts clean by turning the bass down first."
-    guard on else { return PointerHint("Limit", value: "Off", does: does, gestures: ["Click to turn on"]) }
+    guard on else { return PointerHint("Limit", does: does) }
     let r = min(12, max(0, -meters.gainReductionDb))
-    let v = r < 0.1 ? "On" : "\u{2212}\(String(format: "%.1f", r)) dB"
-    return PointerHint("Limit", value: v, does: does, gestures: ["Click to turn off"])
+    return PointerHint("Limit", value: r < 0.1 ? nil : "\u{2212}\(String(format: "%.1f", r)) dB", does: does)
   }
 
   /// The EQ's Limit badge (hover only).
   static func badge(meters: MeterModel) -> PointerHint {
-    let r = min(12, max(0, -meters.gainReductionDb))
-    return PointerHint("Limit", value: r < 0.1 ? "0 dB" : "\u{2212}\(String(format: "%.1f", r)) dB",
-                       does: "How much the sound is turned down right now to stay clean.")
+    PointerHint("Limit", does: "How much the sound is turned down right now to stay clean.")
   }
 }
 
 /// Background noise's caption (#21), Bento and classic.
 enum NoiseHint {
   static func make(_ s: Settings) -> PointerHint {
-    let does = "Plays a steady hiss under your music to hide distractions."
-    guard s.noiseOn else { return PointerHint("Noise", value: "Off", does: does, gestures: ["Click to turn on"]) }
+    let does = "Steady background noise that masks sounds around you, like traffic."
+    guard s.noiseOn else { return PointerHint("Noise", value: nil, does: does, gestures: ["Click to turn on"]) }
     let pct = max(0, min(100, Int(((s.noiseDb + 60) / 36 * 100).rounded())))
-    return PointerHint("Noise", value: "\(s.noiseColor.title) · \(pct)%", does: does, gestures: ["Click to turn off"])
+    return PointerHint("Noise", value: "\(pct)%", does: does, gestures: ["Click to turn off"])
   }
 }

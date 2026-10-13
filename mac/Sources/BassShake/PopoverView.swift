@@ -70,6 +70,7 @@ struct PopoverView: View {
       if !controller.settings.bento || size == .mini { header }
       statusBanner
       MutedNotice(model: controller.live)
+      NowPlayingNote(controller: controller, mini: size == .mini)
       if controller.settings.bento && size != .mini {
         driverSection
         BentoView(controller: controller, meters: meters, editor: $editor, size: size,
@@ -166,10 +167,13 @@ struct PopoverView: View {
         // A hidden or fully covered window (NSPopover/launch window kept
         // alive off screen) draws nothing: don't drive SwiftUI updates.
         if let w = window.window, !w.isVisible || !w.occlusionState.contains(.visible) { return }
+        NowPlaying.shared.noteVisible()
         meters.update(controller.pollMeters())
         if controller.settings.waveform && role != .launchWindow { controller.waveform.pull(controller) }
       }
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
+      NowPlaying.shared.attach(controller)
+      NowPlaying.shared.windowAppeared()
       latencyLab.startMonitoring()
       updates.checkInBackgroundIfStale()
     }
@@ -182,6 +186,7 @@ struct PopoverView: View {
       showBeats = false
       if ownsDrawer { LiveDrawer.shared.hide() }
       controller.live.setMetering(false)
+      NowPlaying.shared.windowDisappeared()
       // A pad held while the popover closed never gets its release event.
       controller.dj.held = []
     }
@@ -250,7 +255,6 @@ struct PopoverView: View {
     .buttonStyle(.plain)
     .accessibilityLabel("Labels: \(controller.settings.labelLevel.title)")
     .pointerHint("Labels", value: controller.settings.labelLevel.title,
-                 does: "Shows more or fewer words in this window.",
                  gestures: ["Click for \(controller.settings.labelLevel.next.title)"])
     if role != .launchWindow {
       Button {
@@ -264,8 +268,8 @@ struct PopoverView: View {
       .accessibilityLabel("View size: \(controller.settings.viewSize.title)")
       .accessibilityHint("Switches to \(controller.settings.viewSize.next.title)")
       .pointerHint("Size", value: controller.settings.viewSize.title,
-                   does: "Makes this window bigger or smaller.",
-                   gestures: ["Click for \(controller.settings.viewSize.next.title)"], vo: false)
+                   does: "Mini keeps just the power switch and main sliders.",
+                   gestures: ["Click for \(controller.settings.viewSize.next.title)", "⌘1 Full · ⌘2 Compact · ⌘3 Mini"], vo: false)
     }
     if role != .launchWindow {
       Button {
@@ -618,6 +622,9 @@ struct PopoverView: View {
           // Stored as `pointerHints` so saved settings keep loading.
           Toggle("Tutorial Mode", isOn: Binding(get: { controller.settings.pointerHints },
                                                 set: { controller.settings.pointerHints = $0 }))
+          // Off by default; the first time it's turned on, a one-time note explains it.
+          Toggle("Show What's Playing", isOn: Binding(get: { controller.settings.showNowPlaying },
+                                                      set: { controller.settings.showNowPlaying = $0 }))
           Divider()
           Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
           Divider()

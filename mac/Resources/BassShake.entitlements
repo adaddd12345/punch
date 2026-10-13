@@ -5,5 +5,8 @@
   <!-- Required with the hardened runtime for Core Audio taps and for the
        microphone (Latency Lab); harmless for ad-hoc beta builds. -->
   <key>com.apple.security.device.audio-input</key><true/>
+  <!-- What's Playing: asks Spotify / Music (Automation) for the song, cover
+       and play/pause/next. macOS asks the user once per app. -->
+  <key>com.apple.security.automation.apple-events</key><true/>
 </dict>
 </plist>

@@ -42,9 +42,8 @@ struct LiveChannelsButton: View {
   }
 
   private func hint(_ n: Int, _ mutedCount: Int) -> PointerHint {
-    PointerHint("Apps Playing", value: mutedCount > 0 ? "\(n) · \(mutedCount) muted" : "\(n)",
-                does: "Each app making sound, with its own level and mute.",
-                gestures: [expanded ? "Click to hide" : "Click to show"])
+    PointerHint("Apps Playing", value: mutedCount > 0 ? "\(mutedCount) muted" : nil,
+                does: "Mute any one app, or let it skip The Bass Shaker.")
   }
 }
 
@@ -164,9 +163,8 @@ private struct LiveChannelRow: View {
           }
       }
       .buttonStyle(.plain)
-      .pointerHint(app.name, value: shakerOn ? "Effects on" : "Untouched",
-                   does: "Choose whether this app goes through The Bass Shaker.",
-                   gestures: [shakerOn ? "Click to leave untouched" : "Click to add effects"])
+      .pointerHint(app.name, value: shakerOn ? "Shaped" : "Untouched",
+                   does: "Untouched skips every effect, even Limit and Night Guard; remembered per app.")
       Button(action: onToggle) {
         Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
           .font(.system(size: 9, weight: .bold))
@@ -178,7 +176,7 @@ private struct LiveChannelRow: View {
       .pointerHint(app.name, value: muted ? "Muted" : "Playing",
                    does: muted ? "Silenced until you unmute it or quit The Bass Shaker."
                      : (app.usesHelpers ? "Silences all its tabs; a browser plays sound as one app."
-                                        : "Silences just this app until you unmute it."),
+                                        : "Silences only this app; quitting The Bass Shaker unmutes it."),
                    gestures: [muted ? "Click to unmute" : "Click to mute"])
     }
     .padding(.horizontal, 4)

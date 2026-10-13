@@ -60,9 +60,8 @@ struct BeatsView: View {
         Text(d.key).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(.tertiary)
       }
       ScrubPercent(value: player.volume, label: "Beats volume") { player.setVolume($0) }
-        .pointerHint("Beats Volume", value: "\(Int((player.volume * 100).rounded()))%",
-                     does: "Changes only the beat's volume, not your Mac's.",
-                     gestures: [Caption.drag, "Double-click for 80%"], live: true)
+        .pointerHint("Beats Volume", does: "Changes only the beat's volume, not your Mac's.",
+                     gestures: [Caption.drag, "Double-click for 80%"])
       Button(action: onToggleLayout) {
         Image(systemName: side ? "rectangle.split.1x2" : "rectangle.split.2x1")
           .font(.system(size: 10, weight: .semibold))

@@ -484,6 +484,11 @@ struct Settings: Codable, Equatable {
   var bento = false
   /// Tutorial Mode (⋯ › Presets & Settings): a small card by the pointer saying what each control does. Key kept from "Pointer Hints".
   var pointerHints = true
+  /// What's Playing (⋯ › Presets & Settings): the Bento hero shows the app you
+  /// hear most (and, with permission, Spotify / Music's song and cover).
+  var showNowPlaying = false
+  /// The one-time note shown the first time What's Playing is turned on.
+  var nowPlayingNoteSeen = false
   /// The preset the current sound was edited from (nil once a preset is picked or saved).
   var editedFrom: String? = nil
   /// The bottom tray (modes) is open.
@@ -568,6 +573,8 @@ struct Settings: Codable, Equatable {
     beatsSide = (try? c.decodeIfPresent(Bool.self, forKey: .beatsSide)) ?? d.beatsSide
     bento = (try? c.decodeIfPresent(Bool.self, forKey: .bento)) ?? d.bento
     pointerHints = (try? c.decodeIfPresent(Bool.self, forKey: .pointerHints)) ?? d.pointerHints
+    showNowPlaying = (try? c.decodeIfPresent(Bool.self, forKey: .showNowPlaying)) ?? d.showNowPlaying
+    nowPlayingNoteSeen = (try? c.decodeIfPresent(Bool.self, forKey: .nowPlayingNoteSeen)) ?? d.nowPlayingNoteSeen
     editedFrom = (try? c.decodeIfPresent(String.self, forKey: .editedFrom)) ?? nil
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb

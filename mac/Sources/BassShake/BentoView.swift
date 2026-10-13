@@ -42,6 +42,8 @@ struct BentoView: View {
   @Environment(\.colorScheme) private var scheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   private var s: Settings { controller.settings }
+  /// What's Playing. Not observed here: only its own small views observe it.
+  private var nowPlaying: NowPlaying { NowPlaying.shared }
   private var live: Bool { s.enabled }
   /// Every tile but the hero turns calm graphite when the app is off.
   private func tint(_ t: BentoTint) -> BentoTint { live ? t : .graphite }
@@ -51,6 +53,8 @@ struct BentoView: View {
   var body: some View {
     VStack(spacing: 8) {
       hero
+      // What's Playing: other playing apps (nothing while the feature is off).
+      NowPlayingTiles(model: nowPlaying, live: controller.live, on: s.showNowPlaying, active: live)
       BentoTile(tint: tint(.frost), padding: 0) {
         EQView(controller: controller, chrome: false,
                filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
@@ -174,6 +178,34 @@ struct BentoView: View {
         heroIcons
       }
       .frame(height: 14)
+      NowPlayingSwitch(model: nowPlaying, on: s.showNowPlaying) {
+        presetRows(t, dark: dark)
+      } playing: { app in
+        playingRows(app, t, dark: dark)
+      }
+    }
+    .padding(.horizontal, 16)
+    .padding(.top, 8)
+    .padding(.bottom, 16)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .overlay(alignment: .bottom) {
+      // The L/R lines live in the (non-interactive) background: this thin
+      // strip over them carries their caption.
+      if live {
+        Color.clear
+          .frame(height: 12)
+          .contentShape(Rectangle())
+          .pointerHint { [meters] in Caption.level(meters) }
+          .padding(.horizontal, 16)
+      }
+    }
+    .pointerHintTint(ink(t))
+    .background { heroBackground(t, dark: dark, shape: shape) }
+  }
+
+  /// The hero as it always was: the big preset word, then modes and output.
+  private func presetRows(_ t: BentoTint, dark: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
       HStack(alignment: .center, spacing: 8) {
         ZStack(alignment: .leading) {
           HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -203,28 +235,11 @@ struct BentoView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.easeOut(duration: 0.25), value: heroKey)
         .accessibilityElement(children: .combine)
-        if live {
-          // Reserve "Original"'s width so A/B never re-flows the preset name.
-          ZStack {
-            Text("Original")
-              .font(.system(size: 10, weight: .bold, design: .rounded))
-              .lineLimit(1).fixedSize().footerChip().hidden()
-            abButton
-          }
-          .fixedSize()
-        }
-        powerButton
+        heroTrailing
       }
       HStack(alignment: .center, spacing: 8) {
         if live && !modesLine.isEmpty {
-          ViewThatFits(in: .horizontal) {
-            Text(modesLine).lineLimit(1).fixedSize()
-            Text(modeCount == 1 ? "+ 1 mode" : "+ \(modeCount) modes").lineLimit(1)
-          }
-          .font(.system(size: 11, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary)
-          .layoutPriority(1)
-          .transition(.opacity)
+          modesText(droppable: false).transition(.opacity)
         }
         Spacer(minLength: 4)
         deviceCard
@@ -232,57 +247,132 @@ struct BentoView: View {
       .padding(.top, 4)
       .animation(.easeOut(duration: 0.2), value: modesLine)
     }
-    .padding(.horizontal, 16)
-    .padding(.top, 8)
-    .padding(.bottom, 16)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .overlay(alignment: .bottom) {
-      // The L/R lines live in the (non-interactive) background: this thin
-      // strip over them carries their caption.
-      if live {
-        Color.clear
-          .frame(height: 12)
-          .contentShape(Rectangle())
-          .pointerHint { [meters] in Caption.level(meters) }
-          .padding(.horizontal, 16)
+  }
+
+  /// What's Playing leads: cover, song, artist and app; the preset stays as a
+  /// small line underneath, so the hero still says the sound.
+  private func playingRows(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .center, spacing: 8) {
+        NowPlayingHeadline(model: nowPlaying, app: app)
+        heroTrailing
       }
-    }
-    .pointerHintTint(ink(t))
-    .background {
-      ZStack {
-        BentoFill(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
-          .id(t.name)
-          .transition(.opacity)
+      .padding(.top, 2)
+      NowPlayingControls(model: nowPlaying, live: controller.live, app: app,
+                         barColor: dark ? t.pastel : t.ink, active: live)
+        .padding(.top, 8)
+      HStack(alignment: .center, spacing: 8) {
+        soundLine(t)
+        Spacer(minLength: 4)
+        deviceCard(narrow: true)
       }
-      .overlay(alignment: .bottomTrailing) {
-        // The giant faded glyph, cropped by the tile edge. An overlay, so it
-        // never sizes the hero.
-        ZStack {
-          heroGlyph
-            .foregroundStyle(dark ? t.pastel : t.ink)
-            .opacity(0.05)
-            .fixedSize()
-            .offset(x: 22, y: 30)
-            .id("glyph")
-            .transition(.opacity)
-        }
-      }
-      .overlay(alignment: .bottom) {
-        if live {
-          BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
-        }
-      }
-      .animation(.easeInOut(duration: 0.3), value: t.name)
-      .clipShape(shape)
-      .allowsHitTesting(false)
-      .accessibilityHidden(true)
+      .padding(.top, 6)
+      .animation(.easeOut(duration: 0.2), value: modesLine)
     }
   }
 
+  /// The preset in a small line (What's Playing on): glyph, name, Edited, modes.
+  private func soundLine(_ t: BentoTint) -> some View {
+    HStack(alignment: .center, spacing: 5) {
+      Image(nsImage: MenuBarIcon.image)
+        .renderingMode(.template)
+        .resizable()
+        .interpolation(.high)
+        .frame(width: 10, height: 10)
+        .foregroundStyle(live ? ink(t) : Color.secondary)
+        .accessibilityHidden(true)
+      Text(heroWord)
+        .font(.system(size: 12, weight: .heavy, design: .rounded))
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .foregroundStyle(Color.primary)
+        .layoutPriority(2)
+      if editedBase != nil {
+        Text("EDITED")
+          .font(.system(size: 8, weight: .semibold, design: .monospaced))
+          .tracking(0.6)
+          .foregroundStyle(ink(t))
+          .padding(.horizontal, 4)
+          .padding(.vertical, 1)
+          .overlay(Capsule().strokeBorder(ink(t).opacity(0.5), lineWidth: 1))
+          .lineLimit(1)
+          .fixedSize()
+      }
+      if live && !modesLine.isEmpty { modesText(droppable: true).transition(.opacity) }
+    }
+    .layoutPriority(1)
+    .accessibilityElement(children: .combine)
+    .pointerHint(heroHint)
+  }
+
+  /// `droppable`: left out when even "+ 2 modes" doesn't fit (the sound line).
+  private func modesText(droppable: Bool) -> some View {
+    ViewThatFits(in: .horizontal) {
+      Text(modesLine).lineLimit(1).fixedSize()
+      if droppable {
+        Text(modeCount == 1 ? "+ 1 mode" : "+ \(modeCount) modes").lineLimit(1).fixedSize()
+        Color.clear.frame(width: 0, height: 0)
+      } else {
+        Text(modeCount == 1 ? "+ 1 mode" : "+ \(modeCount) modes").lineLimit(1)
+      }
+    }
+    .font(.system(size: 11, weight: .medium, design: .rounded))
+    .foregroundStyle(.secondary)
+    .layoutPriority(1)
+  }
+
+  /// A/B and Power, at the right of the hero's first line.
+  @ViewBuilder private var heroTrailing: some View {
+    if live {
+      // Reserve "Original"'s width so A/B never re-flows the preset name.
+      ZStack {
+        Text("Original")
+          .font(.system(size: 10, weight: .bold, design: .rounded))
+          .lineLimit(1).fixedSize().footerChip().hidden()
+        abButton
+      }
+      .fixedSize()
+    }
+    powerButton
+  }
+
+  private func heroBackground(_ t: BentoTint, dark: Bool, shape: RoundedRectangle) -> some View {
+    ZStack {
+      BentoFill(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
+        .id(t.name)
+        .transition(.opacity)
+    }
+    .overlay(alignment: .bottomTrailing) {
+      // The giant faded glyph, cropped by the tile edge. An overlay, so it
+      // never sizes the hero.
+      ZStack {
+        heroGlyph
+          .foregroundStyle(dark ? t.pastel : t.ink)
+          .opacity(0.05)
+          .fixedSize()
+          .offset(x: 22, y: 30)
+          .id("glyph")
+          .transition(.opacity)
+      }
+    }
+    .overlay(alignment: .bottom) {
+      if live {
+        BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
+          .padding(.horizontal, 16)
+          .padding(.bottom, 4)
+      }
+    }
+    .animation(.easeInOut(duration: 0.3), value: t.name)
+    .clipShape(shape)
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
+  }
+
   /// Dark inset mini-card: the output device (menu picks another).
-  private var deviceCard: some View {
+  private var deviceCard: some View { deviceCard(narrow: live && !modesLine.isEmpty) }
+
+  /// `narrow`: leave room for text beside it (modes, or What's Playing's sound line).
+  private func deviceCard(narrow: Bool) -> some View {
     Menu {
       ForEach(controller.devices) { d in
         Button {
@@ -300,7 +390,7 @@ struct BentoView: View {
             .font(.system(size: 10, weight: .bold, design: .rounded))
             .lineLimit(1)
             .truncationMode(.middle)
-            .frame(maxWidth: live && !modesLine.isEmpty ? 96 : 150, alignment: .leading)
+            .frame(maxWidth: narrow ? 96 : 150, alignment: .leading)
         }
       }
       .miniCard()
@@ -435,7 +525,7 @@ struct BentoView: View {
     let st = controller.settings
     guard st.mode == m else { return Caption.mode(m, state: nil, click: "Click to turn on") }
     let click = shownDetail != .mode ? "Click for settings" : "Click to turn off"
-    var state = "On"
+    var state: String? = nil
     if m == .sleep {
       if controller.sleepFinished {
         state = "Faded out"

@@ -174,16 +174,23 @@ final class LiveChannels: ObservableObject {
   /// Turns the level meter on while the list is visible, off otherwise.
   func setMetering(_ on: Bool) {
     uiMetering = on
-    applyMetering(uiMetering || backgroundMetering)
+    applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
   }
 
   /// Keeps the meter running with the list closed (Fair Level reads `levels`).
   func setBackgroundMetering(_ on: Bool) {
     backgroundMetering = on
-    applyMetering(uiMetering || backgroundMetering)
+    applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
+  }
+
+  /// What's Playing (NowPlaying.swift) reads `levels` while the popup shows.
+  func setNowPlayingMetering(_ on: Bool) {
+    nowPlayingMetering = on
+    applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
   }
   private var uiMetering = false
   private var backgroundMetering = false
+  private var nowPlayingMetering = false
 
   private func applyMetering(_ on: Bool) {
     guard on != meteringWanted else { return }
@@ -214,9 +221,11 @@ final class LiveChannels: ObservableObject {
 
   /// Shaker on/off for one app. Off: the app is left out of the EQ tap, so
   /// macOS plays it straight to the output, untouched.
-  func toggleShaker(_ app: LiveApp) {
+  func toggleShaker(_ app: LiveApp) { toggleShaker(id: app.id) }
+
+  func toggleShaker(id: String) {
     var s = shakerOff
-    if s.contains(app.id) { s.remove(app.id) } else { s.insert(app.id) }
+    if s.contains(id) { s.remove(id) } else { s.insert(id) }
     shakerOff = s
     UserDefaults.standard.set(s.filter { !$0.hasPrefix("pid.") }.sorted(), forKey: Self.shakerOffKey)
     halQueue.async {
@@ -274,12 +283,14 @@ final class LiveChannels: ObservableObject {
   }
 
   /// App icon (AppKit only, no Core Audio). Cached.
-  func icon(for app: LiveApp) -> NSImage {
-    if let hit = iconCache[app.id] { return hit }
-    let img = NSRunningApplication(processIdentifier: app.appPID)?.icon
-      ?? app.bundleID.flatMap(Self.appIcon(bundleID:))
+  func icon(for app: LiveApp) -> NSImage { icon(id: app.id, pid: app.appPID, bundleID: app.bundleID) }
+
+  func icon(id: String, pid: pid_t, bundleID: String?) -> NSImage {
+    if let hit = iconCache[id] { return hit }
+    let img = NSRunningApplication(processIdentifier: pid)?.icon
+      ?? bundleID.flatMap(Self.appIcon(bundleID:))
       ?? Self.genericIcon
-    iconCache[app.id] = img
+    iconCache[id] = img
     return img
   }
 

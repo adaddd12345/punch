@@ -32,7 +32,7 @@ struct ModesView: View {
               controller.setMode(s.mode == m ? .off : m)
             }
           }
-          .pointerHint(Caption.mode(m, state: s.mode == m ? "On" : nil,
+          .pointerHint(Caption.mode(m, state: nil,
                                     click: s.mode == m ? "Click to turn off" : "Click to turn on"))
         }
       }

@@ -26,3 +26,4 @@ C++20 DSP core, SwiftUI + AppKit UI, Sparkle auto-updates. Bundle id `app.basssh
 - Every engine stage: bit-exact when off, glides on changes, real-time safe (no allocation/locks in the IOProc).
 - Never commit secrets (the Sparkle private key lives only in the GitHub secret `SPARKLE_ED_PRIVATE_KEY`).
 - Work on branch `claude/macos-audio-routing-research-xpbcuk` unless told otherwise.
+- Tutorial Mode copy (`.pointerHint`, `PointerHints.swift`): say only what isn't obvious. No "Click"/"Click to use"/"Drag the slider" chips (`PointerHint.isObvious` drops them), no value labels that restate the control ("Preset", "In use"), no sentence that just repeats the name. One plain, first-principles sentence, at most 12 words, and true to the code: e.g. Flat is not "your Mac's own sound" (that's Power off); it only removes tone shaping, and Boost, Limit and modes still apply.
