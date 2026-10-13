@@ -482,6 +482,10 @@ struct Settings: Codable, Equatable {
   var beatsSide = false
   /// Bento layout: the main block as pastel tiles instead of the classic stack.
   var bento = false
+  /// Pointer Hints: short captions near the pointer on dense controls.
+  var pointerHints = true
+  /// The preset the current sound was edited from (nil once a preset is picked or saved).
+  var editedFrom: String? = nil
   /// The bottom tray (modes) is open.
   var trayOpen = true
   var nightGuardDb: Double = 8
@@ -563,6 +567,8 @@ struct Settings: Codable, Equatable {
     labelLevel = (try? c.decodeIfPresent(LabelLevel.self, forKey: .labelLevel)) ?? d.labelLevel
     beatsSide = (try? c.decodeIfPresent(Bool.self, forKey: .beatsSide)) ?? d.beatsSide
     bento = (try? c.decodeIfPresent(Bool.self, forKey: .bento)) ?? d.bento
+    pointerHints = (try? c.decodeIfPresent(Bool.self, forKey: .pointerHints)) ?? d.pointerHints
+    editedFrom = (try? c.decodeIfPresent(String.self, forKey: .editedFrom)) ?? nil
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock

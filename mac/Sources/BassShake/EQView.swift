@@ -30,6 +30,7 @@ struct EQView: View {
   @FocusState private var focused: Bool
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.pointerHintsOn) private var hintsOn
 
   private static let colors: [Color] = [
     Color(red: 1.00, green: 0.36, blue: 0.36),
@@ -58,10 +59,12 @@ struct EQView: View {
         if controller.settings.limit && controller.settings.enabled {
           LimitOverlay(meters: controller.meters, size: size, bassEdgeX: x(150, size.width),
                        yFor: { y($0, size.height) })
-            .allowsHitTesting(false)
             .transition(.opacity)
         }
-        if let i = grabbed ?? hovered ?? (focused ? kbBand : nil), i < bands.count {
+        // With Pointer Hints on, the hint is the pointer's readout; the
+        // in-graph readout stays for the keyboard.
+        if let i = hintsOn ? (focused && kbActive && grabbed == nil ? kbBand : nil) : (grabbed ?? hovered ?? (focused ? kbBand : nil)),
+           i < bands.count {
           let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
           let ny: CGFloat = y(bands[i].gain, size.height)
           readout(bands[i], color: Self.colors[i])
@@ -71,6 +74,7 @@ struct EQView: View {
         }
       }
       .contentShape(Rectangle())
+      .pointerHint(nodeHint(bands), detail: (grabbed ?? hovered) == nil ? nil : "Up/down = louder/quieter. Left/right = pitch range.", live: true)
       .accessibilityRepresentation {
         VStack {
           ForEach(bands.indices, id: \.self) { i in
@@ -110,6 +114,15 @@ struct EQView: View {
     )
     .clipShape(RoundedRectangle(cornerRadius: chrome ? 12 : 0, style: .continuous))
     .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
+  }
+
+  /// Caption #9: the node under the pointer (empty space: nothing).
+  private func nodeHint(_ bands: [EQBand]) -> String {
+    guard let i = grabbed ?? hovered, bands.indices.contains(i) else { return "" }
+    let b = bands[i]
+    let f = b.freq >= 1000 ? String(format: "%.1fK", b.freq / 1000) : String(format: "%.0f", b.freq)
+    let g = String(format: "%+.1f", b.gain).replacingOccurrences(of: "-", with: "\u{2212}")
+    return "[\(f) HZ \(g) DB · DRAG · ⇧ FINE · ⌥CLICK RESET]"
   }
 
   // MARK: - Geometry
@@ -390,6 +403,7 @@ private struct LimitOverlay: View {
     let active = meters.limiting && gr > 0.1
     let top = yFor(12)
     let lid = yFor(12 - gr)
+    let meters = self.meters
     ZStack(alignment: .topLeading) {
       // Restricted zone over the bass.
       Path { p in
@@ -397,12 +411,14 @@ private struct LimitOverlay: View {
       }
       .fill(LinearGradient(colors: [Color.orange.opacity(active ? 0.30 : 0.10), Color.orange.opacity(0.02)],
                            startPoint: .top, endPoint: .bottom))
+      .allowsHitTesting(false)
       // The lid itself.
       Path { p in
         p.move(to: CGPoint(x: 0, y: max(lid, top + 2)))
         p.addLine(to: CGPoint(x: bassEdgeX, y: max(lid, top + 2)))
       }
       .stroke(Color.orange.opacity(active ? 0.9 : 0.45), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+      .allowsHitTesting(false)
       // Badge.
       HStack(spacing: 3) {
         Image(systemName: "rectangle.compress.vertical").font(.system(size: 8, weight: .bold))
@@ -413,6 +429,11 @@ private struct LimitOverlay: View {
       .padding(.horizontal, 6).padding(.vertical, 2)
       .foregroundStyle(active ? Color.white : Color.orange)
       .background(Capsule().fill(active ? Color.orange : Color.orange.opacity(0.15)))
+      // Hover only (no gestures), so EQ drags still pass through.
+      .pointerHint {
+        let r = min(12, max(0, -meters.gainReductionDb))
+        return PointerHint(line: r < 0.1 ? "[LIMIT · NOTHING HELD BACK]" : "[LIMIT −\(String(format: "%.1f", r)) DB · BASS HELD BACK]")
+      }
       .position(x: size.width - 46, y: 12)
     }
     .frame(width: size.width, height: size.height)

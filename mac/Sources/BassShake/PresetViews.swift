@@ -45,7 +45,7 @@ struct PresetStrip: View {
             } action: {
               controller.apply(preset: p)
             }
-            .help(p.subtitle ?? p.name)
+            .pointerHint("[PRESET · \(p.name.uppercased())]", detail: p.subtitle)
           }
           ForEach(controller.settings.userPresets) { p in
             Chip(title: p.name, selected: controller.settings.userPresetID == p.id) {
@@ -53,6 +53,7 @@ struct PresetStrip: View {
             } action: {
               controller.apply(userPreset: p)
             }
+            .pointerHint("[PRESET · \(p.name.uppercased())]", detail: "Your preset. Right-click to rename, update or delete.")
             .id(p.id)
             .contextMenu {
               Button("Edit Name & Icon…") { editor = .edit(p.id) }
@@ -68,7 +69,7 @@ struct PresetStrip: View {
               .background(Capsule().strokeBorder(Color.primary.opacity(0.18), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
           }
           .buttonStyle(.plain)
-          .help("Save the current sound as a preset")
+          .pointerHint("[+ SAVE THIS SOUND AS A PRESET]")
           .id("plus")
         }
       }

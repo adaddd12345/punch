@@ -43,17 +43,21 @@ struct PopoverView: View {
   }
 
   var body: some View {
-    if controller.needsOnboarding {
-      OnboardingView(controller: controller)
-    } else if showMicTest {
-      MicTestView(controller: controller) { withAnimation { showMicTest = false } }
-    } else if showHearingFit {
-      HearingFitView(controller: controller) { withAnimation { showHearingFit = false } }
-    } else if showLatencyLab {
-      LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
-    } else {
-      controls
+    Group {
+      if controller.needsOnboarding {
+        OnboardingView(controller: controller)
+      } else if showMicTest {
+        MicTestView(controller: controller) { withAnimation { showMicTest = false } }
+      } else if showHearingFit {
+        HearingFitView(controller: controller) { withAnimation { showHearingFit = false } }
+      } else if showLatencyLab {
+        LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
+      } else {
+        controls
+      }
     }
+    // Above both the classic stack and Bento (and the pinned popover).
+    .pointerHintRoot(enabled: controller.settings.pointerHints)
   }
 
   private var labels: LabelLevel { controller.settings.labelLevel }
@@ -110,6 +114,9 @@ struct PopoverView: View {
       window.window = w
       if ownsDrawer, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
     })
+    .onChange(of: controller.settings.pointerHints, initial: true) { _, on in
+      LiveDrawer.shared.pointerHints = on
+    }
     .onChange(of: showLive) { _, on in
       if on {
         showDJ = false
@@ -226,7 +233,8 @@ struct PopoverView: View {
           .toggleStyle(.switch)
           .controlSize(.small)
           .labelsHidden()
-          .help(controller.settings.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
+          .pointerHint(controller.settings.enabled ? "[SHAKER ON · CLICK = PLAIN MAC SOUND]" : "[SHAKER OFF · CLICK = ON]",
+                       detail: "Off sends audio to your speakers untouched.")
       }
     }
   }
@@ -242,7 +250,8 @@ struct PopoverView: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel("Labels: \(controller.settings.labelLevel.title)")
-    .help("Labels: \(controller.settings.labelLevel.title). Click for \(controller.settings.labelLevel.next.title).")
+    .pointerHint("[LABELS: \(controller.settings.labelLevel.title.uppercased()) → \(controller.settings.labelLevel.next.title.uppercased())]",
+                 detail: "More or fewer words in the popup.")
     if role != .launchWindow {
       Button {
         controller.settings.viewSize = controller.settings.viewSize.next
@@ -254,7 +263,7 @@ struct PopoverView: View {
       .buttonStyle(.plain)
       .accessibilityLabel("View size: \(controller.settings.viewSize.title)")
       .accessibilityHint("Switches to \(controller.settings.viewSize.next.title)")
-      .help("View: \(controller.settings.viewSize.title). Click for \(controller.settings.viewSize.next.title).")
+      .pointerHint("[VIEW: \(controller.settings.viewSize.title.uppercased()) → \(controller.settings.viewSize.next.title.uppercased())]")
     }
     if role != .launchWindow {
       Button {
@@ -267,7 +276,7 @@ struct PopoverView: View {
       }
       .buttonStyle(.plain)
       .accessibilityLabel(controller.pinned ? "Unpin" : "Pin open")
-      .help(controller.pinned ? "Unpin: close when you click elsewhere" : "Pin: keep this open when you click elsewhere")
+      .pointerHint(controller.pinned ? "[UNPIN · CLOSES ON CLICK-AWAY]" : "[PIN · STAYS OPEN ON CLICK-AWAY]")
     }
   }
 
@@ -286,7 +295,8 @@ struct PopoverView: View {
       .buttonStyle(.plain)
       .accessibilityLabel("Compare with original sound")
       .accessibilityValue(controller.bypassed ? "Original" : "Processed")
-      .help("Compare with the original sound (\(GlobalHotkey.bypassLabel) from anywhere)")
+      .pointerHint("[A/B · NOW: \(controller.bypassed ? "ORIGINAL" : "PROCESSED") · \(GlobalHotkey.bypassLabel)]",
+                   detail: "Quick before and after. Nothing gets turned off.")
     }
   }
 
@@ -425,14 +435,14 @@ struct PopoverView: View {
     VStack(spacing: 4) {
       LabeledSlider(title: "Strength", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
-                    range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
-                    help: "Psychoacoustic bass: adds harmonics so small speakers sound deeper without distorting.")
+                    range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+        .pointerHint("[STRENGTH \(Int((controller.settings.bass * 100).rounded()))% · NOT VOLUME]",
+                     detail: "Adds bass harmonics small speakers can play.", live: true, track: false)
       LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
                     value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
-                    range: 0...12, format: { String(format: "+%.0f dB", $0) },
-                    help: controller.settings.limit
-                      ? "Extra loudness. With Limit on, the bass is held back first when there's no room, so vocals don't duck."
-                      : "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping.")
+                    range: 0...12, format: { String(format: "+%.0f dB", $0) })
+        .pointerHint("[BOOST +\(Int(controller.settings.boostDb.rounded())) DB · CLIPS WHEN RED]",
+                     detail: "Extra loudness on top of your Mac's volume. Volume keys still work.", live: true, track: false)
       HStack(spacing: 6) {
         Spacer()
         Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
@@ -441,7 +451,7 @@ struct PopoverView: View {
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
-        .help("Off: nothing holds the sound back. EQ and Boost go straight to your speakers, and loud peaks can clip (red meters). On: when there's no room left, the bass is held back first so vocals never duck, and the EQ shows how much is being restricted. Sleep mode always limits.")
+        .pointerHint { [controller] in LimitHint.make(on: controller.settings.limit, meters: controller.meters) }
       }
     }
   }
@@ -472,7 +482,7 @@ struct PopoverView: View {
     .menuStyle(.borderlessButton)
     .menuIndicator(.hidden)
     .fixedSize()
-    .help(controller.currentDevice?.name ?? "Output device")
+    .pointerHint("[OUT · \((controller.currentDevice?.name ?? "No output").uppercased()) · CLICK TO SWITCH]")
   }
 
   private var footer: some View {
@@ -522,7 +532,7 @@ struct PopoverView: View {
       }
       .buttonStyle(.plain)
       .accessibilityLabel("Check and fix sound issues")
-      .help("Check & Fix: muffled, silent or one-sided sound (e.g. after sleep or Bluetooth trouble)")
+      .pointerHint("[CHECK & FIX · RESTARTS AUDIO · ~2 S]", detail: "For muffled, silent or one-sided sound.")
       Menu {
         Button("Check & Fix Sound Issues") { controller.checkAndFix() }
         Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
@@ -594,6 +604,8 @@ struct PopoverView: View {
           }
           Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
                                                 set: { controller.settings.fadeWindows = $0 }))
+          Toggle("Pointer Hints", isOn: Binding(get: { controller.settings.pointerHints },
+                                                set: { controller.settings.pointerHints = $0 }))
         }
         SoundLikeMenu(controller: controller)
         Menu("Shortcuts") {
@@ -657,7 +669,6 @@ private struct LabeledSlider: View {
   @Binding var value: Double
   let range: ClosedRange<Double>
   let format: (Double) -> String
-  let help: String
   @Environment(\.labelLevel) private var labels
 
   var body: some View {
@@ -674,7 +685,6 @@ private struct LabeledSlider: View {
         .foregroundStyle(.secondary)
         .frame(width: 44, alignment: .trailing)
     }
-    .help(help)
   }
 }
 

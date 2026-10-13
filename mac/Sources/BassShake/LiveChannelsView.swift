@@ -38,13 +38,13 @@ struct LiveChannelsButton: View {
       .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
     }
     .buttonStyle(.plain)
-    .help(helpText(n, mutedCount))
+    .pointerHint(hintLine(n, mutedCount))
   }
 
-  private func helpText(_ n: Int, _ mutedCount: Int) -> String {
-    var s = n == 1 ? "1 app is playing sound." : "\(n) apps are playing sound."
-    if mutedCount > 0 { s += " \(mutedCount) muted." }
-    return s + " Click to see levels and mute an app."
+  private func hintLine(_ n: Int, _ mutedCount: Int) -> String {
+    let apps = n == 1 ? "1 APP PLAYING" : "\(n) APPS PLAYING"
+    let muted = mutedCount > 0 ? " · \(mutedCount) MUTED" : ""
+    return "[\(apps)\(muted) · CLICK \(expanded ? "TO HIDE" : "FOR LEVELS")]"
   }
 }
 
@@ -164,8 +164,8 @@ private struct LiveChannelRow: View {
           }
       }
       .buttonStyle(.plain)
-      .help(shakerOn ? "The Bass Shaker is shaping \(app.name). Click to let it play untouched."
-                     : "\(app.name) plays untouched. Click to run it through The Bass Shaker again.")
+      .pointerHint(shakerOn ? "[\(app.name.uppercased()) · SHAPED · CLICK = UNTOUCHED]"
+                            : "[\(app.name.uppercased()) · UNTOUCHED · CLICK = SHAPED]")
       Button(action: onToggle) {
         Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
           .font(.system(size: 9, weight: .bold))
@@ -174,7 +174,8 @@ private struct LiveChannelRow: View {
           .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
       }
       .buttonStyle(.plain)
-      .help(muteHelp)
+      .pointerHint(muted ? "[UNMUTE \(app.name.uppercased())]" : "[MUTE \(app.name.uppercased()) · STAYS MUTED]",
+                   detail: !muted && app.usesHelpers ? "Mutes every tab: browsers share one audio process." : nil)
     }
     .padding(.horizontal, 4)
     .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.06 : 0)))
@@ -220,11 +221,6 @@ private struct LiveChannelRow: View {
     guard app.isPlaying, let level else { return "" }
     if level <= LiveChannels.floorDb { return "—" }
     return String(format: "%.0f", level).replacingOccurrences(of: "-", with: "\u{2212}")
-  }
-
-  private var muteHelp: String {
-    if muted { return "Unmute \(app.name)" }
-    return app.usesHelpers ? "Mute \(app.name). \(LiveChannels.tabsNote)" : "Mute \(app.name)"
   }
 
   private var rowHelp: String {

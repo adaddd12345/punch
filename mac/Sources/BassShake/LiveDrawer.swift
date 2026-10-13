@@ -25,6 +25,14 @@ final class LiveDrawer {
   private let gap: CGFloat = 6
 
   var isShown: Bool { panel?.isVisible ?? false }
+  /// Pointer Hints in the drawer (mirrors the setting; set by the popup).
+  var pointerHints: Bool {
+    get { hints.on }
+    set { if hints.on != newValue { hints.on = newValue } }
+  }
+  /// Observed only by the drawer's hint root: flips when the setting changes
+  /// or the drawer shows/hides (hiding clears any caption and hover stack).
+  private let hints = DrawerHints()
   /// Beside the popup (a slim card to its right, or left if there's no
   /// room) instead of hanging under it.
   private var side = false
@@ -56,8 +64,8 @@ final class LiveDrawer {
     guard let panel else { return }
     // The hosting controller sizes the window to the content (rows come
     // and go); the resize observer keeps its top edge under the popover.
-    let root = content
-      .frame(width: width ?? anchorRect?.width ?? host.frame.width)
+    hints.shown = true
+    let root = DrawerHintRoot(flags: hints, content: content.frame(width: width ?? anchorRect?.width ?? host.frame.width))
       .background(VisualEffectBackground())
       .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     let hosting = NSHostingController(rootView: AnyView(root))
@@ -80,6 +88,7 @@ final class LiveDrawer {
   func hide() {
     guard let panel, panel.isVisible else { return }
     onHide?()
+    hints.shown = false
     panel.parent?.removeChildWindow(panel)
     panel.orderOut(nil)
   }
@@ -133,4 +142,16 @@ struct HostWindowReader: NSViewRepresentable {
   func updateNSView(_ nsView: NSView, context: Context) {
     DispatchQueue.main.async { onWindow(nsView.window) }
   }
+}
+
+/// The drawer's Pointer Hints switch, live while the drawer is open.
+final class DrawerHints: ObservableObject {
+  @Published var on = true
+  @Published var shown = false
+}
+
+private struct DrawerHintRoot<C: View>: View {
+  @ObservedObject var flags: DrawerHints
+  let content: C
+  var body: some View { content.pointerHintRoot(enabled: flags.on && flags.shown) }
 }

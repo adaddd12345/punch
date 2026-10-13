@@ -16,13 +16,15 @@ struct ModesView: View {
         } action: {
           controller.settings.studioEars.toggle()
         }
-        .help("Leans hard into sub-bass and trap highs (808 body, hats, air) on top of any preset. A 22 Hz guard keeps rumble out.")
+        .pointerHint("[STUDIO EARS · \(s.studioEars ? "ON" : "OFF") · STACKS ON PRESET]",
+                     detail: "Leans into sub-bass and trap highs on top of any preset.")
         Chip(title: "Loudness", selected: s.autoLoudness) {
           Image(systemName: "speaker.wave.2.bubble").font(.system(size: 9, weight: .semibold))
         } action: {
           controller.settings.autoLoudness.toggle()
         }
-        .help("Auto Loudness: at low volume your ears lose bass and treble first. This adds them back as you turn the volume down, and does nothing at high volume.")
+        .pointerHint("[LOUDNESS · MORE BASS AT LOW VOLUME]",
+                     detail: "At low volume your ears lose bass and treble first; this adds them back.")
         Spacer(minLength: 4)
         ForEach([ListeningMode.study, .sleep]) { m in
           Chip(title: m.title, selected: s.mode == m, compact: true) {
@@ -32,7 +34,8 @@ struct ModesView: View {
               controller.setMode(s.mode == m ? .off : m)
             }
           }
-          .help(m == .study ? "Lo-fi study sound: warm, soft highs, gentle tape character." : "Sleep: dark, soft and level, with a fade-out timer.")
+          .pointerHint(s.mode == m ? "[\(m.title.uppercased()) · ON · CLICK = OFF]" : "[\(m.title.uppercased()) · CLICK = ON]",
+                       detail: "Only one of Study and Sleep at a time.")
         }
       }
       nightGuardRow
@@ -52,7 +55,8 @@ struct ModesView: View {
       } action: {
         controller.settings.nightGuard.toggle()
       }
-      .help("Turns down anything that gets suddenly louder than what you've been listening to, like a booming title sequence after quiet dialogue. Quiet parts are left alone.")
+      .pointerHint("[NIGHT GUARD · CAP +\(Int(s.nightGuardDb.rounded())) DB · CLICK = \(s.nightGuard ? "OFF" : "ON")]",
+                   detail: "Turns down anything suddenly louder than what you've been hearing.")
       if s.nightGuard {
         if labels == .full {
           Text("Allow")
@@ -158,7 +162,7 @@ struct ModesView: View {
             Image(systemName: "speaker.wave.1").font(.system(size: 10, weight: .semibold))
           }
         }
-        .help("Background noise")
+        .pointerHint(NoiseHint.line(s), detail: NoiseHint.detail)
         .toggleStyle(.switch)
         .controlSize(.mini)
         Picker("", selection: Binding(get: { s.noiseColor }, set: { controller.settings.noiseColor = $0 })) {

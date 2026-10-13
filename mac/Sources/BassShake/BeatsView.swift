@@ -60,6 +60,8 @@ struct BeatsView: View {
         Text(d.key).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundStyle(.tertiary)
       }
       ScrubPercent(value: player.volume, label: "Beats volume") { player.setVolume($0) }
+        .pointerHint("[BEATS VOL \(Int((player.volume * 100).rounded()))% · DRAG ↔ · BEATS ONLY]",
+                     detail: "Only the beat, not your Mac.", live: true)
       Button(action: onToggleLayout) {
         Image(systemName: side ? "rectangle.split.1x2" : "rectangle.split.2x1")
           .font(.system(size: 10, weight: .semibold))
@@ -357,6 +359,5 @@ struct ScrubPercent: View {
     .accessibilityLabel(label)
     .accessibilityValue("\(Int(value * 100)) percent")
     .accessibilityAdjustableAction { dir in onChange(value + (dir == .increment ? 0.05 : -0.05)) }
-    .help("\(label): drag left or right. Double-click for 80%.")
   }
 }

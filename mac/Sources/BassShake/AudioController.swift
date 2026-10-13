@@ -230,6 +230,7 @@ final class AudioController: ObservableObject {
   private struct SoundSnapshot {
     var bands: [EQBand], bass: Double, boostDb: Double, character: SoundCharacter
     var presetName: String?, userPresetID: UUID?, userPresets: [UserPreset]
+    var editedFrom: String?
   }
   private var undoStack: [SoundSnapshot] = []
   var canUndo: Bool { !undoStack.isEmpty }
@@ -238,7 +239,8 @@ final class AudioController: ObservableObject {
   func pushUndo() {
     let s = settings
     undoStack.append(SoundSnapshot(bands: s.bands, bass: s.bass, boostDb: s.boostDb, character: s.character,
-                                   presetName: s.presetName, userPresetID: s.userPresetID, userPresets: s.userPresets))
+                                   presetName: s.presetName, userPresetID: s.userPresetID, userPresets: s.userPresets,
+                                   editedFrom: s.editedFrom))
     if undoStack.count > 30 { undoStack.removeFirst() }
   }
 
@@ -251,6 +253,7 @@ final class AudioController: ObservableObject {
     settings.boostDb = u.boostDb
     settings.character = u.character
     settings.userPresets = u.userPresets
+    settings.editedFrom = u.editedFrom
     settings.bands = u.bands
   }
 
@@ -259,6 +262,7 @@ final class AudioController: ObservableObject {
     leaveModeQuietly()
     settings.presetName = preset.name
     settings.userPresetID = nil
+    settings.editedFrom = nil
     settings.bass = preset.bass
     settings.character = preset.character
     morph(to: preset.bands())
@@ -273,6 +277,7 @@ final class AudioController: ObservableObject {
     leaveModeQuietly()
     settings.presetName = nil
     settings.userPresetID = p.id
+    settings.editedFrom = nil
     settings.bass = p.bass
     settings.boostDb = p.boostDb
     settings.character = p.character
@@ -289,6 +294,7 @@ final class AudioController: ObservableObject {
     settings.userPresets.append(p)
     settings.presetName = nil
     settings.userPresetID = p.id
+    settings.editedFrom = nil
     return p
   }
 
@@ -311,14 +317,22 @@ final class AudioController: ObservableObject {
 
   func deleteUserPreset(_ id: UUID) {
     pushUndo()   // ⌘Z brings it back
+    let gone = settings.userPresets.first { $0.id == id }?.name
     settings.userPresets.removeAll { $0.id == id }
-    if settings.userPresetID == id { settings.userPresetID = nil }
+    if settings.userPresetID == id { settings.userPresetID = nil; settings.editedFrom = nil }
+    if let gone, settings.editedFrom == gone { settings.editedFrom = nil }
   }
 
   func update(band i: Int, to b: EQBand, animated: Bool = false) {
     guard settings.bands.indices.contains(i) else { return }
     var bands = settings.bands
     bands[i] = b
+    // Remember what this was edited from, so the hero can say "Bass Shake · Edited".
+    if let id = settings.userPresetID, let p = settings.userPresets.first(where: { $0.id == id }) {
+      settings.editedFrom = p.name
+    } else if let n = settings.presetName {
+      settings.editedFrom = n
+    }
     settings.presetName = nil
     settings.userPresetID = nil
     if animated {
@@ -466,6 +480,7 @@ final class AudioController: ObservableObject {
     s.character = sound.character
     s.presetName = sound.presetName
     s.userPresetID = sound.userPresetID
+    s.editedFrom = nil
     s.studioEars = sound.studioEars
     settings = s
     morph(to: sound.bands)
