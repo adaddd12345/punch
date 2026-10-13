@@ -4,7 +4,7 @@ import SwiftUI
 // What's Playing in the Bento layout (model: NowPlaying.swift).
 //
 // Each view here observes only `NowPlaying` (slow: changes when the hero
-// app, the song or a Shaped switch changes). The per-app level bars are their
+// app, the song or a mute changes). The per-app level bars are their
 // own tiny views over LiveChannels' levels, so the 30 Hz meter redraws a few
 // bars and nothing else.
 
@@ -82,7 +82,7 @@ struct NowPlayingHeadline: View {
   }
 }
 
-/// The hero's second line: this app's level, Shaped / Untouched, and (Spotify,
+/// The hero's second line: this app's level, mute, and (Spotify,
 /// Music) play/pause and next.
 struct NowPlayingControls: View {
   @ObservedObject var model: NowPlaying
@@ -98,7 +98,7 @@ struct NowPlayingControls: View {
       NowLevel(live: live, id: app.id, color: barColor)
         .frame(width: 64, height: 4)
         .pointerHint { [live, app] in Caption.appLevel(app.name, db: live.levels[app.id]) }
-      ShapedSwitch(model: model, app: app, compact: false, active: active)
+      MuteButton(model: model, app: app, compact: false)
       Spacer(minLength: 4)
       if app.player != nil, let track {
         PlayerButtons(model: model, app: app, playing: track.playing, size: 22)
@@ -178,7 +178,7 @@ private struct NowSubTile: View {
           if app.player != nil, let track {
             PlayerButtons(model: model, app: app, playing: track.playing, size: 16, next: false)
           }
-          ShapedSwitch(model: model, app: app, compact: true, active: active)
+          MuteButton(model: model, app: app, compact: true)
         }
         .frame(height: 16)
       }
@@ -245,50 +245,28 @@ private struct NowLevel: View {
   }
 }
 
-/// Shaped (through The Bass Shaker) or Untouched (plays as normal). The same
-/// per-app switch as in Live Channels.
-private struct ShapedSwitch: View {
+/// Mute just this app: a speaker, slashed when muted. The same per-app mute
+/// as Live Channels. (Replaced "Shaped / Untouched", which nobody could read;
+/// skipping effects per app stays in Live Channels.)
+private struct MuteButton: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
-  /// Sub-tiles: the glyph only.
   let compact: Bool
-  /// The Bass Shaker is on (off: the pill goes neutral, like the power button).
-  let active: Bool
-  @Environment(\.labelLevel) private var labels
 
   var body: some View {
-    let shaped = !model.isUntouched(app.id)
-    let lit = shaped && active
-    let words = !compact && labels != .icons
-    Button { model.toggleShaped(app) } label: {
-      HStack(spacing: 4) {
-        ZStack {
-          Image(nsImage: MenuBarIcon.image)
-            .renderingMode(.template)
-            .resizable()
-            .interpolation(.high)
-            .frame(width: compact ? 9 : 10, height: compact ? 9 : 10)
-          if !shaped {
-            Image(systemName: "line.diagonal").font(.system(size: compact ? 10 : 11, weight: .bold))
-          }
-        }
-        if words {
-          Text(shaped ? "Shaped" : "Untouched")
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .lineLimit(1)
-            .fixedSize()
-        }
-      }
-      .padding(.horizontal, words ? 8 : 0)
-      .frame(width: words ? nil : (compact ? 24 : 28), height: compact ? 16 : 20)
-      .foregroundStyle(lit ? Color.white : Color.primary.opacity(0.7))
-      .background(Capsule().fill(lit ? BentoInk.miniFill : Color.primary.opacity(0.08)))
-      .contentShape(Capsule())
+    let muted = model.isMuted(app.id)
+    Button { model.toggleMute(app) } label: {
+      Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+        .font(.system(size: compact ? 8 : 10, weight: .bold))
+        .frame(width: compact ? 24 : 28, height: compact ? 16 : 20)
+        .foregroundStyle(muted ? Color.white : Color.primary.opacity(0.7))
+        .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
+        .contentShape(Capsule())
     }
     .buttonStyle(BentoPressStyle())
     .fixedSize()
-    .accessibilityLabel("\(app.name): \(shaped ? "Shaped by The Bass Shaker" : "Untouched")")
-    .pointerHint(Caption.shaped(app.name, on: shaped, bassShakerOn: active))
+    .accessibilityLabel(muted ? "Unmute \(app.name)" : "Mute \(app.name)")
+    .pointerHint(Caption.tileMute(app.name, muted: muted))
   }
 }
 
@@ -333,7 +311,7 @@ struct NowPlayingNote: View {
   var body: some View {
     let s = controller.settings
     if s.showNowPlaying && !s.nowPlayingNoteSeen {
-      VStack(alignment: .leading, spacing: 6) {
+      VStack(alignment: .leading, spacing: 8) {
         Label {
           VStack(alignment: .leading, spacing: 4) {
             Text("What's Playing is on").font(.system(size: 11, weight: .bold, design: .rounded))
@@ -345,7 +323,7 @@ struct NowPlayingNote: View {
         } icon: {
           Image(systemName: "music.note").foregroundStyle(Color.accentColor)
         }
-        HStack {
+        HStack(spacing: 6) {
           Button("Got It") { controller.settings.nowPlayingNoteSeen = true }
             .controlSize(.small).lineLimit(1).fixedSize()
           Button("Turn Off") {
@@ -356,7 +334,8 @@ struct NowPlayingNote: View {
           .pointerHint(Caption.noteTurnOff)
         }
       }
-      .padding(10)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 12)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -368,16 +347,14 @@ struct NowPlayingNote: View {
     }
   }
 
+  /// Only what a beginner can't guess: what the tile shows, and the one-time
+  /// macOS question about Spotify / Music. (Turn Off is the button below.)
   private func message(bento: Bool, mini: Bool) -> String {
-    var t = "The top tile shows which app is playing and how loud. "
-      + "Your Mac may ask once if The Bass Shaker can control Spotify or Music; "
-      + "say OK to see the song and cover here. "
-      + "Nothing is saved or sent anywhere (Spotify covers load from Spotify). "
-      + "To turn it off: ⋯ › Presets & Settings › Show What's Playing."
+    var t = "The top tile shows the loudest app. If your Mac asks to let The Bass Shaker control Spotify or Music, say OK to see the song and cover. Nothing is saved or shared."
     if !bento {
-      t += " It shows in the Bento layout (⋯ › Look › Bento Layout)."
+      t += " Needs Bento (⋯ › Look)."
     } else if mini {
-      t += " It shows at the bigger sizes, not Mini."
+      t += " Hidden at Mini size."
     }
     return t
   }
@@ -404,12 +381,11 @@ extension Caption {
                        gestures: ["Click opens \(name)"])
   }
 
-  static func shaped(_ name: String, on: Bool, bassShakerOn: Bool) -> PointerHint {
-    PointerHint(name, value: on ? "Shaped" : "Untouched",
-                does: bassShakerOn ? "Untouched skips every effect, even Limit and Night Guard; remembered per app."
-                  : "The Bass Shaker is off, so nothing is shaped now.",
-                gestures: [on ? "Click to leave untouched" : "Click to shape it"])
+  static func tileMute(_ name: String, muted: Bool) -> PointerHint {
+    muted ? PointerHint("Unmute \(name)", does: "Muted until you unmute it or quit The Bass Shaker.")
+          : PointerHint("Mute \(name)", does: "Silences only \(name); everything else keeps playing.")
   }
+
 
   static func appLevel(_ name: String, db: Double?) -> PointerHint {
     var v = "—"

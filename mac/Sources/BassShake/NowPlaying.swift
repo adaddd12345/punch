@@ -75,7 +75,8 @@ final class NowPlaying: ObservableObject {
   /// Song info by bundle ID (Spotify / Music only).
   @Published private(set) var tracks: [String: NowTrack] = [:]
   /// Mirrors LiveChannels.shakerOff (slow) so tiles don't observe the 30 Hz levels.
-  @Published private(set) var untouched: Set<String> = []
+  /// Apps muted in Live Channels (the tiles' mute buttons).
+  @Published private(set) var muted: Set<String> = []
 
   static let smoothingSeconds = 3.0
   static let swapDb = 3.0
@@ -132,9 +133,9 @@ final class NowPlaying: ObservableObject {
       .removeDuplicates()
       .sink { [weak self] on in DispatchQueue.main.async { self?.setWanted(on) } }
       .store(in: &cancellables)
-    c.live.$shakerOff
+    c.live.$muted
       .removeDuplicates()
-      .sink { [weak self] off in DispatchQueue.main.async { if self?.untouched != off { self?.untouched = off } } }
+      .sink { [weak self] m in DispatchQueue.main.async { if self?.muted != m { self?.muted = m } } }
       .store(in: &cancellables)
   }
 
@@ -143,8 +144,12 @@ final class NowPlaying: ObservableObject {
   /// From the popup's 30 Hz ticker while its window is really on screen.
   func noteVisible() { lastVisible = ProcessInfo.processInfo.systemUptime }
 
-  func isUntouched(_ id: String) -> Bool { untouched.contains(id) }
-  func toggleShaped(_ app: NowApp) { controller?.live.toggleShaker(id: app.id) }
+  func isMuted(_ id: String) -> Bool { muted.contains(id) }
+  /// Mutes just this app (the same per-app mute as Live Channels).
+  func toggleMute(_ app: NowApp) {
+    guard let live = controller?.live else { return }
+    live.setMuted(!live.muted.contains(app.id), id: app.id)
+  }
   func open(_ app: NowApp) { controller?.live.open(app.liveApp) }
   func icon(_ app: NowApp) -> NSImage {
     controller?.live.icon(id: app.id, pid: app.pid, bundleID: app.bundleID) ?? NSImage()
@@ -211,7 +216,8 @@ final class NowPlaying: ObservableObject {
     // The meter takes a moment to build: don't pick a hero from silence.
     if levels.isEmpty && now - activeSince < 1.0 { return }
 
-    let playing = live.apps.filter { $0.isPlaying && !live.muted.contains($0.id) }
+    // Muted apps stay listed (so their tile can unmute them) but rank last.
+    let playing = live.apps.filter { $0.isPlaying }
     let playingIDs = Set(playing.map(\.id))
     for a in playing {
       lastHeard[a.id] = now
@@ -221,7 +227,7 @@ final class NowPlaying: ObservableObject {
     var ids = playingIDs
     for (id, heard) in lastHeard where !playingIDs.contains(id) {
       let keep = retainsWhilePaused(id) ? Self.pausedSeconds : Self.graceSeconds
-      if now - heard < keep, let app = known[id], isRunning(app), !live.muted.contains(id) { ids.insert(id) }
+      if now - heard < keep, let app = known[id], isRunning(app) { ids.insert(id) }
     }
     for id in Array(lastHeard.keys) where !ids.contains(id) {
       lastHeard[id] = nil
@@ -236,7 +242,9 @@ final class NowPlaying: ObservableObject {
       let p = pow(10, (levels[id] ?? LiveChannels.floorDb - 1) / 10)
       if let s = smooth[id] { smooth[id] = s + a * (p - s) } else { smooth[id] = p }
     }
-    func db(_ id: String) -> Double { 10 * log10(max(smooth[id] ?? 0, 1e-12)) }
+    func db(_ id: String) -> Double {
+      live.muted.contains(id) ? -200 : 10 * log10(max(smooth[id] ?? 0, 1e-12))
+    }
     let ranked = ids.sorted { x, y in
       let dx = db(x), dy = db(y)
       if dx != dy { return dx > dy }

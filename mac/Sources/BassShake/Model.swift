@@ -507,6 +507,8 @@ struct Settings: Codable, Equatable {
   var soundLike: SoundLikeChoice?
   /// Hearing Fit: per-ear compensation (nil = never set up).
   var hearing: HearingProfile?
+  /// Sections hidden with ⋯ › Presets & Settings › Edit Layout ("bento.eq", "classic.meters"…; see LayoutSection).
+  var hiddenSections: [String] = []
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -585,6 +587,7 @@ struct Settings: Codable, Equatable {
     fairLevelPinned = ((try? c.decodeIfPresent(Set<String>.self, forKey: .fairLevelPinned)) ?? nil) ?? d.fairLevelPinned
     soundLike = (try? c.decodeIfPresent(SoundLikeChoice.self, forKey: .soundLike)) ?? nil
     hearing = (try? c.decodeIfPresent(HearingProfile.self, forKey: .hearing)) ?? nil
+    hiddenSections = (try? c.decodeIfPresent([String].self, forKey: .hiddenSections)) ?? d.hiddenSections
   }
 
   static func load() -> Settings {

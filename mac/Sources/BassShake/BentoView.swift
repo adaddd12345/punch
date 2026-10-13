@@ -54,33 +54,22 @@ struct BentoView: View {
     VStack(spacing: 8) {
       hero
       // What's Playing: other playing apps (nothing while the feature is off).
-      NowPlayingTiles(model: nowPlaying, live: controller.live, on: s.showNowPlaying, active: live)
-      BentoTile(tint: tint(.frost), padding: 0) {
-        EQView(controller: controller, chrome: false,
-               filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
-          .frame(height: size == .full ? 132 : 100)
+      if s.shows(.bentoNowPlaying) {
+        NowPlayingTiles(model: nowPlaying, live: controller.live, on: s.showNowPlaying, active: live)
       }
-      .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
-      .pointerHintTint(live ? ink(.bass) : nil)
-      HStack(spacing: 8) {
-        ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
-                  value: s.bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
-                  format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
-          controller.settings.bass = $0
-        } accessory: { EmptyView() }
-        .pointerHint(Caption.strength(s.bass, scrub: true), live: true)
-        .pointerHintTint(ink(tint(.bass)))
-        ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
-                  value: s.boostDb, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
-                  format: { ("+", "\(Int($0.rounded()))", " dB") }) {
-          if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
-        } accessory: { limitCard }
-        .pointerHint(Caption.boost(s.boostDb, scrub: true), live: true)
-        .pointerHintTint(ink(tint(.bass)))
+      if s.shows(.bentoEQ) {
+        BentoTile(tint: tint(.frost), padding: 0) {
+          EQView(controller: controller, chrome: false,
+                 filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
+            .frame(height: size == .full ? 132 : 100)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
+        .pointerHintTint(live ? ink(.bass) : nil)
       }
-      presets
-      modeGrid
-      modeDetails
+      if s.shows(.bentoDials) { dials }
+      if s.shows(.bentoPresets) { presets }
+      if s.shows(.bentoModes) { modeGrid }
+      if s.shows(.bentoModeSettings) { modeDetails }
     }
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
@@ -88,6 +77,26 @@ struct BentoView: View {
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: lastDetail)
     .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
     .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
+  }
+
+  /// Strength and Boost, side by side.
+  private var dials: some View {
+    HStack(spacing: 8) {
+      ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
+                value: s.bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
+                format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
+        controller.settings.bass = $0
+      } accessory: { EmptyView() }
+      .pointerHint(Caption.strength(s.bass, scrub: true), live: true)
+      .pointerHintTint(ink(tint(.bass)))
+      ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
+                value: s.boostDb, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
+                format: { ("+", "\(Int($0.rounded()))", " dB") }) {
+        if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
+      } accessory: { limitCard }
+      .pointerHint(Caption.boost(s.boostDb, scrub: true), live: true)
+      .pointerHintTint(ink(tint(.bass)))
+    }
   }
 
   // MARK: - Hero

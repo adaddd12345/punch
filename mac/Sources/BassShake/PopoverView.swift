@@ -26,6 +26,7 @@ struct PopoverView: View {
   @State private var showLatencyLab = false
   @State private var showHearingFit = false
   @State private var showMicTest = false
+  @State private var showLayoutEditor = false
 
   /// Where this copy of the controls lives.
   enum Role { case menuBar, launchWindow, pinned }
@@ -46,6 +47,8 @@ struct PopoverView: View {
     Group {
       if controller.needsOnboarding {
         OnboardingView(controller: controller)
+      } else if showLayoutEditor {
+        LayoutEditorView(controller: controller, mini: size == .mini) { withAnimation { showLayoutEditor = false } }
       } else if showMicTest {
         MicTestView(controller: controller) { withAnimation { showMicTest = false } }
       } else if showHearingFit {
@@ -64,6 +67,11 @@ struct PopoverView: View {
 
   private var size: ViewSize { role == .launchWindow ? .full : controller.settings.viewSize }
 
+  /// Edit Layout's choice for this section (Mini always shows its few controls).
+  private func shows(_ section: LayoutSection) -> Bool {
+    size == .mini || controller.settings.shows(section)
+  }
+
   private var controls: some View {
     VStack(alignment: .leading, spacing: 8) {
       // Bento folds the header's controls into its hero.
@@ -77,15 +85,17 @@ struct PopoverView: View {
                   heroIcons: AnyView(headerIcons), abButton: AnyView(abButton))
       } else if size != .mini {
         driverSection
-        EQView(controller: controller)
-          .frame(height: size == .full ? 150 : 112)
-          .opacity(controller.settings.enabled ? 1 : 0.45)
-        presetStrip
-        if size == .full { MeterView(model: meters) }
+        if shows(.classicEQ) {
+          EQView(controller: controller)
+            .frame(height: size == .full ? 150 : 112)
+            .opacity(controller.settings.enabled ? 1 : 0.45)
+        }
+        if shows(.classicPresets) { presetStrip }
+        if size == .full && shows(.classicMeters) { MeterView(model: meters) }
       }
-      if !controller.settings.bento || size == .mini { sliders }
+      if size == .mini || (!controller.settings.bento && shows(.classicSliders)) { sliders }
       if size != .mini {
-        if !controller.settings.bento { tray }
+        if !controller.settings.bento && shows(.classicModes) { tray }
         Divider().opacity(0.5)
         footer
       }
@@ -182,6 +192,7 @@ struct PopoverView: View {
       ticker.stop()
       meters.reset()
       showLive = false
+      showLayoutEditor = false
       showDJ = false
       showBeats = false
       if ownsDrawer { LiveDrawer.shared.hide() }
@@ -619,6 +630,7 @@ struct PopoverView: View {
           if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
         }
         Menu("Presets & Settings") {
+          Button("Edit Layout…") { withAnimation { showLayoutEditor = true } }
           // Stored as `pointerHints` so saved settings keep loading.
           Toggle("Tutorial Mode", isOn: Binding(get: { controller.settings.pointerHints },
                                                 set: { controller.settings.pointerHints = $0 }))
@@ -708,7 +720,7 @@ private struct Banner: View {
   let secondary: (String, () -> Void)?
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: 8) {
       // Text in the primary color, the tint only on the glyph: tinted text on
       // a same-hue wash over a colorful blur was unreadable.
       Label {
@@ -718,12 +730,13 @@ private struct Banner: View {
       }
         .font(.system(size: 11, weight: .medium))
         .fixedSize(horizontal: false, vertical: true)
-      HStack {
+      HStack(spacing: 6) {
         if let a = action { Button(a.0, action: a.1).controlSize(.small).lineLimit(1).fixedSize() }
         if let s = secondary { Button(s.0, action: s.1).controlSize(.small).lineLimit(1).fixedSize() }
       }
     }
-    .padding(10)
+    .padding(.horizontal, 10)
+    .padding(.vertical, 12)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background {
       let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
