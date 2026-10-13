@@ -6,7 +6,7 @@ No Apple Developer account is used. Builds are ad-hoc signed, and updates go out
 1. Commit and push to `claude/macos-audio-routing-research-xpbcuk`. That's it.
 2. CI (`build` workflow, run number **N**) then does the following:
    - Linux: core tests plus ASan/UBSan.
-   - macOS 26 runner (Xcode 26.6 pinned, macOS 26 SDK; deployment target 14.4):
+   - macOS 26 runner (Xcode 26.6 pinned, macOS 26 SDK; deployment target 14.4). The steps live in `.github/workflows/mac-app.yml`; if GitHub can't supply an Apple Silicon Mac (the job is cancelled after ~15 min), the same steps run on `macos-26-intel`:
      1. Run the core tests.
      2. Run `mac/scripts/bundle.sh "0.1.0-beta.N" N`. It builds a universal `The Bass Shaker.app`, ad-hoc signs it and zips it to `build/BassShake-0.1.0-beta.N.zip`.
      3. Publish the GitHub prerelease **`v0.1.0-beta.N`** with that zip.

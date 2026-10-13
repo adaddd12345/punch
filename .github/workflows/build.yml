@@ -29,92 +29,20 @@ jobs:
 
   mac-app:
     name: The Bass Shaker.app (macOS)
-    # macOS 26 SDK (Liquid Glass); the app's deployment target stays 14.4.
-    runs-on: macos-26
-    # Publish releases and the update feed in push order.
-    concurrency:
-      group: publish-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - name: Toolchain
-        run: |
-          # Pin Xcode 26.6 (the image default today); keep the default if a newer image drops it.
-          if [ -d /Applications/Xcode_26.6.app ]; then
-            sudo xcode-select -s /Applications/Xcode_26.6.app
-          else
-            echo "::warning::Xcode_26.6.app not on this image; using the default $(xcode-select -p)"
-          fi
-          xcodebuild -version
-          swift --version
-      - name: DSP core tests (Apple Silicon)
-        run: |
-          cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build core/build -j
-          ctest --test-dir core/build --output-on-failure
-          core/build/punch_bench
-      - name: Build app bundle
-        run: mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: BassShake-0.1.0-beta.${{ github.run_number }}
-          path: build/BassShake-*.zip
-          if-no-files-found: error
-      - name: Publish beta prerelease
-        if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v0.1.0-beta.${{ github.run_number }}
-          name: The Bass Shaker 0.1.0 beta ${{ github.run_number }}
-          target_commitish: ${{ github.sha }}
-          prerelease: true
-          files: build/BassShake-*.zip
-          body: |
-            The Bass Shaker beta build from `${{ github.ref_name }}` @ ${{ github.sha }}.
+    uses: ./.github/workflows/mac-app.yml
+    with:
+      runner: macos-26
+    secrets: inherit
 
-            **Install (macOS 15+)**
-            1. Download `BassShake-*.zip`, unzip, drag **The Bass Shaker.app** to Applications.
-            2. Double-click it → "Apple could not verify…" → **Done**.
-            3. System Settings → Privacy & Security → scroll to Security → **Open Anyway** → password.
-            4. The Bass Shaker window and the salt shaker in the menu bar appear. Allow **System Audio Recording**.
-
-            Or skip 2–3 in Terminal:
-            `xattr -dr com.apple.quarantine "/Applications/The Bass Shaker.app" && open "/Applications/The Bass Shaker.app"`
-
-            Troubleshooting: see the README (menu-bar icon hidden behind the notch, macOS 26 Menu Bar settings, permissions).
-
-            Requires macOS 14.4 or later. No driver is installed and no restart is needed;
-            quitting The Bass Shaker instantly returns your Mac's audio to normal.
-      - name: Sign update + write Sparkle appcast
-        if: github.event_name != 'pull_request'
-        env:
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
-          NOTES: ${{ github.event.head_commit.message }}
-        run: |
-          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
-            echo "::warning::SPARKLE_ED_PRIVATE_KEY secret is not set; skipping the auto-update feed"
-            exit 0
-          fi
-          python3 -m venv build/venv
-          build/venv/bin/pip install --quiet cryptography
-          V="0.1.0-beta.${{ github.run_number }}"
-          PUB="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' mac/Resources/Info.plist)"
-          build/venv/bin/python mac/scripts/sparkle_appcast.py "build/BassShake-$V.zip" \
-            --version "${{ github.run_number }}" --short "$V" \
-            --url "https://github.com/${{ github.repository }}/releases/download/v$V/BassShake-$V.zip" \
-            --notes "$(printf '%s\n' "$NOTES" | head -n 1)" \
-            --expect-public-key "$PUB" -o build/appcast.xml
-          echo "PUBLISH_FEED=1" >> "$GITHUB_ENV"
-      - name: Publish update feed
-        if: env.PUBLISH_FEED == '1'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: updates
-          target_commitish: ${{ github.sha }}
-          name: Update feed (Sparkle)
-          prerelease: true
-          files: build/appcast.xml
-          overwrite_files: true
-          body: |
-            Machine-readable update feed for The Bass Shaker's built-in updater (Sparkle).
-            This is not an app download; get the app from the newest v0.1.0-beta.N release.
+  # GitHub's Apple Silicon Macs sometimes run out ("job was not acquired …
+  # capacity constraints") and the job is cancelled after ~15 min. Then build
+  # the same universal app on an Intel Mac (same Xcode 26.6) so the beta still
+  # ships. A run cancelled by hand also falls through to here.
+  mac-app-fallback:
+    name: The Bass Shaker.app (macOS, Intel fallback)
+    needs: mac-app
+    if: ${{ always() && needs.mac-app.result == 'cancelled' }}
+    uses: ./.github/workflows/mac-app.yml
+    with:
+      runner: macos-26-intel
+    secrets: inherit
