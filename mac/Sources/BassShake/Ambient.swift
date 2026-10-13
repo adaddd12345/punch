@@ -6,12 +6,14 @@ import SwiftUI
 /// (blurred, low contrast, so it reads as alive without pulling the eye).
 struct PopupBackground: View {
   let style: BackgroundStyle
+  /// False while the popup is closed/hidden: the smoke stops drawing.
+  var active = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     if let palette = AmbientPalette.for(style) {
       // 15 fps is plenty for drifting smoke and keeps the blur cheap.
-      TimelineView(.animation(minimumInterval: 1.0 / 15, paused: reduceMotion)) { tl in
+      TimelineView(.animation(minimumInterval: 1.0 / 15, paused: reduceMotion || !active)) { tl in
         AmbientSmoke(t: tl.date.timeIntervalSinceReferenceDate, palette: palette)
       }
       .allowsHitTesting(false)

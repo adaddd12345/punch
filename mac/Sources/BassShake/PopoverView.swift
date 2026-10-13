@@ -86,7 +86,7 @@ struct PopoverView: View {
     }
     .padding(12)
     .frame(width: 360)
-    .background(PopupBackground(style: controller.settings.backgroundStyle))
+    .background(PopupBackground(style: controller.settings.backgroundStyle, active: visible))
     .overlay {
       if splash {
         LaunchSplash().transition(.opacity)
