@@ -23,6 +23,7 @@ struct PopoverView: View {
   @ObservedObject private var latencyLab = LatencyLab.shared
   @State private var showLatencyLab = false
   @State private var showHearingFit = false
+  @State private var showMicTest = false
 
   /// Where this copy of the controls lives.
   enum Role { case menuBar, launchWindow, pinned }
@@ -42,6 +43,8 @@ struct PopoverView: View {
   var body: some View {
     if controller.needsOnboarding {
       OnboardingView(controller: controller)
+    } else if showMicTest {
+      MicTestView(controller: controller) { withAnimation { showMicTest = false } }
     } else if showHearingFit {
       HearingFitView(controller: controller) { withAnimation { showHearingFit = false } }
     } else if showLatencyLab {
@@ -490,6 +493,7 @@ struct PopoverView: View {
             Divider()
             Button("Sound Settings…") { controller.openSoundSettings() }
           }
+          Button("Mic Test…") { withAnimation { showMicTest = true } }
           Button("Latency Lab… (Bluetooth delay for recording)") { withAnimation { showLatencyLab = true } }
           Button("Find Old Audio Drivers…") {
             controller.scanDrivers()
