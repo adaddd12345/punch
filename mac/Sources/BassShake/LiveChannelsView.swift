@@ -4,11 +4,12 @@ import SwiftUI
 /// Compact header chip: "● 3 Live". Click to show the Live Channels list.
 struct LiveChannelsButton: View {
   @ObservedObject var model: LiveChannels
+  @ObservedObject private var beats = BeatPlayer.shared
   @Binding var expanded: Bool
   @Environment(\.labelLevel) private var labels
 
   var body: some View {
-    let n = model.liveCount
+    let n = model.liveCount + (beats.playing ? 1 : 0)
     let mutedCount = model.mutedPresentCount
     Button {
       withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expanded.toggle() }
@@ -20,6 +21,8 @@ struct LiveChannelsButton: View {
         Text(labels == .icons ? (n > 0 ? "\(n)" : "") : (n > 0 ? "\(n) Live" : "Live"))
           .font(.system(size: 10, weight: .bold, design: .rounded))
           .monospacedDigit()
+          .lineLimit(1)
+          .fixedSize()
         if mutedCount > 0 {
           Image(systemName: "speaker.slash.fill")
             .font(.system(size: 8, weight: .bold))
@@ -30,7 +33,7 @@ struct LiveChannelsButton: View {
           .foregroundStyle(.secondary)
           .rotationEffect(.degrees(expanded ? 180 : 0))
       }
-      .padding(.horizontal, 7).padding(.vertical, 3)
+      .footerChip()
       .foregroundStyle(Color.primary)
       .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
     }
@@ -49,6 +52,7 @@ struct LiveChannelsButton: View {
 /// level and a one-click mute. Metering runs only while this is on screen.
 struct LiveChannelsPanel: View {
   @ObservedObject var model: LiveChannels
+  @ObservedObject private var beats = BeatPlayer.shared
   private static let rowHeight: CGFloat = 30
   private static let maxVisibleRows = 6
 
@@ -66,7 +70,11 @@ struct LiveChannelsPanel: View {
       }
       let idle = model.mutedIdle
       let rowCount = model.apps.count + idle.count
-      if rowCount == 0 {
+      if let drop = beats.current {
+        BeatsLiveRow(player: beats, title: drop.title)
+          .frame(height: Self.rowHeight)
+      }
+      if rowCount == 0 && beats.current == nil {
         Text("Nothing is playing right now.")
           .font(.system(size: 10, weight: .medium, design: .rounded))
           .foregroundStyle(.secondary)
@@ -313,5 +321,47 @@ struct MutedNotice: View {
       .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
       .help("The Bass Shaker is muting these apps. Mutes last until you unmute or quit.")
     }
+  }
+}
+
+/// Beats in Live: our own stem player, with its own volume (it plays clean,
+/// outside the EQ, so it has no Bass Shaker or meter controls).
+private struct BeatsLiveRow: View {
+  @ObservedObject var player: BeatPlayer
+  let title: String
+  @State private var hover = false
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "square.grid.2x2.fill")
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(.white)
+        .frame(width: 18, height: 18)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor))
+      VStack(alignment: .leading, spacing: 1) {
+        Text("Beats")
+          .font(.system(size: 11, weight: .semibold, design: .rounded))
+          .lineLimit(1)
+        Text(player.playing ? title : "\(title) · Paused")
+          .font(.system(size: 9, weight: .medium, design: .rounded))
+          .lineLimit(1)
+          .truncationMode(.tail)
+          .foregroundStyle(.secondary)
+      }
+      Spacer(minLength: 4)
+      ScrubPercent(value: player.volume, label: "Beats volume") { player.setVolume($0) }
+      Button { player.togglePlay() } label: {
+        Image(systemName: player.playing ? "pause.fill" : "play.fill")
+          .font(.system(size: 9, weight: .bold))
+          .frame(width: 28, height: 18)
+          .foregroundStyle(Color.primary)
+          .background(Capsule().fill(Color.primary.opacity(0.08)))
+      }
+      .buttonStyle(.plain)
+      .help(player.playing ? "Pause Beats" : "Play Beats")
+    }
+    .padding(.horizontal, 4)
+    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.06 : 0)))
+    .onHover { hover = $0 }
   }
 }

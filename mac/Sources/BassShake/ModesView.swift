@@ -6,9 +6,10 @@ struct ModesView: View {
   @ObservedObject var controller: AudioController
 
   private var s: Settings { controller.settings }
+  private var labels: LabelLevel { s.labelLevel }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: 8) {
       HStack(spacing: 6) {
         Chip(title: "Studio Ears", selected: s.studioEars) {
           Image(systemName: "ear.badge.waveform").font(.system(size: 9, weight: .semibold))
@@ -24,7 +25,7 @@ struct ModesView: View {
         .help("Auto Loudness: at low volume your ears lose bass and treble first. This adds them back as you turn the volume down, and does nothing at high volume.")
         Spacer(minLength: 4)
         ForEach([ListeningMode.study, .sleep]) { m in
-          Chip(title: m.title, selected: s.mode == m) {
+          Chip(title: m.title, selected: s.mode == m, compact: true) {
             Image(systemName: m.symbol).font(.system(size: 9, weight: .semibold))
           } action: {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
@@ -53,15 +54,19 @@ struct ModesView: View {
       }
       .help("Turns down anything that gets suddenly louder than what you've been listening to, like a booming title sequence after quiet dialogue. Quiet parts are left alone.")
       if s.nightGuard {
-        Text("Allow")
-          .font(.system(size: 9, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary)
+        if labels == .full {
+          Text("Allow")
+            .font(.system(size: 9, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+            .fixedSize()
+        }
         Slider(value: Binding(get: { s.nightGuardDb }, set: { controller.settings.nightGuardDb = $0.rounded() }), in: 3...15)
           .controlSize(.mini)
           .frame(width: 80)
         Text("+\(Int(s.nightGuardDb)) dB")
           .font(.system(size: 9, weight: .medium, design: .rounded))
           .monospacedDigit()
+          .fixedSize()
           .foregroundStyle(.secondary)
         Spacer(minLength: 2)
         NightGuardChip(model: controller.nightGuard)
@@ -70,15 +75,15 @@ struct ModesView: View {
   }
 
   @ViewBuilder private var panel: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: 8) {
       if s.mode == .sleep { sleepRow } else { studyRow }
       noiseRow
       Text(caption)
-        .font(.system(size: 9.5))
+        .font(.system(size: 10))
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
-    .padding(9)
+    .padding(8)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
   }
@@ -144,11 +149,16 @@ struct ModesView: View {
   }
 
   private var noiseRow: some View {
-    VStack(alignment: .leading, spacing: 5) {
+    VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: 8) {
         Toggle(isOn: Binding(get: { s.noiseOn }, set: { controller.settings.noiseOn = $0 })) {
-          Text("Noise").font(.system(size: 11, weight: .semibold, design: .rounded))
+          if labels == .full {
+            Text("Noise").font(.system(size: 11, weight: .semibold, design: .rounded)).fixedSize()
+          } else {
+            Image(systemName: "speaker.wave.1").font(.system(size: 10, weight: .semibold))
+          }
         }
+        .help("Background noise")
         .toggleStyle(.switch)
         .controlSize(.mini)
         Picker("", selection: Binding(get: { s.noiseColor }, set: { controller.settings.noiseColor = $0 })) {

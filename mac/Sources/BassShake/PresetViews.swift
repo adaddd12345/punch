@@ -110,6 +110,8 @@ struct IconText: View {
 struct Chip<Icon: View>: View {
   let title: String
   let selected: Bool
+  /// Secondary chips show only their icon below All labels.
+  var compact = false
   @ViewBuilder let icon: () -> Icon
   let action: () -> Void
   @Environment(\.labelLevel) private var labels
@@ -118,8 +120,8 @@ struct Chip<Icon: View>: View {
     Button(action: action) {
       HStack(spacing: 4) {
         icon()
-        if labels != .icons {
-          Text(title).font(.system(size: 11, weight: .semibold, design: .rounded)).lineLimit(1)
+        if labels == .full || (labels == .half && !compact) {
+          Text(title).font(.system(size: 11, weight: .semibold, design: .rounded)).lineLimit(1).fixedSize()
         }
       }
       .padding(.horizontal, 9)
@@ -128,7 +130,7 @@ struct Chip<Icon: View>: View {
       .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
     }
     .buttonStyle(.plain)
-    .help(labels == .icons ? title : "")
+    .help(labels == .full ? "" : title)
     .accessibilityLabel(title)
     .accessibilityAddTraits(selected ? .isSelected : [])
     .animation(.easeOut(duration: 0.15), value: selected)
@@ -214,5 +216,12 @@ struct PresetEditor: View {
     case .edit(let id): controller.updateUserPreset(id, name: name, icon: icon)
     }
     onDone()
+  }
+}
+
+extension View {
+  /// The footer's small capsule chips (Live, DJ, Beats, Latency): one size.
+  func footerChip() -> some View {
+    padding(.horizontal, 8).frame(height: 22)
   }
 }

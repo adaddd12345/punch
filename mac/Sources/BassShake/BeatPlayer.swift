@@ -71,10 +71,16 @@ final class BeatPlayer: ObservableObject {
   @Published private(set) var levels: [String: Double] = [:]
   @Published private(set) var muted: Set<String> = []
   @Published private(set) var message: String?
+  /// Overall Beats volume, 0...1 (Live and the Beats drawer). Remembered.
+  @Published private(set) var volume: Double = BeatPlayer.savedVolume
   /// Bumped when a drop is opened from Finder, so the popover shows Beats.
   @Published private(set) var revealCount = 0
 
   static let bpmRange: ClosedRange<Double> = 60...100
+  private static let volumeKey = "beatsVolume"
+  private static var savedVolume: Double {
+    UserDefaults.standard.object(forKey: volumeKey) as? Double ?? 0.8
+  }
 
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "beats")
   private let queue = DispatchQueue(label: "bassshake.beats", qos: .userInitiated)
@@ -183,6 +189,7 @@ final class BeatPlayer: ObservableObject {
     let start = AVAudioFramePosition(position)
     let rate = Float(bpm / drop.bpm)
     let mix = mixLevels()
+    let vol = Float(volume * volume)
     anchorFrames = Double(start)
     anchorHost = 0  // hold the playhead until the engine says when it starts
     playing = true
@@ -197,6 +204,7 @@ final class BeatPlayer: ObservableObject {
         guard let s = self.session else { return }
         s.setRate(rate)
         s.setLevels(mix)
+        s.setVolume(vol)
         let host = try s.play(from: start)
         DispatchQueue.main.async {
           self.sampleRate = s.sampleRate
@@ -240,6 +248,15 @@ final class BeatPlayer: ObservableObject {
     levels[id] = min(max(value, 0), 1)
     muted.remove(id)
     pushLevels()
+  }
+
+  func setVolume(_ v: Double) {
+    let x = min(max(v, 0), 1)
+    guard x != volume else { return }
+    volume = x
+    UserDefaults.standard.set(x, forKey: Self.volumeKey)
+    let g = Float(x * x)
+    queue.async { [weak self] in self?.session?.setVolume(g) }
   }
 
   func toggleMute(_ id: String) {
@@ -391,6 +408,8 @@ private final class Session {
   func pause() { engine.pause() }
 
   func setRate(_ r: Float) { stretch.rate = r }
+
+  func setVolume(_ v: Float) { engine.mainMixerNode.outputVolume = v }
 
   func setLevels(_ levels: [String: Float]) {
     for (id, p) in players { p.volume = levels[id] ?? 1 }

@@ -127,13 +127,18 @@ struct PopoverView: View {
       if on {
         showLive = false
         showDJ = false
-        LiveDrawer.shared.show(BeatsView(player: beats))
+        showBeatsDrawer()
       } else if !showLive && !showDJ {
         LiveDrawer.shared.hide()
       }
     }
+    .onChange(of: controller.settings.beatsSide) { _, _ in
+      if showBeats { showBeatsDrawer() }
+    }
     .onChange(of: beats.revealCount) { _, _ in
-      if ownsDrawer && size != .mini { showBeats = true }
+      // A beat opened from Finder: the popup comes up first, then Beats.
+      guard ownsDrawer, size != .mini else { return }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showBeats = true }
     }
     .onAppear {
       visible = true
@@ -168,6 +173,12 @@ struct PopoverView: View {
       // A pad held while the popover closed never gets its release event.
       controller.dj.held = []
     }
+  }
+
+  private func showBeatsDrawer() {
+    let side = controller.settings.beatsSide
+    LiveDrawer.shared.show(BeatsView(player: beats, side: side) { [controller] in controller.settings.beatsSide.toggle() },
+                           side: side, width: side ? BeatsView.sideWidth : nil)
   }
 
   /// ⌘1/⌘2/⌘3: Full, Compact, Mini.
@@ -243,7 +254,9 @@ struct PopoverView: View {
         Button { controller.bypassed.toggle() } label: {
           Text(controller.bypassed ? "Original" : "A/B")
             .font(.system(size: 10, weight: .bold, design: .rounded))
-            .padding(.horizontal, 7).padding(.vertical, 3)
+            .lineLimit(1)
+            .fixedSize()
+            .footerChip()
             .foregroundStyle(controller.bypassed ? Color.white : Color.primary)
             .background(Capsule().fill(controller.bypassed ? Color.orange : Color.primary.opacity(0.08)))
         }
@@ -343,7 +356,7 @@ struct PopoverView: View {
 
   /// The bottom tray (modes): collapses and opens; its state is remembered.
   private var tray: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: 8) {
       Button {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { controller.settings.trayOpen.toggle() }
       } label: {
@@ -358,11 +371,12 @@ struct PopoverView: View {
           } else {
             Image(systemName: "slider.horizontal.3").font(.system(size: 9, weight: .bold))
           }
-          if !controller.settings.trayOpen, labels != .icons, let active = activeModesSummary {
+          if !controller.settings.trayOpen, labels == .full, let active = activeModesSummary {
             Text(active)
               .font(.system(size: 9, weight: .medium, design: .rounded))
               .foregroundStyle(.tertiary)
               .lineLimit(1)
+              .truncationMode(.tail)
           }
           Spacer()
         }
@@ -450,11 +464,11 @@ struct PopoverView: View {
       Button {
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
           Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
-          if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)) }
+          if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
-        .padding(.horizontal, 7).padding(.vertical, 3)
+        .footerChip()
         .foregroundStyle(controller.dj.anyActive ? Color.white : Color.primary)
         .background(Capsule().fill(controller.dj.anyActive ? Color.purple
                                    : (showDJ ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08))))
@@ -464,20 +478,20 @@ struct PopoverView: View {
       Button {
         if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
       } label: {
-        HStack(spacing: 3) {
+        HStack(spacing: 4) {
           Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 9, weight: .bold))
-          if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)) }
+            .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible)
+          if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
-        .padding(.horizontal, 7).padding(.vertical, 3)
-        .foregroundStyle(beats.playing ? Color.white : Color.primary)
-        .background(Capsule().fill(beats.playing ? Color.accentColor
-                                   : (showBeats ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08))))
+        .footerChip()
+        .foregroundStyle(beats.playing ? Color.accentColor : Color.primary)
+        .background(Capsule().fill(showBeats ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
       }
       .buttonStyle(.plain)
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
       LatencyChip(lab: latencyLab) { withAnimation { showLatencyLab = true } }
-      Spacer()
-      if case .running(_, let sr) = controller.status {
+      Spacer(minLength: 4)
+      if labels == .full, case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
           .font(.system(size: 9, weight: .medium, design: .rounded))
           .foregroundStyle(.tertiary)
@@ -608,7 +622,7 @@ struct PopoverView: View {
       .fixedSize()
       .help("Updates, version and Quit")
       Button { NSApp.terminate(nil) } label: {
-        if labels == .icons { Image(systemName: "power") } else { Text("Quit") }
+        if labels == .full { Text("Quit").fixedSize() } else { Image(systemName: "power") }
       }
       .accessibilityLabel("Quit")
         .buttonStyle(.plain)
@@ -660,8 +674,8 @@ private struct Banner: View {
         .foregroundStyle(contrast == .increased ? Color.primary : tint)
         .fixedSize(horizontal: false, vertical: true)
       HStack {
-        if let a = action { Button(a.0, action: a.1).controlSize(.small) }
-        if let s = secondary { Button(s.0, action: s.1).controlSize(.small) }
+        if let a = action { Button(a.0, action: a.1).controlSize(.small).lineLimit(1).fixedSize() }
+        if let s = secondary { Button(s.0, action: s.1).controlSize(.small).lineLimit(1).fixedSize() }
       }
     }
     .padding(10)

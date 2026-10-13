@@ -478,6 +478,8 @@ struct Settings: Codable, Equatable {
   /// Popover size: everything, compact, or just the sliders.
   var viewSize: ViewSize = .full
   var labelLevel: LabelLevel = .full
+  /// Beats drawer: under the popup (false) or a slim card beside it (true).
+  var beatsSide = false
   /// The bottom tray (modes) is open.
   var trayOpen = true
   var nightGuardDb: Double = 8
@@ -557,6 +559,7 @@ struct Settings: Codable, Equatable {
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
     labelLevel = (try? c.decodeIfPresent(LabelLevel.self, forKey: .labelLevel)) ?? d.labelLevel
+    beatsSide = (try? c.decodeIfPresent(Bool.self, forKey: .beatsSide)) ?? d.beatsSide
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock

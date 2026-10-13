@@ -360,6 +360,7 @@ struct LatencySparkline: View {
 struct LatencyChip: View {
   @ObservedObject var lab: LatencyLab
   let onOpen: () -> Void
+  @Environment(\.labelLevel) private var labels
 
   var body: some View {
     if lab.onTheRoad {
@@ -370,13 +371,14 @@ struct LatencyChip: View {
             Text(String(format: "%.0f ms", saved.extraMs))
               .font(.system(size: 10, weight: .semibold, design: .rounded))
               .monospacedDigit()
-          } else {
+              .fixedSize()
+          } else if labels == .full {
             Text("Measure")
               .font(.system(size: 10, weight: .semibold, design: .rounded))
+              .fixedSize()
           }
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
+        .footerChip()
         .foregroundStyle(lab.savedForCurrentPair == nil ? Color.secondary : Color.primary)
         .background(Capsule().fill(Color.primary.opacity(0.08)))
       }
