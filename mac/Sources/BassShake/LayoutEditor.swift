@@ -4,6 +4,8 @@ import SwiftUI
 // current layout as a small floating card. The round button in the middle
 // hides a section (X) or brings it back (+). Each layout keeps its own list,
 // stored in Settings.hiddenSections; Mini size always shows its few controls.
+// Mac Volume is the exception: one switch (Settings.showMacVolume) for both
+// layouts and every size, Mini included.
 
 /// One part of the popup the editor can show or hide.
 struct LayoutSection: Identifiable, Equatable {
@@ -19,6 +21,11 @@ struct LayoutSection: Identifiable, Equatable {
   /// Why it can't be hidden (nil = it can).
   var locked: String? = nil
   var id: String { key }
+
+  // Both layouts, every size (Mini included): the Mac's own volume. Stored
+  // as Settings.showMacVolume, not in hiddenSections.
+  static let macVolume = LayoutSection(key: "mac.volume", name: "Mac Volume", symbol: "speaker.wave.2.fill",
+                                       tint: .steel, height: 32)
 
   // Bento, top to bottom.
   static let bentoHero = LayoutSection(key: "bento.hero", name: "Top Tile", symbol: "power", tint: .butter,
@@ -46,16 +53,17 @@ struct LayoutSection: Identifiable, Equatable {
   static let classicFooter = LayoutSection(key: "classic.footer", name: "Bottom Bar", symbol: "ellipsis.circle", tint: .graphite,
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
-  static let bento: [LayoutSection] = [bentoHero, bentoNowPlaying, bentoEQ, bentoDials, bentoPresets, bentoModes,
+  static let bento: [LayoutSection] = [macVolume, bentoHero, bentoNowPlaying, bentoEQ, bentoDials, bentoPresets, bentoModes,
                                        bentoModeSettings, bentoFooter]
-  static let classic: [LayoutSection] = [classicHeader, classicEQ, classicPresets, classicMeters, classicSliders,
+  static let classic: [LayoutSection] = [macVolume, classicHeader, classicEQ, classicPresets, classicMeters, classicSliders,
                                          classicModes, classicFooter]
 }
 
 extension Settings {
   /// The layout editor hasn't hidden this section.
   func shows(_ section: LayoutSection) -> Bool {
-    section.locked != nil || !hiddenSections.contains(section.key)
+    if section.key == LayoutSection.macVolume.key { return showMacVolume }
+    return section.locked != nil || !hiddenSections.contains(section.key)
   }
 }
 
@@ -103,17 +111,20 @@ struct LayoutEditorView: View {
       Image(systemName: "rectangle.3.group").font(.system(size: 12, weight: .semibold))
       VStack(alignment: .leading, spacing: 0) {
         Text("Edit Layout").font(.system(size: 13, weight: .bold, design: .rounded))
-        Text(mini ? "Mini always shows its few controls. Changes show at bigger sizes."
+        Text(mini ? "At Mini only Mac Volume hides; other changes show at bigger sizes."
              : (controller.settings.bento ? "Bento layout" : "Classic layout"))
           .font(.system(size: 10, weight: .medium, design: .rounded))
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
       Spacer(minLength: 8)
-      Button("Show All") { controller.settings.hiddenSections.removeAll { k in sections.contains { $0.key == k } } }
+      Button("Show All") {
+        controller.settings.hiddenSections.removeAll { k in sections.contains { $0.key == k } }
+        controller.settings.showMacVolume = true
+      }
         .controlSize(.small)
         .disabled(!anyHidden)
-        .pointerHint("Show All", does: "Brings back every section of this layout. The other layout keeps its own.")
+        .pointerHint("Show All", does: "Brings back this layout's sections, and Mac Volume in both layouts.")
       Button("Done", action: onClose)
         .controlSize(.small)
         .buttonStyle(.borderedProminent)
@@ -123,7 +134,9 @@ struct LayoutEditorView: View {
 
   private func toggle(_ s: LayoutSection) {
     guard s.locked == nil else { return }
-    if let i = controller.settings.hiddenSections.firstIndex(of: s.key) {
+    if s.key == LayoutSection.macVolume.key {
+      controller.settings.showMacVolume.toggle()
+    } else if let i = controller.settings.hiddenSections.firstIndex(of: s.key) {
       controller.settings.hiddenSections.remove(at: i)
     } else {
       controller.settings.hiddenSections.append(s.key)

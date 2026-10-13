@@ -104,6 +104,9 @@ struct PopoverView: View {
 
   private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
+      // The Mac's own volume, first in every layout and size (or, hidden, a
+      // red notice while the Mac is muted or at 0).
+      macSlot
       // Bento folds the header's controls into its hero; Mini has its own row 1.
       if !controller.settings.bento && size != .mini { header }
       // Banners sit above Mini's row 1, full width.
@@ -137,6 +140,7 @@ struct PopoverView: View {
       }
     }
     .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.86), value: size)
+    .animation(.easeOut(duration: 0.2), value: controller.settings.showMacVolume)
     .confirmationDialog("Reset all settings?", isPresented: $confirmReset) {
       Button("Reset Everything", role: .destructive) { controller.resetAllSettings() }
     } message: {
@@ -225,6 +229,7 @@ struct PopoverView: View {
       NowPlaying.shared.attach(controller)
       NowPlaying.shared.windowAppeared()
       latencyLab.startMonitoring()
+      controller.macVolume.refresh()
       updates.checkInBackgroundIfStale()
     }
     .onDisappear {
@@ -264,6 +269,23 @@ struct PopoverView: View {
   }
 
   // MARK: - Sections
+
+  /// Mac Volume: never through `shows()` (hiding must work at Mini too) and
+  /// never dimmed with Power, since it is the Mac's volume, not the app's.
+  @ViewBuilder private var macSlot: some View {
+    let model = controller.macVolume
+    if controller.settings.showMacVolume {
+      if controller.settings.bento {
+        MacVolumeTile(model: model, size: size, liquidGlass: controller.settings.liquidGlass)
+      } else if size == .mini {
+        MacVolumeMiniRow(model: model)
+      } else {
+        MacVolumeRow(model: model)
+      }
+    } else {
+      MacSilentNotice(model: model, bento: controller.settings.bento, mini: size == .mini)
+    }
+  }
 
   /// Classic Full and Compact (Mini draws `classicMini`; Bento folds this into its hero).
   private var header: some View {
@@ -892,6 +914,8 @@ struct PopoverView: View {
         }
         Menu("Presets & Settings") {
           Button("Edit Layout…") { withAnimation { showLayoutEditor = true } }
+          Toggle("Show Mac Volume", isOn: Binding(get: { controller.settings.showMacVolume },
+                                                  set: { controller.settings.showMacVolume = $0 }))
           // Stored as `pointerHints` so saved settings keep loading.
           Toggle("Tutorial Mode", isOn: Binding(get: { controller.settings.pointerHints },
                                                 set: { controller.settings.pointerHints = $0 }))

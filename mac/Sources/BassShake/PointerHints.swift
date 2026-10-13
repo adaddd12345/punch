@@ -676,6 +676,22 @@ enum Caption {
                 gestures: ["Click to choose"])
   }
 
+  /// Mac Volume (top of the popup): the system output volume, not ours.
+  static func macVolume() -> PointerHint {
+    PointerHint("Mac Volume", does: "Same as your volume keys; Boost is separate.")
+  }
+
+  /// Mac Volume on an output with no software volume (HDMI, some DACs).
+  static func macVolumeFixed() -> PointerHint {
+    PointerHint("Mac Volume", does: "This device sets its own volume; use its buttons or remote.")
+  }
+
+  /// The red notice shown while Mac Volume is hidden and the Mac is silent.
+  static func macSilent(mini: Bool) -> PointerHint {
+    PointerHint("Mac Volume", does: mini ? "Hidden: press ⌘2, then ⋯ › Presets & Settings › Show Mac Volume."
+                                         : "Hidden: turn on ⋯ › Presets & Settings › Show Mac Volume.")
+  }
+
   static func checkAndFix(menu: Bool = false) -> PointerHint {
     PointerHint("Check & Fix",
                 does: "Fixes silent, muffled or one-sided sound, then reconnects audio.",

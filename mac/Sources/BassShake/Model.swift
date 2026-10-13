@@ -525,6 +525,10 @@ struct Settings: Codable, Equatable {
   /// Show in Menu Bar (⋯ › Look): may only be off while Show in Dock is on,
   /// so the app can always be found. Read `menuBarIconShown`, not this.
   var showInMenuBar = true
+  /// Mac Volume (top of the popup): the Mac's own output volume and mute.
+  /// Hidden from Edit Layout; brought back there or in ⋯ › Presets & Settings.
+  /// While hidden, a red notice says when the Mac is muted or at 0.
+  var showMacVolume = true
 
   /// Whether the menu-bar icon is shown: never hidden unless the Dock icon is on.
   var menuBarIconShown: Bool { showInMenuBar || !showInDock }
@@ -612,6 +616,7 @@ struct Settings: Codable, Equatable {
     liquidGlass = (try? c.decodeIfPresent(Bool.self, forKey: .liquidGlass)) ?? d.liquidGlass
     showInDock = (try? c.decodeIfPresent(Bool.self, forKey: .showInDock)) ?? d.showInDock
     showInMenuBar = (try? c.decodeIfPresent(Bool.self, forKey: .showInMenuBar)) ?? d.showInMenuBar
+    showMacVolume = (try? c.decodeIfPresent(Bool.self, forKey: .showMacVolume)) ?? d.showMacVolume
   }
 
   static func load() -> Settings {

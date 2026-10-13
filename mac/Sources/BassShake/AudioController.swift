@@ -103,8 +103,9 @@ final class AudioController: ObservableObject {
   @Published var bypassed = false {
     didSet { if bypassed != oldValue { pushParams() } }
   }
-  /// Output device volume (0...1) for Auto Loudness; not persisted.
-  @Published private(set) var deviceVolume: Double?
+  /// Output device volume (0...1) for Auto Loudness; not persisted. Not
+  /// @Published: it changes on every volume step and no view reads it.
+  private(set) var deviceVolume: Double?
   /// Device UID to offer a Quiet Floor pad for (see QuietFloor.swift).
   @Published var quietFloorSuggestion: String?
   let quietFloorTracker = QuietFloorTracker()
@@ -140,6 +141,9 @@ final class AudioController: ObservableObject {
   /// Live Channels: apps making sound, their levels, one-click mute.
   let live = LiveChannels()
   let waveform = WaveformModel()
+  /// Mac Volume: the system output's volume and mute, followed whether or not
+  /// the pipeline runs (its own queues; only its small views observe it).
+  let macVolume = MacVolume()
 
   private let engine: OpaquePointer
   private let curveEngine: OpaquePointer
@@ -208,6 +212,7 @@ final class AudioController: ObservableObject {
       self.log.error("coreaudiod did not respond within 6 s")
       self.status = .audioServiceStuck
     }
+    macVolume.start()
     audioQueue.async {
       self.installHALListeners()
       if #available(macOS 14.2, *) { TapPipeline.sweepLeftovers() }

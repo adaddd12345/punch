@@ -89,6 +89,14 @@ enum HAL {
     return AudioObjectHasProperty(object, &addr)
   }
 
+  /// The property exists and can be written (false when either check fails).
+  static func settable(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress) -> Bool {
+    var addr = address
+    guard AudioObjectHasProperty(object, &addr) else { return false }
+    var out: DarwinBoolean = false
+    return AudioObjectIsPropertySettable(object, &addr, &out) == noErr && out.boolValue
+  }
+
   /// Number of channels in a device's streams for one scope.
   static func channelCount(_ device: AudioObjectID, scope: AudioObjectPropertyScope) -> Int {
     var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration, mScope: scope,

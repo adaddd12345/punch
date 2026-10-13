@@ -941,6 +941,10 @@ struct BentoTint: Equatable {
   // Neutrals.
   static let frost = BentoTint(name: "frost", pastel: Color(white: 1.0), ink: Color(white: 0.35), darkScale: 0.4)
   static let graphite = BentoTint(name: "graphite", pastel: Color(white: 0.62), ink: Color(white: 0.30))
+  // Alerts: the Mac is muted or at 0 (Mac Volume).
+  static let alert = BentoTint(name: "alert", pastel: Color(red: 1.00, green: 0.58, blue: 0.58), ink: Color(red: 0.80, green: 0.16, blue: 0.16))
+  /// Mac Volume: a cool, low-saturation hue so the fader level reads (frost is white on white).
+  static let steel = BentoTint(name: "steel", pastel: Color(red: 0.70, green: 0.76, blue: 0.86), ink: Color(red: 0.26, green: 0.33, blue: 0.45))
 
   static let presetPalette: [BentoTint] = [.butter, .mint, .aqua, .sand]
 
