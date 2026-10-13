@@ -640,6 +640,15 @@ struct PopoverView: View {
         Menu("Look") {
           Toggle("Bento Layout", isOn: Binding(get: { controller.settings.bento },
                                                set: { controller.settings.bento = $0 }))
+          // The Bento tiles in system Liquid Glass (macOS 26+). Power Saver and
+          // Reduce Transparency keep the classic frosted tiles.
+          if #available(macOS 26, *) {
+            Toggle("Liquid Glass", isOn: Binding(get: { controller.settings.liquidGlass },
+                                                 set: { controller.settings.liquidGlass = $0 }))
+              .disabled(!controller.settings.bento || controller.settings.powerSaver
+                        || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
+              .help("Off while Power Saver or Reduce Transparency is on")
+          }
           Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
                                                    set: { controller.settings.backgroundStyle = $0 })) {
             ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }

@@ -43,6 +43,9 @@ struct BentoView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   /// Power Saver: no blur glows, shadows or blur transitions.
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  /// Liquid Glass tiles: the IDs that let a strip or tile morph as it comes and goes.
+  @Namespace private var glassSpace
   private var s: Settings { controller.settings }
   /// What's Playing. Not observed here: only its own small views observe it.
   private var nowPlaying: NowPlaying { NowPlaying.shared }
@@ -52,7 +55,22 @@ struct BentoView: View {
   /// A tile's hue as readable text (Tutorial Mode cards).
   private func ink(_ t: BentoTint) -> Color { scheme == .dark ? t.pastel : t.ink }
 
+  /// Liquid Glass tiles (macOS 26+, ⋯ › Look). Power Saver and Reduce
+  /// Transparency keep the classic frosted fill.
+  private var glass: Bool {
+    guard #available(macOS 26, *) else { return false }
+    return s.liquidGlass && !powerSaver && !reduceTransparency
+  }
+
   var body: some View {
+    stack
+      .modifier(BentoGlassContainer())
+      .environment(\.bentoGlass, glass ? BentoGlassSpace(id: glassSpace) : nil)
+      // Always set, so a tile's glassEffectID never comes and goes with `glass`.
+      .environment(\.bentoGlassNamespace, glassSpace)
+  }
+
+  private var stack: some View {
     VStack(spacing: 8) {
       hero
       // What's Playing: other playing apps (nothing while the feature is off).
@@ -60,12 +78,11 @@ struct BentoView: View {
         NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live)
       }
       if s.shows(.bentoEQ) {
-        BentoTile(tint: tint(.frost), padding: 0) {
+        BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
           EQView(controller: controller, chrome: false,
                  filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
             .frame(height: size == .full ? 132 : 100)
         }
-        .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
         .pointerHintTint(live ? ink(.bass) : nil)
       }
       if s.shows(.bentoDials) { dials }
@@ -222,6 +239,9 @@ struct BentoView: View {
     }
     .pointerHintTint(ink(t))
     .background { heroBackground(t, dark: dark, shape: shape) }
+    // Liquid Glass: plain glass under the wash (the wash, not .tint, carries the
+    // colour, so it stays when the window isn't key).
+    .modifier(BentoGlassSurface(on: glass, radius: BentoRadius.hero, interactive: false))
   }
 
   /// The hero as it always was: the big preset word, then modes and output.
@@ -364,9 +384,15 @@ struct BentoView: View {
 
   private func heroBackground(_ t: BentoTint, dark: Bool, shape: RoundedRectangle) -> some View {
     ZStack {
-      BentoFill(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
-        .id(t.name)
-        .transition(.opacity)
+      Group {
+        if glass {
+          BentoGlassWash(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
+        } else {
+          BentoFill(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
+        }
+      }
+      .id(t.name)
+      .transition(.opacity)
     }
     .overlay(alignment: .bottom) {
       if live {
@@ -456,13 +482,15 @@ struct BentoView: View {
 
   private var presets: some View {
     VStack(spacing: 8) {
-      BentoTile(tint: tint(.frost), padding: 0) {
+      // Not interactive: the whole strip would react to every pill press and
+      // scroll drag. The pills stay non-glass on purpose: at 6 pt spacing they
+      // would merge inside GlassEffectContainer (and be glass on glass).
+      BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
         PresetStrip(controller: controller, editor: $editor)
           .contentMargins(.horizontal, 8, for: .scrollContent)
           .padding(.vertical, 8)
           .environment(\.bentoChips, true)
       }
-      .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
       .pointerHintTint(ink(.frost))
       if let mode = editor {
         PresetEditor(controller: controller, mode: mode) {
@@ -579,7 +607,7 @@ struct BentoView: View {
   }
 
   private var modeStrip: some View {
-    BentoTile(tint: tint(s.mode == .study ? .lime : .lilac)) {
+    BentoTile(tint: tint(s.mode == .study ? .lime : .lilac), glassID: "detail.mode") {
       VStack(alignment: .leading, spacing: 8) {
         if s.mode == .sleep { sleepRow } else { studyRow }
         noiseRow
@@ -595,7 +623,7 @@ struct BentoView: View {
   private var nightGuardRow: some View {
     ScrubTile(title: "Allow", symbol: "moon.haze", tint: tint(.indigo),
               value: s.nightGuardDb, range: 3...15, defaultValue: Self.defaultAllow,
-              detent: Self.defaultAllow, tickStep: 1, step: 1,
+              detent: Self.defaultAllow, tickStep: 1, step: 1, glassID: "detail.nightGuard",
               format: { ("+", "\(Int($0.rounded()))", " dB") }) {
       v in let r = v.rounded(); if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
     } accessory: { EmptyView() }
@@ -773,19 +801,187 @@ enum BentoLook: Equatable {
   case fader(Double)
 }
 
-/// One tile: soft diagonal wash, top-lit rim, continuous corners.
+/// One tile: soft diagonal wash, top-lit rim, continuous corners. Inside
+/// BentoView with Liquid Glass on (macOS 26+), the same wash sits inside a
+/// system glass shape instead, with no rim of our own.
 struct BentoTile<Content: View>: View {
   let tint: BentoTint
   var look: BentoLook = .base
   var padding: CGFloat = 8
   var radius: CGFloat = BentoRadius.tile
+  /// Clip the content to the tile (edge-to-edge content: the EQ, the preset strip).
+  var clipped = false
+  /// Liquid Glass: the tile reacts to the pointer (tiles you click or drag).
+  var interactive = false
+  /// Liquid Glass: a tile that comes and goes morphs under this ID.
+  var glassID: String? = nil
   @ViewBuilder let content: () -> Content
+  @Environment(\.bentoGlass) private var glass
+  @Environment(\.bentoGlassNamespace) private var glassSpace
 
+  /// One fixed structure whether glass is on or off (only the background
+  /// branches), so toggling glass never resets the content's state.
   var body: some View {
     content()
       .padding(padding)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .background(BentoFill(tint: tint, look: look, radius: radius))
+      .background {
+        if glass != nil {
+          BentoGlassWash(tint: tint, look: look, radius: radius)
+        } else {
+          BentoFill(tint: tint, look: look, radius: radius)
+        }
+      }
+      .modifier(BentoClip(on: clipped, radius: radius))
+      .modifier(BentoGlassSurface(on: glass != nil, radius: radius, interactive: interactive,
+                                  clear: look == .outline, id: glassID, space: glassSpace))
+  }
+}
+
+private struct BentoClip: ViewModifier {
+  let on: Bool
+  let radius: CGFloat
+  func body(content: Content) -> some View {
+    if on { content.clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous)) } else { content }
+  }
+}
+
+// MARK: - Liquid Glass (macOS 26+)
+
+/// Set by BentoView while its tiles are Liquid Glass (nil: the classic fill).
+struct BentoGlassSpace: Equatable {
+  let id: Namespace.ID
+}
+
+private struct BentoGlassKey: EnvironmentKey {
+  static let defaultValue: BentoGlassSpace? = nil
+}
+
+private struct BentoGlassNamespaceKey: EnvironmentKey {
+  static let defaultValue: Namespace.ID? = nil
+}
+
+extension EnvironmentValues {
+  var bentoGlass: BentoGlassSpace? {
+    get { self[BentoGlassKey.self] }
+    set { self[BentoGlassKey.self] = newValue }
+  }
+  /// BentoView's glass namespace, set whether or not glass is on.
+  var bentoGlassNamespace: Namespace.ID? {
+    get { self[BentoGlassNamespaceKey.self] }
+    set { self[BentoGlassNamespaceKey.self] = newValue }
+  }
+}
+
+/// One container around the Bento stack, so the glass tiles share one
+/// sampling pass and morph into each other. Spacing stays well under the 8 pt
+/// gaps, so resting (or pressed, interactive) tiles never merge. Only
+/// #available branches, so the structure is fixed for the process's life.
+struct BentoGlassContainer: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(macOS 26, *) {
+      GlassEffectContainer(spacing: 2) { content }
+    } else {
+      content
+    }
+  }
+}
+
+/// The system glass behind a tile. Never tinted: glass tints turn grey when
+/// the window isn't key (the pinned popover, the drawer panels), so our own
+/// wash, drawn inside the shape, carries the colour.
+struct BentoGlassSurface: ViewModifier {
+  let on: Bool
+  let radius: CGFloat
+  let interactive: Bool
+  /// Clear glass (the outline look: one-shot actions).
+  var clear = false
+  var id: String? = nil
+  var space: Namespace.ID? = nil
+
+  /// Off is Glass.identity, not a different view tree: only #available and
+  /// the per-tile id branch, so toggling glass keeps the content's state.
+  func body(content: Content) -> some View {
+    if #available(macOS 26, *) {
+      let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+      let glass = on ? (clear ? Glass.clear : Glass.regular).interactive(interactive) : Glass.identity
+      if let id, let space {
+        content
+          .glassEffect(glass, in: shape)
+          .glassEffectID(id, in: space)
+      } else {
+        content.glassEffect(glass, in: shape)
+      }
+    } else {
+      content
+    }
+  }
+}
+
+/// The pastel wash inside a glass tile: the same hue and diagonal as
+/// BentoFill, retuned for glass (which is lighter in light mode and darker in
+/// dark), with no rim or drop shadow (the glass draws its own edge).
+struct BentoGlassWash: View {
+  let tint: BentoTint
+  let look: BentoLook
+  var radius: CGFloat = BentoRadius.tile
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.colorSchemeContrast) private var contrast
+
+  private var dark: Bool { scheme == .dark }
+  /// Frost (EQ, presets, What's Playing) and graphite (off) stay faint.
+  private var neutral: Bool { tint.name == BentoTint.frost.name || tint.name == BentoTint.graphite.name }
+
+  private enum Level { case strong, base, faint }
+
+  private func alpha(_ level: Level) -> Double {
+    let a: Double
+    switch level {
+    case .strong: a = dark ? 0.55 : 0.78
+    case .base: a = neutral ? (dark ? 0.08 : 0.16) : (dark ? 0.32 : 0.48)
+    case .faint: a = dark ? 0.10 : 0.16
+    }
+    return min(1, a + (contrast == .increased ? 0.15 : 0))
+  }
+
+  private func wash(_ level: Level) -> LinearGradient {
+    let a = alpha(level)
+    return LinearGradient(colors: [tint.pastel.opacity(a), tint.pastel.opacity(a * 0.62)],
+                          startPoint: .topLeading, endPoint: .bottomTrailing)
+  }
+
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+    ZStack {
+      switch look {
+      case .outline:
+        // The same hairline as BentoFill: marks a one-shot action, not a toggle.
+        shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.26), Color.primary.opacity(0.10)],
+                                          startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
+      case .fader(let f):
+        shape.fill(wash(.faint))
+        GeometryReader { g in
+          Rectangle()
+            .fill(wash(.strong))
+            .frame(width: g.size.width * CGFloat(min(1, max(0, f))))
+        }
+      case .lit:
+        shape.fill(wash(.strong))
+        // The lit glow, inside the glass (Power Saver never gets here).
+        shape.stroke(tint.pastel.opacity(dark ? 0.75 : 0.95), lineWidth: 8)
+          .blur(radius: 6)
+      case .strong:
+        shape.fill(wash(.strong))
+      case .quiet:
+        shape.fill(wash(.faint))
+      case .base:
+        shape.fill(wash(.base))
+      }
+    }
+    .clipShape(shape)
+    .animation(.easeOut(duration: 0.15), value: look == .lit)
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
   }
 }
 
@@ -945,6 +1141,8 @@ private struct ScrubTile<Accessory: View>: View {
   let tickStep: Double
   /// Snap to this step before haptics and set(), so ticks match the digits (0 = off).
   var step: Double = 0
+  /// Liquid Glass: morph under this ID as the tile comes and goes.
+  var glassID: String? = nil
   /// (sign, digits, unit): sign and unit are drawn small.
   let format: (Double) -> (String, String, String)
   let set: (Double) -> Void
@@ -980,7 +1178,7 @@ private struct ScrubTile<Accessory: View>: View {
     let f = format(value)
     let dragging = start != nil
     let motion = !reduceMotion
-    BentoTile(tint: tint, look: .fader(fraction), padding: 12) {
+    BentoTile(tint: tint, look: .fader(fraction), padding: 12, interactive: true, glassID: glassID) {
       VStack(alignment: .leading, spacing: 6) {
         TileLabel(title: title, symbol: symbol)
           .frame(maxWidth: .infinity, minHeight: 20, maxHeight: 20, alignment: .leading)
@@ -1075,7 +1273,7 @@ private struct ModeTile<Fact: View>: View {
   var body: some View {
     let dark = scheme == .dark
     Button(action: action) {
-      BentoTile(tint: tint, look: outline ? .outline : (on ? .lit : .quiet)) {
+      BentoTile(tint: tint, look: outline ? .outline : (on ? .lit : .quiet), interactive: true) {
         VStack(alignment: .leading, spacing: 4) {
           ZStack {
             Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))

@@ -88,7 +88,7 @@ EdDSA key, and Sparkle verifies it against `SUPublicEDKey` in Info.plist.
 # DSP core (any OS)
 cmake -S core -B core/build && cmake --build core/build -j && ctest --test-dir core/build
 
-# App (macOS 14.4+, Xcode 16+)
+# App (runs on macOS 14.4+; builds with Xcode 26+ / macOS 26 SDK)
 mac/scripts/bundle.sh 0.1.0 1      # → build/Bass Shake.app + build/BassShake-0.1.0.zip
 open "build/Bass Shake.app"
 ```

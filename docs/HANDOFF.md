@@ -1,6 +1,6 @@
 # Handoff: read this, then CLAUDE.md
 
-**Who / how:** sole user-tester (Adam). He installs betas through Sparkle; **every push to `claude/macos-audio-routing-research-xpbcuk` ships a beta to his Mac**, so only push what compiles (CI = Xcode 16.4 / macOS 15.5 SDK; check the run before saying it's live). He gives fast, terse feedback, often with screenshots, videos or Terminal output. Act on it directly, keep replies short and plain, and don't dump option lists. He says "fire on all" when he wants the whole batch done.
+**Who / how:** sole user-tester (Adam). He installs betas through Sparkle; **every push to `claude/macos-audio-routing-research-xpbcuk` ships a beta to his Mac**, so only push what compiles (CI = Xcode 26 / macOS 26 SDK, deployment target 14.4; check the run before saying it's live). He gives fast, terse feedback, often with screenshots, videos or Terminal output. Act on it directly, keep replies short and plain, and don't dump option lists. He says "fire on all" when he wants the whole batch done.
 
 **Feel he's tuned for (keep it):**
 - Tight 8 pt rhythm and 12 pt padding. He rejected "airy" spacing and a monochrome redesign, so don't restyle unprompted.

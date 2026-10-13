@@ -518,6 +518,9 @@ struct Settings: Codable, Equatable {
   var hiddenSections: [String] = []
   /// Power Saver (⋯ › Presets & Settings): simpler visuals and slower meters to save CPU. Never changes the sound.
   var powerSaver = false
+  /// Liquid Glass Bento tiles (⋯ › Look, macOS 26+ only). Power Saver and Reduce
+  /// Transparency fall back to the classic frosted tiles.
+  var liquidGlass = true
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -599,6 +602,7 @@ struct Settings: Codable, Equatable {
     hearing = (try? c.decodeIfPresent(HearingProfile.self, forKey: .hearing)) ?? nil
     hiddenSections = (try? c.decodeIfPresent([String].self, forKey: .hiddenSections)) ?? d.hiddenSections
     powerSaver = (try? c.decodeIfPresent(Bool.self, forKey: .powerSaver)) ?? d.powerSaver
+    liquidGlass = (try? c.decodeIfPresent(Bool.self, forKey: .liquidGlass)) ?? d.liquidGlass
   }
 
   static func load() -> Settings {

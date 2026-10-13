@@ -221,6 +221,8 @@ private struct PrimaryButton: View {
 /// The locked play/pause's badge: a tiny lock on a plate, on the disc's edge.
 private struct LockBadge: View {
   let size: CGFloat
+  /// On a glass tile: an opaque plate, not a second backdrop blur.
+  @Environment(\.bentoGlass) private var bentoGlass
 
   var body: some View {
     let d = max(CGFloat(12), (size * CGFloat(0.4)).rounded())
@@ -228,7 +230,8 @@ private struct LockBadge: View {
       .font(.system(size: max(CGFloat(6.5), d * CGFloat(0.5)), weight: .bold))
       .foregroundStyle(Color.primary.opacity(0.75))
       .frame(width: d, height: d)
-      .background(Circle().fill(.regularMaterial))
+      .background(Circle().fill(bentoGlass != nil ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor).opacity(0.9))
+                                                  : AnyShapeStyle(.regularMaterial)))
       .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
       .offset(x: d * CGFloat(0.2), y: d * CGFloat(0.2))
       .accessibilityHidden(true)
@@ -288,7 +291,7 @@ private struct NowSubTile: View {
     let paused = track.map { !$0.playing } ?? model.showsPaused(app)
     let tint: BentoTint = active ? .frost : .graphite
     let dark = scheme == .dark
-    BentoTile(tint: tint) {
+    BentoTile(tint: tint, interactive: true, glassID: "now." + app.id) {
       VStack(alignment: .leading, spacing: 6) {
         Button { model.open(app) } label: {
           HStack(spacing: 6) {

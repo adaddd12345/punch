@@ -29,7 +29,8 @@ jobs:
 
   mac-app:
     name: The Bass Shaker.app (macOS)
-    runs-on: macos-15
+    # macOS 26 SDK (Liquid Glass); the app's deployment target stays 14.4.
+    runs-on: macos-26
     # Publish releases and the update feed in push order.
     concurrency:
       group: publish-${{ github.ref }}
@@ -38,6 +39,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Toolchain
         run: |
+          # Pin Xcode 26.6 (the image default today); keep the default if a newer image drops it.
+          if [ -d /Applications/Xcode_26.6.app ]; then
+            sudo xcode-select -s /Applications/Xcode_26.6.app
+          else
+            echo "::warning::Xcode_26.6.app not on this image; using the default $(xcode-select -p)"
+          fi
           xcodebuild -version
           swift --version
       - name: DSP core tests (Apple Silicon)

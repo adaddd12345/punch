@@ -33,6 +33,8 @@ struct EQView: View {
   @Environment(\.pointerHintsOn) private var hintsOn
   /// Power Saver: no scope and no glow under the curve.
   @Environment(\.powerSaver) private var powerSaver
+  /// Inside a Liquid Glass tile (the readout skips its own blur there).
+  @Environment(\.bentoGlass) private var bentoGlass
 
   private static let colors: [Color] = [
     Color(red: 1.00, green: 0.36, blue: 0.36),
@@ -288,7 +290,9 @@ struct EQView: View {
     }
     .padding(.horizontal, 7)
     .padding(.vertical, 3)
-    .background(.regularMaterial, in: Capsule())
+    // On a glass tile: an opaque capsule, not a second backdrop blur.
+    .background(bentoGlass != nil ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor).opacity(0.85))
+                                  : AnyShapeStyle(.regularMaterial), in: Capsule())
   }
 
   // MARK: - Interaction
