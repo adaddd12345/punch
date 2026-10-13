@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Signs an update archive with Sparkle's EdDSA (Ed25519) scheme and writes a
-single-item appcast.xml.
+appcast.xml with the new item first, followed by the newest few items of the
+previous feed (--previous), so the previous build is never dropped.
 
 Usage:
   SPARKLE_ED_PRIVATE_KEY=<base64 32-byte seed> \\
   sparkle_appcast.py ZIP --version BUILD --short VERSION --url URL \\
-                     [--notes-url URL] [--notes TEXT] [--min-os 14.4] -o appcast.xml
+                     [--notes-url URL] [--notes TEXT] [--min-os 14.4] \\
+                     [--previous old-appcast.xml] [--keep 4] -o appcast.xml
 
 The private key format matches Sparkle's `generate_keys -x` export (base64
 seed); the public half lives in Info.plist as SUPublicEDKey. Sparkle verifies
@@ -16,6 +18,7 @@ import base64
 import email.utils
 import html
 import os
+import re
 import sys
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -32,6 +35,8 @@ def main() -> int:
     ap.add_argument("--notes", default="")
     ap.add_argument("--min-os", default="14.4")
     ap.add_argument("--expect-public-key", default="", help="fail if the key doesn't match this SUPublicEDKey")
+    ap.add_argument("--previous", default="", help="existing appcast.xml whose newest items are kept")
+    ap.add_argument("--keep", type=int, default=4, help="how many previous items to keep")
     ap.add_argument("-o", "--output", required=True)
     a = ap.parse_args()
 
@@ -59,6 +64,21 @@ def main() -> int:
     elif a.notes:
         notes += f"      <description><![CDATA[<p>{html.escape(a.notes)}</p>]]></description>\n"
 
+    # Keep the newest few items of the previous feed after the new one, so the
+    # previous build stays listed (a fallback if the new one is bad).
+    previous = ""
+    if a.previous and os.path.exists(a.previous):
+        old = open(a.previous, encoding="utf-8", errors="replace").read()
+        kept = []
+        for item in re.findall(r"[ \t]*<item>.*?</item>", old, re.S):
+            m = re.search(r"<sparkle:version>([^<]*)</sparkle:version>", item)
+            if not m or m.group(1).strip() == a.version:
+                continue
+            kept.append(item.strip("\n"))
+            if len(kept) >= a.keep:
+                break
+        previous = "".join("\n" + k for k in kept)
+
     xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
@@ -71,7 +91,7 @@ def main() -> int:
       <sparkle:minimumSystemVersion>{html.escape(a.min_os)}</sparkle:minimumSystemVersion>
 {notes}      <enclosure url="{html.escape(a.url)}" length="{len(data)}" type="application/octet-stream"
                  sparkle:edSignature="{sig}"/>
-    </item>
+    </item>{previous}
   </channel>
 </rss>
 """
