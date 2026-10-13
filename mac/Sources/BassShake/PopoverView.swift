@@ -65,7 +65,10 @@ struct PopoverView: View {
       header
       statusBanner
       MutedNotice(model: controller.live)
-      if size != .mini {
+      if controller.settings.bento && size != .mini {
+        driverSection
+        BentoView(controller: controller, meters: meters, editor: $editor, size: size)
+      } else if size != .mini {
         driverSection
         EQView(controller: controller)
           .frame(height: size == .full ? 150 : 112)
@@ -73,9 +76,9 @@ struct PopoverView: View {
         presetStrip
         if size == .full { MeterView(model: meters) }
       }
-      sliders
+      if !controller.settings.bento || size == .mini { sliders }
       if size != .mini {
-        tray
+        if !controller.settings.bento { tray }
         Divider().opacity(0.5)
         footer
       }
@@ -213,7 +216,7 @@ struct PopoverView: View {
           .layoutPriority(1)
       }
       Spacer(minLength: 4)
-      if size != .mini { deviceMenu }
+      if size != .mini && !controller.settings.bento { deviceMenu }
       Button {
         controller.settings.labelLevel = controller.settings.labelLevel.next
       } label: {
@@ -265,11 +268,13 @@ struct PopoverView: View {
         .accessibilityValue(controller.bypassed ? "Original" : "Processed")
         .help("Compare with the original sound (\(GlobalHotkey.bypassLabel) from anywhere)")
       }
-      Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
-        .toggleStyle(.switch)
-        .controlSize(.small)
-        .labelsHidden()
-        .help(controller.settings.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
+      if size == .mini || !controller.settings.bento {
+        Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
+          .toggleStyle(.switch)
+          .controlSize(.small)
+          .labelsHidden()
+          .help(controller.settings.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
+      }
     }
   }
 
@@ -563,6 +568,8 @@ struct PopoverView: View {
           }
         }
         Menu("Look") {
+          Toggle("Bento Layout", isOn: Binding(get: { controller.settings.bento },
+                                               set: { controller.settings.bento = $0 }))
           Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
                                                    set: { controller.settings.backgroundStyle = $0 })) {
             ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }

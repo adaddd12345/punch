@@ -480,6 +480,8 @@ struct Settings: Codable, Equatable {
   var labelLevel: LabelLevel = .full
   /// Beats drawer: under the popup (false) or a slim card beside it (true).
   var beatsSide = false
+  /// Bento layout: the main block as pastel tiles instead of the classic stack.
+  var bento = false
   /// The bottom tray (modes) is open.
   var trayOpen = true
   var nightGuardDb: Double = 8
@@ -560,6 +562,7 @@ struct Settings: Codable, Equatable {
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
     labelLevel = (try? c.decodeIfPresent(LabelLevel.self, forKey: .labelLevel)) ?? d.labelLevel
     beatsSide = (try? c.decodeIfPresent(Bool.self, forKey: .beatsSide)) ?? d.beatsSide
+    bento = (try? c.decodeIfPresent(Bool.self, forKey: .bento)) ?? d.bento
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock

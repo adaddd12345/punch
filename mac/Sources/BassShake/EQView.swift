@@ -10,6 +10,8 @@ import SwiftUI
 /// Gain snaps to 0 dB with a trackpad haptic tick.
 struct EQView: View {
   @ObservedObject var controller: AudioController
+  /// The faint rounded backing; Bento turns it off (its tile is the backing).
+  var chrome = true
 
   @State private var grabbed: Int?
   @State private var hovered: Int?
@@ -87,9 +89,9 @@ struct EQView: View {
     }
     .background(
       RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .fill(Color.primary.opacity(0.045))
+        .fill(Color.primary.opacity(chrome ? 0.045 : 0))
     )
-    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: chrome ? 12 : 0, style: .continuous))
     .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
   }
 
