@@ -50,6 +50,25 @@ struct NowTrack: Equatable {
   var artwork: NSImage?
 }
 
+/// One thing playing inside a browser: a tab (YouTube video, SoundCloud, a podcast page…).
+/// Never logged, never saved. Filled by the browser source in NowPlaying; the Bento stack
+/// shows one tile per item, so two YouTube tabs plus Spotify make three tiles.
+struct NowItem: Equatable, Identifiable {
+  /// Stable while the tab lives: "<app id>:<window id>:<tab id>".
+  let id: String
+  /// The NowApp.id this item belongs to (e.g. Google Chrome).
+  let appID: String
+  /// Page title cleaned of the site suffix and notification counts ("(3) … - YouTube").
+  var title: String
+  /// Channel or site name ("YouTube", "SoundCloud"); empty if unknown.
+  var subtitle: String
+  var url: URL?
+  /// A still for the item (YouTube's video thumbnail); nil until fetched or unknown.
+  var artwork: NSImage?
+  /// Heard right now (the tab's own audio indicator), not just open.
+  var playing: Bool
+}
+
 /// "What's Playing" for the Bento hero.
 ///
 /// Layer A (no permission): Live Channels' per-app levels. The loudest app
@@ -74,6 +93,8 @@ final class NowPlaying: ObservableObject {
   @Published private(set) var others: [NowApp] = []
   /// Song info by bundle ID (Spotify / Music only).
   @Published private(set) var tracks: [String: NowTrack] = [:]
+  /// Browser tabs playing, by NowApp.id (loudest/most recent first). Empty for other apps.
+  @Published var items: [String: [NowItem]] = [:]
   /// Mirrors LiveChannels.shakerOff (slow) so tiles don't observe the 30 Hz levels.
   /// Apps muted in Live Channels (the tiles' mute buttons).
   @Published private(set) var muted: Set<String> = []
