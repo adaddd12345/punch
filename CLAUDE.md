@@ -14,7 +14,7 @@ C++20 DSP core, SwiftUI + AppKit UI, Sparkle auto-updates. Bundle id `app.basssh
 
 ## Build & test
 - Core: `cmake -S core -B core/build && cmake --build core/build -j && core/build/punch_tests`
-- App (on a Mac with Xcode 26+, or Command Line Tools with the macOS 26 SDK; the app still runs on 14.4+): `swift build -c release` from repo root, or `mac/scripts/bundle.sh 0.1.0-dev 1` → `build/The Bass Shaker.app`.
+- App (on a Mac with Xcode 26+, or Command Line Tools with the macOS 26 SDK; the app still runs on 14.4+): `swift build -c release` from repo root, or `mac/scripts/bundle.sh 0.1.0-dev 1` → `build/The Bass Shaker.app` (universal needs full Xcode; `ARCHS=native mac/scripts/bundle.sh …` works with only the Command Line Tools, for a local install).
 - CI compiles with Xcode 26 / macOS 26 SDK (macos-26 runner); the deployment target is still 14.4, so gate 26-only APIs (Liquid Glass) with `if #available(macOS 26, *)` and keep a fallback.
 
 - Shipping betas / the Sparkle update pipeline: see docs/UPDATES.md. Handoff notes: docs/HANDOFF.md.

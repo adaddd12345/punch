@@ -11,8 +11,13 @@ BUILD="${2:-1}"
 APP="build/The Bass Shaker.app"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
-swift build -c release --arch arm64 --arch x86_64
-BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/BassShake"
+# Universal by default (needs full Xcode). ARCHS=native builds just this Mac's
+# architecture, which works with only the Command Line Tools (local installs).
+ARCHS="${ARCHS:-arm64 x86_64}"
+ARCH_FLAGS=()
+if [ "$ARCHS" != "native" ]; then for a in $ARCHS; do ARCH_FLAGS+=(--arch "$a"); done; fi
+swift build -c release ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}
+BIN="$(swift build -c release ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)/BassShake"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
