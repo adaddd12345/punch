@@ -521,6 +521,15 @@ struct Settings: Codable, Equatable {
   /// Liquid Glass Bento tiles (⋯ › Look, macOS 26+ only). Power Saver and Reduce
   /// Transparency fall back to the classic frosted tiles.
   var liquidGlass = true
+  /// Show in Dock (⋯ › Look): a regular app with the 3D shaker in the Dock;
+  /// a Dock click opens the popup. Off = menu-bar only, as before.
+  var showInDock = false
+  /// Show in Menu Bar (⋯ › Look): may only be off while Show in Dock is on,
+  /// so the app can always be found. Read `menuBarIconShown`, not this.
+  var showInMenuBar = true
+
+  /// Whether the menu-bar icon is shown: never hidden unless the Dock icon is on.
+  var menuBarIconShown: Bool { showInMenuBar || !showInDock }
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -603,6 +612,8 @@ struct Settings: Codable, Equatable {
     hiddenSections = (try? c.decodeIfPresent([String].self, forKey: .hiddenSections)) ?? d.hiddenSections
     powerSaver = (try? c.decodeIfPresent(Bool.self, forKey: .powerSaver)) ?? d.powerSaver
     liquidGlass = (try? c.decodeIfPresent(Bool.self, forKey: .liquidGlass)) ?? d.liquidGlass
+    showInDock = (try? c.decodeIfPresent(Bool.self, forKey: .showInDock)) ?? d.showInDock
+    showInMenuBar = (try? c.decodeIfPresent(Bool.self, forKey: .showInMenuBar)) ?? d.showInMenuBar
   }
 
   static func load() -> Settings {

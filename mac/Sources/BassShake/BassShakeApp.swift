@@ -35,6 +35,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     l.notice("delegate ready")
   }
 
+  /// Show in Dock: become a regular app before launch finishes (switching
+  /// later can leave the previous app's menus in the menu bar). No activate:
+  /// LSUIElement stays set, so login and update relaunches start quietly.
+  func applicationWillFinishLaunching(_ notification: Notification) {
+    launchedAt = Date()
+    // A duplicate copy that is about to step away mustn't flash a Dock tile.
+    let alone = Bundle.main.bundleIdentifier.map { id in
+      NSRunningApplication.runningApplications(withBundleIdentifier: id).allSatisfy { $0 == .current }
+    } ?? true
+    if controller.settings.showInDock && alone { NSApp.setActivationPolicy(.regular) }
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     // One instance only: two copies would each tap the other's output and
     // feed back. A relaunch (update, audio restart) overlaps briefly with the
@@ -42,6 +54,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     if let id = Bundle.main.bundleIdentifier {
       let mine = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
       var others = NSRunningApplication.runningApplications(withBundleIdentifier: id).filter { $0 != .current }
+      // Only strictly older copies count (ties by pid), so of two copies
+      // started together exactly one steps away.
+      let me = NSRunningApplication.current
+      let myDate = me.launchDate ?? Date()
+      others = others.filter { o in
+        let d = o.launchDate ?? .distantPast
+        return d < myDate || (d == myDate && o.processIdentifier < me.processIdentifier)
+      }
       // A relaunch (update, audio restart) overlaps briefly with the old copy
       // shutting down: give it a moment.
       let deadline = Date().addingTimeInterval(3)
@@ -67,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         if !other.isTerminated { other.forceTerminate() }
       }
     }
+    if controller.settings.showInDock && NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
     log.notice("launched \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?", privacy: .public)")
     // Only the first run shows it (the explainer); later launches, updates
     // and login launches start quietly. Reopening the app still shows it.
@@ -74,16 +95,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     setUpStatusItem()
     controller.onPinChange = { [weak self] _, _ in self?.applyPopoverBehavior() }
     controller.onOpenHotkey = { [weak self] in self?.togglePopover(nil) }
+    NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil,
+                                           queue: .main) { [weak self] _ in self?.screensChanged() }
+    NotificationCenter.default.addObserver(forName: NSApplication.didUnhideNotification, object: nil,
+                                           queue: .main) { [weak self] _ in self?.unhiddenAt = Date() }
     DispatchQueue.main.async { [controller] in controller.bootstrap() }
     // Start auto-updates only once the UI is up, and never block on it.
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }
   }
 
   /// Double-clicking the app again (Finder, Launchpad, Spotlight) while it is
-  /// already running brings the window back.
+  /// already running brings the window back. A Dock click (Show in Dock)
+  /// opens the popup instead; a second copy launched at login stays quiet.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-    showWindow()
+    let justLaunched = Date().timeIntervalSince(launchedAt) < 15
+    switch ReopenSource.current() {
+    case .sibling where justLaunched, .login where justLaunched:
+      break   // double login launch (Dock's Open at Login + ours): stay quiet
+    case .dock(let p) where controller.settings.showInDock && !controller.needsOnboarding:
+      dockClicked(at: p)
+    default:
+      showWindow()   // Finder / Spotlight / Launchpad: unchanged
+    }
     return false
+  }
+
+  /// The Dock's right-click menu (Show in Dock). The Dock adds Options, Show
+  /// in Finder, Hide and Quit itself.
+  func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+    guard controller.settings.showInDock else { return nil }
+    // The pointer is on the tile while the menu is asked for.
+    let p = NSEvent.mouseLocation
+    if let s = DockGeometry.screen(at: p), let id = DockGeometry.displayID(of: s) { lastDockClick = (id, p) }
+    return buildMenu(forDock: true)
   }
 
   /// A `.bassdrop` beat opened from Finder: add it and show it in Beats.
@@ -113,6 +157,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   private var statusItem: NSStatusItem?
   private let popover = NSPopover()
 
+  /// Where the popover hangs from: the menu-bar icon, or (Show in Dock) an
+  /// invisible point just above the clicked Dock tile.
+  enum PopoverAnchor { case statusItem, dock(NSPoint, NSRectEdge) }
+  private let dockAnchor = DockAnchorWindow()
+  private var anchoredAt: PopoverAnchor?
+  /// The last Dock click (memory only): the display and the pointer on the tile.
+  private var lastDockClick: (displayID: CGDirectDisplayID, point: NSPoint)?
+  private var launchedAt = Date()
+  /// An outside click (e.g. on the Dock tile) just closed it: the reopen
+  /// that follows the same Dock click must not open it again.
+  private var closedByDockPress: (at: Date, point: NSPoint)?
+  /// Changing the activation policy can briefly deactivate us; don't let
+  /// that close an open popover.
+  private var suppressResignCloseUntil = Date.distantPast
+  private var badgeTitle = ""
+  private var unhiddenAt = Date.distantPast
+
   private func setUpStatusItem() {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     item.button?.image = MenuBarIcon.image
@@ -122,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp, .otherMouseUp])
     item.button?.setAccessibilityLabel("The Bass Shaker")
     item.autosaveName = "BassShakeStatusItem"
+    item.isVisible = controller.settings.menuBarIconShown
     statusItem = item
     popover.delegate = self
     UNUserNotificationCenter.current().delegate = self
@@ -129,6 +191,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     Publishers.CombineLatest3(controller.$settings.map(\.enabled), controller.$bypassed, controller.$status)
       .receive(on: RunLoop.main)
       .sink { [weak self] enabled, bypassed, status in self?.updateStatusIcon(enabled: enabled, bypassed: bypassed, status: status) }
+      .store(in: &cancellables)
+    // Show in Dock / Show in Menu Bar: the icon, the Dock tile and its badge.
+    controller.$settings.map { [$0.showInDock, $0.menuBarIconShown] }.removeDuplicates()
+      .receive(on: RunLoop.main)
+      .sink { [weak self] v in
+        guard let self else { return }
+        // Hiding the icon the popover hangs from would lose it: move it.
+        let hiding = !v[1] && self.statusItem?.isVisible == true
+        var reanchor = false
+        if hiding, self.popover.isShown, case .statusItem? = self.anchoredAt { reanchor = true }
+        if reanchor {
+          self.popover.animates = false
+          self.removeOutsideClickMonitors()
+          self.statusItem?.button?.highlight(false)
+          self.popover.close()
+          LiveDrawer.shared.hide()
+        }
+        if self.statusItem?.isVisible != v[1] { self.statusItem?.isVisible = v[1] }
+        self.applyActivationPolicy()
+        if reanchor { self.showPopover(self.resolveAuto()) }
+        // Dock tile gone while the popup hangs from it: move it to the icon.
+        if !v[0], self.popover.isShown, case .dock? = self.anchoredAt {
+          self.suppressResignCloseUntil = Date().addingTimeInterval(0.6)
+          self.popover.animates = false
+          self.popover.close()
+          LiveDrawer.shared.hide()
+          DispatchQueue.main.async { self.showPopover(.statusItem) }
+        }
+        NSApp.dockTile.badgeLabel = v[0] && !self.badgeTitle.isEmpty ? self.badgeTitle : nil
+      }
       .store(in: &cancellables)
     controller.$earAlerts.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
       guard let self, !self.popover.isShown else { return }
@@ -163,7 +255,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   private var lastProblem: String?
 
   private func closeIfUnpinned() {
+    if Date() < suppressResignCloseUntil { return }
     if popover.isShown && !controller.pinned { closePopover() }
+  }
+
+  /// Regular (Dock icon, ⌘-Tab) while Show in Dock is on or the launch
+  /// window is open; otherwise menu-bar only.
+  func applyActivationPolicy(windowClosing: Bool = false) {
+    let windowOpen = !windowClosing && (window?.isVisible ?? false)
+    let want: NSApplication.ActivationPolicy = controller.settings.showInDock || windowOpen ? .regular : .accessory
+    guard NSApp.activationPolicy() != want else { return }
+    if want == .accessory && popover.isShown {
+      // Dropping the Dock icon can deactivate us: keep the popover open.
+      suppressResignCloseUntil = Date().addingTimeInterval(0.6)
+      NSApp.setActivationPolicy(want)
+      NSApp.activate(ignoringOtherApps: true)
+      popover.contentViewController?.view.window?.makeKey()
+    } else {
+      NSApp.setActivationPolicy(want)
+    }
   }
 
   /// The icon shows state without opening anything: dimmed when off, "A/B"
@@ -192,6 +302,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     b.alphaValue = enabled ? 1 : 0.45
     b.toolTip = tip
     b.setAccessibilityValue(tip)
+    // The Dock tile shows the same "!" / "A/B" (system badge; a custom tile
+    // view would replace the 3D icon's own rendering).
+    badgeTitle = title
+    NSApp.dockTile.badgeLabel = controller.settings.showInDock && !title.isEmpty ? title : nil
     if let p = problem, enabled {
       if p != lastProblem && !popover.isShown { notifyProblem(p) }
       lastProblem = p
@@ -220,12 +334,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   }
 
   func windowWillClose(_ notification: Notification) {
-    if (notification.object as? NSWindow) === window { NSApp.setActivationPolicy(.accessory) }
+    if (notification.object as? NSWindow) === window { applyActivationPolicy(windowClosing: true) }
   }
 
   func popoverDidClose(_ notification: Notification) {
+    // Re-shown already (moved to another anchor): leave the new one alone.
+    guard !popover.isShown else { return }
     removeOutsideClickMonitors()
     statusItem?.button?.highlight(false)
+    clearDockAnchor()
+  }
+
+  private func clearDockAnchor() {
+    dockAnchor.orderOut(nil)
+    anchoredAt = nil
+    LiveDrawer.shared.preferSide = false
   }
 
   @objc private func statusClicked(_ sender: Any?) {
@@ -236,33 +359,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       controller.toggle()                       // middle click: on/off
     } else if e?.modifierFlags.contains(.option) == true {
       if controller.settings.enabled { controller.bypassed.toggle() }   // ⌥-click: A/B
-    } else {
-      togglePopover(sender)
-    }
-  }
-
-  private func togglePopover(_ sender: Any?) {
-    if popover.isShown {
+    } else if popover.isShown {
       closePopover()
-    } else if let button = statusItem?.button {
-      applyPopoverBehavior()
-      popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-      // A menu-bar-only app must activate for the popover to take keys.
-      NSApp.activate(ignoringOtherApps: true)
-      popover.contentViewController?.view.window?.makeKey()
-      popover.contentViewController?.view.window?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-      button.highlight(true)
-      installOutsideClickMonitors()
+    } else {
+      showPopover(.statusItem)
     }
   }
 
-  private func closePopover() {
+  /// Open/close from anywhere (hotkey, notification, menus): from the icon
+  /// when it can be seen, else from the Dock.
+  private func togglePopover(_ sender: Any?) {
+    if popover.isShown { closePopover() } else { showPopover(resolveAuto()) }
+  }
+
+  private func resolveAuto() -> PopoverAnchor {
+    // Menu-bar only (Show in Dock off): always the icon, as before.
+    guard controller.settings.showInDock else { return .statusItem }
+    if StatusItemVisibility.usable(statusItem) { return .statusItem }
+    if let last = lastDockClick, let s = DockGeometry.screen(withDisplayID: last.displayID) {
+      let a = DockGeometry.anchor(forClick: last.point, on: s)
+      return .dock(a.point, a.edge)
+    }
+    guard let s = DockGeometry.screen(at: NSEvent.mouseLocation) ?? NSScreen.screens.first else { return .statusItem }
+    let a = DockGeometry.defaultAnchor(on: s)
+    return .dock(a.point, a.edge)
+  }
+
+  private func showPopover(_ anchor: PopoverAnchor) {
+    closedByDockPress = nil
+    applyPopoverBehavior()
+    switch anchor {
+    case .statusItem:
+      guard let button = statusItem?.button else { return }
+      LiveDrawer.shared.preferSide = false
+      dockAnchor.orderOut(nil)
+      popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+      button.highlight(true)
+    case .dock(let p, let edge):
+      guard let v = dockAnchor.contentView else { return }
+      // A popup against the Dock puts its tray beside it, not over the Dock.
+      LiveDrawer.shared.preferSide = true
+      dockAnchor.place(at: p)
+      popover.show(relativeTo: v.bounds, of: v, preferredEdge: edge)
+    }
+    anchoredAt = anchor
+    // A menu-bar-only app must activate for the popover to take keys.
+    NSApp.activate(ignoringOtherApps: true)
+    popover.contentViewController?.view.window?.makeKey()
+    popover.contentViewController?.view.window?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+    installOutsideClickMonitors()
+  }
+
+  /// `yieldFocus`: closed by the user from inside (Esc, ⌘W, Dock click) in
+  /// Dock mode: hand focus back so the menu bar isn't left on our empty menus.
+  private func closePopover(yieldFocus: Bool = false) {
     removeOutsideClickMonitors()
     statusItem?.button?.highlight(false)
     // close(), not performClose(): with .applicationDefined behaviour
     // performClose can be refused, which left the popover stuck open.
     popover.close()
     LiveDrawer.shared.hide()
+    clearDockAnchor()
+    if yieldFocus, controller.settings.showInDock, NSApp.isActive, !(window?.isVisible ?? false) {
+      DispatchQueue.main.async { NSApp.deactivate() }
+    }
+  }
+
+  /// A click on the Dock tile (Show in Dock): toggles the popup, from the
+  /// menu-bar icon when it's really visible on that display, else from the tile.
+  private func dockClicked(at p: NSPoint) {
+    // Hidden (⌘H / Dock › Hide): this click brings it back as it was. The
+    // Dock usually unhides us just before the reopen arrives.
+    if NSApp.isHidden {
+      NSApp.unhide(nil)
+      if popover.isShown { return }
+    } else if popover.isShown && Date() < unhiddenAt.addingTimeInterval(0.5) {
+      return
+    }
+    // The outside-click monitor sees the Dock click first and closes an
+    // unpinned popup; this reopen is the same click, so stay closed.
+    if popover.isShown { closePopover(yieldFocus: true); return }
+    // Used up once, so the next deliberate click on the tile opens it.
+    if let c = closedByDockPress {
+      closedByDockPress = nil
+      if Date() < c.at.addingTimeInterval(1.2), hypot(c.point.x - p.x, c.point.y - p.y) < DockGeometry.tileSize { return }
+    }
+    guard let s = DockGeometry.screen(at: p) else { return }
+    if let id = DockGeometry.displayID(of: s) { lastDockClick = (id, p) }
+    if StatusItemVisibility.usable(statusItem, on: s) {
+      showPopover(.statusItem)
+    } else {
+      let a = DockGeometry.anchor(forClick: p, on: s)
+      showPopover(.dock(a.point, a.edge))
+    }
+  }
+
+  /// Displays added/removed/rearranged, or the Dock moved or resized: keep a
+  /// Dock-anchored popup on its tile.
+  private func screensChanged() {
+    guard popover.isShown, case .dock(_, let oldEdge)? = anchoredAt else { return }
+    let here = NSPoint(x: dockAnchor.frame.midX, y: dockAnchor.frame.midY)
+    let target: (point: NSPoint, edge: NSRectEdge)
+    if let last = lastDockClick, let s = DockGeometry.screen(withDisplayID: last.displayID) {
+      target = DockGeometry.anchor(forClick: last.point, on: s)
+    } else if lastDockClick == nil, let s = NSScreen.screens.first(where: { $0.frame.insetBy(dx: -4, dy: -4).contains(here) }) {
+      target = DockGeometry.defaultAnchor(on: s)   // opened without a click (hotkey): stay on that screen
+    } else {
+      // Its display is gone: unpinned closes, pinned moves to the main screen.
+      guard controller.pinned, let main = NSScreen.main else { closePopover(); return }
+      lastDockClick = nil
+      target = DockGeometry.defaultAnchor(on: main)
+    }
+    if target.edge == oldEdge, let v = dockAnchor.contentView {
+      dockAnchor.place(at: target.point)
+      anchoredAt = .dock(target.point, target.edge)
+      popover.positioningRect = v.bounds   // re-aim at the moved anchor
+    } else {
+      // The Dock changed sides: show again from the new edge, without the fade.
+      popover.animates = false
+      popover.close()
+      LiveDrawer.shared.hide()
+      showPopover(.dock(target.point, target.edge))
+    }
   }
 
   /// Unpinned: any click outside the popover (another app, the desktop, our
@@ -273,14 +491,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
     if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
       guard let self, !self.controller.pinned else { return }
+      // A press on our Dock tile: the reopen its mouseUp sends must not reopen it.
+      let m = NSEvent.mouseLocation
+      if self.controller.settings.showInDock, let s = DockGeometry.screen(at: m), DockGeometry.isNearDock(m, on: s) {
+        self.closedByDockPress = (Date(), m)
+      } else {
+        self.closedByDockPress = nil
+      }
       self.closePopover()
     }) { outsideClickMonitors.append(g) }
     // Esc closes an unpinned popover, ⌘W closes it, ⌘Z undoes a sound edit.
     if let k = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
       guard let self, self.popover.isShown else { return event }
       let cmd = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
-      if event.keyCode == 53, !self.controller.pinned { self.closePopover(); return nil }
-      if cmd, event.charactersIgnoringModifiers == "w" { self.closePopover(); return nil }
+      if event.keyCode == 53, !self.controller.pinned { self.closePopover(yieldFocus: true); return nil }
+      if cmd, event.charactersIgnoringModifiers == "w" { self.closePopover(yieldFocus: true); return nil }
       if cmd, event.charactersIgnoringModifiers == "z" { self.controller.undo(); return nil }
       return event
     }) { outsideClickMonitors.append(k) }
@@ -302,13 +527,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   // MARK: Right-click menu
 
   private func showStatusMenu() {
+    statusItem?.menu = buildMenu(forDock: false)
+    statusItem?.button?.performClick(nil)   // pops the menu at the icon
+    statusItem?.menu = nil                  // left-click keeps toggling the popover
+  }
+
+  /// The right-click menu: the menu-bar icon's, or the Dock tile's (no
+  /// Quit/About/Updates/Login there: the Dock has its own Quit and Options).
+  private func buildMenu(forDock: Bool) -> NSMenu {
     let menu = NSMenu()
     func add(_ title: String, _ sel: Selector, on: Bool = false, key: String = "") {
       let it = menu.addItem(withTitle: title, action: sel, keyEquivalent: key)
       it.target = self
       it.state = on ? .on : .off
     }
-    add(popover.isShown ? "Hide The Bass Shaker" : "Open The Bass Shaker", #selector(menuToggle))
+    add(popover.isShown ? (forDock ? "Close Controls" : "Hide The Bass Shaker")
+                        : (forDock ? "Open Controls" : "Open The Bass Shaker"), #selector(menuToggle))
     menu.addItem(.separator())
     add("Check & Fix Sound Issues", #selector(menuFix))
     add("On", #selector(menuEnabled), on: controller.settings.enabled)
@@ -324,6 +558,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     menu.addItem(presets)
     menu.addItem(.separator())
     add(controller.pinned ? "Unpin" : "Pin Open", #selector(menuPin))
+    if forDock {
+      add("Show in Menu Bar", #selector(menuShowInMenuBar), on: controller.settings.menuBarIconShown)
+      return menu
+    }
     add("Open at Login", #selector(menuLogin), on: LoginItem.isOn)
     menu.addItem(.separator())
     add("Check for Updates…", #selector(menuUpdates))
@@ -334,9 +572,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     let force = menu.addItem(withTitle: "Force Quit", action: #selector(menuForceQuit), keyEquivalent: "")
     force.target = self
     force.toolTip = "Ends The Bass Shaker immediately, even if it's stuck. Your Mac's sound goes back to normal."
-    statusItem?.menu = menu
-    statusItem?.button?.performClick(nil)   // pops the menu at the icon
-    statusItem?.menu = nil                  // left-click keeps toggling the popover
+    return menu
   }
 
   @objc private func menuEnabled() { controller.toggle() }
@@ -354,6 +590,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   @objc private func menuHelp() { Links.open(.help) }
   @objc private func menuToggle() { togglePopover(nil) }
   @objc private func menuPin() { controller.setPinned(!controller.pinned, from: nil) }
+  @objc private func menuShowInMenuBar() { controller.settings.showInMenuBar = !controller.settings.menuBarIconShown }
   @objc private func menuQuit() { NSApp.terminate(nil) }
   /// Immediate, no cleanup (works even when the app is wedged in Core
   /// Audio): coreaudiod frees our taps and aggregates when the process dies.
@@ -395,20 +632,34 @@ struct MainWindowView: View {
           .resizable()
           .frame(width: 18, height: 18)
           .foregroundStyle(Color.accentColor)
-        VStack(alignment: .leading, spacing: 3) {
-          Text("The Bass Shaker lives in your menu bar")
-            .font(.system(size: 12, weight: .semibold))
-          Text("Click the salt shaker near the clock to open these controls any time. You can close this window; The Bass Shaker keeps running. Can't see the icon? Your menu bar may be full (hidden behind the notch), or on macOS 26 check System Settings → Menu Bar.")
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        WhereItLivesText(controller: controller)
       }
       .padding(14)
       .frame(width: 360, alignment: .leading)
       .background(Color.primary.opacity(0.04))
       Divider()
       PopoverView(controller: controller, ownsDrawer: false)
+    }
+  }
+}
+
+/// The launch window's headline: menu bar or Dock (Show in Dock). Its own
+/// small view so only this text follows settings changes.
+private struct WhereItLivesText: View {
+  @ObservedObject var controller: AudioController
+
+  var body: some View {
+    let dock = controller.settings.showInDock
+    let bar = controller.settings.menuBarIconShown
+    VStack(alignment: .leading, spacing: 3) {
+      Text(dock ? "The Bass Shaker lives in your Dock" : "The Bass Shaker lives in your menu bar")
+        .font(.system(size: 12, weight: .semibold))
+      Text(dock
+           ? "Click its icon in the Dock" + (bar ? " (or the shaker in the menu bar)" : "") + " to open these controls. Right-click the Dock icon for quick switches."
+           : "Click the salt shaker near the clock to open these controls any time. You can close this window; The Bass Shaker keeps running. Can't see the icon? Your menu bar may be full (hidden behind the notch), or on macOS 26 check System Settings → Menu Bar.")
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 }

@@ -238,7 +238,8 @@ struct PopoverView: View {
   }
 
   private func showBeatsDrawer() {
-    let side = controller.settings.beatsSide
+    // Beside a Dock-anchored popup the tray always uses its side layout.
+    let side = controller.settings.beatsSide || LiveDrawer.shared.preferSide
     LiveDrawer.shared.show(BeatsView(player: beats, side: side) { [controller] in controller.settings.beatsSide.toggle() },
                            side: side, width: side ? BeatsView.sideWidth : nil)
   }
@@ -661,6 +662,18 @@ struct PopoverView: View {
           }
           Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
                                                 set: { controller.settings.fadeWindows = $0 }))
+          // The 3D shaker in the Dock; a Dock click opens this popup.
+          Toggle("Show in Dock", isOn: Binding(get: { controller.settings.showInDock },
+                                               set: {
+                                                 controller.settings.showInDock = $0
+                                                 // The menu-bar icon may only be off while the Dock tile is on.
+                                                 if !$0 { controller.settings.showInMenuBar = true }
+                                               }))
+          // Only hideable while the Dock icon is on, so the app can't get lost.
+          Toggle("Show in Menu Bar", isOn: Binding(get: { controller.settings.menuBarIconShown },
+                                                   set: { controller.settings.showInMenuBar = $0 }))
+            .disabled(!controller.settings.showInDock)
+            .help("Turn on Show in Dock first, so the app can always be found")
         }
         SoundLikeMenu(controller: controller)
         Menu("Shortcuts") {

@@ -36,6 +36,9 @@ final class LiveDrawer {
   /// Beside the popup (a slim card to its right, or left if there's no
   /// room) instead of hanging under it.
   private var side = false
+  /// Set while the popup hangs from the Dock: the tray goes beside it
+  /// instead of under it (where the Dock is).
+  var preferSide = false
 
   func show(model: LiveChannels) {
     show(LiveChannelsPanel(model: model))
@@ -45,7 +48,7 @@ final class LiveDrawer {
   /// what was there.
   func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil) {
     guard let host else { return }
-    self.side = side
+    self.side = side || preferSide
     if panel == nil {
       let p = DrawerPanel(contentRect: NSRect(x: 0, y: 0, width: anchorRect?.width ?? host.frame.width, height: 120),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
