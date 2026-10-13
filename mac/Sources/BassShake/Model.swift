@@ -529,6 +529,13 @@ struct Settings: Codable, Equatable {
   /// Hidden from Edit Layout; brought back there or in ⋯ › Presets & Settings.
   /// While hidden, a red notice says when the Mac is muted or at 0.
   var showMacVolume = true
+  /// Mini's hero shows the app you hear most (its icon is play/pause), with
+  /// the preset as a small chip under its name. Song and cover only while
+  /// What's Playing is on. Nothing playing: Mini looks as it always did.
+  var showPlayingChannel = true
+  /// The menu-bar icon carries the Mac's volume: 0–3 small waves beside the
+  /// shaker, a slash while muted or at 0 (⋯ › Look).
+  var menuBarVolume = true
 
   /// Whether the menu-bar icon is shown: never hidden unless the Dock icon is on.
   var menuBarIconShown: Bool { showInMenuBar || !showInDock }
@@ -617,6 +624,8 @@ struct Settings: Codable, Equatable {
     showInDock = (try? c.decodeIfPresent(Bool.self, forKey: .showInDock)) ?? d.showInDock
     showInMenuBar = (try? c.decodeIfPresent(Bool.self, forKey: .showInMenuBar)) ?? d.showInMenuBar
     showMacVolume = (try? c.decodeIfPresent(Bool.self, forKey: .showMacVolume)) ?? d.showMacVolume
+    showPlayingChannel = (try? c.decodeIfPresent(Bool.self, forKey: .showPlayingChannel)) ?? d.showPlayingChannel
+    menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
   }
 
   static func load() -> Settings {

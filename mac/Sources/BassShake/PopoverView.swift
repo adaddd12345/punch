@@ -107,6 +107,8 @@ struct PopoverView: View {
       // The Mac's own volume, first in every layout and size (or, hidden, a
       // red notice while the Mac is muted or at 0).
       macSlot
+      // In your ears: the output, and every playing app behind a chevron.
+      earsSlot
       // Bento folds the header's controls into its hero; Mini has its own row 1.
       if !controller.settings.bento && size != .mini { header }
       // Banners sit above Mini's row 1, full width.
@@ -227,6 +229,7 @@ struct PopoverView: View {
       }
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
       NowPlaying.shared.attach(controller)
+      PlayingApps.shared.attach(controller.live)
       NowPlaying.shared.windowAppeared()
       latencyLab.startMonitoring()
       controller.macVolume.refresh()
@@ -287,6 +290,16 @@ struct PopoverView: View {
     }
   }
 
+  /// Under Mac Volume (and hidden with it): the output chip and the playing apps.
+  @ViewBuilder private var earsSlot: some View {
+    if controller.settings.showMacVolume {
+      EarsStack(playing: PlayingApps.shared, live: controller.live, devices: controller.devices,
+                currentID: controller.currentDeviceID, headphones: controller.currentOutputIsHeadphones,
+                bento: controller.settings.bento, mini: size == .mini,
+                select: { [controller] d in controller.select(device: d) })
+    }
+  }
+
   /// Classic Full and Compact (Mini draws `classicMini`; Bento folds this into its hero).
   private var header: some View {
     HStack(spacing: 6) {
@@ -329,10 +342,21 @@ struct PopoverView: View {
     let col: CGFloat = 164
     return VStack(alignment: .leading, spacing: 16) {
       HStack(alignment: .center, spacing: 8) {
-        HStack(alignment: .center, spacing: 8) {
-          miniLogo
-          PresetMenu(controller: controller, editor: $editor, chips: false) { miniPresetLabel }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        // Something playing: its icon (play/pause), name and the preset as a
+        // chip; the row grows to 32 for it. Nothing playing: as always.
+        NowPlayingSwitch(model: NowPlaying.shared, on: controller.settings.showPlayingChannel) {
+          HStack(alignment: .center, spacing: 8) {
+            miniLogo
+            PresetMenu(controller: controller, editor: $editor, chips: false) { miniPresetLabel }
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }
+        } playing: { app in
+          PlayingChannelMini(model: NowPlaying.shared, app: app, art: 28, nameSize: 12) {
+            PresetMenu(controller: controller, editor: $editor, chips: false) {
+              PlayingPresetChip(word: PresetSummary(controller.settings).word, live: controller.settings.enabled,
+                                ink: Color.accentColor)
+            }
+          }
         }
         .frame(width: col, alignment: .leading)
         HStack(alignment: .center, spacing: 0) {
@@ -350,7 +374,7 @@ struct PopoverView: View {
         }
         .frame(width: col, alignment: .trailing)
       }
-      .frame(height: 24)
+      .frame(minHeight: 24)
       // "Save Current Sound as Preset…" from the preset menu opens here.
       if let mode = editor {
         PresetEditor(controller: controller, mode: mode) {
@@ -904,6 +928,10 @@ struct PopoverView: View {
                                                    set: { controller.settings.showInMenuBar = $0 }))
             .disabled(!controller.settings.showInDock)
             .help("Turn on Show in Dock first, so the app can always be found")
+          // Waves (or a slash) beside the menu-bar shaker; scrolling over it works either way.
+          Toggle("Volume on Menu Bar Icon", isOn: Binding(get: { controller.settings.menuBarVolume },
+                                                          set: { controller.settings.menuBarVolume = $0 }))
+            .disabled(!controller.settings.menuBarIconShown)
         }
         SoundLikeMenu(controller: controller)
         Menu("Shortcuts") {
@@ -922,6 +950,9 @@ struct PopoverView: View {
           // Off by default; the first time it's turned on, a one-time note explains it.
           Toggle("Show What's Playing", isOn: Binding(get: { controller.settings.showNowPlaying },
                                                       set: { controller.settings.showNowPlaying = $0 }))
+          // Mini: the app you hear most leads (its icon plays and pauses).
+          Toggle("Show Playing App in Mini", isOn: Binding(get: { controller.settings.showPlayingChannel },
+                                                           set: { controller.settings.showPlayingChannel = $0 }))
           // Drawing only: the sound, Fair Level and every meter's reading stay the same.
           Toggle("Power Saver", isOn: Binding(get: { controller.settings.powerSaver },
                                               set: { controller.settings.powerSaver = $0 }))

@@ -49,6 +49,8 @@ struct BentoView: View {
   /// What's Playing. Not observed here: only its own small views observe it.
   private var nowPlaying: NowPlaying { NowPlaying.shared }
   private var live: Bool { s.enabled }
+  /// An app may lead the hero: What's Playing (Full, Compact) or the playing channel (Mini).
+  private var playingShown: Bool { size == .mini ? s.showPlayingChannel : s.showNowPlaying }
   /// Every tile but the hero turns calm graphite when the app is off.
   private func tint(_ t: BentoTint) -> BentoTint { live ? t : .graphite }
   /// A tile's hue as readable text (Tutorial Mode cards).
@@ -289,8 +291,15 @@ struct BentoView: View {
     let radius: CGFloat = 28
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
     return HStack(alignment: .center, spacing: 12) {
-      miniPreset(t, dark: dark)
-        .frame(width: 160, alignment: .leading)
+      // Something playing: its icon (play/pause), name and the preset as a chip.
+      NowPlayingSwitch(model: nowPlaying, on: s.showPlayingChannel) {
+        miniPreset(t, dark: dark)
+      } playing: { app in
+        PlayingChannelMini(model: nowPlaying, app: app, art: 32, nameSize: 13) {
+          presetMenu { PlayingPresetChip(word: heroWord, live: live, ink: ink(t)) }
+        }
+      }
+      .frame(width: 160, alignment: .leading)
       heroIcons
       HStack(spacing: 8) {
         miniAB
@@ -303,11 +312,13 @@ struct BentoView: View {
     .overlay(alignment: .bottom) {
       // The level line's caption (the line itself is in the background).
       if live {
-        Color.clear
-          .frame(height: 8)
-          .contentShape(Rectangle())
-          .pointerHint { [meters] in Caption.level(meters) }
-          .padding(.horizontal, radius)
+        HiddenWhilePlaying(model: nowPlaying, on: playingShown) {
+          Color.clear
+            .frame(height: 8)
+            .contentShape(Rectangle())
+            .pointerHint { [meters] in Caption.level(meters) }
+            .padding(.horizontal, radius)
+        }
       }
     }
     .pointerHintTint(ink(t))
@@ -569,7 +580,7 @@ struct BentoView: View {
     }
     .overlay(alignment: .bottom) {
       if live {
-        HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
+        HiddenWhilePlaying(model: nowPlaying, on: playingShown) {
           BentoLevelLine(model: meters, ink: dark ? t.pastel : t.ink, dark: dark)
             .padding(.horizontal, lineInset ?? heroPad)
             .padding(.bottom, lineBottom ?? (compact ? 3 : 4))

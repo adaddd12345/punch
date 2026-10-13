@@ -678,7 +678,8 @@ enum Caption {
 
   /// Mac Volume (top of the popup): the system output volume, not ours.
   static func macVolume() -> PointerHint {
-    PointerHint("Mac Volume", does: "Same as your volume keys; Boost is separate.")
+    PointerHint("Mac Volume", does: "Same as your volume keys; Boost is separate.",
+                gestures: MacVolume.menuBarScroll ? ["Scroll over the menu bar icon"] : [])
   }
 
   /// Mac Volume on an output with no software volume (HDMI, some DACs).
