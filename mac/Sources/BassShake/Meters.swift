@@ -44,7 +44,11 @@ final class MeterModel: ObservableObject {
     // nothing downstream needs to redraw.
     if next != channels { channels = next }
 
-    let gr = Double(m.gain_reduction_db)
+    // The limiter's reading is only refreshed while audio flows; when
+    // playback stops it would sit frozen at its last value. No input: no
+    // reduction, so it releases back to 0 like the level meters.
+    let silent = m.in_peak.0 == 0 && m.in_peak.1 == 0
+    let gr = silent ? 0 : Double(m.gain_reduction_db)
     let nextGR = gr <= gainReductionDb ? gr : min(0, gainReductionDb + 12 * dt)
     if nextGR != gainReductionDb { gainReductionDb = nextGR }
     if gr < -0.5 { limitingUntil = now + 0.6 }
