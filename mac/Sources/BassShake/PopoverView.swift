@@ -637,6 +637,14 @@ struct PopoverView: View {
           // Off by default; the first time it's turned on, a one-time note explains it.
           Toggle("Show What's Playing", isOn: Binding(get: { controller.settings.showNowPlaying },
                                                       set: { controller.settings.showNowPlaying = $0 }))
+          // What's Playing's pause for apps with no script: the system media key
+          // (Accessibility) when on, mute when off. The way back from "Mute Instead".
+          Toggle("Pause Any App with Media Keys", isOn: Binding(
+            get: { controller.settings.pauseRoute == .keys },
+            set: { on in
+              controller.settings.pauseRoute = on ? .keys : .mute
+              if on { MediaKeys.request() }
+            }))
           Divider()
           Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
           Divider()

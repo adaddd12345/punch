@@ -303,6 +303,10 @@ struct DJState: Equatable {
   var anyActive: Bool { !held.isEmpty || !pinned.isEmpty || abs(filter) > 0.01 }
 }
 
+/// How What's Playing pauses an app with no script route: ask first, the
+/// system play/pause key (needs Accessibility), or just mute it.
+enum PauseRoute: String, Codable { case ask, keys, mute }
+
 /// Popover sizes.
 /// Word mark: how much text the popup shows. Full; Half (drops headings
 /// and captions); Icons (only text needed to operate: values, banners,
@@ -489,6 +493,8 @@ struct Settings: Codable, Equatable {
   var showNowPlaying = false
   /// The one-time note shown the first time What's Playing is turned on.
   var nowPlayingNoteSeen = false
+  /// What's Playing's pause for apps other than Spotify / Music with a song.
+  var pauseRoute: PauseRoute = .ask
   /// The preset the current sound was edited from (nil once a preset is picked or saved).
   var editedFrom: String? = nil
   /// The bottom tray (modes) is open.
@@ -577,6 +583,7 @@ struct Settings: Codable, Equatable {
     pointerHints = (try? c.decodeIfPresent(Bool.self, forKey: .pointerHints)) ?? d.pointerHints
     showNowPlaying = (try? c.decodeIfPresent(Bool.self, forKey: .showNowPlaying)) ?? d.showNowPlaying
     nowPlayingNoteSeen = (try? c.decodeIfPresent(Bool.self, forKey: .nowPlayingNoteSeen)) ?? d.nowPlayingNoteSeen
+    pauseRoute = (try? c.decodeIfPresent(PauseRoute.self, forKey: .pauseRoute)) ?? d.pauseRoute
     editedFrom = (try? c.decodeIfPresent(String.self, forKey: .editedFrom)) ?? nil
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb

@@ -77,6 +77,26 @@ final class NowPlaying: ObservableObject {
   /// Mirrors LiveChannels.shakerOff (slow) so tiles don't observe the 30 Hz levels.
   /// Apps muted in Live Channels (the tiles' mute buttons).
   @Published private(set) var muted: Set<String> = []
+  /// Apps on screen heard in the last 4 s (published only when the set changes).
+  @Published private(set) var audible: Set<String> = []
+  /// Apps the media key paused, by when (cleared when they sound again).
+  @Published private(set) var pausedByUs: [String: TimeInterval] = [:]
+  /// Apps we muted because the key didn't pause them (their big button unmutes).
+  @Published private(set) var mutedByUs: Set<String> = []
+  /// One line under the controls (a key that missed); clears after 4 s.
+  @Published private(set) var notice: (id: String, text: String, settings: Bool)?
+  /// The app whose "allow Accessibility?" card is showing.
+  @Published private(set) var asking: String?
+  /// The media key sent, waiting to be checked against the app's level.
+  /// `before`: lastLoud at the click, for apps heard in the 1.5 s before it.
+  @Published private(set) var pending: Pending?
+  /// Mirrors Settings.pauseRoute (slow) so views here observe only NowPlaying.
+  @Published private(set) var pauseRoute: PauseRoute = .ask
+
+  /// How the big button pauses this app (chosen on every click).
+  enum Route { case script, key, mute }
+  enum Intent { case pause, play }
+  typealias Pending = (id: String, intent: Intent, sentAt: TimeInterval, before: [String: TimeInterval])
 
   static let smoothingSeconds = 3.0
   static let swapDb = 3.0
@@ -85,8 +105,17 @@ final class NowPlaying: ObservableObject {
   static let maxOthers = 3
   /// A silent app stays this long (gaps between songs).
   static let graceSeconds = 4.0
-  /// A paused Spotify / Music with a known song stays this long, so its play button stays reachable.
+  /// A paused Spotify / Music with a known song (or an app the key paused)
+  /// stays this long, so its play button stays reachable.
   static let pausedSeconds = 180.0
+  /// An app is audible when it was loud this recently.
+  static let audibleSeconds = 1.5
+  /// Louder than this counts as sound.
+  static let loudDb = -70.0
+  /// When a sent key is checked.
+  static let pauseCheckSeconds = 1.4
+  static let playCheckSeconds = 2.0
+  static let noticeSeconds = 4.0
 
   private weak var controller: AudioController?
   private var cancellables = Set<AnyCancellable>()
@@ -100,6 +129,8 @@ final class NowPlaying: ObservableObject {
   private var lastPoll: TimeInterval = 0
   /// LiveChannels' per-app meter is on (only while the window was seen in the last 2 s).
   private var metering = false
+  /// Closed with a key check still due: the timer runs on (at most ~2 s) only to finish it.
+  private var closing = false
 
   // Layer A
   private var smooth: [String: Double] = [:]   // linear power
@@ -107,6 +138,23 @@ final class NowPlaying: ObservableObject {
   private var lastHeard: [String: TimeInterval] = [:]
   private var known: [String: NowApp] = [:]
   private var challenger: (id: String, since: TimeInterval)?
+
+  // Media-key pause (main)
+  /// Last time each app was really sounding (not just the meter's release tail).
+  private var lastLoud: [String: TimeInterval] = [:]
+  private var lastLevel: [String: Double] = [:]
+  /// Apps the key missed this session (memory only): they get mute.
+  private var keyless: Set<String> = []
+  private var noticeAt: TimeInterval = 0
+  /// The click that raised the Accessibility card, sent if access is already there.
+  private var askApp: NowApp?
+  private var askIntent: Intent = .pause
+  /// `audible` is fresh from the meter since the last open / meter rebuild.
+  private var measured = false
+  /// A click on the key route before `measured`, sent once it is.
+  private var deferredClick: NowApp?
+  /// Music was running when the key was sent (an unowned key can launch it).
+  private var musicWasRunning = true
 
   // Layer B (main)
   private var polling = false
@@ -135,7 +183,20 @@ final class NowPlaying: ObservableObject {
       .store(in: &cancellables)
     c.live.$muted
       .removeDuplicates()
-      .sink { [weak self] m in DispatchQueue.main.async { if self?.muted != m { self?.muted = m } } }
+      .sink { [weak self] m in
+        DispatchQueue.main.async {
+          guard let self else { return }
+          if self.muted != m { self.muted = m }
+          // Unmuted elsewhere (Live Channels): no longer our fallback mute.
+          let ours = self.mutedByUs.intersection(m)
+          if ours != self.mutedByUs { self.mutedByUs = ours }
+        }
+      }
+      .store(in: &cancellables)
+    c.$settings
+      .map(\.pauseRoute)
+      .removeDuplicates()
+      .sink { [weak self] r in DispatchQueue.main.async { if self?.pauseRoute != r { self?.pauseRoute = r } } }
       .store(in: &cancellables)
   }
 
@@ -147,8 +208,19 @@ final class NowPlaying: ObservableObject {
   func isMuted(_ id: String) -> Bool { muted.contains(id) }
   /// Mutes just this app (the same per-app mute as Live Channels).
   func toggleMute(_ app: NowApp) {
+    mutedByUs.remove(app.id)
     guard let live = controller?.live else { return }
     live.setMuted(!live.muted.contains(app.id), id: app.id)
+  }
+  /// The key missed and we muted it: the big button unmutes.
+  func showsUnmute(_ app: NowApp) -> Bool { mutedByUs.contains(app.id) && muted.contains(app.id) }
+  /// The key reached nobody for this app this session (it has a pause key in general).
+  func ignoredKey(_ app: NowApp) -> Bool { keyless.contains(app.id) }
+  /// "Paused" in the headline / tile: paused by the key, not while a play is being checked.
+  func showsPaused(_ app: NowApp) -> Bool {
+    guard pausedByUs[app.id] != nil else { return false }
+    if let p = pending, p.id == app.id, p.intent == .play { return false }
+    return true
   }
   func open(_ app: NowApp) { controller?.live.open(app.liveApp) }
   func icon(_ app: NowApp) -> NSImage {
@@ -161,6 +233,9 @@ final class NowPlaying: ObservableObject {
     guard on != wanted else { return }
     wanted = on
     if !on {
+      if closing { teardown() }
+      measured = false
+      deferredClick = nil
       hero = nil
       others = []
       tracks = [:]
@@ -168,6 +243,10 @@ final class NowPlaying: ObservableObject {
       known = [:]
       firstSeen = [:]
       failures = [:]
+      lastLoud = [:]
+      lastLevel = [:]
+      if !audible.isEmpty { audible = [] }
+      if !pausedByUs.isEmpty { pausedByUs = [:] }
       artCache.removeAll()
       artLoading.removeAll()
     }
@@ -178,22 +257,44 @@ final class NowPlaying: ObservableObject {
     let on = wanted && windows > 0
     guard on != active else { return }
     active = on
+    // Reopened while a key check finishes: keep its timer, meter and data.
+    if on && closing { closing = false; return }
     smooth = [:]
     challenger = nil
     lastTick = 0
     if on {
       activeSince = ProcessInfo.processInfo.systemUptime
       lastPoll = 0
+      measured = false
+      deferredClick = nil
       // A grant in System Settings is picked up on the next open (a denial costs one fast event).
       denied.removeAll()
       let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
       RunLoop.main.add(t, forMode: .common)
       timer = t
     } else {
-      timer?.invalidate()
-      timer = nil
-      if metering { metering = false; controller?.live.setNowPlayingMetering(false) }
+      asking = nil
+      askApp = nil
+      deferredClick = nil
+      // Closed mid-check: finish the check first (a missed key still gets undone / muted).
+      if pending != nil, timer != nil, wanted { closing = true; return }
+      teardown()
     }
+  }
+
+  /// Everything off for a closed popup. The pause marks stay (a reopen shows Play).
+  private func teardown() {
+    closing = false
+    timer?.invalidate()
+    timer = nil
+    if metering { metering = false; controller?.live.setNowPlayingMetering(false) }
+    pending = nil
+    notice = nil
+    lastLevel = [:]
+    lastLoud = [:]
+    if !audible.isEmpty { audible = [] }
+    measured = false
+    deferredClick = nil
   }
 
   // MARK: - Layer A: who is playing (10 Hz, main, no HAL)
@@ -201,13 +302,26 @@ final class NowPlaying: ObservableObject {
   private func tick() {
     guard let live = controller?.live else { return }
     let now = ProcessInfo.processInfo.systemUptime
+    // Closed with a key check due: only the check, then everything stops (6 s cap in checkPending).
+    if closing {
+      let dt = lastTick == 0 ? 0.1 : min(0.5, now - lastTick)
+      lastTick = now
+      updateAudible(live.levels, now: now, dt: dt)
+      checkPending(now: now)
+      if pending == nil { teardown() }
+      return
+    }
+    if notice != nil, now - noticeAt >= Self.noticeSeconds { notice = nil }
     // Meter only while the window was really on screen lately (2 s, so a brief
     // occlusion flicker doesn't rebuild the HAL meter).
     let seen = now - lastVisible < 2.0
     if seen != metering {
       metering = seen
       live.setNowPlayingMetering(seen)
-      if seen { activeSince = now; smooth = [:]; challenger = nil; lastTick = 0 }
+      if seen {
+        activeSince = now; smooth = [:]; challenger = nil; lastTick = 0; lastLevel = [:]; lastLoud = [:]
+        measured = false; deferredClick = nil
+      }
     }
     guard seen else { return }
     let dt = lastTick == 0 ? 0.1 : min(0.5, now - lastTick)
@@ -215,6 +329,7 @@ final class NowPlaying: ObservableObject {
     let levels = live.levels
     // The meter takes a moment to build: don't pick a hero from silence.
     if levels.isEmpty && now - activeSince < 1.0 { return }
+    updateAudible(levels, now: now, dt: dt)
 
     // Muted apps stay listed (so their tile can unmute them) but rank last.
     let playing = live.apps.filter { $0.isPlaying }
@@ -272,6 +387,14 @@ final class NowPlaying: ObservableObject {
     let newOthers = rest.compactMap { known[$0] }
     if newHero != hero { hero = newHero }
     if newOthers != others { others = newOthers }
+    publishAudible(now: now)
+    // A click made while the meter was still building, now that the state is real.
+    if let app = deferredClick {
+      deferredClick = nil
+      if hero?.id == app.id || others.contains(app) { primary(app) }
+    }
+
+    checkPending(now: now)
 
     // Layer B, only while the popup is really visible.
     // Not before the one-time note is acknowledged: the Automation prompt would hide it.
@@ -282,7 +405,187 @@ final class NowPlaying: ObservableObject {
   }
 
   private func retainsWhilePaused(_ id: String) -> Bool {
-    NowPlayer(rawValue: id) != nil && tracks[id] != nil
+    if NowPlayer(rawValue: id) != nil && tracks[id] != nil { return true }
+    // A key still being checked (a play click on a paused app keeps it on screen).
+    if pending?.id == id { return true }
+    if let t = pausedByUs[id], ProcessInfo.processInfo.systemUptime - t < Self.pausedSeconds { return true }
+    return false
+  }
+
+  /// Who is really sounding. The meter falls at a fixed rate after sound
+  /// stops (LiveChannels.releaseDbPerSec), so a level only counts as sound
+  /// while it isn't sliding down that release slope; otherwise a pause would
+  /// look like sound for a couple of seconds.
+  private func updateAudible(_ levels: [String: Double], now: TimeInterval, dt: Double) {
+    let slide = LiveChannels.releaseDbPerSec * dt * 0.6
+    for (id, db) in levels {
+      let prev = lastLevel[id]
+      if db > Self.loudDb, prev.map({ db > $0 - slide }) ?? true { lastLoud[id] = now }
+    }
+    lastLevel = levels
+    for (id, t) in lastLoud where now - t > 60 { lastLoud[id] = nil }
+    // A paused app that sounds again (not the one being checked) is playing again;
+    // and the override ends with its three minutes.
+    var p = pausedByUs
+    for (id, t) in p {
+      if pending?.id == id { continue }
+      if let l = lastLoud[id], l > t { p[id] = nil } else if now - t >= Self.pausedSeconds { p[id] = nil }
+    }
+    if p != pausedByUs { pausedByUs = p }
+  }
+
+  /// Publishes who is sounding, for the apps on screen only (so off-screen
+  /// blips don't re-render the tiles). 4 s, so a quiet scene or a gap between
+  /// tracks doesn't flip Pause to Play; the key checks read lastLoud directly.
+  private func publishAudible(now: TimeInterval) {
+    let shown = Set(([hero].compactMap { $0 } + others).map(\.id))
+    let heard = Set(lastLoud.filter { shown.contains($0.key) && now - $0.value < Self.graceSeconds }.keys)
+    if heard != audible { audible = heard }
+    measured = true
+  }
+
+  /// Sounding in the last 1.5 s (the key checks).
+  private func loud(_ id: String, _ now: TimeInterval) -> Bool {
+    lastLoud[id].map { now - $0 < Self.audibleSeconds } ?? false
+  }
+
+  // MARK: - Media-key pause (any app; main thread, no HAL)
+
+  func route(_ app: NowApp) -> Route {
+    if let p = app.player, tracks[p.rawValue] != nil, !denied.contains(p.rawValue) { return .script }
+    if MediaKeys.honours(app.bundleID), !keyless.contains(app.id), pauseRoute != .mute { return .key }
+    return .mute
+  }
+
+  /// Mute route because the user turned pausing off (not because the app has no key).
+  func muteIsChoice(_ app: NowApp) -> Bool {
+    pauseRoute == .mute && MediaKeys.honours(app.bundleID) && !keyless.contains(app.id)
+  }
+
+  func isPlaying(_ app: NowApp) -> Bool {
+    if route(app) == .script, let id = app.bundleID, let t = tracks[id] { return t.playing }
+    if let p = pending, p.id == app.id { return p.intent == .play }
+    // Just opened, meter still building: the glyph only (a click waits for the meter).
+    if !measured { return pausedByUs[app.id] == nil }
+    return audible.contains(app.id) && pausedByUs[app.id] == nil
+  }
+
+  /// The big button: script, media key or mute, whichever this app can honour.
+  func primary(_ app: NowApp) {
+    switch route(app) {
+    case .script:
+      playPause(app)
+    case .mute:
+      toggleMute(app)
+    case .key:
+      if showsUnmute(app) { toggleMute(app); return }
+      // Pause or play is decided from fresh levels (at most ~1 s after opening).
+      guard measured else { deferredClick = app; return }
+      let intent: Intent = isPlaying(app) ? .pause : .play
+      if pauseRoute == .ask {
+        askApp = app
+        askIntent = intent
+        asking = app.id
+        return
+      }
+      sendKey(app, intent)
+    }
+  }
+
+  /// "Allow…" on the card: pause with keys from now on.
+  func allowKeys() {
+    controller?.settings.pauseRoute = .keys
+    pauseRoute = .keys
+    MediaKeys.request()
+    asking = nil
+    let app = askApp
+    askApp = nil
+    if MediaKeys.allowed, let app { sendKey(app, askIntent) }
+  }
+
+  /// "Mute Instead" on the card: mute apps with no script from now on.
+  func muteInstead() {
+    controller?.settings.pauseRoute = .mute
+    pauseRoute = .mute
+    if let app = askApp, !isMuted(app.id) { toggleMute(app) }
+    asking = nil
+    askApp = nil
+  }
+
+  /// Posts play/pause, shows the result at once, and checks it in `tick()`.
+  /// With "keys" chosen it always posts: preflight can stay stale until
+  /// relaunch, and the check catches a real denial.
+  private func sendKey(_ app: NowApp, _ intent: Intent) {
+    guard pending == nil else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    let before = lastLoud.filter { now - $0.value < Self.audibleSeconds }
+    musicWasRunning = NowPlayer.music.isRunning
+    MediaKeys.post(MediaKeys.play)
+    // A play click keeps the pause mark until the check hears the app (so it stays on screen).
+    if intent == .pause { pausedByUs[app.id] = now }
+    pending = (app.id, intent, now, before)
+    notice = nil
+  }
+
+  private func checkPending(now: TimeInterval) {
+    guard let p = pending else { return }
+    // The meter was just rebuilt (window hidden then shown): too stale to judge.
+    if now - p.sentAt > 6 || now - activeSince < 1.0 { pending = nil; return }
+    let age = now - p.sentAt
+    let name = known[p.id]?.name ?? hero.flatMap { $0.id == p.id ? $0.name : nil } ?? "The app"
+    switch p.intent {
+    case .pause:
+      guard age >= Self.pauseCheckSeconds else { return }
+      pending = nil
+      let other = otherToggled(p, now: now)
+      let silent = (lastLoud[p.id] ?? 0) <= p.sentAt + 0.4
+      if silent && !other {
+        pausedByUs[p.id] = now
+        return
+      }
+      if other { MediaKeys.post(MediaKeys.play) }
+      pausedByUs[p.id] = nil
+      if !muted.contains(p.id) {
+        mutedByUs.insert(p.id)
+        controller?.live.setMuted(true, id: p.id)
+      }
+      if !MediaKeys.allowed {
+        show(p.id, "\(name) muted. Allow Accessibility to pause instead ›", settings: true, now: now)
+      } else {
+        keyless.insert(p.id)
+        // A key nobody owns can launch Music.
+        let music = !musicWasRunning && known[p.id]?.bundleID != NowPlayer.music.rawValue
+        show(p.id, "\(name) didn't pause, so it's muted instead." + (music ? " Music may have opened." : ""),
+             settings: false, now: now)
+      }
+    case .play:
+      guard age >= Self.playCheckSeconds else { return }
+      pending = nil
+      if loud(p.id, now) { pausedByUs[p.id] = nil; return }
+      if otherToggled(p, now: now) { MediaKeys.post(MediaKeys.play) }
+      show(p.id, "\(name) didn't resume. Click its icon to open it.", settings: false, now: now)
+    }
+  }
+
+  /// The key went to another media app (one stopped or started instead); the
+  /// caller presses it once more to put that app back. Stopped: sounding in the
+  /// 0.3 s before the key and silent since. Started: loud after the key and not
+  /// heard in the 1.5 s before it. Only apps that honour the key count, so a
+  /// chime or a voice call isn't taken for a toggle.
+  private func otherToggled(_ p: Pending, now: TimeInterval) -> Bool {
+    func media(_ id: String) -> Bool { MediaKeys.honours(known[id]?.bundleID ?? id) }
+    let stopped = p.before.contains { id, t in
+      id != p.id && p.sentAt - t < 0.3 && media(id) && (lastLoud[id].map { $0 <= p.sentAt + 0.2 } ?? true)
+    }
+    let started = lastLoud.contains { id, t in
+      id != p.id && p.before[id] == nil && t > p.sentAt && now - t < Self.audibleSeconds && media(id)
+    }
+    return stopped || started
+  }
+
+  private func show(_ id: String, _ text: String, settings: Bool, now: TimeInterval) {
+    notice = (id, text, settings)
+    noticeAt = now
   }
 
   /// Layer B may raise the macOS Automation prompt only after the user has read the note.

@@ -55,7 +55,7 @@ struct BentoView: View {
       hero
       // What's Playing: other playing apps (nothing while the feature is off).
       if s.shows(.bentoNowPlaying) {
-        NowPlayingTiles(model: nowPlaying, live: controller.live, on: s.showNowPlaying, active: live)
+        NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live)
       }
       if s.shows(.bentoEQ) {
         BentoTile(tint: tint(.frost), padding: 0) {
@@ -258,8 +258,8 @@ struct BentoView: View {
     }
   }
 
-  /// What's Playing leads: cover, song, artist and app; the preset stays as a
-  /// small line underneath, so the hero still says the sound.
+  /// What's Playing leads: cover, song, artist and app, then play/pause (the
+  /// biggest control); the preset and output stay as one quiet line underneath.
   private func playingRows(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(alignment: .center, spacing: 8) {
@@ -267,8 +267,7 @@ struct BentoView: View {
         heroTrailing
       }
       .padding(.top, 2)
-      NowPlayingControls(model: nowPlaying, live: controller.live, app: app,
-                         barColor: dark ? t.pastel : t.ink, active: live)
+      NowPlayingControls(model: nowPlaying, app: app, tint: live ? (dark ? t.pastel : t.ink) : nil)
         .padding(.top, 8)
       HStack(alignment: .center, spacing: 8) {
         soundLine(t)
