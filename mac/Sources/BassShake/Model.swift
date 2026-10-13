@@ -88,8 +88,16 @@ extension Preset {
            bass: 0, symbol: "sparkles"),
     Preset(name: "Loudness", nodes: [(80, 6, 0.71), (180, 1.5, 0.7), (400, 0, 1), (1_500, 0, 1), (3_200, 1, 0.7), (10_000, 4, 0.85)],
            bass: 0.25, symbol: "ear"),
-    Preset(name: "Podcast", nodes: [(100, -6, 0.71), (250, -2, 1), (600, 0, 1), (3_000, 4, 1), (6_500, -2, 3), (11_000, -1, 0.71)],
-           bass: 0, symbol: "mic"),
+    // Warm, close, treated-booth voice (the SM7B sound): rumble trimmed,
+    // chest at 165 Hz, room box out at 420 Hz, 1-4 kHz speech band left
+    // within about 1 dB, sibilance and top softened. Narrower stereo pulls
+    // the voice to the middle and drops room reverb that sits in the sides.
+    // See docs/research/29-podcast-preset.md.
+    Preset(name: "Podcast", nodes: [(60, -3, 0.71), (165, 2.5, 0.8), (420, -2.5, 1.2), (2_600, -1, 1.4), (7_000, -2, 3), (10_000, -1.5, 0.71)],
+           bass: 0, symbol: "mic",
+           character: SoundCharacter(compressor: .init(thresholdDb: -24, ratio: 2, attackMs: 15, releaseMs: 200, makeupDb: 2, sidechainHpHz: 120),
+                                     width: 0.8),
+           subtitle: "Warm, close studio voice: fuller chest, less room box and hiss, gentle leveling."),
     Preset(name: "Basic Enhance", nodes: [(105, 2, 0.71), (250, -1.5, 0.8), (1_000, 0, 1), (3_500, 0.5, 0.7), (6_500, 0, 1), (10_000, 2, 0.71)],
            bass: 0.15, symbol: "wand.and.stars", character: SoundCharacter(width: 1.05),
            subtitle: "A gentle all-rounder: a little low-end weight, less mud, a touch of air."),
