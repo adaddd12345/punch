@@ -764,12 +764,12 @@ enum MenuBarIcon {
 
 /// What the menu-bar icon says about the Mac's volume.
 enum VolumeGlyph: Hashable {
-  /// 0–6 lit bars (0 also when the level can't be read, e.g. HDMI with no software volume).
+  /// 0–10 lit pills (0 also when the level can't be read, e.g. HDMI with no software volume).
   case bars(Int)
   /// Muted or at 0: nothing comes out of the Mac.
   case slash
 
-  static let barCount = 6
+  static let barCount = 10
 
   init(_ s: MacVolumeState) {
     if s.silent { self = .slash; return }
@@ -781,26 +781,25 @@ enum VolumeGlyph: Hashable {
 extension MenuBarIcon {
   private static var cache: [VolumeGlyph: NSImage] = [:]
 
-  /// The shaker, unchanged, with a stack of 6 rising bars beside it: lit bars solid, the rest
-  /// faint, so the level reads at a glance. Always the same width; muted dims every bar and
-  /// slashes the shaker.
+  /// The shaker, unchanged, with a stack of 10 identical pills beside it that fills from the
+  /// bottom (lit solid, the rest faint), so the level reads at a glance. Always the same width;
+  /// muted dims every pill and slashes the shaker.
   static func image(for glyph: VolumeGlyph) -> NSImage {
     if let hit = cache[glyph] { return hit }
     let base = image
     let n = VolumeGlyph.barCount
-    let barW: CGFloat = 2, gap: CGFloat = 1.2, x0: CGFloat = 20.5
-    let width = (x0 + CGFloat(n) * barW + CGFloat(n - 1) * gap + 0.5).rounded(.up)
-    let img = NSImage(size: NSSize(width: width, height: 18), flipped: true) { _ in
+    let pillW: CGFloat = 5, pillH: CGFloat = 1, gap: CGFloat = 0.5, x0: CGFloat = 20
+    let img = NSImage(size: NSSize(width: x0 + pillW + 1, height: 18), flipped: true) { _ in
       base.draw(in: NSRect(x: 0, y: 0, width: 18, height: 18), from: .zero, operation: .sourceOver, fraction: 1,
                 respectFlipped: true, hints: nil)
       guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
       var lit = 0
       if case .bars(let k) = glyph { lit = k }
+      let bottom: CGFloat = 16.5  // pixel-aligned on 2x: 2 px pills, 1 px gaps
       for i in 0..<n {
-        let h = 4 + CGFloat(i) * 2  // 4 … 14 pt, bottoms aligned
-        let r = CGRect(x: x0 + CGFloat(i) * (barW + gap), y: 16 - h, width: barW, height: h)
-        ctx.setFillColor(NSColor.black.withAlphaComponent(i < lit ? 1 : 0.25).cgColor)
-        ctx.addPath(CGPath(roundedRect: r, cornerWidth: 0.6, cornerHeight: 0.6, transform: nil))
+        let r = CGRect(x: x0, y: bottom - pillH - CGFloat(i) * (pillH + gap), width: pillW, height: pillH)
+        ctx.setFillColor(NSColor.black.withAlphaComponent(i < lit ? 1 : 0.22).cgColor)
+        ctx.addPath(CGPath(roundedRect: r, cornerWidth: pillH / 2, cornerHeight: pillH / 2, transform: nil))
         ctx.fillPath()
       }
       if glyph == .slash {
