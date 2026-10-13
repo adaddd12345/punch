@@ -18,8 +18,9 @@ struct PopoverView: View {
   /// "Connecting…" only once starting has taken a while (a normal start is
   /// 0.15–0.5 s, and a banner popping in pushed every tile mid-animation).
   @State private var slowStart = false
-  /// The logo splash shows once per launch, on the first popup.
-  private static var splashShown = false
+  /// The trophy plays once ever, on the very first launch, at full length. Never again, and
+  /// never a shortened version: under Reduce Motion or Power Saver it is simply skipped.
+  private static var splashShown = UserDefaults.standard.bool(forKey: "trophyShown")
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorSchemeContrast) private var contrast
   @State private var showDJ = false
@@ -208,10 +209,12 @@ struct PopoverView: View {
       visible = true
       if !Self.splashShown {
         Self.splashShown = true
-        splash = true
-        let still = reduceMotion || controller.settings.powerSaver
-        DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: still)) {
-          withAnimation(.easeOut(duration: still ? 0 : 0.35)) { splash = false }
+        UserDefaults.standard.set(true, forKey: "trophyShown")
+        if !(reduceMotion || controller.settings.powerSaver) {
+          splash = true
+          DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: false)) {
+            withAnimation(.easeOut(duration: 0.35)) { splash = false }
+          }
         }
       }
       // 30 Hz meters (10 Hz under Power Saver) only while this is on screen (nothing runs when closed).
