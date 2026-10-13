@@ -19,6 +19,9 @@ struct EQView: View {
   @State private var grabbed: Int?
   @State private var hovered: Int?
   @State private var dragOrigin: (band: EQBand, point: CGPoint)?
+  /// While dragging: the curve of every other band (this one at 0 dB), so the
+  /// grabbed band's gain can be solved to put the line under the pointer.
+  @State private var othersCurve: [Double] = []
   @State private var snapped = false
   @State private var scrollMonitor: Any?
   @State private var kbBand = 0
@@ -72,7 +75,7 @@ struct EQView: View {
         if let i = hintsOn ? (focused && kbActive && grabbed == nil ? kbBand : nil) : (grabbed ?? hovered ?? (focused ? kbBand : nil)),
            i < bands.count {
           let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
-          let ny: CGFloat = y(bands[i].gain, size.height)
+          let ny: CGFloat = nodeY(bands[i], response(bands), size.height)
           readout(bands[i], color: Self.colors[i])
             .position(x: nx, y: ny < 30 ? ny + 24 : ny - 22)
             .allowsHitTesting(false)
@@ -138,11 +141,35 @@ struct EQView: View {
     return Double((h / 2 - y) / (h / 2 - pad)) * gainSpan
   }
 
+  // MARK: - Nodes sit on the combined line
+
+  /// Samples of the summed response, 20 Hz–20 kHz on the same log axis as x().
+  private static let curveSamples = 256
+  private func response(_ bands: [EQBand]) -> [Double] {
+    controller.curve(for: bands, count: Self.curveSamples)
+  }
+  /// The summed response at `f`, interpolated from `resp`.
+  private func sample(_ resp: [Double], at f: Double) -> Double {
+    guard resp.count > 1 else { return 0 }
+    let t = min(1, max(0, log10(f / 20) / 3)) * Double(resp.count - 1)
+    let i = Int(t), j = min(resp.count - 1, i + 1), a = t - Double(i)
+    return resp[i] + (resp[j] - resp[i]) * a
+  }
+  /// Where a node is drawn: at its frequency, on the line (not at its own
+  /// gain, which floats off the line when neighbouring bands overlap).
+  private func nodeY(_ b: EQBand, _ resp: [Double], _ h: CGFloat) -> CGFloat {
+    y(max(-gainSpan * 1.1, min(gainSpan * 1.1, sample(resp, at: b.freq))), h)
+  }
+  /// How much of a band's own gain shows at its own frequency: all of it for
+  /// a bell, about half at a shelf's corner.
+  private func selfShare(_ b: EQBand) -> Double { b.kind == .bell ? 1 : 0.5 }
+
   private func nearest(_ p: CGPoint, size: CGSize) -> Int? {
     let bands = controller.settings.bands
+    let resp = response(bands)
     var best: (Int, CGFloat)?
     for (i, b) in bands.enumerated() {
-      let d = hypot(x(b.freq, size.width) - p.x, y(b.gain, size.height) - p.y)
+      let d = hypot(x(b.freq, size.width) - p.x, nodeY(b, resp, size.height) - p.y)
       if d < hitRadius, d < (best?.1 ?? .infinity) { best = (i, d) }
     }
     return best?.0
@@ -174,13 +201,14 @@ struct EQView: View {
                at: CGPoint(x: x(f, w) + 3, y: h - 7), anchor: .leading)
     }
 
+    let resp = response(bands)
     // Per-node soft "influence" glow so you can see what each node does.
     for (i, b) in bands.enumerated() where abs(b.gain) > 0.05 {
       let cx = x(b.freq, w)
       let rect = CGRect(x: cx - 40, y: 0, width: 80, height: h)
       ctx.fill(Path(rect), with: .radialGradient(
         Gradient(colors: [Self.colors[i].opacity(0.10 * min(1, abs(b.gain) / 6)), .clear]),
-        center: CGPoint(x: cx, y: y(b.gain, h)), startRadius: 0, endRadius: 44))
+        center: CGPoint(x: cx, y: nodeY(b, resp, h)), startRadius: 0, endRadius: 44))
     }
 
     // Response curve.
@@ -211,7 +239,7 @@ struct EQView: View {
                                             endPoint: CGPoint(x: 0, y: y(-gainSpan, h))),
                style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
-    drawNodes(ctx, size: size, bands: bands)
+    drawNodes(ctx, size: size, bands: bands, resp: resp)
   }
 
   private func curvePath(_ bands: [EQBand], size: CGSize) -> Path {
@@ -250,13 +278,14 @@ struct EQView: View {
     }
     ctx.stroke(curve, with: .color(color), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
 
+    let resp = response(bands)
     if showNodes {
-      drawNodes(ctx, size: size, bands: bands)
+      drawNodes(ctx, size: size, bands: bands, resp: resp)
     } else {
       // Small dots on the line; the keyboard-picked node is a little larger,
       // in its own colour, so the arrows' target stays visible.
       for (i, b) in bands.enumerated() {
-        let c = CGPoint(x: x(b.freq, w), y: y(b.gain, h))
+        let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h))
         let picked = i == kbDot
         let r: CGFloat = picked ? 5.5 : 2.5
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
@@ -265,10 +294,10 @@ struct EQView: View {
     }
   }
 
-  private func drawNodes(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand]) {
+  private func drawNodes(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], resp: [Double]) {
     let w = size.width, h = size.height
     for (i, b) in bands.enumerated() {
-      let c = CGPoint(x: x(b.freq, w), y: y(b.gain, h))
+      let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h))
       let active = grabbed == i || hovered == i
       let r: CGFloat = active ? 7.5 : 5.5
       if active {
@@ -316,6 +345,9 @@ struct EQView: View {
             return
           }
           dragOrigin = (controller.settings.bands[i], v.startLocation)
+          var rest = controller.settings.bands
+          rest[i].gain = 0
+          othersCurve = response(rest)
           snapped = abs(controller.settings.bands[i].gain) < 0.01
         }
         guard let i = grabbed, let origin = dragOrigin else { return }
@@ -324,9 +356,15 @@ struct EQView: View {
         let dy = (v.location.y - origin.point.y) * fine
         var b = origin.band
         let ox = x(origin.band.freq, size.width)
-        let oy = y(origin.band.gain, size.height)
+        // The dot sits on the summed line, so the drag moves the line: solve
+        // this band's gain so the curve passes under the pointer at its new
+        // frequency, given what the other bands already add there.
+        let share = selfShare(origin.band)
+        let oy = y(sample(othersCurve, at: origin.band.freq) + origin.band.gain * share, size.height)
         b.freq = min(EQBand.freqRange.upperBound, max(EQBand.freqRange.lowerBound, freq(ox + dx, size.width)))
-        var g = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, gain(oy + dy, size.height)))
+        let target = gain(oy + dy, size.height)
+        let solved = (target - sample(othersCurve, at: b.freq)) / share
+        var g = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, solved))
         // Hysteresis snap to 0 dB: catch within 0.4 dB, release beyond 0.8.
         if snapped {
           if abs(g) < 0.8 { g = 0 } else { snapped = false }
@@ -341,6 +379,7 @@ struct EQView: View {
       .onEnded { _ in
         grabbed = nil
         dragOrigin = nil
+        othersCurve = []
       }
   }
 
