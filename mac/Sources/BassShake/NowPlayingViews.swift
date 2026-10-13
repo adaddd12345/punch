@@ -5,7 +5,8 @@ import SwiftUI
 //
 // Each view here observes only `NowPlaying` (slow: changes when the hero
 // app, the song, a mute, or who is audible changes). There are no per-app
-// level bars: the hero's L/R hairlines are the one level shown.
+// level bars, and while an app leads the hero its L/R hairlines are hidden
+// too (see `HiddenWhilePlaying`): the play state is the button.
 
 /// The hero's middle: what's playing when the feature is on and an app is
 /// playing, otherwise the usual preset rows, unchanged.
@@ -28,6 +29,22 @@ struct NowPlayingSwitch<Standard: View, Playing: View>: View {
       }
     }
     .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: hero?.id)
+  }
+}
+
+/// Its content only while the hero shows the preset (no app leads it). A tiny
+/// view of its own so only it observes `NowPlaying`.
+struct HiddenWhilePlaying<Content: View>: View {
+  @ObservedObject var model: NowPlaying
+  let on: Bool
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    let playing = on && model.hero != nil
+    ZStack {
+      if !playing { content().transition(.opacity) }
+    }
+    .animation(.easeOut(duration: 0.25), value: playing)
   }
 }
 
@@ -95,7 +112,9 @@ struct NowPlayingHeadline: View {
 
 /// The hero's second line, in order of importance: play/pause (or mute, for
 /// apps with no pause), next (Spotify / Music with a song), then a small mute.
-/// A note or the Accessibility card takes the space between.
+/// A note after a key that missed takes the space between. Never a permission
+/// card after a click: a button that needs Accessibility shows a lock, and its
+/// hover card says so before anyone clicks.
 struct NowPlayingControls: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
@@ -104,31 +123,22 @@ struct NowPlayingControls: View {
 
   var body: some View {
     let route = model.route(app)
-    Group {
-      if model.asking != nil {
-        AskCard(model: model)
+    HStack(spacing: 8) {
+      PrimaryButton(model: model, app: app, size: 40, glyph: 16, fill: tint)
+      if route == .script {
+        NextButton(model: model, app: app)
+      }
+      if let n = model.notice {
+        NoticeText(text: n.text, settings: n.settings)
           .transition(.opacity)
-      } else {
-        HStack(spacing: 8) {
-          PrimaryButton(model: model, app: app, size: 40, glyph: 16, fill: tint)
-          if route == .script {
-            NextButton(model: model, app: app)
-          }
-          if let n = model.notice {
-            NoticeText(text: n.text, settings: n.settings)
-              .transition(.opacity)
-          }
-          Spacer(minLength: 4)
-          if route != .mute {
-            MuteButton(model: model, app: app, compact: false)
-          }
-        }
-        .frame(height: 40)
-        .transition(.opacity)
+      }
+      Spacer(minLength: 4)
+      if route != .mute {
+        MuteButton(model: model, app: app, compact: false)
       }
     }
+    .frame(height: 40)
     .animation(.easeOut(duration: 0.2), value: model.notice?.text)
-    .animation(.easeOut(duration: 0.2), value: model.asking)
   }
 }
 
@@ -153,31 +163,10 @@ private struct NoticeText: View {
   }
 }
 
-/// The one-time question before the first media key: allow Accessibility, or mute.
-private struct AskCard: View {
-  @ObservedObject var model: NowPlaying
-
-  var body: some View {
-    HStack(spacing: 6) {
-      Text("To pause any app, allow The Bass Shaker in Accessibility.")
-        .font(.system(size: 10, weight: .medium, design: .rounded))
-        .foregroundStyle(Color.primary)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      Button("Allow…") { model.allowKeys() }
-        .controlSize(.small).lineLimit(1).fixedSize()
-      Button("Mute Instead") { model.muteInstead() }
-        .controlSize(.small).lineLimit(1).fixedSize()
-    }
-    .padding(.horizontal, 8)
-    .padding(.vertical, 6)
-    .frame(minHeight: 44)
-    .background(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous).fill(.thinMaterial))
-  }
-}
-
 /// The biggest control: pause / play (media key or script), or mute for an
 /// app with no pause. A filled tint disc, so it reads apart from Power.
+/// Locked (the key needs Accessibility): a small lock badge, an always-on
+/// hover card, and a click that opens Accessibility instead of sending a key.
 private struct PrimaryButton: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
@@ -197,6 +186,7 @@ private struct PrimaryButton: View {
     var disc: Color = fill ?? Color.primary.opacity(0.10)
     var ink: Color = fill == nil ? Color.primary : (dark ? Color.black : Color.white)
     let fallback = model.showsUnmute(app)
+    let locked = model.locked(app)
     if route == .mute || fallback {
       symbol = muted ? "speaker.slash.fill" : "speaker.wave.2.fill"
       label = muted ? "Unmute \(app.name)" : "Mute \(app.name)"
@@ -205,20 +195,43 @@ private struct PrimaryButton: View {
       symbol = playing ? "pause.fill" : "play.fill"
       label = playing ? "Pause \(app.name)" : "Play \(app.name)"
     }
+    let hint = locked
+      ? Caption.locked(app.name, playing: playing)
+      : Caption.primary(app.name, route: route, playing: playing, muted: muted,
+                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback)
     return Button { model.primary(app) } label: {
       Image(systemName: symbol)
         .font(.system(size: glyph, weight: .heavy))
         .foregroundStyle(ink)
         .frame(width: size, height: size)
         .background(Circle().fill(disc))
+        .overlay(alignment: .bottomTrailing) {
+          if locked { LockBadge(size: size).transition(.opacity) }
+        }
         .contentShape(Circle())
     }
     .buttonStyle(BentoPressStyle())
     .fixedSize()
-    .accessibilityLabel(label)
-    .pointerHint(Caption.primary(app.name, route: route, playing: playing, muted: muted,
-                                 chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app),
-                                 fallback: fallback))
+    .animation(.easeOut(duration: 0.2), value: locked)
+    .accessibilityLabel(locked ? "\(label), needs Accessibility" : label)
+    .pointerHint(hint, essential: locked)
+  }
+}
+
+/// The locked play/pause's badge: a tiny lock on a plate, on the disc's edge.
+private struct LockBadge: View {
+  let size: CGFloat
+
+  var body: some View {
+    let d = max(CGFloat(12), (size * CGFloat(0.4)).rounded())
+    Image(systemName: "lock.fill")
+      .font(.system(size: max(CGFloat(6.5), d * CGFloat(0.5)), weight: .bold))
+      .foregroundStyle(Color.primary.opacity(0.75))
+      .frame(width: d, height: d)
+      .background(Circle().fill(.regularMaterial))
+      .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
+      .offset(x: d * CGFloat(0.2), y: d * CGFloat(0.2))
+      .accessibilityHidden(true)
   }
 }
 
@@ -487,6 +500,14 @@ extension Caption {
       }
       return PointerHint(muted ? "Unmute" : "Mute", does: "\(name) has no pause key, so this mutes it.")
     }
+  }
+
+  /// The locked big button (shows even with Tutorial Mode off). The click is
+  /// unexpected (it asks for Accessibility, it doesn't pause), so it gets a chip.
+  static func locked(_ name: String, playing: Bool) -> PointerHint {
+    PointerHint("\(playing ? "Pause" : "Play") \(name)",
+                does: "To \(playing ? "pause" : "play") from here, allow The Bass Shaker in Accessibility.",
+                gestures: ["Click to allow in Accessibility"])
   }
 
   static let noteTurnOff = PointerHint("Turn Off", does: "Hides What's Playing only; The Bass Shaker stays on.")

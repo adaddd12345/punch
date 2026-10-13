@@ -673,13 +673,11 @@ struct PopoverView: View {
                                               set: { controller.settings.powerSaver = $0 }))
             .help("Simpler visuals and slower meters; your sound is unchanged.")
           // What's Playing's pause for apps with no script: the system media key
-          // (Accessibility) when on, mute when off. The way back from "Mute Instead".
+          // when on (a locked button until Accessibility is allowed; its hover
+          // card explains, its click opens the pane), mute when off.
           Toggle("Pause Any App with Media Keys", isOn: Binding(
-            get: { controller.settings.pauseRoute == .keys },
-            set: { on in
-              controller.settings.pauseRoute = on ? .keys : .mute
-              if on { MediaKeys.request() }
-            }))
+            get: { controller.settings.pauseRoute != .mute },
+            set: { on in controller.settings.pauseRoute = on ? .keys : .mute }))
           Divider()
           Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
           Divider()

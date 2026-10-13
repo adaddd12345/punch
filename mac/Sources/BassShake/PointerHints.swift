@@ -64,9 +64,10 @@ final class PointerHintHub: ObservableObject {
   @Published private(set) var pointer: CGPoint = .zero
   @Published private(set) var anchor: CGRect = .zero
   @Published private(set) var visible = false
-  /// Not @Published: set by the root.
+  /// Tutorial Mode. Not @Published: set by the root. Off, only essential
+  /// hints (a control that can't do its job yet says why) still show.
   var enabled = true {
-    didSet { if !enabled { clear() } }
+    didSet { if !enabled { stack.removeAll { !$0.essential }; hide() } }
   }
   /// The shown hint's live closure (polled by the overlay while visible).
   private(set) var source: (() -> PointerHint)?
@@ -76,6 +77,7 @@ final class PointerHintHub: ObservableObject {
     var hint: PointerHint
     var anchor: CGRect
     var source: (() -> PointerHint)?
+    var essential: Bool
     var isEmpty: Bool { hint.isEmpty && source == nil }
   }
   /// Entered hinted controls, innermost (most recently entered) last.
@@ -93,14 +95,15 @@ final class PointerHintHub: ObservableObject {
   // MARK: Control side
 
   func hover(id: UUID, hint: PointerHint, anchor: CGRect, location: CGPoint,
-             source: (() -> PointerHint)? = nil) {
-    guard enabled else { return }
+             source: (() -> PointerHint)? = nil, essential: Bool = false) {
+    guard enabled || essential else { ended(id: id); return }
     if let i = stack.firstIndex(where: { $0.id == id }) {
       stack[i].hint = hint
       stack[i].anchor = anchor
       stack[i].source = source
+      stack[i].essential = essential
     } else {
-      stack.append(Entry(id: id, hint: hint, anchor: anchor, source: source))
+      stack.append(Entry(id: id, hint: hint, anchor: anchor, source: source, essential: essential))
     }
     lastPointer = location
     guard let top = topEntry(), top.id == id else { return }
@@ -141,9 +144,12 @@ final class PointerHintHub: ObservableObject {
 
   /// New text for a control (its value changed): a caption already showing
   /// updates in place.
-  func refresh(id: UUID, hint: PointerHint) {
+  func refresh(id: UUID, hint: PointerHint, essential: Bool = false) {
     guard let i = stack.firstIndex(where: { $0.id == id }) else { return }
+    // No longer essential with Tutorial Mode off (e.g. the lock went away).
+    if !enabled && !essential { ended(id: id); return }
     stack[i].hint = hint
+    stack[i].essential = essential
     guard topEntry()?.id == id else { return }
     if shownID == id && visible {
       if stack[i].isEmpty { hide() } else if stack[i].source == nil, shown != hint { shown = hint }
@@ -274,14 +280,17 @@ extension View {
   }
 
   /// A ready-made caption (computed by the host view).
-  func pointerHint(_ hint: PointerHint, live: Bool = false, track: Bool = true, vo: Bool = true) -> some View {
-    modifier(PointerHintModifier(hint: hint, make: nil, live: live, track: track, vo: vo))
+  /// `essential`: shows even with Tutorial Mode off. Only for a control that
+  /// can't do what it looks like yet (a locked button), never for teaching.
+  func pointerHint(_ hint: PointerHint, live: Bool = false, track: Bool = true, vo: Bool = true,
+                   essential: Bool = false) -> some View {
+    modifier(PointerHintModifier(hint: hint, make: nil, live: live, track: track, vo: vo, essential: essential))
   }
 
   /// Fast live value (meters, limiter): the closure is polled by the overlay
   /// only while this hint is visible, via a 15 Hz TimelineView (5 Hz under Power Saver).
   func pointerHint(live: Bool = false, _ make: @escaping () -> PointerHint) -> some View {
-    modifier(PointerHintModifier(hint: nil, make: make, live: live, track: true, vo: true))
+    modifier(PointerHintModifier(hint: nil, make: make, live: live, track: true, vo: true, essential: false))
   }
 
   /// Colour for the hints under this view.
@@ -301,18 +310,15 @@ private struct PointerHintRootModifier: ViewModifier {
       .environment(\.pointerHintHub, hub)
       .environment(\.pointerHintsOn, enabled)
       .coordinateSpace(.named(PointerHintSpace.name))
-      .overlay {
-        if enabled { PointerHintOverlay(hub: hub) }
-      }
+      // Always here (it draws nothing until a hint shows): essential hints
+      // appear even with Tutorial Mode off.
+      .overlay { PointerHintOverlay(hub: hub) }
       .onAppear {
         hub.enabled = enabled
         hub.start()
       }
       .onDisappear { hub.stop() }
-      .onChange(of: enabled) { _, on in
-        hub.enabled = on
-        if on { hub.start() } else { hub.stop() }
-      }
+      .onChange(of: enabled) { _, on in hub.enabled = on }
   }
 }
 
@@ -330,6 +336,8 @@ private struct PointerHintModifier: ViewModifier {
   let track: Bool
   /// Adds the sentence as the VoiceOver hint (off when the control has its own).
   let vo: Bool
+  /// Shows with Tutorial Mode off too.
+  let essential: Bool
 
   @Environment(\.pointerHintHub) private var hub
   @Environment(\.pointerHintsOn) private var on
@@ -365,14 +373,14 @@ private struct PointerHintModifier: ViewModifier {
         }
       )
       .onContinuousHover(coordinateSpace: space) { phase in
-        guard let hub, on else { return }
+        guard let hub, on || essential else { return }
         switch phase {
         case .active(let p):
           let src: (() -> PointerHint)? = make.map { m in
             let t = tint, l = live
             return { var h = m(); h.live = l; if h.tint == nil { h.tint = t }; return h }
           }
-          hub.hover(id: id, hint: current, anchor: box.rect, location: p, source: src)
+          hub.hover(id: id, hint: current, anchor: box.rect, location: p, source: src, essential: essential)
         case .ended:
           hub.ended(id: id)
         }
@@ -386,10 +394,13 @@ private struct PointerHintModifier: ViewModifier {
         including: (live && track) ? .all : .subviews
       )
       .onChange(of: hint) { _, n in
-        if let n, let hub { hub.refresh(id: id, hint: tinted(n)) }
+        if let n, let hub { hub.refresh(id: id, hint: tinted(n), essential: essential) }
+      }
+      .onChange(of: essential) { _, e in
+        if !e && !on { hub?.ended(id: id) }
       }
       .onDisappear { hub?.ended(id: id) }
-      .help(on ? "" : helpText)
+      .help(on || essential ? "" : helpText)
       .modifier(OptionalA11yHint(text: vo ? hint?.sentence : nil))
   }
 }
@@ -739,10 +750,10 @@ enum Caption {
   static func hero(live: Bool, mode: ListeningMode, word: String, editedFrom: String?, unsaved: Bool) -> PointerHint {
     if !live { return PointerHint("Off", does: "Nothing is changed: your Mac plays its normal sound.") }
     if mode != .off { return PointerHint(word, value: "Paused", does: "\(mode.title) plays its own sound until you turn it off.") }
-    if editedFrom != nil {
-      return PointerHint("Edited", does: "Save it with + below, or press ⌘Z to undo.")
+    if let base = editedFrom {
+      return PointerHint("\(base) · edited", value: "Not saved", does: "Save it with + below, or press ⌘Z to undo.")
     }
-    if unsaved { return PointerHint("My Sound", value: "Not saved", does: "Save it with + below, or press ⌘Z to undo.") }
+    if unsaved { return PointerHint(word, value: "Not saved", does: "Save it with + below, or press ⌘Z to undo.") }
     return PointerHint(word, does: plain[word] ?? "Your saved sound; right-click its chip below to update it.")
   }
 

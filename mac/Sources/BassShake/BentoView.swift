@@ -119,7 +119,8 @@ struct BentoView: View {
     if !live { return "Off" }
     if let p = userPreset { return p.name }
     if let n = presetSource.name { return n }
-    return s.mode == .off ? (s.editedFrom ?? "My Sound") : "My Sound"
+    // Edited: the preset it came from (with "· edited" beside it); no base: plain EQ.
+    return s.mode == .off ? (s.editedFrom ?? "Custom EQ") : "Custom EQ"
   }
 
   /// The EQ was changed after picking a preset: no preset is in effect.
@@ -208,12 +209,15 @@ struct BentoView: View {
     .overlay(alignment: .bottom) {
       // The L/R lines live in the (non-interactive) background: this thin
       // strip over them carries their caption.
+      // Only with the preset showing: while an app leads, no level lines.
       if live {
-        Color.clear
-          .frame(height: 12)
-          .contentShape(Rectangle())
-          .pointerHint { [meters] in Caption.level(meters) }
-          .padding(.horizontal, 16)
+        HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
+          Color.clear
+            .frame(height: 12)
+            .contentShape(Rectangle())
+            .pointerHint { [meters] in Caption.level(meters) }
+            .padding(.horizontal, 16)
+        }
       }
     }
     .pointerHintTint(ink(t))
@@ -234,13 +238,9 @@ struct BentoView: View {
               .foregroundStyle(Color.primary)
               .modifier(SoftShadow(on: !powerSaver, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
             if editedBase != nil {
-              Text("EDITED")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .tracking(0.8)
-                .foregroundStyle(ink(t))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .overlay(Capsule().strokeBorder(ink(t).opacity(0.5), lineWidth: 1))
+              Text("· edited")
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .fixedSize()
             }
@@ -318,13 +318,9 @@ struct BentoView: View {
         .foregroundStyle(Color.primary)
         .layoutPriority(2)
       if editedBase != nil {
-        Text("EDITED")
-          .font(.system(size: 8, weight: .semibold, design: .monospaced))
-          .tracking(0.6)
-          .foregroundStyle(ink(t))
-          .padding(.horizontal, 4)
-          .padding(.vertical, 1)
-          .overlay(Capsule().strokeBorder(ink(t).opacity(0.5), lineWidth: 1))
+        Text("· edited")
+          .font(.system(size: 11, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
           .lineLimit(1)
           .fixedSize()
       }
@@ -374,9 +370,11 @@ struct BentoView: View {
     }
     .overlay(alignment: .bottom) {
       if live {
-        BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
-          .padding(.horizontal, 16)
-          .padding(.bottom, 4)
+        HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
+          BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 4)
+        }
       }
     }
     .animation(.easeInOut(duration: 0.3), value: t.name)

@@ -303,8 +303,9 @@ struct DJState: Equatable {
   var anyActive: Bool { !held.isEmpty || !pinned.isEmpty || abs(filter) > 0.01 }
 }
 
-/// How What's Playing pauses an app with no script route: ask first, the
-/// system play/pause key (needs Accessibility), or just mute it.
+/// How What's Playing pauses an app with no script route: the system
+/// play/pause key (needs Accessibility; `ask`, the default, now means the same:
+/// a locked button until access is granted), or just mute it.
 enum PauseRoute: String, Codable { case ask, keys, mute }
 
 /// Popover sizes.

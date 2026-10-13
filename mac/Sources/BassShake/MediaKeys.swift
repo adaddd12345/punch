@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 
 /// The system play/pause media key, posted the way the keyboard's own key is
@@ -24,10 +25,25 @@ enum MediaKeys {
     }
   }
 
-  /// May post events (Accessibility). Can stay stale until relaunch after a grant.
-  static var allowed: Bool { CGPreflightPostEventAccess() }
-  /// Shows macOS's Accessibility prompt (once; after that it's System Settings).
-  static func request() { _ = CGRequestPostEventAccess() }
+  /// May post events (Accessibility). The post-event preflight can stay stale
+  /// until relaunch after a grant; the Accessibility trust check follows the
+  /// switch in System Settings live, so either one counts.
+  static var allowed: Bool { CGPreflightPostEventAccess() || AXIsProcessTrusted() }
+  /// The Accessibility switch alone (follows System Settings live).
+  static var trusted: Bool { AXIsProcessTrusted() }
+  /// The post-event check alone (can stay false until relaunch after a grant).
+  static var postGranted: Bool { CGPreflightPostEventAccess() }
+
+  private static let promptedKey = "axPrompted"
+  /// One screen per click. First time: macOS's own prompt (it adds us to the
+  /// list and has its own Open System Settings button). After that: the
+  /// Accessibility pane. The request still runs every time: it shows nothing
+  /// once answered, and puts us back on the list if our entry was reset.
+  static func requestOrOpenSettings() {
+    _ = CGRequestPostEventAccess()
+    if UserDefaults.standard.bool(forKey: promptedKey) { openSettings(); return }
+    UserDefaults.standard.set(true, forKey: promptedKey)
+  }
 
   static func openSettings() {
     if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {

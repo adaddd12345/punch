@@ -329,7 +329,7 @@ final class AudioController: ObservableObject {
     guard settings.bands.indices.contains(i) else { return }
     var bands = settings.bands
     bands[i] = b
-    // Remember what this was edited from, so the hero can say "Bass Shake · Edited".
+    // Remember what this was edited from, so the hero can say "Bass Shake · edited".
     if let id = settings.userPresetID, let p = settings.userPresets.first(where: { $0.id == id }) {
       settings.editedFrom = p.name
     } else if let n = settings.presetName {

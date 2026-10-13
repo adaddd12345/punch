@@ -85,8 +85,12 @@ final class NowPlaying: ObservableObject {
   @Published private(set) var mutedByUs: Set<String> = []
   /// One line under the controls (a key that missed); clears after 4 s.
   @Published private(set) var notice: (id: String, text: String, settings: Bool)?
-  /// The app whose "allow Accessibility?" card is showing.
-  @Published private(set) var asking: String?
+  /// The Mac lets us post the media key (Accessibility). Checked on every
+  /// open and, while a locked button is on screen, once a second.
+  @Published private(set) var keysAllowed = false
+  /// A pause missed while the trust check was off: the post-event preflight
+  /// may be stale-true, so only the trust check counts from then on.
+  private var preflightStale = false
   /// The media key sent, waiting to be checked against the app's level.
   /// `before`: lastLoud at the click, for apps heard in the 1.5 s before it.
   @Published private(set) var pending: Pending?
@@ -157,9 +161,7 @@ final class NowPlaying: ObservableObject {
   /// Apps the key missed this session (memory only): they get mute.
   private var keyless: Set<String> = []
   private var noticeAt: TimeInterval = 0
-  /// The click that raised the Accessibility card, sent if access is already there.
-  private var askApp: NowApp?
-  private var askIntent: Intent = .pause
+  private var lastAccessCheck: TimeInterval = 0
   /// `audible` is fresh from the meter since the last open / meter rebuild.
   private var measured = false
   /// A click on the key route before `measured`, sent once it is.
@@ -280,12 +282,11 @@ final class NowPlaying: ObservableObject {
       deferredClick = nil
       // A grant in System Settings is picked up on the next open (a denial costs one fast event).
       denied.removeAll()
+      refreshAccess(now: activeSince)
       let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
       RunLoop.main.add(t, forMode: .common)
       timer = t
     } else {
-      asking = nil
-      askApp = nil
       deferredClick = nil
       // Closed mid-check: finish the check first (a missed key still gets undone / muted).
       if pending != nil, timer != nil, wanted { closing = true; return }
@@ -325,6 +326,11 @@ final class NowPlaying: ObservableObject {
       return
     }
     if notice != nil, now - noticeAt >= Self.noticeSeconds { notice = nil }
+    // A lock on screen: notice the grant in System Settings without a reopen.
+    if !keysAllowed, now - lastAccessCheck >= 1.0, now - lastVisible < 1.0,
+       ([hero].compactMap { $0 } + others).contains(where: { route($0) == .key }) {
+      refreshAccess(now: now)
+    }
     // Meter only while the window was really on screen lately (2 s, so a brief
     // occlusion flicker doesn't rebuild the HAL meter).
     let seen = now - lastVisible < 2.0
@@ -435,7 +441,8 @@ final class NowPlaying: ObservableObject {
   /// Power Saver: something on screen needs the per-app meter.
   private func needsMeter() -> Bool {
     if pending != nil || deferredClick != nil { return true }
-    return ([hero].compactMap { $0 } + others).contains { route($0) == .key }
+    // A locked button needs no levels (its click opens Accessibility).
+    return keysAllowed && ([hero].compactMap { $0 } + others).contains { route($0) == .key }
   }
 
   private func retainsWhilePaused(_ id: String) -> Bool {
@@ -491,6 +498,12 @@ final class NowPlaying: ObservableObject {
     return .mute
   }
 
+  /// Key route, but the Mac won't let us post the key yet: the button shows a
+  /// lock and its click opens Accessibility instead (never a card after a click).
+  func locked(_ app: NowApp) -> Bool {
+    route(app) == .key && !keysAllowed && !showsUnmute(app)
+  }
+
   /// Mute route because the user turned pausing off (not because the app has no key).
   func muteIsChoice(_ app: NowApp) -> Bool {
     pauseRoute == .mute && MediaKeys.honours(app.bundleID) && !keyless.contains(app.id)
@@ -513,43 +526,33 @@ final class NowPlaying: ObservableObject {
       toggleMute(app)
     case .key:
       if showsUnmute(app) { toggleMute(app); return }
+      if !keysAllowed { unlock(); return }
       // Pause or play is decided from fresh levels (at most ~1 s after opening,
       // or after the meter starts under Power Saver).
       guard measured, metering else { deferredClick = app; return }
-      let intent: Intent = isPlaying(app) ? .pause : .play
-      if pauseRoute == .ask {
-        askApp = app
-        askIntent = intent
-        asking = app.id
-        return
-      }
-      sendKey(app, intent)
+      sendKey(app, isPlaying(app) ? .pause : .play)
     }
   }
 
-  /// "Allow…" on the card: pause with keys from now on.
-  func allowKeys() {
-    controller?.settings.pauseRoute = .keys
-    pauseRoute = .keys
-    MediaKeys.request()
-    asking = nil
-    let app = askApp
-    askApp = nil
-    if MediaKeys.allowed, let app { sendKey(app, askIntent) }
+  /// The locked button (its hover card already said why): macOS's own prompt
+  /// the first time (its button opens the pane); after that, the Accessibility
+  /// pane. One screen per click. No key is sent.
+  private func unlock() {
+    MediaKeys.requestOrOpenSettings()
+    refreshAccess(now: ProcessInfo.processInfo.systemUptime)
   }
 
-  /// "Mute Instead" on the card: mute apps with no script from now on.
-  func muteInstead() {
-    controller?.settings.pauseRoute = .mute
-    pauseRoute = .mute
-    if let app = askApp, !isMuted(app.id) { toggleMute(app) }
-    asking = nil
-    askApp = nil
+  private func refreshAccess(now: TimeInterval) {
+    lastAccessCheck = now
+    // A post-event preflight that stayed true after access was turned off is
+    // ignored once a pause missed; the trust check follows the switch live.
+    let ok = MediaKeys.trusted || (!preflightStale && MediaKeys.postGranted)
+    if ok != keysAllowed { keysAllowed = ok }
   }
 
   /// Posts play/pause, shows the result at once, and checks it in `tick()`.
-  /// With "keys" chosen it always posts: preflight can stay stale until
-  /// relaunch, and the check catches a real denial.
+  /// Only once access is there (the button shows a lock until then); the
+  /// check still catches a key that reached nobody.
   private func sendKey(_ app: NowApp, _ intent: Intent) {
     guard pending == nil else { return }
     let now = ProcessInfo.processInfo.systemUptime
@@ -584,8 +587,14 @@ final class NowPlaying: ObservableObject {
         mutedByUs.insert(p.id)
         controller?.live.setMuted(true, id: p.id)
       }
-      if !MediaKeys.allowed {
+      if !MediaKeys.trusted { preflightStale = true }
+      refreshAccess(now: now)
+      if !keysAllowed {
         show(p.id, "\(name) muted. Allow Accessibility to pause instead ›", settings: true, now: now)
+      } else if !MediaKeys.postGranted {
+        // Allowed in System Settings, but this run may not post until relaunch: keep the key route.
+        show(p.id, "\(name) muted. Quit and reopen The Bass Shaker to finish allowing Accessibility.",
+             settings: false, now: now)
       } else {
         keyless.insert(p.id)
         // A key nobody owns can launch Music.
