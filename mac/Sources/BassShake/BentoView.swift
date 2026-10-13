@@ -41,6 +41,8 @@ struct BentoView: View {
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  /// Power Saver: no blur glows, shadows or blur transitions.
+  @Environment(\.powerSaver) private var powerSaver
   private var s: Settings { controller.settings }
   /// What's Playing. Not observed here: only its own small views observe it.
   private var nowPlaying: NowPlaying { NowPlaying.shared }
@@ -160,17 +162,23 @@ struct BentoView: View {
 
   private var presetBoost: Double { userPreset?.boostDb ?? 0 }
 
-  /// The salt shaker, as a vector so it stays sharp at this size (the
-  /// menu-bar bitmap is only 18 pt).
-  private var heroGlyph: some View {
-    ShakerIcon().frame(width: 120, height: 120)
+  /// The app's mark (the menu-bar shaker), small and faint in the hero's top-left
+  /// corner, level with the small controls on the right: a watermark, not an object.
+  private func heroMark(_ color: Color) -> some View {
+    Image(nsImage: MenuBarIcon.image)
+      .renderingMode(.template)
+      .resizable()
+      .interpolation(.high)
+      .aspectRatio(contentMode: .fit)
+      .frame(width: 12, height: 12)
+      .foregroundStyle(color)
   }
 
   /// The word plus its Edited tag: they come and go together.
   private var heroKey: String { heroWord + (editedBase != nil ? "·edited" : "") }
 
   private var heroWordTransition: AnyTransition {
-    if reduceMotion { return .opacity }
+    if reduceMotion || powerSaver { return .opacity }
     return .asymmetric(
       insertion: .modifier(active: BlurRise(amount: 1), identity: BlurRise(amount: 0)),
       removal: .modifier(active: BlurRise(amount: -1), identity: BlurRise(amount: 0)))
@@ -224,7 +232,7 @@ struct BentoView: View {
               .lineLimit(1)
               .minimumScaleFactor(0.5)
               .foregroundStyle(Color.primary)
-              .shadow(color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10)
+              .modifier(SoftShadow(on: !powerSaver, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
             if editedBase != nil {
               Text("EDITED")
                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -255,6 +263,20 @@ struct BentoView: View {
       }
       .padding(.top, 4)
       .animation(.easeOut(duration: 0.2), value: modesLine)
+    }
+    .overlay(alignment: .topLeading) {
+      // The app's mark as a quiet watermark, centred on the hero's top icon row
+      // (13 pt above these rows). Preset layout only: with What's Playing leading
+      // it would sit on the cover art, and the sound line already shows the mark.
+      // An overlay, so it never sizes the hero.
+      if !powerSaver {
+        heroMark(dark ? t.pastel : t.ink)
+          .opacity(dark ? 0.30 : 0.26)
+          .offset(y: -13)
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
+          .transition(.opacity)
+      }
     }
   }
 
@@ -349,19 +371,6 @@ struct BentoView: View {
       BentoFill(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
         .id(t.name)
         .transition(.opacity)
-    }
-    .overlay(alignment: .bottomTrailing) {
-      // The giant faded glyph, cropped by the tile edge. An overlay, so it
-      // never sizes the hero.
-      ZStack {
-        heroGlyph
-          .foregroundStyle(dark ? t.pastel : t.ink)
-          .opacity(0.05)
-          .fixedSize()
-          .offset(x: 22, y: 30)
-          .id("glyph")
-          .transition(.opacity)
-      }
     }
     .overlay(alignment: .bottom) {
       if live {
@@ -788,8 +797,11 @@ private struct BentoFill: View {
   var radius: CGFloat = BentoRadius.tile
   @Environment(\.colorScheme) private var scheme
   @Environment(\.colorSchemeContrast) private var contrast
+  /// Power Saver: no drop shadows, and a crisp rim instead of the blurred inner glow.
+  @Environment(\.powerSaver) private var powerSaver
 
   private var dark: Bool { scheme == .dark }
+  private var tileShadow: SoftShadow { SoftShadow(on: !powerSaver, color: Color.black.opacity(dark ? 0 : 0.05), radius: 1.5, y: 1) }
 
   private func alpha(strong: Bool) -> Double {
     let a = dark ? (strong ? 0.40 : 0.18) * tint.darkScale : (strong ? 0.72 : 0.50)
@@ -812,7 +824,7 @@ private struct BentoFill: View {
                                           startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
       case .fader(let f):
         shape.fill(wash(dark ? 0.08 : 0.20))
-          .shadow(color: Color.black.opacity(dark ? 0 : 0.05), radius: 1.5, y: 1)
+          .modifier(tileShadow)
         GeometryReader { g in
           Rectangle()
             .fill(wash(alpha(strong: true)))
@@ -829,11 +841,15 @@ private struct BentoFill: View {
           }
         }()
         shape.fill(wash(a))
-          .shadow(color: Color.black.opacity(dark ? 0 : 0.05), radius: 1.5, y: 1)
+          .modifier(tileShadow)
         if look == .lit {
-          shape.stroke(tint.pastel.opacity(dark ? 0.75 : 0.95), lineWidth: 8)
-            .blur(radius: 6)
-            .clipShape(shape)
+          if powerSaver {
+            shape.strokeBorder(tint.pastel.opacity(dark ? 0.75 : 0.95), lineWidth: 2)
+          } else {
+            shape.stroke(tint.pastel.opacity(dark ? 0.75 : 0.95), lineWidth: 8)
+              .blur(radius: 6)
+              .clipShape(shape)
+          }
         }
         shape.strokeBorder(rim, lineWidth: 0.75)
       }
@@ -887,6 +903,17 @@ struct BentoPressStyle: ButtonStyle {
     configuration.label
       .scaleEffect(configuration.isPressed ? 0.96 : 1)
       .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+  }
+}
+
+/// A shadow that Power Saver leaves out entirely (not just transparent).
+struct SoftShadow: ViewModifier {
+  let on: Bool
+  let color: Color
+  let radius: CGFloat
+  var y: CGFloat = 0
+  func body(content: Content) -> some View {
+    if on { content.shadow(color: color, radius: radius, y: y) } else { content }
   }
 }
 

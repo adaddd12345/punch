@@ -28,12 +28,16 @@ struct ShakerTrophy: View {
 
 /// Plays the trophy reveal once: appear, slow rise, slow spin into two fast turns, a final slow
 /// rise into place, a held pose, then a fade. The TimelineView only ticks while this is on screen
-/// and pauses when finished. A click skips to the fade. Under Reduce Motion: a still figure and a
-/// quick fade.
+/// and pauses when finished. A click skips to the fade. Under Reduce Motion or Power Saver: a
+/// still figure and a quick fade.
 struct ShakerTrophySplash: View {
   var backdrop = true
   var onFinish: (() -> Void)? = nil
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
+  /// The short, still version (Reduce Motion or Power Saver).
+  private var reduceMotion: Bool { systemReduceMotion || powerSaver }
   @State private var start = Date()
   @State private var started = false
   @State private var done = false
@@ -44,7 +48,8 @@ struct ShakerTrophySplash: View {
   static func duration(reduceMotion: Bool) -> Double { reduceMotion ? reducedLength : length }
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: done)) { tl in
+    // The still version only fades, so 30 fps; nothing draws while the window is covered.
+    TimelineView(.animation(minimumInterval: reduceMotion ? 1.0 / 30 : 1.0 / 60, paused: done || drawPaused)) { tl in
       let p = Self.pose(at: tl.date.timeIntervalSince(start), reduceMotion: reduceMotion)
       ZStack {
         if backdrop { Rectangle().fill(.ultraThinMaterial).opacity(p.backdrop) }

@@ -31,6 +31,8 @@ struct EQView: View {
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.colorScheme) private var scheme
   @Environment(\.pointerHintsOn) private var hintsOn
+  /// Power Saver: no scope and no glow under the curve.
+  @Environment(\.powerSaver) private var powerSaver
 
   private static let colors: [Color] = [
     Color(red: 1.00, green: 0.36, blue: 0.36),
@@ -51,11 +53,12 @@ struct EQView: View {
       let showNodes = pointerIn || grabbed != nil
       let kbDot: Int? = focused && kbActive ? kbBand : nil
       ZStack {
-        if controller.settings.waveform && controller.settings.enabled {
+        if controller.settings.waveform && controller.settings.enabled && !powerSaver {
           WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
             .allowsHitTesting(false)
         }
         Canvas { ctx, size in draw(ctx, size: size, bands: bands, showNodes: showNodes, kbDot: kbDot) }
+          .id(powerSaver)  // redraw without the glow when Power Saver flips
         if controller.settings.limit && controller.settings.enabled {
           LimitOverlay(meters: controller.meters, size: size, bassEdgeX: x(150, size.width),
                        yFor: { y($0, size.height) })
@@ -233,10 +236,12 @@ struct EQView: View {
     ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.30 : 0.18), color.opacity(0)]),
                                          startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
                                          endPoint: CGPoint(x: 0, y: h)))
-    ctx.drawLayer { glow in
-      glow.addFilter(.blur(radius: 5))
-      glow.stroke(curve, with: .color(color.opacity(dark ? 0.75 : 0.28)),
-                  style: StrokeStyle(lineWidth: dark ? 6 : 5, lineCap: .round, lineJoin: .round))
+    if !powerSaver {
+      ctx.drawLayer { glow in
+        glow.addFilter(.blur(radius: 5))
+        glow.stroke(curve, with: .color(color.opacity(dark ? 0.75 : 0.28)),
+                    style: StrokeStyle(lineWidth: dark ? 6 : 5, lineCap: .round, lineJoin: .round))
+      }
     }
     ctx.stroke(curve, with: .color(color), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
 

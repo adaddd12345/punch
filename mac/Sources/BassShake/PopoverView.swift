@@ -61,6 +61,8 @@ struct PopoverView: View {
     }
     // Above both the classic stack and Bento (and the pinned popover).
     .pointerHintRoot(enabled: controller.settings.pointerHints)
+    // Power Saver for everything inside; animation pauses while the window is covered.
+    .drawBudgetRoot()
   }
 
   private var labels: LabelLevel { controller.settings.labelLevel }
@@ -125,6 +127,7 @@ struct PopoverView: View {
       window.window = w
       if ownsDrawer, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
     })
+    .onChange(of: controller.settings.powerSaver) { _, on in ticker.setSlow(on) }
     .onChange(of: controller.settings.pointerHints, initial: true) { _, on in
       LiveDrawer.shared.pointerHints = on
     }
@@ -168,18 +171,21 @@ struct PopoverView: View {
       if !Self.splashShown {
         Self.splashShown = true
         splash = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: reduceMotion)) {
-          withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.35)) { splash = false }
+        let still = reduceMotion || controller.settings.powerSaver
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: still)) {
+          withAnimation(.easeOut(duration: still ? 0 : 0.35)) { splash = false }
         }
       }
-      // 60 Hz meters only while this is on screen (nothing runs when closed).
-      ticker.start { [controller, meters, role, window] in
+      // 30 Hz meters (10 Hz under Power Saver) only while this is on screen (nothing runs when closed).
+      ticker.start(slow: controller.settings.powerSaver) { [controller, meters, role, window] in
         // A hidden or fully covered window (NSPopover/launch window kept
         // alive off screen) draws nothing: don't drive SwiftUI updates.
         if let w = window.window, !w.isVisible || !w.occlusionState.contains(.visible) { return }
         NowPlaying.shared.noteVisible()
         meters.update(controller.pollMeters())
-        if controller.settings.waveform && role != .launchWindow { controller.waveform.pull(controller) }
+        if controller.settings.waveform && !controller.settings.powerSaver && role != .launchWindow {
+          controller.waveform.pull(controller)
+        }
       }
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
       NowPlaying.shared.attach(controller)
@@ -524,7 +530,7 @@ struct PopoverView: View {
       } label: {
         HStack(spacing: 4) {
           Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 9, weight: .bold))
-            .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible)
+            .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible && !controller.settings.powerSaver)
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip()
@@ -637,6 +643,10 @@ struct PopoverView: View {
           // Off by default; the first time it's turned on, a one-time note explains it.
           Toggle("Show What's Playing", isOn: Binding(get: { controller.settings.showNowPlaying },
                                                       set: { controller.settings.showNowPlaying = $0 }))
+          // Drawing only: the sound, Fair Level and every meter's reading stay the same.
+          Toggle("Power Saver", isOn: Binding(get: { controller.settings.powerSaver },
+                                              set: { controller.settings.powerSaver = $0 }))
+            .help("Simpler visuals and slower meters; your sound is unchanged.")
           // What's Playing's pause for apps with no script: the system media key
           // (Accessibility) when on, mute when off. The way back from "Mute Instead".
           Toggle("Pause Any App with Media Keys", isOn: Binding(
@@ -762,15 +772,24 @@ final class WindowRef {
 }
 
 
-/// Drives the 60 Hz meter/scope refresh only while a window is showing.
+/// Drives the meter/scope refresh (30 Hz, 10 Hz under Power Saver) only while a window is showing.
 final class MeterTicker {
   private var timer: Timer?
-  func start(_ tick: @escaping () -> Void) {
+  private(set) var slow = false
+  private var tick: (() -> Void)?
+  func start(slow: Bool = false, _ tick: @escaping () -> Void) {
     stop()
-    let t = Timer(timeInterval: 1.0 / 30, repeats: true) { _ in tick() }
+    self.slow = slow
+    self.tick = tick
+    let t = Timer(timeInterval: slow ? 1.0 / 10 : 1.0 / 30, repeats: true) { _ in tick() }
     RunLoop.main.add(t, forMode: .common)
     timer = t
   }
-  func stop() { timer?.invalidate(); timer = nil }
+  /// Power Saver flipped while running: restart at the new rate.
+  func setSlow(_ slow: Bool) {
+    guard timer != nil, slow != self.slow, let tick else { return }
+    start(slow: slow, tick)
+  }
+  func stop() { timer?.invalidate(); timer = nil; tick = nil }
   deinit { timer?.invalidate() }
 }

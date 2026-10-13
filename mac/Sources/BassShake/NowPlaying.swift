@@ -102,6 +102,12 @@ final class NowPlaying: ObservableObject {
   static let swapDb = 3.0
   static let swapSeconds = 2.0
   static let pollSeconds = 2.0
+  /// Power Saver: Spotify / Music are asked less often.
+  static let saverPollSeconds = 5.0
+  private static var pollEvery: Double { PowerSaver.isOn ? saverPollSeconds : pollSeconds }
+  /// Power Saver: once the per-app meter is needed it stays at least this long
+  /// (so a list on the edge doesn't rebuild it over and over).
+  static let saverMeterHoldSeconds = 6.0
   static let maxOthers = 3
   /// A silent app stays this long (gaps between songs).
   static let graceSeconds = 4.0
@@ -127,8 +133,13 @@ final class NowPlaying: ObservableObject {
   private var lastTick: TimeInterval = 0
   private var lastVisible: TimeInterval = 0
   private var lastPoll: TimeInterval = 0
-  /// LiveChannels' per-app meter is on (only while the window was seen in the last 2 s).
+  /// LiveChannels' per-app meter is on (only while the window was seen in the last 2 s;
+  /// under Power Saver only while something on screen needs loudness, see `needsMeter`).
   private var metering = false
+  /// The window was seen in the last 2 s (as of the last tick).
+  private var wasSeen = false
+  /// Power Saver: the meter stays on until then.
+  private var saverMeterUntil: TimeInterval = 0
   /// Closed with a key check still due: the timer runs on (at most ~2 s) only to finish it.
   private var closing = false
 
@@ -288,6 +299,8 @@ final class NowPlaying: ObservableObject {
     timer?.invalidate()
     timer = nil
     if metering { metering = false; controller?.live.setNowPlayingMetering(false) }
+    wasSeen = false
+    saverMeterUntil = 0
     pending = nil
     notice = nil
     lastLevel = [:]
@@ -315,12 +328,27 @@ final class NowPlaying: ObservableObject {
     // Meter only while the window was really on screen lately (2 s, so a brief
     // occlusion flicker doesn't rebuild the HAL meter).
     let seen = now - lastVisible < 2.0
-    if seen != metering {
-      metering = seen
-      live.setNowPlayingMetering(seen)
-      if seen {
+    if seen != wasSeen {
+      wasSeen = seen
+      if seen { deferredClick = nil }
+    }
+    // Power Saver: the per-app meter (a HAL aggregate of every app's tap) runs
+    // only while an app on screen is paused/played by the media key (its button
+    // follows loudness) or a click is waiting / being checked. Otherwise the
+    // hero is picked from who macOS says is playing, longest first.
+    if !seen || !PowerSaver.isOn {
+      saverMeterUntil = 0
+    } else if needsMeter() {
+      saverMeterUntil = now + Self.saverMeterHoldSeconds
+    }
+    let meterOn = seen && (!PowerSaver.isOn || now < saverMeterUntil)
+    if meterOn != metering {
+      metering = meterOn
+      live.setNowPlayingMetering(meterOn)
+      // Off: `audible` is no longer fresh, so the glyph falls back to "playing unless we paused it".
+      measured = false
+      if meterOn {
         activeSince = now; smooth = [:]; challenger = nil; lastTick = 0; lastLevel = [:]; lastLoud = [:]
-        measured = false; deferredClick = nil
       }
     }
     guard seen else { return }
@@ -398,10 +426,16 @@ final class NowPlaying: ObservableObject {
 
     // Layer B, only while the popup is really visible.
     // Not before the one-time note is acknowledged: the Automation prompt would hide it.
-    if now - lastPoll >= Self.pollSeconds, now - lastVisible < 1.0, !polling, mayAsk {
+    if now - lastPoll >= Self.pollEvery, now - lastVisible < 1.0, !polling, mayAsk {
       lastPoll = now
       pollPlayers()
     }
+  }
+
+  /// Power Saver: something on screen needs the per-app meter.
+  private func needsMeter() -> Bool {
+    if pending != nil || deferredClick != nil { return true }
+    return ([hero].compactMap { $0 } + others).contains { route($0) == .key }
   }
 
   private func retainsWhilePaused(_ id: String) -> Bool {
@@ -441,7 +475,7 @@ final class NowPlaying: ObservableObject {
     let shown = Set(([hero].compactMap { $0 } + others).map(\.id))
     let heard = Set(lastLoud.filter { shown.contains($0.key) && now - $0.value < Self.graceSeconds }.keys)
     if heard != audible { audible = heard }
-    measured = true
+    if metering { measured = true }
   }
 
   /// Sounding in the last 1.5 s (the key checks).
@@ -479,8 +513,9 @@ final class NowPlaying: ObservableObject {
       toggleMute(app)
     case .key:
       if showsUnmute(app) { toggleMute(app); return }
-      // Pause or play is decided from fresh levels (at most ~1 s after opening).
-      guard measured else { deferredClick = app; return }
+      // Pause or play is decided from fresh levels (at most ~1 s after opening,
+      // or after the meter starts under Power Saver).
+      guard measured, metering else { deferredClick = app; return }
       let intent: Intent = isPlaying(app) ? .pause : .play
       if pauseRoute == .ask {
         askApp = app
@@ -758,7 +793,7 @@ final class NowPlaying: ObservableObject {
           self.tracks[p.rawValue] = nil
         }
         // Re-read about 0.4 s from now (a skip changes the song).
-        self.lastPoll = ProcessInfo.processInfo.systemUptime - Self.pollSeconds + 0.4
+        self.lastPoll = ProcessInfo.processInfo.systemUptime - Self.pollEvery + 0.4
       }
     }
   }

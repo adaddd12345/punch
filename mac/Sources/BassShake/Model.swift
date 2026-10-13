@@ -515,6 +515,8 @@ struct Settings: Codable, Equatable {
   var hearing: HearingProfile?
   /// Sections hidden with ⋯ › Presets & Settings › Edit Layout ("bento.eq", "classic.meters"…; see LayoutSection).
   var hiddenSections: [String] = []
+  /// Power Saver (⋯ › Presets & Settings): simpler visuals and slower meters to save CPU. Never changes the sound.
+  var powerSaver = false
 
   struct DeviceSound: Codable, Equatable {
     var bands: [EQBand]
@@ -595,6 +597,7 @@ struct Settings: Codable, Equatable {
     soundLike = (try? c.decodeIfPresent(SoundLikeChoice.self, forKey: .soundLike)) ?? nil
     hearing = (try? c.decodeIfPresent(HearingProfile.self, forKey: .hearing)) ?? nil
     hiddenSections = (try? c.decodeIfPresent([String].self, forKey: .hiddenSections)) ?? d.hiddenSections
+    powerSaver = (try? c.decodeIfPresent(Bool.self, forKey: .powerSaver)) ?? d.powerSaver
   }
 
   static func load() -> Settings {

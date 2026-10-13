@@ -323,6 +323,7 @@ struct NowArt: View {
   let artwork: NSImage?
   let icon: NSImage
   let size: CGFloat
+  @Environment(\.powerSaver) private var powerSaver
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
@@ -335,7 +336,7 @@ struct NowArt: View {
           .frame(width: size, height: size)
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-          .shadow(color: Color.black.opacity(0.18), radius: 3, y: 1)
+          .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
         if size >= 30 {
           Image(nsImage: icon)
             .resizable()

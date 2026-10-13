@@ -279,7 +279,7 @@ extension View {
   }
 
   /// Fast live value (meters, limiter): the closure is polled by the overlay
-  /// only while this hint is visible, via TimelineView(.periodic(by: 1.0/15.0)).
+  /// only while this hint is visible, via a 15 Hz TimelineView (5 Hz under Power Saver).
   func pointerHint(live: Bool = false, _ make: @escaping () -> PointerHint) -> some View {
     modifier(PointerHintModifier(hint: nil, make: make, live: live, track: true, vo: true))
   }
@@ -409,6 +409,9 @@ private struct OptionalA11yHint: ViewModifier {
 struct PointerHintOverlay: View {
   @ObservedObject var hub: PointerHintHub
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  /// Power Saver: live captions refresh at 5 Hz instead of 15.
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
 
   var body: some View {
     GeometryReader { g in
@@ -439,7 +442,7 @@ struct PointerHintOverlay: View {
 
   @ViewBuilder private func card(_ hint: PointerHint, width: CGFloat, density: PointerHintCard.Density) -> some View {
     if let src = hub.source, hub.visible {
-      TimelineView(.periodic(from: .now, by: 1.0 / 15.0)) { _ in
+      TimelineView(PeriodicPausable(by: powerSaver ? 1.0 / 5.0 : 1.0 / 15.0, paused: drawPaused)) { _ in
         PointerHintCard(hint: src(), maxWidth: width, density: density, shown: hub.visible)
       }
     } else {

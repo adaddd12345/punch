@@ -12,6 +12,10 @@ struct BeatsView: View {
 
   /// The slim card's width (the popup is 360).
   static let sideWidth: CGFloat = 212
+  /// Power Saver: the playhead steps at 10 fps.
+  @Environment(\.powerSaver) private var powerSaver
+  /// The drawer is hidden or covered: no playhead redraws.
+  @Environment(\.drawPaused) private var drawPaused
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -85,7 +89,7 @@ struct BeatsView: View {
   }
 
   private func position(_ drop: BeatDrop) -> some View {
-    TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+    TimelineView(PeriodicPausable(by: 0.5, paused: drawPaused)) { _ in
       let bar = player.beat.bar
       Text("\(drop.section(atBar: bar)?.name ?? "") · \(bar + 1)/\(drop.bars)")
         .font(.system(size: 10, weight: .medium, design: .rounded))
@@ -122,9 +126,9 @@ struct BeatsView: View {
     .buttonRepeatBehavior(.enabled)
   }
 
-  /// Only the stems redraw with the playhead, and only while playing.
+  /// Only the stems redraw with the playhead, and only while playing (and on screen).
   private func stems<C: View>(@ViewBuilder _ content: @escaping ((bar: Int, step: Int)) -> C) -> some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !player.playing)) { _ in
+    TimelineView(.animation(minimumInterval: powerSaver ? 1.0 / 10 : 1.0 / 30, paused: !player.playing || drawPaused)) { _ in
       content(player.beat)
     }
   }

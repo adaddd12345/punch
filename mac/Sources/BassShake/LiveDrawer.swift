@@ -153,5 +153,5 @@ final class DrawerHints: ObservableObject {
 private struct DrawerHintRoot<C: View>: View {
   @ObservedObject var flags: DrawerHints
   let content: C
-  var body: some View { content.pointerHintRoot(enabled: flags.on && flags.shown) }
+  var body: some View { content.pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot() }
 }

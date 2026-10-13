@@ -89,6 +89,9 @@ final class LiveChannels: ObservableObject {
   private var started = false
   private var meteringWanted = false
   private var pollTimer: Timer?
+  /// The drain runs at 10 Hz (Power Saver, only the Live Channels list reading it).
+  private var pollSlow = false
+  private var powerSaverObserver: NSObjectProtocol?
   private var lastPoll: TimeInterval = 0
   private var iconCache: [String: NSImage] = [:]
   private var nameCache: [String: String] = [:]
@@ -161,6 +164,8 @@ final class LiveChannels: ObservableObject {
   func start() {
     guard !started else { return }
     started = true
+    powerSaverObserver = NotificationCenter.default.addObserver(forName: PowerSaver.changed, object: nil,
+                                                                queue: .main) { [weak self] _ in self?.retunePoll() }
     let m = muted
     let off = shakerOff
     halQueue.async {
@@ -181,12 +186,32 @@ final class LiveChannels: ObservableObject {
   func setBackgroundMetering(_ on: Bool) {
     backgroundMetering = on
     applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
+    retunePoll()
   }
 
   /// What's Playing (NowPlaying.swift) reads `levels` while the popup shows.
   func setNowPlayingMetering(_ on: Bool) {
     nowPlayingMetering = on
     applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
+    retunePoll()
+  }
+
+  /// 10 Hz only when the Live Channels list is the sole reader under Power Saver.
+  /// Fair Level and What's Playing's pause checks time their reads against the
+  /// 30 Hz release slope, so they always get the full rate.
+  private var wantsSlowPoll: Bool { PowerSaver.isOn && !backgroundMetering && !nowPlayingMetering }
+
+  private func startPollTimer() {
+    pollTimer?.invalidate()
+    pollSlow = wantsSlowPoll
+    let t = Timer(timeInterval: pollSlow ? 1.0 / 10 : 1.0 / 30, repeats: true) { [weak self] _ in self?.poll() }
+    RunLoop.main.add(t, forMode: .common)
+    pollTimer = t
+  }
+
+  private func retunePoll() {
+    guard pollTimer != nil, pollSlow != wantsSlowPoll else { return }
+    startPollTimer()
   }
   private var uiMetering = false
   private var backgroundMetering = false
@@ -197,9 +222,7 @@ final class LiveChannels: ObservableObject {
     meteringWanted = on
     if on {
       lastPoll = 0
-      let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.poll() }
-      RunLoop.main.add(t, forMode: .common)
-      pollTimer = t
+      startPollTimer()
     } else {
       pollTimer?.invalidate()
       pollTimer = nil

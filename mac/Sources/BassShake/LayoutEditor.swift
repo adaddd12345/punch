@@ -67,6 +67,11 @@ struct LayoutEditorView: View {
   let onClose: () -> Void
   @State private var visible = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
+
+  /// Power Saver and Reduce Motion keep the cards still.
+  private var still: Bool { reduceMotion || powerSaver }
 
   private var sections: [LayoutSection] { controller.settings.bento ? LayoutSection.bento : LayoutSection.classic }
 
@@ -75,8 +80,8 @@ struct LayoutEditorView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       header
-      // Drift only while on screen; Reduce Motion keeps the cards still.
-      TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion || !visible)) { tl in
+      // Drift only while on screen (and not covered); Reduce Motion / Power Saver keep the cards still.
+      TimelineView(.animation(minimumInterval: 1.0 / 30, paused: still || !visible || drawPaused)) { tl in
         let t = tl.date.timeIntervalSinceReferenceDate
         VStack(spacing: 8) {
           ForEach(Array(sections.enumerated()), id: \.element.id) { i, s in
@@ -127,7 +132,7 @@ struct LayoutEditorView: View {
 
   /// A couple of points of slow drift, each card on its own phase.
   private func drift(_ t: Double, index i: Int) -> CGSize {
-    guard !reduceMotion else { return .zero }
+    guard !still else { return .zero }
     let p = Double(i) * 1.9
     let px = 6.3 + Double(i % 3) * 0.8
     let py = 4.7 + Double((i * 2) % 5) * 0.4

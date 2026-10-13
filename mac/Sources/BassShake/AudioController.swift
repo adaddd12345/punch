@@ -109,6 +109,7 @@ final class AudioController: ObservableObject {
       }
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
       hqGuardOn.store(settings.hqGuard)
+      if settings.powerSaver != oldValue.powerSaver { PowerSaver.shared.sync(settings.powerSaver) }
       pushParams()
       scheduleSave()
     }
@@ -150,6 +151,7 @@ final class AudioController: ObservableObject {
     punch_engine_prepare(curveEngine, 48_000, 2, 512)
     settings = Settings.load()
     hqGuardOn.store(settings.hqGuard)
+    PowerSaver.shared.sync(settings.powerSaver)
     pushParams()
     // Nothing here may talk to coreaudiod or tccd. This initializer runs
     // inside SwiftUI's App.body while the scene graph is being built; the
