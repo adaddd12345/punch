@@ -23,6 +23,13 @@ final class TapPipeline {
     var channels: Int
     var bufferFrames: UInt32
     var tapIsGlobal: Bool
+    /// What this pipeline was built for, so a rebuild request can tell
+    /// whether anything it depends on actually changed.
+    var deviceID: AudioObjectID
+    var deviceUID: String
+    var deviceOutputChannels: Int
+    /// Uptime when IO was started (a just-built pipeline may not be called yet).
+    var startedAt: TimeInterval
   }
 
   private let engine: OpaquePointer
@@ -39,6 +46,25 @@ final class TapPipeline {
   deinit { stop(fade: false) }
 
   var isRunning: Bool { procID != nil }
+
+  /// HAL call: audioQueue only. Our aggregate exists and its IO is running.
+  var aggregateIsRunning: Bool {
+    aggregateID != unknownObject &&
+      ((try? HAL.get(aggregateID, .global(kAudioDevicePropertyDeviceIsRunning), default: UInt32(0))) ?? 0) != 0
+  }
+
+  /// HAL calls: audioQueue only. The tap and aggregate still have the
+  /// channel count and rate the engine was prepared for.
+  func liveFormatMatches() -> Bool {
+    guard let info, tapID != unknownObject, aggregateID != unknownObject,
+          let f = try? HAL.get(tapID, .global(kAudioTapPropertyFormat), default: AudioStreamBasicDescription())
+    else { return false }
+    guard max(1, Int(f.mChannelsPerFrame)) == info.channels else { return false }
+    let aggRate = Devices.nominalSampleRate(aggregateID)
+    guard aggRate > 0, abs(aggRate - info.sampleRate) < 0.5 else { return false }
+    if !info.tapIsGlobal && f.mSampleRate > 0 && abs(f.mSampleRate - info.sampleRate) >= 0.5 { return false }
+    return true
+  }
 
   var stats: BSRenderStats? {
     guard let context else { return nil }
@@ -129,7 +155,10 @@ final class TapPipeline {
       try check(AudioDeviceStart(agg, proc), "start IO")
 
       let i = Info(deviceName: output.name, sampleRate: sampleRate, channels: channels,
-                   bufferFrames: bufferFrames, tapIsGlobal: isGlobal)
+                   bufferFrames: bufferFrames, tapIsGlobal: isGlobal,
+                   deviceID: output.id, deviceUID: output.uid,
+                   deviceOutputChannels: HAL.channelCount(output.id, scope: kAudioObjectPropertyScopeOutput),
+                   startedAt: ProcessInfo.processInfo.systemUptime)
       info = i
       return i
     } catch {
