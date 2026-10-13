@@ -54,6 +54,8 @@ struct PopoverView: View {
     }
   }
 
+  private var labels: LabelLevel { controller.settings.labelLevel }
+
   private var size: ViewSize { role == .launchWindow ? .full : controller.settings.viewSize }
 
   private var controls: some View {
@@ -88,6 +90,7 @@ struct PopoverView: View {
       if new == .mini { showLive = false; showDJ = false }
     }
     .padding(12)
+    .environment(\.labelLevel, controller.settings.labelLevel)
     .frame(width: 360)
     .background(PopupBackground(style: controller.settings.backgroundStyle, active: visible))
     .overlay {
@@ -175,7 +178,7 @@ struct PopoverView: View {
         .frame(width: 26, height: 26)
         .saturation(controller.settings.enabled ? 1 : 0)
         .opacity(controller.settings.enabled ? 1 : 0.6)
-      if size != .mini {
+      if size != .mini && labels == .full {
         Text("The Bass Shaker")
           .font(.system(size: 14, weight: .bold, design: .rounded))
           .lineLimit(1)
@@ -183,6 +186,16 @@ struct PopoverView: View {
       }
       Spacer(minLength: 4)
       if size != .mini { deviceMenu }
+      Button {
+        controller.settings.labelLevel = controller.settings.labelLevel.next
+      } label: {
+        Image(systemName: controller.settings.labelLevel.symbol)
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Labels: \(controller.settings.labelLevel.title)")
+      .help("Labels: \(controller.settings.labelLevel.title). Click for \(controller.settings.labelLevel.next.title).")
       if role != .launchWindow {
         Button {
           controller.settings.viewSize = controller.settings.viewSize.next
@@ -322,9 +335,13 @@ struct PopoverView: View {
             .font(.system(size: 8, weight: .bold))
             .rotationEffect(.degrees(controller.settings.trayOpen ? 90 : 0))
             .frame(width: 10)
-          Text("MODES")
-            .font(.system(size: 9, weight: .bold, design: .rounded))
-          if !controller.settings.trayOpen, let active = activeModesSummary {
+          if labels == .full {
+            Text("MODES")
+              .font(.system(size: 9, weight: .bold, design: .rounded))
+          } else {
+            Image(systemName: "slider.horizontal.3").font(.system(size: 9, weight: .bold))
+          }
+          if !controller.settings.trayOpen, labels != .icons, let active = activeModesSummary {
             Text(active)
               .font(.system(size: 9, weight: .medium, design: .rounded))
               .foregroundStyle(.tertiary)
@@ -418,7 +435,7 @@ struct PopoverView: View {
       } label: {
         HStack(spacing: 3) {
           Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
-          Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded))
+          if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)) }
         }
         .padding(.horizontal, 7).padding(.vertical, 3)
         .foregroundStyle(controller.dj.anyActive ? Color.white : Color.primary)
@@ -559,7 +576,10 @@ struct PopoverView: View {
       .menuIndicator(.hidden)
       .fixedSize()
       .help("Updates, version and Quit")
-      Button("Quit") { NSApp.terminate(nil) }
+      Button { NSApp.terminate(nil) } label: {
+        if labels == .icons { Image(systemName: "power") } else { Text("Quit") }
+      }
+      .accessibilityLabel("Quit")
         .buttonStyle(.plain)
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -574,11 +594,12 @@ private struct LabeledSlider: View {
   let range: ClosedRange<Double>
   let format: (Double) -> String
   let help: String
+  @Environment(\.labelLevel) private var labels
 
   var body: some View {
     HStack(spacing: 6) {
       IconText(title: title, symbol: symbol, size: 11)
-        .frame(width: 74, alignment: .leading)
+        .frame(width: labels == .icons ? 16 : 74, alignment: .leading)
       Slider(value: $value, in: range)
         .controlSize(.small)
         .accessibilityLabel(title)

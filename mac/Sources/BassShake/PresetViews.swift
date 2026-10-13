@@ -87,17 +87,23 @@ struct IconText: View {
   let symbol: String
   var size: CGFloat = 11
   var weight: Font.Weight = .semibold
+  @Environment(\.labelLevel) private var labels
 
   var body: some View {
     HStack(alignment: .center, spacing: 4) {
       Image(systemName: symbol)
         .font(.system(size: (size * 0.85).rounded(), weight: weight))
         .frame(width: (size * 1.3).rounded(), height: (size * 1.3).rounded())
-      Text(title)
-        .font(.system(size: size, weight: weight, design: .rounded))
-        .lineLimit(1)
-        .fixedSize()
+      if labels != .icons {
+        Text(title)
+          .font(.system(size: size, weight: weight, design: .rounded))
+          .lineLimit(1)
+          .fixedSize()
+      }
     }
+    .help(labels == .icons ? title : "")
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(title)
   }
 }
 
@@ -106,12 +112,15 @@ struct Chip<Icon: View>: View {
   let selected: Bool
   @ViewBuilder let icon: () -> Icon
   let action: () -> Void
+  @Environment(\.labelLevel) private var labels
 
   var body: some View {
     Button(action: action) {
       HStack(spacing: 4) {
         icon()
-        Text(title).font(.system(size: 11, weight: .semibold, design: .rounded)).lineLimit(1)
+        if labels != .icons {
+          Text(title).font(.system(size: 11, weight: .semibold, design: .rounded)).lineLimit(1)
+        }
       }
       .padding(.horizontal, 9)
       .padding(.vertical, 5)
@@ -119,6 +128,8 @@ struct Chip<Icon: View>: View {
       .background(Capsule().fill(selected ? Color.accentColor : Color.primary.opacity(0.07)))
     }
     .buttonStyle(.plain)
+    .help(labels == .icons ? title : "")
+    .accessibilityLabel(title)
     .accessibilityAddTraits(selected ? .isSelected : [])
     .animation(.easeOut(duration: 0.15), value: selected)
   }

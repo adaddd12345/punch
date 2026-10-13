@@ -5,6 +5,7 @@ import SwiftUI
 struct LiveChannelsButton: View {
   @ObservedObject var model: LiveChannels
   @Binding var expanded: Bool
+  @Environment(\.labelLevel) private var labels
 
   var body: some View {
     let n = model.liveCount
@@ -16,7 +17,7 @@ struct LiveChannelsButton: View {
         Circle()
           .fill(n > 0 ? MeterModel.zones[0].color : Color.secondary.opacity(0.45))
           .frame(width: 6, height: 6)
-        Text(n > 0 ? "\(n) Live" : "Live")
+        Text(labels == .icons ? (n > 0 ? "\(n)" : "") : (n > 0 ? "\(n) Live" : "Live"))
           .font(.system(size: 10, weight: .bold, design: .rounded))
           .monospacedDigit()
         if mutedCount > 0 {

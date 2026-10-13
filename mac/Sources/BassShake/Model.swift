@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import PunchCore
 
 /// One user EQ node. Six of these make the whole EQ: enough to shape
@@ -295,6 +296,24 @@ struct DJState: Equatable {
 }
 
 /// Popover sizes.
+/// Word mark: how much text the popup shows. Full; Half (drops headings
+/// and captions); Icons (only text needed to operate: values, banners,
+/// items without an icon).
+enum LabelLevel: String, Codable, CaseIterable {
+  case full, half, icons
+  var next: LabelLevel { self == .full ? .half : self == .half ? .icons : .full }
+  var symbol: String { self == .full ? "textformat" : self == .half ? "textformat.size.smaller" : "square.grid.2x2" }
+  var title: String { self == .full ? "All labels" : self == .half ? "Fewer labels" : "Icons only" }
+}
+
+private struct LabelLevelKey: EnvironmentKey { static let defaultValue = LabelLevel.full }
+extension EnvironmentValues {
+  var labelLevel: LabelLevel {
+    get { self[LabelLevelKey.self] }
+    set { self[LabelLevelKey.self] = newValue }
+  }
+}
+
 enum ViewSize: String, Codable, CaseIterable {
   case full, compact, mini
   var next: ViewSize {
@@ -450,6 +469,7 @@ struct Settings: Codable, Equatable {
   var backgroundStyle: BackgroundStyle = .system
   /// Popover size: everything, compact, or just the sliders.
   var viewSize: ViewSize = .full
+  var labelLevel: LabelLevel = .full
   /// The bottom tray (modes) is open.
   var trayOpen = true
   var nightGuardDb: Double = 8
@@ -528,6 +548,7 @@ struct Settings: Codable, Equatable {
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
+    labelLevel = (try? c.decodeIfPresent(LabelLevel.self, forKey: .labelLevel)) ?? d.labelLevel
     trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
     nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
     balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
