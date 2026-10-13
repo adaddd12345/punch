@@ -260,3 +260,119 @@ extension View {
     padding(.horizontal, 8).frame(height: 22)
   }
 }
+
+extension View {
+  /// Grows the hit area above and below without changing the layout
+  /// (a 24 pt pill clicks like a 28 pt one).
+  /// 0 leaves the view (and its own content shape) untouched.
+  @ViewBuilder func verticalHitSlop(_ v: CGFloat) -> some View {
+    if v > 0 {
+      padding(.vertical, v).contentShape(Rectangle()).padding(.vertical, -v)
+    } else {
+      self
+    }
+  }
+}
+
+/// The preset in effect, as the Bento hero and Mini name it ("Off" while off).
+struct PresetSummary {
+  let s: Settings
+  init(_ s: Settings) { self.s = s }
+
+  var live: Bool { s.enabled }
+
+  /// While Study or Sleep is on, the preset you came from.
+  var source: (name: String?, userID: UUID?) {
+    if s.mode != .off { return (s.beforeMode?.presetName, s.beforeMode?.userPresetID) }
+    return (s.presetName, s.userPresetID)
+  }
+
+  var userPreset: UserPreset? {
+    guard let id = source.userID else { return nil }
+    return s.userPresets.first(where: { $0.id == id })
+  }
+
+  var word: String {
+    if !live { return "Off" }
+    if let p = userPreset { return p.name }
+    if let n = source.name { return n }
+    // Edited: the preset it came from (the note line says "Edited"); no base: plain EQ.
+    return s.mode == .off ? (s.editedFrom ?? "Custom EQ") : "Custom EQ"
+  }
+
+  /// The EQ was changed after picking a preset: no preset is in effect.
+  var isEdited: Bool { live && userPreset == nil && source.name == nil }
+
+  /// The preset the sound was edited from, when it's known (not during a mode).
+  var editedBase: String? { isEdited && s.mode == .off ? s.editedFrom : nil }
+
+  /// Caption #1: what the preset name means.
+  func hint(chips: Bool = true) -> PointerHint {
+    Caption.hero(live: live, mode: s.mode, word: word, editedFrom: editedBase, unsaved: isEdited, chips: chips)
+  }
+}
+
+/// The preset picker behind the Bento hero's word, its sound chip and the
+/// Mini name. While off: the label alone (no menu).
+struct PresetMenu<Label: View>: View {
+  @ObservedObject var controller: AudioController
+  @Binding var editor: PresetEditor.Mode?
+  /// A preset chip strip is on screen (its right-click menu updates a saved preset).
+  var chips = true
+  @ViewBuilder let label: () -> Label
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    let s = controller.settings
+    let p = PresetSummary(s)
+    if p.live {
+      Menu {
+        Section {
+          ForEach(Preset.all) { preset in
+            Button { controller.apply(preset: preset) } label: {
+              if s.mode == .off && s.userPresetID == nil && s.presetName == preset.name {
+                SwiftUI.Label(preset.name, systemImage: "checkmark")
+              } else {
+                Text(preset.name)
+              }
+            }
+          }
+        }
+        if !s.userPresets.isEmpty {
+          Section("Your Presets") {
+            ForEach(s.userPresets) { up in
+              Button { controller.apply(userPreset: up) } label: {
+                if s.mode == .off && s.userPresetID == up.id {
+                  SwiftUI.Label(up.name, systemImage: "checkmark")
+                } else {
+                  Text(up.name)
+                }
+              }
+            }
+          }
+        }
+        Divider()
+        Button("Save Current Sound as Preset…") {
+          withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.85)) { editor = .create }
+        }
+        if s.mode == .off, let up = p.userPreset {
+          Button("Edit Name & Icon…") {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.85)) { editor = .edit(up.id) }
+          }
+        }
+      } label: {
+        label().contentShape(Rectangle())
+      }
+      .menuStyle(.button)
+      .buttonStyle(.plain)
+      .menuIndicator(.hidden)
+      .accessibilityLabel("Preset")
+      .accessibilityValue(p.word)
+      .pointerHint(p.hint(chips: chips))
+    } else {
+      label()
+        .accessibilityElement(children: .combine)
+        .pointerHint(p.hint(chips: chips))
+    }
+  }
+}

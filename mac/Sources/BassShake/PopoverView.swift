@@ -104,16 +104,22 @@ struct PopoverView: View {
 
   private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
-      // Bento folds the header's controls into its hero.
-      if !controller.settings.bento || size == .mini { header }
+      // Bento folds the header's controls into its hero; Mini has its own row 1.
+      if !controller.settings.bento && size != .mini { header }
+      // Banners sit above Mini's row 1, full width.
       statusBanner
       MutedNotice(model: controller.live)
       NowPlayingNote(controller: controller, mini: size == .mini)
-      if controller.settings.bento && size != .mini {
-        driverSection
+      if controller.settings.bento {
+        if size != .mini { driverSection }
+        // One BentoView at every size, so ⌘1/2/3 resizes its tiles in place.
         BentoView(controller: controller, meters: meters, editor: $editor, size: size,
-                  heroIcons: AnyView(windowTools(words: size == .full && labels == .full)))
-      } else if size != .mini {
+                  heroIcons: AnyView(size == .mini
+                    ? windowTools(words: false, mini: true, height: 32, capsule: true)
+                    : windowTools(words: size == .full && labels == .full)))
+      } else if size == .mini {
+        classicMini
+      } else {
         driverSection
         if shows(.classicEQ) {
           EQView(controller: controller)
@@ -123,7 +129,7 @@ struct PopoverView: View {
         if shows(.classicPresets) { presetStrip }
         if size == .full && shows(.classicMeters) { MeterView(model: meters) }
       }
-      if size == .mini || (!controller.settings.bento && shows(.classicSliders)) { sliders }
+      if size != .mini && !controller.settings.bento && shows(.classicSliders) { sliders }
       if size != .mini {
         if !controller.settings.bento && shows(.classicModes) { tray }
         Divider().opacity(0.5)
@@ -259,6 +265,7 @@ struct PopoverView: View {
 
   // MARK: - Sections
 
+  /// Classic Full and Compact (Mini draws `classicMini`; Bento folds this into its hero).
   private var header: some View {
     HStack(spacing: 6) {
       // The full app logo (the Liquid Glass shaker), not the menu-bar glyph.
@@ -269,7 +276,7 @@ struct PopoverView: View {
         .frame(width: 26, height: 26)
         .saturation(controller.settings.enabled ? 1 : 0)
         .opacity(controller.settings.enabled ? 1 : 0.6)
-      if size != .mini && labels == .full {
+      if labels == .full {
         Text("The Bass Shaker")
           .font(.system(size: 14, weight: .bold, design: .rounded))
           .lineLimit(1)
@@ -277,47 +284,189 @@ struct PopoverView: View {
           .layoutPriority(1)
       }
       Spacer(minLength: 0)
-      if size != .mini && !controller.settings.bento { deviceMenu }
+      deviceMenu
       windowTools(words: false)
       abButton
-      if size == .mini || !controller.settings.bento {
-        Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
-          .toggleStyle(.switch)
-          .controlSize(.small)
-          .labelsHidden()
-          .pointerHint(Caption.power(on: controller.settings.enabled))
+      Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .labelsHidden()
+        .pointerHint(Caption.power(on: controller.settings.enabled))
+    }
+  }
+
+  // MARK: - Classic Mini
+
+  /// Classic Mini (Bento off): two 164 columns with an 8 gutter, row 1 on the
+  /// same columns as the body. 24 + 16 + 48 = 88 (+ 24 padding = 112).
+  ///
+  ///   [logo] Preset ⌄            | [grow|pin]   (A/B) [power]
+  ///   55% Strength               | +7 dB Boost          (Limit)
+  ///   ===========o=============== | ======o=====================
+  private var classicMini: some View {
+    let col: CGFloat = 164
+    return VStack(alignment: .leading, spacing: 16) {
+      HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
+          miniLogo
+          PresetMenu(controller: controller, editor: $editor, chips: false) { miniPresetLabel }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: col, alignment: .leading)
+        HStack(alignment: .center, spacing: 0) {
+          windowTools(words: false, mini: true, height: 24)
+          // Always wider than the 8 inside a group: window tools | sound.
+          Spacer(minLength: 12)
+          miniABButton
+          Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled },
+                                                  set: { controller.settings.enabled = $0 }))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+            .padding(.leading, 8)
+            .pointerHint(Caption.power(on: controller.settings.enabled))
+        }
+        .frame(width: col, alignment: .trailing)
+      }
+      .frame(height: 24)
+      // "Save Current Sound as Preset…" from the preset menu opens here.
+      if let mode = editor {
+        PresetEditor(controller: controller, mode: mode) {
+          withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.85)) { editor = nil }
+        }
+        .id(mode == .create ? "create" : "edit")
+        .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+      }
+      HStack(alignment: .top, spacing: 8) {
+        MiniDial(title: "Strength", symbol: "waveform.path",
+                 value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
+                 range: 0...1, format: { ("", "\(Int(($0 * 100).rounded()))", "%") },
+                 dimmed: !controller.settings.enabled) { EmptyView() }
+          .frame(width: col)
+          .pointerHint(Caption.strength(controller.settings.bass, scrub: false), live: true, track: false)
+        MiniDial(title: "Boost", symbol: "speaker.wave.3",
+                 value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
+                 range: 0...12, format: { ("+", "\(Int($0.rounded()))", " dB") },
+                 dimmed: !controller.settings.enabled) { miniLimit }
+          .frame(width: col)
+          .pointerHint(Caption.boost(controller.settings.boostDb, scrub: false), live: true, track: false)
       }
     }
+    .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.85), value: editor)
+  }
+
+  /// The app logo, 28 at x = −3: its squircle (about 824/1024 of the art)
+  /// lands on the column edge, and the 2 pt above and below is clear margin.
+  private var miniLogo: some View {
+    let on = controller.settings.enabled
+    return Image(nsImage: NSApp.applicationIconImage)
+      .resizable()
+      .interpolation(.high)
+      .aspectRatio(contentMode: .fit)
+      .frame(width: 28, height: 28)
+      .saturation(on ? 1 : 0)
+      .opacity(on ? 1 : 0.6)
+      .padding(.leading, -3)
+      .frame(height: 24)
+      .accessibilityHidden(true)
+  }
+
+  /// The preset name and its chevron (the name truncates; "Off" while off).
+  private var miniPresetLabel: some View {
+    let p = PresetSummary(controller.settings)
+    return HStack(alignment: .firstTextBaseline, spacing: 4) {
+      Text(p.word)
+        .font(.system(size: 13, weight: .semibold, design: .rounded))
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .foregroundStyle(Color.primary)
+      if p.live {
+        Image(systemName: "chevron.down")
+          .font(.system(size: 9, weight: .bold))
+          .foregroundStyle(.secondary)
+      }
+    }
+    .frame(height: 24)
+  }
+
+  /// Mini's A/B: always "A/B" (orange while you hear the original), so it
+  /// never widens; while off it stays put, dimmed and disabled.
+  private var miniABButton: some View {
+    let live = controller.settings.enabled
+    let on = live && controller.bypassed
+    return Button { controller.bypassed.toggle() } label: {
+      Text("A/B")
+        .font(.system(size: 11, weight: .bold, design: .rounded))
+        .lineLimit(1)
+        .fixedSize()
+        .frame(width: 40, height: 24)
+        .foregroundStyle(on ? Color.white : Color.primary)
+        .background(Capsule().fill(on ? Color.orange : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08)))
+        .verticalHitSlop(2)
+    }
+    .buttonStyle(.plain)
+    .disabled(!live)
+    .opacity(live ? 1 : 0.35)
+    .accessibilityLabel("Compare with original sound")
+    .accessibilityValue(on ? "Original" : "Processed")
+    .pointerHint(Caption.ab(bypassed: on, hotkey: controller.settings.bypassHotkey ? GlobalHotkey.bypassLabel : nil))
+  }
+
+  /// Limit, right-aligned in Boost's value line under Power: one named 24 pt
+  /// pill like A/B (a word + switch never fits beside "+12 dB Boost" in 164).
+  private var miniLimit: some View {
+    let on = controller.settings.limit
+    return Button { controller.settings.limit.toggle() } label: {
+      Text("Limit")
+        .font(.system(size: 11, weight: .bold, design: .rounded))
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 10)
+        .frame(height: 24)
+        .foregroundStyle(on ? Color.white : Color.primary)
+        .background(Capsule().fill(on ? BentoInk.miniFill : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08)))
+        .verticalHitSlop(2)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Limit")
+    .accessibilityValue(on ? "On" : "Off")
+    .accessibilityAddTraits(.isToggle)
+    .pointerHint { [controller] in LimitHint.make(on: controller.settings.limit, meters: controller.meters) }
   }
 
   /// Labels, view size and pin as one segmented chip. In Bento it sits in the
   /// hero's bottom bar; words beside the icons only at Full size with All labels.
   /// The launch window shows the Labels segment alone.
-  private func windowTools(words: Bool) -> some View {
+  /// `mini`: Grow and Pin only (Mini follows the label level chosen at a bigger
+  /// size), 28 wide segments of `height` with 14 pt glyphs; `capsule` for Bento.
+  private func windowTools(words: Bool, mini: Bool = false, height: CGFloat = 24, capsule: Bool = false) -> some View {
     let level = controller.settings.labelLevel
     let view = controller.settings.viewSize
     let pinned = controller.pinned
-    let chip = RoundedRectangle(cornerRadius: 8, style: .continuous)
+    let chip = capsule ? AnyShape(Capsule()) : AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    let fill = mini && contrast == .increased ? 0.16 : 0.08
     return HStack(spacing: 0) {
-      toolSegment(level.symbol, word: "Labels", words: words) {
-        controller.settings.labelLevel = level.next
+      if !mini {
+        toolSegment(level.symbol, word: "Labels", words: words) {
+          controller.settings.labelLevel = level.next
+        }
+        .accessibilityLabel("Labels: \(level.title)")
+        .pointerHint("Labels", value: level.title, does: "Shows or hides the words next to icons.",
+                     gestures: ["Click for \(level.next.title)"])
       }
-      .accessibilityLabel("Labels: \(level.title)")
-      .pointerHint("Labels", value: level.title, does: "Shows or hides the words next to icons.",
-                   gestures: ["Click for \(level.next.title)"])
       if role != .launchWindow {
-        toolHairline
-        toolSegment(view.symbol, word: "Size", words: words) {
+        if !mini { toolHairline }
+        toolSegment(view.symbol, word: "Size", words: words, mini: mini, height: height) {
           controller.settings.viewSize = view.next
         }
         .accessibilityLabel("View size: \(view.title)")
         .accessibilityHint("Switches to \(view.next.title)")
         .pointerHint("Size", value: view.title,
-                     does: "Compact shrinks the top tile and EQ; Mini keeps only sliders.",
+                     does: "Compact shrinks the EQ; Mini keeps preset, power, A/B, Strength, Boost, Limit.",
                      gestures: ["Click for \(view.next.title)", "⌘1 Full · ⌘2 Compact · ⌘3 Mini"], vo: false)
-        toolHairline.opacity(pinned ? 0 : 1)
+        if !mini { toolHairline.opacity(pinned ? 0 : 1) }
         toolSegment(pinned ? "pin.fill" : "pin", word: "Pin", words: words, on: pinned,
-                    rotation: pinned ? 0 : 45) {
+                    rotation: pinned ? 0 : 45, mini: mini, height: height) {
           controller.setPinned(!pinned, from: window.window)
         }
         .accessibilityLabel(pinned ? "Unpin" : "Pin open")
@@ -326,8 +475,19 @@ struct PopoverView: View {
                      gestures: [pinned ? "Click to unpin" : "Click to pin"])
       }
     }
-    .frame(height: 24)
-    .background(chip.fill(Color.primary.opacity(0.08)))
+    // Mini: one centred hairline between the two 28 segments (56 wide in all).
+    .overlay {
+      if mini {
+        Rectangle()
+          .fill(Color.primary.opacity(contrast == .increased ? 0.3 : 0.12))
+          .frame(width: contrast == .increased ? 1 : 0.5, height: 16)
+          .opacity(pinned ? 0 : 1)
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
+      }
+    }
+    .frame(height: height)
+    .background(chip.fill(Color.primary.opacity(fill)))
     .clipShape(chip)
     .fixedSize()
     .accessibilityElement(children: .contain)
@@ -336,26 +496,41 @@ struct PopoverView: View {
 
   /// One segment of the window tools: icon, plus its word when there's room.
   /// `on`: dark fill, white icon (Pin while pinned).
+  /// `mini`: 28 × `height`, a 14 pt glyph in a 16 slot, no word; a 24 pt
+  /// segment clicks like a 28 pt one.
   private func toolSegment(_ symbol: String, word: String, words: Bool, on: Bool = false,
-                           rotation: Double = 0, action: @escaping () -> Void) -> some View {
+                           rotation: Double = 0, mini: Bool = false, height: CGFloat = 24,
+                           action: @escaping () -> Void) -> some View {
     Button(action: action) {
-      HStack(spacing: 4) {
+      if mini {
         Image(systemName: symbol)
-          .font(.system(size: 11, weight: .semibold))
+          .font(.system(size: 14, weight: .semibold))
           .rotationEffect(.degrees(rotation))
-          .frame(width: 14)
-        if words {
-          Text(word)
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .lineLimit(1)
-            .fixedSize()
+          .frame(width: 16)
+          .foregroundStyle(on ? Color.white : Color.primary.opacity(0.75))
+          .frame(width: 28, height: height)
+          .background(Rectangle().fill(on ? BentoInk.miniFill : Color.clear))
+          .contentShape(Rectangle())
+          .verticalHitSlop(height < 28 ? (28 - height) / 2 : 0)
+      } else {
+        HStack(spacing: 4) {
+          Image(systemName: symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .rotationEffect(.degrees(rotation))
+            .frame(width: 14)
+          if words {
+            Text(word)
+              .font(.system(size: 10, weight: .bold, design: .rounded))
+              .lineLimit(1)
+              .fixedSize()
+          }
         }
+        .foregroundStyle(on ? Color.white : Color.primary.opacity(0.75))
+        .padding(.horizontal, words ? 8 : 0)
+        .frame(minWidth: 24, minHeight: 24)
+        .background(Rectangle().fill(on ? BentoInk.miniFill : Color.clear))
+        .contentShape(Rectangle())
       }
-      .foregroundStyle(on ? Color.white : Color.primary.opacity(0.75))
-      .padding(.horizontal, words ? 8 : 0)
-      .frame(minWidth: 24, minHeight: 24)
-      .background(Rectangle().fill(on ? BentoInk.miniFill : Color.clear))
-      .contentShape(Rectangle())
     }
     .buttonStyle(BentoPressStyle())
   }
@@ -803,6 +978,73 @@ private struct LabeledSlider: View {
         .monospacedDigit()
         .foregroundStyle(.secondary)
         .frame(width: 44, alignment: .trailing)
+    }
+  }
+}
+
+/// One Classic Mini column: the value on the column's leading edge, then
+/// what it is (the word at All labels, else its glyph) and an optional
+/// trailing accessory; under it, a regular slider the full column wide.
+private struct MiniDial<Accessory: View>: View {
+  let title: String
+  let symbol: String
+  @Binding var value: Double
+  let range: ClosedRange<Double>
+  /// (sign, digits, unit): sign and unit are drawn small and secondary.
+  let format: (Double) -> (String, String, String)
+  /// The app is off: value and slider at 0.45 (still adjustable).
+  let dimmed: Bool
+  @ViewBuilder let accessory: () -> Accessory
+  @Environment(\.labelLevel) private var labels
+
+  var body: some View {
+    let f = format(value)
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          HStack(alignment: .firstTextBaseline, spacing: 1) {
+            if !f.0.isEmpty {
+              Text(f.0)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+            }
+            Text(f.1)
+              .font(.system(size: 17, weight: .bold, design: .rounded))
+            Text(f.2)
+              .font(.system(size: 11, weight: .bold, design: .rounded))
+              .foregroundStyle(.secondary)
+          }
+          .monospacedDigit()
+          .lineLimit(1)
+          .fixedSize()
+          .opacity(dimmed ? 0.45 : 1)
+          if labels == .full {
+            Text(title)
+              .font(.system(size: 12, weight: .semibold, design: .rounded))
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .fixedSize()
+          } else {
+            Image(systemName: symbol)
+              .font(.system(size: 14, weight: .semibold))
+              .foregroundStyle(.secondary)
+              .frame(width: 24, alignment: .leading)
+              .help(title)
+          }
+        }
+        .accessibilityHidden(true)
+        Spacer(minLength: 0)
+        accessory()
+      }
+      .frame(height: 24)
+      Slider(value: $value, in: range)
+        .controlSize(.regular)
+        .labelsHidden()
+        .frame(maxWidth: .infinity)
+        .frame(height: 24)
+        .opacity(dimmed ? 0.45 : 1)
+        .accessibilityLabel(title)
+        .accessibilityValue(f.0 + f.1 + f.2)
     }
   }
 }

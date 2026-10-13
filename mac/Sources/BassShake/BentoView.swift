@@ -42,6 +42,7 @@ struct BentoView: View {
   /// Power Saver: no blur glows, shadows or blur transitions.
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.colorSchemeContrast) private var contrast
   /// Liquid Glass tiles: the IDs that let a strip or tile morph as it comes and goes.
   @Namespace private var glassSpace
   private var s: Settings { controller.settings }
@@ -69,30 +70,41 @@ struct BentoView: View {
   }
 
   private var stack: some View {
-    VStack(spacing: 8) {
-      hero
-      // The editor opens right under the hero when the presets tile is hidden,
-      // so "Save Current Sound as Preset…" from the hero menu is seen.
-      if !s.shows(.bentoPresets), let mode = editor { editorView(mode) }
-      // What's Playing: other playing apps (nothing while the feature is off).
-      if s.shows(.bentoNowPlaying) {
-        NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
-      }
-      if s.shows(.bentoEQ) {
-        BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
-          EQView(controller: controller, chrome: false,
-                 filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
-            .frame(height: size == .full ? 132 : 100)
-        }
-        .pointerHintTint(live ? ink(.bass) : nil)
-      }
-      if s.shows(.bentoDials) { dials }
-      if s.shows(.bentoPresets) {
-        presets
+    let mini = size == .mini
+    return VStack(spacing: 8) {
+      if mini {
+        // Mini: the slim hero and the two dials, nothing else.
+        miniHero
+        // "Save Current Sound as Preset…" from the hero menu opens here.
         if let mode = editor { editorView(mode) }
+      } else {
+        hero
+        // The editor opens right under the hero when the presets tile is hidden,
+        // so "Save Current Sound as Preset…" from the hero menu is seen.
+        if !s.shows(.bentoPresets), let mode = editor { editorView(mode) }
+        // What's Playing: other playing apps (nothing while the feature is off).
+        if s.shows(.bentoNowPlaying) {
+          NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
+        }
+        if s.shows(.bentoEQ) {
+          BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
+            EQView(controller: controller, chrome: false,
+                   filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
+              .frame(height: size == .full ? 132 : 100)
+          }
+          .pointerHintTint(live ? ink(.bass) : nil)
+        }
       }
-      if s.shows(.bentoModes) { modeGrid }
-      if s.shows(.bentoModeSettings) { modeDetails }
+      // One identity at every size, so ⌘3 resizes the dials in place.
+      if mini || s.shows(.bentoDials) { dials }
+      if !mini {
+        if s.shows(.bentoPresets) {
+          presets
+          if let mode = editor { editorView(mode) }
+        }
+        if s.shows(.bentoModes) { modeGrid }
+        if s.shows(.bentoModeSettings) { modeDetails }
+      }
     }
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
@@ -112,11 +124,13 @@ struct BentoView: View {
     .transition(.opacity.combined(with: .move(edge: .top)))
   }
 
-  /// Strength and Boost, side by side.
+  /// Strength and Boost, side by side (Mini: 164 × 72 each).
   private var dials: some View {
-    HStack(spacing: 8) {
+    let mini = size == .mini
+    return HStack(spacing: 8) {
       ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
                 value: s.bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
+                glassID: "dial.strength", mini: mini,
                 format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
         controller.settings.bass = $0
       } accessory: { EmptyView() }
@@ -124,9 +138,10 @@ struct BentoView: View {
       .pointerHintTint(ink(tint(.bass)))
       ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
                 value: s.boostDb, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
+                glassID: "dial.boost", mini: mini,
                 format: { ("+", "\(Int($0.rounded()))", " dB") }) {
         if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
-      } accessory: { limitCard }
+      } accessory: { limitCard(mini: mini) }
       .pointerHint(Caption.boost(s.boostDb, scrub: true), live: true)
       .pointerHintTint(ink(tint(.bass)))
     }
@@ -134,36 +149,15 @@ struct BentoView: View {
 
   // MARK: - Hero
 
-  /// The preset in effect. While Study or Sleep is on, the preset you came
-  /// from (the mode is listed underneath instead).
-  private var presetSource: (name: String?, userID: UUID?) {
-    if s.mode != .off { return (s.beforeMode?.presetName, s.beforeMode?.userPresetID) }
-    return (s.presetName, s.userPresetID)
-  }
-
-  private var userPreset: UserPreset? {
-    guard let id = presetSource.userID else { return nil }
-    return s.userPresets.first(where: { $0.id == id })
-  }
-
-  private var heroWord: String {
-    if !live { return "Off" }
-    if let p = userPreset { return p.name }
-    if let n = presetSource.name { return n }
-    // Edited: the preset it came from (the note line says "Edited"); no base: plain EQ.
-    return s.mode == .off ? (s.editedFrom ?? "Custom EQ") : "Custom EQ"
-  }
-
+  /// The preset in effect, its name and caption (shared with Classic Mini).
+  private var preset: PresetSummary { PresetSummary(s) }
+  private var presetSource: (name: String?, userID: UUID?) { preset.source }
+  private var userPreset: UserPreset? { preset.userPreset }
+  private var heroWord: String { preset.word }
   /// The EQ was changed after picking a preset: no preset is in effect.
-  private var isEdited: Bool { live && userPreset == nil && presetSource.name == nil }
-
+  private var isEdited: Bool { preset.isEdited }
   /// The preset the sound was edited from, when it's known (not during a mode).
-  private var editedBase: String? { isEdited && s.mode == .off ? s.editedFrom : nil }
-
-  /// Caption #1: what the big word means.
-  private var heroHint: PointerHint {
-    Caption.hero(live: live, mode: s.mode, word: heroWord, editedFrom: editedBase, unsaved: isEdited)
-  }
+  private var editedBase: String? { preset.editedBase }
 
   /// "+ Study · Studio Ears · Night Guard"; empty when nothing is on.
   private var modesLine: String {
@@ -243,7 +237,7 @@ struct BentoView: View {
     .background { heroBackground(t, dark: dark, shape: shape) }
     // Liquid Glass: plain glass under the wash (the wash, not .tint, carries the
     // colour, so it stays when the window isn't key).
-    .modifier(BentoGlassSurface(on: glass, radius: BentoRadius.hero, interactive: false))
+    .modifier(BentoGlassSurface(on: glass, radius: BentoRadius.hero, interactive: false, id: "hero", space: glassSpace))
     .animation(.easeOut(duration: 0.2), value: modesLine)
     .animation(.easeOut(duration: 0.2), value: editedBase)
   }
@@ -280,6 +274,106 @@ struct BentoView: View {
       powerButton(size: 32)
     }
     .frame(height: 32)
+  }
+
+  /// Mini's chip and disc fill (stronger with Increase Contrast).
+  private var chipFill: Double { contrast == .increased ? 0.16 : 0.08 }
+
+  /// Mini: one slim capsule, 56 tall, radius 28 (= 32 / 2 + 12, concentric
+  /// with its discs). The preset on the left, ending by the Strength tile's
+  /// right edge; window tools, A/B and Power on the right, the tools starting
+  /// on the Boost tile's content edge. Edges: 12 · 172 | 184 · 324.
+  private var miniHero: some View {
+    let t = live ? heroTint : BentoTint.graphite
+    let dark = scheme == .dark
+    let radius: CGFloat = 28
+    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+    return HStack(alignment: .center, spacing: 12) {
+      miniPreset(t, dark: dark)
+        .frame(width: 160, alignment: .leading)
+      heroIcons
+      HStack(spacing: 8) {
+        miniAB
+        powerButton(size: 32)
+      }
+    }
+    .frame(height: 32)
+    .padding(12)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .overlay(alignment: .bottom) {
+      // The level lines' caption (the lines themselves are in the background).
+      if live {
+        Color.clear
+          .frame(height: 8)
+          .contentShape(Rectangle())
+          .pointerHint { [meters] in Caption.level(meters) }
+          .padding(.horizontal, radius)
+      }
+    }
+    .pointerHintTint(ink(t))
+    .background { heroBackground(t, dark: dark, shape: shape, radius: radius, lineInset: radius, lineBottom: 4) }
+    .modifier(BentoGlassSurface(on: glass, radius: radius, interactive: false, id: "hero", space: glassSpace))
+  }
+
+  /// Mini's preset: a 32 disc with the shaker glyph, the word and its chevron, one menu.
+  private func miniPreset(_ t: BentoTint, dark: Bool) -> some View {
+    presetMenu {
+      HStack(alignment: .center, spacing: 8) {
+        ZStack {
+          Circle().fill(Color.primary.opacity(chipFill))
+          Image(nsImage: MenuBarIcon.image)
+            .renderingMode(.template)
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 16, height: 16)
+            .foregroundStyle(live ? ink(t) : Color.secondary)
+        }
+        .frame(width: 32, height: 32)
+        .accessibilityHidden(true)
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+          ZStack(alignment: .leading) {
+            Text(heroWord)
+              .font(.system(size: 17, weight: .heavy, design: .rounded))
+              .tracking(-0.4)
+              .lineLimit(1)
+              .minimumScaleFactor(0.7)
+              .truncationMode(.tail)
+              .foregroundStyle(Color.primary)
+              .id(heroWord)
+              .transition(heroWordTransition)
+          }
+          .animation(.easeOut(duration: 0.25), value: heroWord)
+          if live {
+            Image(systemName: "chevron.down")
+              .font(.system(size: 10, weight: .heavy))
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+    }
+  }
+
+  /// Mini's A/B: a 32 disc that always says "A/B" (orange while you hear the
+  /// original). While off it stays put, dimmed and disabled, so Power never moves.
+  private var miniAB: some View {
+    let on = live && controller.bypassed
+    return Button { controller.bypassed.toggle() } label: {
+      Text("A/B")
+        .font(.system(size: 11, weight: .bold, design: .rounded))
+        .lineLimit(1)
+        .fixedSize()
+        .frame(width: 32, height: 32)
+        .foregroundStyle(on ? Color.white : Color.primary)
+        .background(Circle().fill(on ? Color.orange : Color.primary.opacity(chipFill)))
+        .contentShape(Circle())
+    }
+    .buttonStyle(BentoPressStyle())
+    .disabled(!live)
+    .opacity(live ? 1 : 0.35)
+    .accessibilityLabel("Compare with original sound")
+    .accessibilityValue(on ? "Original" : "Processed")
+    .pointerHint(Caption.ab(bypassed: on, hotkey: s.bypassHotkey ? GlobalHotkey.bypassLabel : nil))
   }
 
   /// Full, something playing: the song leads with its transport; the sound
@@ -413,56 +507,8 @@ struct BentoView: View {
   }
 
   /// The preset picker behind the big word and the sound chip. While off: the label alone.
-  @ViewBuilder private func presetMenu<L: View>(@ViewBuilder _ label: () -> L) -> some View {
-    if live {
-      Menu {
-        Section {
-          ForEach(Preset.all) { p in
-            Button { controller.apply(preset: p) } label: {
-              if s.mode == .off && s.userPresetID == nil && s.presetName == p.name {
-                Label(p.name, systemImage: "checkmark")
-              } else {
-                Text(p.name)
-              }
-            }
-          }
-        }
-        if !s.userPresets.isEmpty {
-          Section("Your Presets") {
-            ForEach(s.userPresets) { p in
-              Button { controller.apply(userPreset: p) } label: {
-                if s.mode == .off && s.userPresetID == p.id {
-                  Label(p.name, systemImage: "checkmark")
-                } else {
-                  Text(p.name)
-                }
-              }
-            }
-          }
-        }
-        Divider()
-        Button("Save Current Sound as Preset…") {
-          withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = .create }
-        }
-        if s.mode == .off, let p = userPreset {
-          Button("Edit Name & Icon…") {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = .edit(p.id) }
-          }
-        }
-      } label: {
-        label().contentShape(Rectangle())
-      }
-      .menuStyle(.button)
-      .buttonStyle(.plain)
-      .menuIndicator(.hidden)
-      .accessibilityLabel("Preset")
-      .accessibilityValue(heroWord)
-      .pointerHint(heroHint)
-    } else {
-      label()
-        .accessibilityElement(children: .combine)
-        .pointerHint(heroHint)
-    }
+  private func presetMenu<L: View>(@ViewBuilder _ label: @escaping () -> L) -> some View {
+    PresetMenu(controller: controller, editor: $editor, chips: size != .mini && s.shows(.bentoPresets), label: label)
   }
 
   /// `droppable`: left out when even "+ 2 modes" doesn't fit (the sound chip).
@@ -507,13 +553,15 @@ struct BentoView: View {
     .pointerHint(Caption.ab(bypassed: on, hotkey: s.bypassHotkey ? GlobalHotkey.bypassLabel : nil))
   }
 
-  private func heroBackground(_ t: BentoTint, dark: Bool, shape: RoundedRectangle) -> some View {
+  /// `radius`, `lineInset`, `lineBottom`: Mini's capsule (28, 28, 4); nil = Full/Compact.
+  private func heroBackground(_ t: BentoTint, dark: Bool, shape: RoundedRectangle, radius: CGFloat = BentoRadius.hero,
+                              lineInset: CGFloat? = nil, lineBottom: CGFloat? = nil) -> some View {
     ZStack {
       Group {
         if glass {
-          BentoGlassWash(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
+          BentoGlassWash(tint: t, look: live ? .strong : .base, radius: radius)
         } else {
-          BentoFill(tint: t, look: live ? .strong : .base, radius: BentoRadius.hero)
+          BentoFill(tint: t, look: live ? .strong : .base, radius: radius)
         }
       }
       .id(t.name)
@@ -523,8 +571,8 @@ struct BentoView: View {
       if live {
         HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
           BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
-            .padding(.horizontal, heroPad)
-            .padding(.bottom, compact ? 3 : 4)
+            .padding(.horizontal, lineInset ?? heroPad)
+            .padding(.bottom, lineBottom ?? (compact ? 3 : 4))
         }
       }
     }
@@ -596,18 +644,23 @@ struct BentoView: View {
     .pointerHint(Caption.power(on: live))
   }
 
-  private var limitCard: some View {
-    Button { controller.settings.limit.toggle() } label: {
-      HStack(spacing: 3) {
-        Image(systemName: "ear").font(.system(size: 9, weight: .bold))
-        if labels != .icons { Text("Limit").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
+  /// Boost's Limit chip. Mini: 11 pt, "Limit" at every label level (a
+  /// toggle is never shown without its name), and a 24 pt hit area.
+  private func limitCard(mini: Bool = false) -> some View {
+    let inner = RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
+    return Button { controller.settings.limit.toggle() } label: {
+      HStack(spacing: mini ? 4 : 3) {
+        Image(systemName: "ear").font(.system(size: mini ? 11 : 9, weight: .bold))
+        if mini || labels != .icons {
+          Text("Limit").font(.system(size: mini ? 11 : 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize()
+        }
       }
       .padding(.horizontal, 8)
       .frame(height: 20)
       .foregroundStyle(s.limit ? Color.white : Color.primary.opacity(0.6))
-      .background(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
-        .fill(s.limit ? BentoInk.miniFill : Color.primary.opacity(0.08)))
-      .contentShape(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous))
+      .background(inner.fill(s.limit ? BentoInk.miniFill : Color.primary.opacity(mini ? chipFill : 0.08)))
+      .contentShape(inner)
+      .verticalHitSlop(mini ? 2 : 0)
     }
     .buttonStyle(BentoPressStyle())
     .accessibilityLabel("Limit")
@@ -1195,18 +1248,24 @@ private extension View {
 }
 
 /// Small bold tile heading. All labels: icon + UPPERCASE word; fewer: icon.
+/// `glyph` / `word`: point sizes (9 / 9 heavy; Mini 14 semibold in a 24 slot / 11 bold).
 private struct TileLabel: View {
   let title: String
   let symbol: String
+  var glyph: CGFloat = 9
+  var word: CGFloat = 9
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
-    HStack(spacing: 4) {
-      Image(systemName: symbol).font(.system(size: 9, weight: .heavy))
+    let big = glyph > 9
+    HStack(spacing: big ? 6 : 4) {
+      Image(systemName: symbol)
+        .font(.system(size: glyph, weight: big ? .semibold : .heavy))
+        .frame(width: big ? 24 : nil, alignment: .leading)
       if labels == .full {
         Text(title.uppercased())
-          .font(.system(size: 9, weight: .heavy, design: .rounded))
+          .font(.system(size: word, weight: word > 9 ? .bold : .heavy, design: .rounded))
           .tracking(0.4)
           .lineLimit(1)
           .fixedSize()
@@ -1270,6 +1329,8 @@ private struct ScrubTile<Accessory: View>: View {
   var step: Double = 0
   /// Liquid Glass: morph under this ID as the tile comes and goes.
   var glassID: String? = nil
+  /// Mini metrics: 72 tall (label row 20, gap 4, number row 24), 24 pt digits, 14 pt glyph.
+  var mini = false
   /// (sign, digits, unit): sign and unit are drawn small.
   let format: (Double) -> (String, String, String)
   let set: (Double) -> Void
@@ -1306,8 +1367,8 @@ private struct ScrubTile<Accessory: View>: View {
     let dragging = start != nil
     let motion = !reduceMotion
     BentoTile(tint: tint, look: .fader(fraction), padding: 12, interactive: true, glassID: glassID) {
-      VStack(alignment: .leading, spacing: 6) {
-        TileLabel(title: title, symbol: symbol)
+      VStack(alignment: .leading, spacing: mini ? 4 : 6) {
+        TileLabel(title: title, symbol: symbol, glyph: mini ? 14 : 9, word: mini ? 11 : 9)
           .frame(maxWidth: .infinity, minHeight: 20, maxHeight: 20, alignment: .leading)
         HStack(alignment: .firstTextBaseline, spacing: 1) {
           HStack(alignment: .firstTextBaseline, spacing: 1) {
@@ -1317,7 +1378,7 @@ private struct ScrubTile<Accessory: View>: View {
                 .foregroundStyle(.secondary)
             }
             Text(f.1)
-              .font(.system(size: 28, weight: .bold, design: .rounded))
+              .font(.system(size: mini ? 24 : 28, weight: .bold, design: .rounded))
               .contentTransition(.numericText())
             Text(f.2)
               .font(.system(size: 12, weight: .bold, design: .rounded))
@@ -1335,6 +1396,7 @@ private struct ScrubTile<Accessory: View>: View {
         }
         .monospacedDigit()
         .lineLimit(1)
+        .frame(height: mini ? 24 : nil)
         .accessibilityRepresentation {
           Slider(value: Binding(get: { value }, set: { set($0) }), in: range)
             .accessibilityLabel(title)
