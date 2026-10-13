@@ -62,12 +62,14 @@ struct PopoverView: View {
 
   private var controls: some View {
     VStack(alignment: .leading, spacing: 8) {
-      header
+      // Bento folds the header's controls into its hero.
+      if !controller.settings.bento || size == .mini { header }
       statusBanner
       MutedNotice(model: controller.live)
       if controller.settings.bento && size != .mini {
         driverSection
-        BentoView(controller: controller, meters: meters, editor: $editor, size: size)
+        BentoView(controller: controller, meters: meters, editor: $editor, size: size,
+                  heroIcons: AnyView(headerIcons), abButton: AnyView(abButton))
       } else if size != .mini {
         driverSection
         EQView(controller: controller)
@@ -217,57 +219,8 @@ struct PopoverView: View {
       }
       Spacer(minLength: 4)
       if size != .mini && !controller.settings.bento { deviceMenu }
-      Button {
-        controller.settings.labelLevel = controller.settings.labelLevel.next
-      } label: {
-        Image(systemName: controller.settings.labelLevel.symbol)
-          .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(.secondary)
-      }
-      .buttonStyle(.plain)
-      .accessibilityLabel("Labels: \(controller.settings.labelLevel.title)")
-      .help("Labels: \(controller.settings.labelLevel.title). Click for \(controller.settings.labelLevel.next.title).")
-      if role != .launchWindow {
-        Button {
-          controller.settings.viewSize = controller.settings.viewSize.next
-        } label: {
-          Image(systemName: controller.settings.viewSize.symbol)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("View size: \(controller.settings.viewSize.title)")
-        .accessibilityHint("Switches to \(controller.settings.viewSize.next.title)")
-        .help("View: \(controller.settings.viewSize.title). Click for \(controller.settings.viewSize.next.title).")
-      }
-      if role != .launchWindow {
-        Button {
-          controller.setPinned(!controller.pinned, from: window.window)
-        } label: {
-          Image(systemName: controller.pinned ? "pin.fill" : "pin")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(controller.pinned ? Color.accentColor : Color.secondary)
-            .rotationEffect(.degrees(controller.pinned ? 0 : 45))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(controller.pinned ? "Unpin" : "Pin open")
-        .help(controller.pinned ? "Unpin: close when you click elsewhere" : "Pin: keep this open when you click elsewhere")
-      }
-      if controller.settings.enabled {
-        Button { controller.bypassed.toggle() } label: {
-          Text(controller.bypassed ? "Original" : "A/B")
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .lineLimit(1)
-            .fixedSize()
-            .footerChip()
-            .foregroundStyle(controller.bypassed ? Color.white : Color.primary)
-            .background(Capsule().fill(controller.bypassed ? Color.orange : Color.primary.opacity(0.08)))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Compare with original sound")
-        .accessibilityValue(controller.bypassed ? "Original" : "Processed")
-        .help("Compare with the original sound (\(GlobalHotkey.bypassLabel) from anywhere)")
-      }
+      headerIcons
+      abButton
       if size == .mini || !controller.settings.bento {
         Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
           .toggleStyle(.switch)
@@ -275,6 +228,65 @@ struct PopoverView: View {
           .labelsHidden()
           .help(controller.settings.enabled ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
       }
+    }
+  }
+
+  /// Labels, view size and pin. In Bento they sit in the hero instead of a header row.
+  @ViewBuilder private var headerIcons: some View {
+    Button {
+      controller.settings.labelLevel = controller.settings.labelLevel.next
+    } label: {
+      Image(systemName: controller.settings.labelLevel.symbol)
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(.secondary)
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Labels: \(controller.settings.labelLevel.title)")
+    .help("Labels: \(controller.settings.labelLevel.title). Click for \(controller.settings.labelLevel.next.title).")
+    if role != .launchWindow {
+      Button {
+        controller.settings.viewSize = controller.settings.viewSize.next
+      } label: {
+        Image(systemName: controller.settings.viewSize.symbol)
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("View size: \(controller.settings.viewSize.title)")
+      .accessibilityHint("Switches to \(controller.settings.viewSize.next.title)")
+      .help("View: \(controller.settings.viewSize.title). Click for \(controller.settings.viewSize.next.title).")
+    }
+    if role != .launchWindow {
+      Button {
+        controller.setPinned(!controller.pinned, from: window.window)
+      } label: {
+        Image(systemName: controller.pinned ? "pin.fill" : "pin")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(controller.pinned ? Color.accentColor : Color.secondary)
+          .rotationEffect(.degrees(controller.pinned ? 0 : 45))
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(controller.pinned ? "Unpin" : "Pin open")
+      .help(controller.pinned ? "Unpin: close when you click elsewhere" : "Pin: keep this open when you click elsewhere")
+    }
+  }
+
+  /// A/B compare (only while on). In Bento it sits next to Power.
+  @ViewBuilder private var abButton: some View {
+    if controller.settings.enabled {
+      Button { controller.bypassed.toggle() } label: {
+        Text(controller.bypassed ? "Original" : "A/B")
+          .font(.system(size: 10, weight: .bold, design: .rounded))
+          .lineLimit(1)
+          .fixedSize()
+          .footerChip()
+          .foregroundStyle(controller.bypassed ? Color.white : Color.primary)
+          .background(Capsule().fill(controller.bypassed ? Color.orange : Color.primary.opacity(0.08)))
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Compare with original sound")
+      .accessibilityValue(controller.bypassed ? "Original" : "Processed")
+      .help("Compare with the original sound (\(GlobalHotkey.bypassLabel) from anywhere)")
     }
   }
 

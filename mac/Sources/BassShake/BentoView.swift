@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The Bento layout of the main block: translucent tiles on the 8 pt grid,
 /// one big number or word per tile. Same controls as the classic stack
-/// (the header and footer stay as they are, around this).
+/// (the footer stays as it is, under this; the header's controls move into
+/// the hero, so there is no header row).
 ///
 ///   ┌──────── Hero: preset name · modes · output · power · L/R lines ──────┐
 ///   ├──────────────────────── EQ curve ──────────────────────────┤
@@ -24,6 +25,18 @@ struct BentoView: View {
   let meters: MeterModel
   @Binding var editor: PresetEditor.Mode?
   let size: ViewSize
+  /// The header's small controls (labels, view size, pin), from PopoverView.
+  var heroIcons: AnyView = AnyView(EmptyView())
+  /// A/B compare, from PopoverView (empty while off).
+  var abButton: AnyView = AnyView(EmptyView())
+
+  /// Which mode's settings strip shows: the one turned on most recently.
+  private enum Detail { case nightGuard, mode }
+  @State private var lastDetail: Detail? = BentoView.remembered
+  /// lastDetail survives this view being rebuilt (process memory only).
+  private static var remembered: Detail?
+  private func showDetail(_ d: Detail) { lastDetail = d; Self.remembered = d }
+  private static let defaultAllow = Settings().nightGuardDb
 
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
@@ -37,7 +50,8 @@ struct BentoView: View {
     VStack(spacing: 8) {
       hero
       BentoTile(tint: tint(.frost), padding: 0) {
-        EQView(controller: controller, chrome: false)
+        EQView(controller: controller, chrome: false,
+               filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
           .frame(height: size == .full ? 132 : 100)
       }
       .clipShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
@@ -54,7 +68,7 @@ struct BentoView: View {
                   help: s.limit
                     ? "Extra loudness. With Limit on, the bass is held back first when there's no room, so vocals don't duck."
                     : "Extra loudness, with nothing holding it back. Watch for red meters: that's clipping.") {
-          controller.settings.boostDb = $0
+          if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
         } accessory: { limitCard }
       }
       presets
@@ -64,6 +78,9 @@ struct BentoView: View {
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
     .animation(.easeOut(duration: 0.2), value: live)
+    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: lastDetail)
+    .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
+    .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
   }
 
   // MARK: - Hero
@@ -136,7 +153,13 @@ struct BentoView: View {
     let t = heroTint
     let dark = scheme == .dark
     let shape = RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous)
-    return VStack(alignment: .leading, spacing: 4) {
+    return VStack(alignment: .leading, spacing: 0) {
+      // The old header row's small controls, quiet in the top-right corner.
+      HStack(spacing: 8) {
+        Spacer(minLength: 0)
+        heroIcons
+      }
+      .frame(height: 14)
       HStack(alignment: .center, spacing: 8) {
         ZStack(alignment: .leading) {
           Text(heroWord)
@@ -152,6 +175,16 @@ struct BentoView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.easeOut(duration: 0.25), value: heroWord)
         .accessibilityElement(children: .combine)
+        if live {
+          // Reserve "Original"'s width so A/B never re-flows the preset name.
+          ZStack {
+            Text("Original")
+              .font(.system(size: 10, weight: .bold, design: .rounded))
+              .lineLimit(1).fixedSize().footerChip().hidden()
+            abButton
+          }
+          .fixedSize()
+        }
         powerButton
       }
       HStack(alignment: .center, spacing: 8) {
@@ -168,9 +201,12 @@ struct BentoView: View {
         Spacer(minLength: 4)
         deviceCard
       }
+      .padding(.top, 4)
       .animation(.easeOut(duration: 0.2), value: modesLine)
     }
-    .padding(16)
+    .padding(.horizontal, 16)
+    .padding(.top, 8)
+    .padding(.bottom, 16)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background {
       ZStack {
@@ -309,7 +345,8 @@ struct BentoView: View {
         } fact: { EmptyView() }
         ModeTile(title: "Night Guard", symbol: "moon.haze", tint: tint(.indigo), on: s.nightGuard,
                  help: "Turns down anything that gets suddenly louder than what you've been listening to, like a booming title sequence after quiet dialogue. Quiet parts are left alone.") {
-          controller.settings.nightGuard.toggle()
+          // Lit but its strip hidden: the first click brings the strip forward.
+          if s.nightGuard && shownDetail != .nightGuard { showDetail(.nightGuard) } else { controller.settings.nightGuard.toggle() }
         } fact: { NightGuardFact(model: controller.nightGuard, allowDb: s.nightGuardDb) }
       }
       .fixedSize(horizontal: false, vertical: true)
@@ -317,8 +354,12 @@ struct BentoView: View {
         ForEach([ListeningMode.study, .sleep]) { m in
           ModeTile(title: m.title, symbol: m.symbol, tint: tint(m == .study ? .lime : .lilac), on: s.mode == m,
                    help: m == .study ? "Lo-fi study sound: warm, soft highs, gentle tape character." : "Sleep: dark, soft and level, with a fade-out timer.") {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-              controller.setMode(s.mode == m ? .off : m)
+            if s.mode == m && shownDetail != .mode {
+              showDetail(.mode)
+            } else {
+              withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                controller.setMode(s.mode == m ? .off : m)
+              }
             }
           } fact: {
             if m == .study {
@@ -342,40 +383,53 @@ struct BentoView: View {
     }
   }
 
-  @ViewBuilder private var modeDetails: some View {
-    if s.nightGuard {
-      BentoTile(tint: tint(.indigo)) { nightGuardRow }
-        .transition(.opacity.combined(with: .move(edge: .top)))
+  /// The strip on show: the most recently turned-on mode's, or another
+  /// active one if that's been turned off.
+  private var shownDetail: Detail? {
+    switch lastDetail {
+    case .nightGuard where s.nightGuard: return .nightGuard
+    case .mode where s.mode != .off: return .mode
+    default: return s.mode != .off ? .mode : (s.nightGuard ? .nightGuard : nil)
     }
-    if s.mode != .off {
-      BentoTile(tint: tint(s.mode == .study ? .lime : .lilac)) {
-        VStack(alignment: .leading, spacing: 8) {
-          if s.mode == .sleep { sleepRow } else { studyRow }
-          noiseRow
+  }
+
+  /// One settings strip at a time, right under the mode grid.
+  @ViewBuilder private var modeDetails: some View {
+    // One slot: swapping strips crossfades in place; only appearing from or
+    // going to nothing slides.
+    if let d = shownDetail {
+      ZStack(alignment: .top) {
+        switch d {
+        case .nightGuard: nightGuardRow.transition(.opacity)
+        case .mode: modeStrip.transition(.opacity)
         }
       }
-      .help(s.mode == .sleep
-        ? "Keep it quiet: about a whisper (40–45 dB), never loud all night. Sound like this can mask disturbances and help you drift off; it doesn't deepen sleep."
-        : "Instrumental music works best for reading and writing; lyrics compete with words. Noise helps some people focus and distracts others, so try both.")
       .transition(.opacity.combined(with: .move(edge: .top)))
     }
   }
 
-  private var nightGuardRow: some View {
-    HStack(spacing: 8) {
-      IconText(title: "Allow", symbol: "moon.haze", size: 11)
-      Slider(value: Binding(get: { s.nightGuardDb }, set: { controller.settings.nightGuardDb = $0.rounded() }), in: 3...15)
-        .controlSize(.mini)
-      ZStack(alignment: .trailing) {
-        Text("+15 dB").hidden()
-        Text("+\(Int(s.nightGuardDb)) dB")
+  private var modeStrip: some View {
+    BentoTile(tint: tint(s.mode == .study ? .lime : .lilac)) {
+      VStack(alignment: .leading, spacing: 8) {
+        if s.mode == .sleep { sleepRow } else { studyRow }
+        noiseRow
       }
-        .font(.system(size: 11, weight: .heavy, design: .rounded))
-        .monospacedDigit()
-        .lineLimit(1)
-        .fixedSize()
+      .frame(maxWidth: .infinity, minHeight: 68, alignment: .topLeading)   // Allow tile's height
     }
-    .help("How much louder than what you've been hearing Night Guard lets things get.")
+    .help(s.mode == .sleep
+      ? "Keep it quiet: about a whisper (40–45 dB), never loud all night. Sound like this can mask disturbances and help you drift off; it doesn't deepen sleep."
+      : "Instrumental music works best for reading and writing; lyrics compete with words. Noise helps some people focus and distracts others, so try both.")
+  }
+
+  /// Night Guard's allowance: the same drag-the-number tile as Strength/Boost.
+  private var nightGuardRow: some View {
+    ScrubTile(title: "Allow", symbol: "moon.haze", tint: tint(.indigo),
+              value: s.nightGuardDb, range: 3...15, defaultValue: Self.defaultAllow,
+              detent: Self.defaultAllow, tickStep: 1, step: 1,
+              format: { ("+", "\(Int($0.rounded()))", " dB") },
+              help: "How much louder than what you've been hearing Night Guard lets things get. Drag left or right; double-click to reset.") {
+      v in let r = v.rounded(); if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
+    } accessory: { EmptyView() }
   }
 
   private var sleepRow: some View {
@@ -700,6 +754,8 @@ private struct ScrubTile<Accessory: View>: View {
   let detent: Double
   /// A light haptic tick every this much.
   let tickStep: Double
+  /// Snap to this step before haptics and set(), so ticks match the digits (0 = off).
+  var step: Double = 0
   /// (sign, digits, unit): sign and unit are drawn small.
   let format: (Double) -> (String, String, String)
   let help: String
@@ -783,9 +839,10 @@ private struct ScrubTile<Accessory: View>: View {
         // Rubber band: past either end the number gives a few points.
         let over = raw - v
         band = CGFloat(max(-6, min(6, over / span * Double(travel) * 0.15)))
-        haptics(from: last ?? value, to: v)
-        last = v
-        set(v)
+        let q = step > 0 ? (v / step).rounded() * step : v
+        haptics(from: last ?? value, to: q)
+        last = q
+        set(q)
       }
       .onEnded { _ in start = nil; last = nil; band = 0 })
     .simultaneousGesture(TapGesture(count: 2).onEnded { set(defaultValue) })

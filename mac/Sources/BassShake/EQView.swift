@@ -12,6 +12,9 @@ struct EQView: View {
   @ObservedObject var controller: AudioController
   /// The faint rounded backing; Bento turns it off (its tile is the backing).
   var chrome = true
+  /// Bento only: no grid or labels, the curve drawn as one lit line in this
+  /// colour with a glow and a fill fading to clear. nil = the classic look.
+  var filament: Color? = nil
 
   @State private var grabbed: Int?
   @State private var hovered: Int?
@@ -19,8 +22,14 @@ struct EQView: View {
   @State private var snapped = false
   @State private var scrollMonitor: Any?
   @State private var kbBand = 0
+  /// Filament only: the pointer is over the EQ, so every node shows.
+  @State private var pointerIn = false
+  /// Filament only: the arrow keys were used last (not the pointer), so the
+  /// keyboard-picked node is marked.
+  @State private var kbActive = false
   @FocusState private var focused: Bool
   @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.colorScheme) private var scheme
 
   private static let colors: [Color] = [
     Color(red: 1.00, green: 0.36, blue: 0.36),
@@ -37,12 +46,15 @@ struct EQView: View {
     GeometryReader { geo in
       let size = geo.size
       let bands = controller.settings.bands
+      // Read here (not only in the Canvas) so changes redraw it.
+      let showNodes = pointerIn || grabbed != nil
+      let kbDot: Int? = focused && kbActive ? kbBand : nil
       ZStack {
         if controller.settings.waveform && controller.settings.enabled {
           WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
             .allowsHitTesting(false)
         }
-        Canvas { ctx, size in draw(ctx, size: size, bands: bands) }
+        Canvas { ctx, size in draw(ctx, size: size, bands: bands, showNodes: showNodes, kbDot: kbDot) }
         if controller.settings.limit && controller.settings.enabled {
           LimitOverlay(meters: controller.meters, size: size, bassEdgeX: x(150, size.width),
                        yFor: { y($0, size.height) })
@@ -80,8 +92,13 @@ struct EQView: View {
       .simultaneousGesture(TapGesture(count: 2).onEnded { resetHovered() })
       .onContinuousHover { phase in
         switch phase {
-        case .active(let p): if grabbed == nil { hovered = nearest(p, size: size) }
-        case .ended: if grabbed == nil { hovered = nil }
+        case .active(let p):
+          if filament != nil && !pointerIn { pointerIn = true }
+          if kbActive { kbActive = false }
+          if grabbed == nil { hovered = nearest(p, size: size) }
+        case .ended:
+          if filament != nil { pointerIn = false }
+          if grabbed == nil { hovered = nil }
         }
       }
       .onAppear { installScrollMonitor() }
@@ -120,7 +137,11 @@ struct EQView: View {
 
   // MARK: - Drawing
 
-  private func draw(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand]) {
+  private func draw(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], showNodes: Bool, kbDot: Int?) {
+    if let filament {
+      drawFilament(ctx, size: size, bands: bands, color: filament, showNodes: showNodes, kbDot: kbDot)
+      return
+    }
     let w = size.width, h = size.height
 
     // Grid.
@@ -150,13 +171,7 @@ struct EQView: View {
     }
 
     // Response curve.
-    let n = max(64, Int(w / 2))
-    let resp = controller.curve(for: bands, count: n)
-    var curve = Path()
-    for (k, db) in resp.enumerated() {
-      let p = CGPoint(x: w * CGFloat(k) / CGFloat(n - 1), y: y(max(-gainSpan * 1.1, min(gainSpan * 1.1, db)), h))
-      k == 0 ? curve.move(to: p) : curve.addLine(to: p)
-    }
+    let curve = curvePath(bands, size: size)
     var fill = curve
     fill.addLine(to: CGPoint(x: w, y: y(0, h)))
     fill.addLine(to: CGPoint(x: 0, y: y(0, h)))
@@ -183,7 +198,60 @@ struct EQView: View {
                                             endPoint: CGPoint(x: 0, y: y(-gainSpan, h))),
                style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
-    // Nodes.
+    drawNodes(ctx, size: size, bands: bands)
+  }
+
+  private func curvePath(_ bands: [EQBand], size: CGSize) -> Path {
+    let w = size.width, h = size.height
+    let n = max(64, Int(w / 2))
+    let resp = controller.curve(for: bands, count: n)
+    var curve = Path()
+    for (k, db) in resp.enumerated() {
+      let p = CGPoint(x: w * CGFloat(k) / CGFloat(n - 1), y: y(max(-gainSpan * 1.1, min(gainSpan * 1.1, db)), h))
+      k == 0 ? curve.move(to: p) : curve.addLine(to: p)
+    }
+    return curve
+  }
+
+  /// Bento's lit filament: fill fading to clear, a soft glow, then the line.
+  /// Nodes show in full while the pointer is over the EQ (or one is held /
+  /// keyboard-picked); otherwise only as small dots on the line.
+  private func drawFilament(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], color: Color,
+                            showNodes: Bool, kbDot: Int?) {
+    let w = size.width, h = size.height
+    let dark = scheme == .dark
+    let curve = curvePath(bands, size: size)
+    var fill = curve
+    fill.addLine(to: CGPoint(x: w, y: h))
+    fill.addLine(to: CGPoint(x: 0, y: h))
+    fill.closeSubpath()
+    ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.30 : 0.18), color.opacity(0)]),
+                                         startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
+                                         endPoint: CGPoint(x: 0, y: h)))
+    ctx.drawLayer { glow in
+      glow.addFilter(.blur(radius: 5))
+      glow.stroke(curve, with: .color(color.opacity(dark ? 0.75 : 0.28)),
+                  style: StrokeStyle(lineWidth: dark ? 6 : 5, lineCap: .round, lineJoin: .round))
+    }
+    ctx.stroke(curve, with: .color(color), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+
+    if showNodes {
+      drawNodes(ctx, size: size, bands: bands)
+    } else {
+      // Small dots on the line; the keyboard-picked node is a little larger,
+      // in its own colour, so the arrows' target stays visible.
+      for (i, b) in bands.enumerated() {
+        let c = CGPoint(x: x(b.freq, w), y: y(b.gain, h))
+        let picked = i == kbDot
+        let r: CGFloat = picked ? 5.5 : 2.5
+        ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
+                 with: .color(picked ? Self.colors[i] : color.opacity(0.9)))
+      }
+    }
+  }
+
+  private func drawNodes(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand]) {
+    let w = size.width, h = size.height
     for (i, b) in bands.enumerated() {
       let c = CGPoint(x: x(b.freq, w), y: y(b.gain, h))
       let active = grabbed == i || hovered == i
@@ -217,6 +285,7 @@ struct EQView: View {
   private func dragGesture(size: CGSize) -> some Gesture {
     DragGesture(minimumDistance: 0)
       .onChanged { v in
+        if kbActive { kbActive = false }
         if grabbed == nil {
           guard let i = nearest(v.startLocation, size: size) else { return }
           grabbed = i
@@ -258,6 +327,7 @@ struct EQView: View {
   private func handleKey(_ press: KeyPress) -> KeyPress.Result {
     let bands = controller.settings.bands
     guard !bands.isEmpty else { return .ignored }
+    kbActive = true
     kbBand = min(kbBand, bands.count - 1)
     var b = bands[kbBand]
     let alt = press.modifiers.contains(.option), fine = press.modifiers.contains(.shift)
