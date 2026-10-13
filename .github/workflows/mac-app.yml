@@ -1,5 +1,7 @@
 name: Mac app (build + publish)
 
+# Builds, tests and smoke-launches on every branch and PR; only pushes to the
+# shipping branch publish the release and the update feed.
 # Shared by the main job (Apple Silicon runner) and its fallback (Intel runner,
 # used only when GitHub can't supply an arm64 Mac). Same universal app either way.
 on:
@@ -38,13 +40,37 @@ jobs:
           core/build/punch_bench
       - name: Build app bundle
         run: mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"
+      # Launch the built app and make sure it stays up. No one answers the
+      # System Audio Recording prompt on CI (and first run shows onboarding
+      # before asking), so the tap may never start: that's fine. Only the
+      # process exiting (a crash at launch) fails the build, before anything
+      # is published.
+      - name: Launch smoke test
+        run: |
+          BIN="build/The Bass Shaker.app/Contents/MacOS/BassShake"
+          "$BIN" > build/smoke.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 20); do
+            sleep 1
+            if ! kill -0 "$PID" 2>/dev/null; then
+              CODE=0; wait "$PID" || CODE=$?
+              echo "::error::The app exited ${i} s after launch (status $CODE)"
+              tail -n 100 build/smoke.log || true
+              for r in $(ls -t ~/Library/Logs/DiagnosticReports/BassShake* 2>/dev/null | head -1); do head -n 120 "$r"; done
+              exit 1
+            fi
+          done
+          echo "The app is still running after 20 s"
+          kill "$PID" 2>/dev/null || true
+          sleep 2
+          kill -9 "$PID" 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         with:
           name: BassShake-0.1.0-beta.${{ github.run_number }}
           path: build/BassShake-*.zip
           if-no-files-found: error
       - name: Publish beta prerelease
-        if: github.event_name != 'pull_request'
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/claude/macos-audio-routing-research-xpbcuk' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0-beta.${{ github.run_number }}
@@ -69,15 +95,20 @@ jobs:
             Requires macOS 14.4 or later. No driver is installed and no restart is needed;
             quitting The Bass Shaker instantly returns your Mac's audio to normal.
       - name: Sign update + write Sparkle appcast
-        if: github.event_name != 'pull_request'
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/claude/macos-audio-routing-research-xpbcuk' }}
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}
           NOTES: ${{ github.event.head_commit.message }}
         run: |
           if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
             echo "::warning::SPARKLE_ED_PRIVATE_KEY secret is not set; skipping the auto-update feed"
             exit 0
           fi
+          # Start from the live feed so the previous builds stay listed.
+          gh release download updates --repo "${{ github.repository }}" --pattern appcast.xml \
+            --output build/appcast-previous.xml --clobber \
+            || echo "::warning::No previous appcast.xml; the feed will list only this build"
           python3 -m venv build/venv
           build/venv/bin/pip install --quiet cryptography
           V="0.1.0-beta.${{ github.run_number }}"
@@ -86,7 +117,8 @@ jobs:
             --version "${{ github.run_number }}" --short "$V" \
             --url "https://github.com/${{ github.repository }}/releases/download/v$V/BassShake-$V.zip" \
             --notes "$(printf '%s\n' "$NOTES" | head -n 1)" \
-            --expect-public-key "$PUB" -o build/appcast.xml
+            --expect-public-key "$PUB" --previous build/appcast-previous.xml --keep 4 \
+            -o build/appcast.xml
           echo "PUBLISH_FEED=1" >> "$GITHUB_ENV"
       - name: Publish update feed
         if: env.PUBLISH_FEED == '1'

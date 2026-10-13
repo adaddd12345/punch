@@ -496,14 +496,24 @@ final class AudioController: ObservableObject {
   }
 
   /// The output changed: switch to the sound this device had last time.
-  /// A device we haven't seen keeps the current sound (and learns it).
+  /// A device we haven't seen keeps the current sound (and learns it), but
+  /// starts at 0 dB Boost: +12 dB set for quiet laptop speakers must not
+  /// land on a new pair of headphones.
   private func deviceChanged(from old: AudioObjectID) {
     guard settings.perDevice, settings.mode == .off else { return }
     // Bank the outgoing device's sound first (a pending save may not have run).
     if let oldUID = devices.first(where: { $0.id == old })?.uid {
       settings.deviceSounds[oldUID] = currentSound
     }
-    guard let uid = currentDevice?.uid, let sound = settings.deviceSounds[uid] else { return }
+    guard let uid = currentDevice?.uid else { return }
+    guard let sound = settings.deviceSounds[uid] else {
+      // Only on a real switch (not the first device found at launch).
+      if old != 0, settings.boostDb != 0 {
+        log.notice("new device \(uid, privacy: .public): Boost starts at 0 dB")
+        settings.boostDb = 0
+      }
+      return
+    }
     log.notice("per-device sound for \(uid, privacy: .public)")
     var s = settings
     s.bass = sound.bass
@@ -1051,6 +1061,11 @@ final class AudioController: ObservableObject {
                      deviceName: currentDevice?.name)
   }
 
+  /// Most the positive gain path (EQ peak + Boost + Fair Level + loudness
+  /// makeup) may add, and the total above which the limiter always runs.
+  static let maxLiftDb = 12.0
+  static let autoLimitAboveDb = 6.0
+
   private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, _ live: LiveState = LiveState()) {
     let fade = live.fade, headphones = live.headphones
     punch_set_bypass(e, live.bypass)
@@ -1108,12 +1123,21 @@ final class AudioController: ObservableObject {
     // Sleep ignores Boost: quieter is the point.
     let boost = s.mode == .sleep ? 0 : s.boostDb
     let fair = s.mode == .sleep ? min(0, live.fairDb) : live.fairDb
-    punch_set_output_gain_db(e, Float(boost + loudnessMakeup + fade.musicDb + fair + currentQuietFloorDb))
+    // Gain safety: Boost, Fair Level and loudness makeup on top of the EQ's
+    // highest node lift at most +12 dB in total, and past +6 dB the limiter
+    // runs even with Limit off. The toggle stays as the user set it (only
+    // the engine's safety net turns on; no auto headroom or compression), and
+    // the output gain and the limiter's on/off both glide in the engine.
+    let eqPeak = max(0, s.bands.map(\.gain).max() ?? 0)
+    var lift = boost + loudnessMakeup + fair
+    if lift > 0 { lift = min(lift, max(0, Self.maxLiftDb - eqPeak)) }
+    let safetyLimit = eqPeak + max(0, lift) > Self.autoLimitAboveDb
+    punch_set_output_gain_db(e, Float(lift + fade.musicDb + currentQuietFloorDb))
     punch_set_loudness_guard(e, s.nightGuard, Float(s.nightGuardDb), 20)
     let d = live.dj
     punch_set_dj(e, d.isOn(.low), d.isOn(.mid), d.isOn(.high), Float(d.filter), d.isOn(.echo), d.isOn(.crush),
                  d.isOn(.drive))
-    punch_set_limiter(e, !unlimited, Float(c.ceilingDb), 80)
+    punch_set_limiter(e, !unlimited || safetyLimit, Float(c.ceilingDb), 80)
     // Bass-priority limiting (docs/research/22-loudness-fighting.md): bass
     // boosts are limited against the room the rest of the mix leaves, so the
     // vocals never duck and bass boosts don't turn the whole song down.

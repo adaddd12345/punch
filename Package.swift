@@ -11,7 +11,9 @@ let package = Package(
   ],
   dependencies: [
     // Auto-updates (EdDSA-signed appcast; works without an Apple developer account).
-    .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
+    // Pinned exactly (with Package.resolved committed) so a new Sparkle release
+    // can't change the updater inside a beta nobody tested.
+    .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
   ],
   targets: [
     // Portable C++ DSP engine (also built + tested with CMake on Linux).

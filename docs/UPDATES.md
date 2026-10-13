@@ -8,17 +8,20 @@ No Apple Developer account is used. Builds are ad-hoc signed, and updates go out
    - Linux: core tests plus ASan/UBSan.
    - macOS 26 runner (Xcode 26.6 pinned, macOS 26 SDK; deployment target 14.4). The steps live in `.github/workflows/mac-app.yml`; if GitHub can't supply an Apple Silicon Mac (the job is cancelled after ~15 min), the same steps run on `macos-26-intel`:
      1. Run the core tests.
-     2. Run `mac/scripts/bundle.sh "0.1.0-beta.N" N`. It builds a universal `The Bass Shaker.app`, ad-hoc signs it and zips it to `build/BassShake-0.1.0-beta.N.zip`.
+     2. Run `mac/scripts/bundle.sh "0.1.0-beta.N" N`. It builds a universal `The Bass Shaker.app`, ad-hoc signs it and zips it to `build/BassShake-0.1.0-beta.N.zip`. Then launch it for 20 s (smoke test); steps 3-5 run only for pushes to the shipping branch.
      3. Publish the GitHub prerelease **`v0.1.0-beta.N`** with that zip.
      4. Sign the zip with `SPARKLE_ED_PRIVATE_KEY` using `mac/scripts/sparkle_appcast.py`. The release notes are the first line of the commit message. The script checks the signature against `SUPublicEDKey` in `Info.plist`.
-     5. Overwrite `appcast.xml` on the fixed release tag **`updates`**.
+     5. Overwrite `appcast.xml` on the fixed release tag **`updates`** (new item first, then the newest 4 from the previous feed).
 3. The installed app reads `SUFeedURL` = `https://github.com/adaddd12345/punch/releases/download/updates/appcast.xml`:
    - It checks hourly, without stealing focus.
    - It also checks quietly when the popover opens, at most every 10 minutes.
    - The user can check now with ⋯ → Check for Updates….
 
 ## Rules
-- **The workflow runs on every branch (`branches: ["**"]`), and they all share the one `updates` feed.** Pushing *any* branch ships to the user. To experiment without shipping, use a PR or a draft branch and change the trigger, or don't push.
+- **Only pushes to `claude/macos-audio-routing-research-xpbcuk` ship.** The workflow builds, tests and smoke-launches every branch and PR, but the release and the `updates` feed are published only for pushes to that branch.
+- **Launch smoke test:** before publishing, CI starts the built app and fails the build if it exits within 20 s (no audio permission is granted there, so only a crash counts).
+- **The feed keeps history:** each run downloads the live `appcast.xml` and keeps its newest 4 items after the new one, so the previous build is still listed.
+- **Sparkle is pinned** to an exact version in `Package.swift`, with `Package.resolved` committed. Bump both on purpose.
 - **Only push code that compiles.** There's no local Swift check without Xcode; CI is the compiler. Before telling the user a build is live, check the run succeeded (GitHub MCP `actions_list` / `get_job_logs`, or the Actions tab).
 - **Commit messages:** write the first line as release notes, because users see it in Sparkle.
 - **Version numbers:** `CFBundleVersion` = run number, which only increases. Never hand-edit versions; `bundle.sh` stamps `__VERSION__` / `__BUILD__` into `Info.plist`.

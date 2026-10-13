@@ -167,6 +167,19 @@ extension EQBand {
     return b
   }
 
+  // Tolerant: a bad field falls back to the default node at this id, so one
+  // garbage value can't fail the whole band list (and the settings with it).
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let i = (try? c.decodeIfPresent(Int.self, forKey: .id)) ?? 0
+    let d = EQBand.defaults.first { $0.id == i } ?? EQBand.defaults[3]
+    id = i
+    kind = (try? c.decodeIfPresent(Kind.self, forKey: .kind)) ?? d.kind
+    freq = (try? c.decodeIfPresent(Double.self, forKey: .freq)) ?? d.freq
+    gain = (try? c.decodeIfPresent(Double.self, forKey: .gain)) ?? d.gain
+    q = (try? c.decodeIfPresent(Double.self, forKey: .q)) ?? d.q
+  }
+
   static func normalized(_ bands: [EQBand]) -> [EQBand] {
     if bands.count == defaults.count && bands.enumerated().allSatisfy({ $0.offset == $0.element.id }) { return bands }
     return defaults.enumerated().map { i, d in
@@ -414,13 +427,13 @@ struct UserPreset: Codable, Equatable, Identifiable {
 
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
-    id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-    name = try c.decode(String.self, forKey: .name)
-    icon = try c.decode(String.self, forKey: .icon)
-    bands = try c.decode([EQBand].self, forKey: .bands)
-    bass = try c.decode(Double.self, forKey: .bass)
-    boostDb = try c.decode(Double.self, forKey: .boostDb)
-    character = try c.decodeIfPresent(SoundCharacter.self, forKey: .character) ?? .neutral
+    id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
+    name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "My Preset"
+    icon = (try? c.decodeIfPresent(String.self, forKey: .icon)) ?? PresetIcon.choices[0]
+    bands = (try? c.decodeIfPresent([EQBand].self, forKey: .bands)) ?? EQBand.defaults
+    bass = (try? c.decodeIfPresent(Double.self, forKey: .bass)) ?? 0
+    boostDb = (try? c.decodeIfPresent(Double.self, forKey: .boostDb)) ?? 0
+    character = (try? c.decodeIfPresent(SoundCharacter.self, forKey: .character)) ?? .neutral
   }
 }
 
@@ -561,36 +574,37 @@ struct Settings: Codable, Equatable {
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let d = Settings()
-    enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? d.enabled
-    bands = try c.decodeIfPresent([EQBand].self, forKey: .bands) ?? d.bands
-    presetName = try c.decodeIfPresent(String.self, forKey: .presetName)
-    userPresetID = try c.decodeIfPresent(UUID.self, forKey: .userPresetID)
-    bass = try c.decodeIfPresent(Double.self, forKey: .bass) ?? d.bass
-    boostDb = try c.decodeIfPresent(Double.self, forKey: .boostDb) ?? d.boostDb
+    enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? d.enabled
+    bands = (try? c.decodeIfPresent([EQBand].self, forKey: .bands)) ?? d.bands
+    presetName = (try? c.decodeIfPresent(String.self, forKey: .presetName)) ?? nil
+    userPresetID = (try? c.decodeIfPresent(UUID.self, forKey: .userPresetID)) ?? nil
+    bass = (try? c.decodeIfPresent(Double.self, forKey: .bass)) ?? d.bass
+    boostDb = (try? c.decodeIfPresent(Double.self, forKey: .boostDb)) ?? d.boostDb
     userPresets = ((try? c.decodeIfPresent([Lossy<UserPreset>].self, forKey: .userPresets)) ?? nil)?.compactMap(\.value) ?? []
-    character = try c.decodeIfPresent(SoundCharacter.self, forKey: .character) ?? d.character
-    studioEars = try c.decodeIfPresent(Bool.self, forKey: .studioEars) ?? d.studioEars
+    character = (try? c.decodeIfPresent(SoundCharacter.self, forKey: .character)) ?? d.character
+    studioEars = (try? c.decodeIfPresent(Bool.self, forKey: .studioEars)) ?? d.studioEars
     mode = (try? c.decodeIfPresent(ListeningMode.self, forKey: .mode)) ?? d.mode
     beforeMode = try? c.decodeIfPresent(Snapshot.self, forKey: .beforeMode)
-    noiseOn = try c.decodeIfPresent(Bool.self, forKey: .noiseOn) ?? d.noiseOn
+    noiseOn = (try? c.decodeIfPresent(Bool.self, forKey: .noiseOn)) ?? d.noiseOn
     noiseColor = (try? c.decodeIfPresent(NoiseColorChoice.self, forKey: .noiseColor)) ?? d.noiseColor
-    noiseDb = try c.decodeIfPresent(Double.self, forKey: .noiseDb) ?? d.noiseDb
-    sleepMinutes = try c.decodeIfPresent(Int.self, forKey: .sleepMinutes) ?? d.sleepMinutes
-    noiseAllNight = try c.decodeIfPresent(Bool.self, forKey: .noiseAllNight) ?? d.noiseAllNight
-    perDevice = try c.decodeIfPresent(Bool.self, forKey: .perDevice) ?? d.perDevice
-    deviceSounds = (try? c.decodeIfPresent([String: DeviceSound].self, forKey: .deviceSounds)) ?? [:]
-    bypassDevices = try c.decodeIfPresent(Set<String>.self, forKey: .bypassDevices) ?? []
-    autoLoudness = try c.decodeIfPresent(Bool.self, forKey: .autoLoudness) ?? d.autoLoudness
-    bypassHotkey = try c.decodeIfPresent(Bool.self, forKey: .bypassHotkey) ?? d.bypassHotkey
-    checkDrivers = try c.decodeIfPresent(Bool.self, forKey: .checkDrivers) ?? d.checkDrivers
-    limit = try c.decodeIfPresent(Bool.self, forKey: .limit) ?? d.limit
-    nightGuard = try c.decodeIfPresent(Bool.self, forKey: .nightGuard) ?? d.nightGuard
-    fadeWindows = try c.decodeIfPresent(Bool.self, forKey: .fadeWindows) ?? d.fadeWindows
+    noiseDb = (try? c.decodeIfPresent(Double.self, forKey: .noiseDb)) ?? d.noiseDb
+    sleepMinutes = (try? c.decodeIfPresent(Int.self, forKey: .sleepMinutes)) ?? d.sleepMinutes
+    noiseAllNight = (try? c.decodeIfPresent(Bool.self, forKey: .noiseAllNight)) ?? d.noiseAllNight
+    perDevice = (try? c.decodeIfPresent(Bool.self, forKey: .perDevice)) ?? d.perDevice
+    deviceSounds = ((try? c.decodeIfPresent([String: Lossy<DeviceSound>].self, forKey: .deviceSounds)) ?? nil)?
+      .compactMapValues(\.value) ?? [:]
+    bypassDevices = (try? c.decodeIfPresent(Set<String>.self, forKey: .bypassDevices)) ?? []
+    autoLoudness = (try? c.decodeIfPresent(Bool.self, forKey: .autoLoudness)) ?? d.autoLoudness
+    bypassHotkey = (try? c.decodeIfPresent(Bool.self, forKey: .bypassHotkey)) ?? d.bypassHotkey
+    checkDrivers = (try? c.decodeIfPresent(Bool.self, forKey: .checkDrivers)) ?? d.checkDrivers
+    limit = (try? c.decodeIfPresent(Bool.self, forKey: .limit)) ?? d.limit
+    nightGuard = (try? c.decodeIfPresent(Bool.self, forKey: .nightGuard)) ?? d.nightGuard
+    fadeWindows = (try? c.decodeIfPresent(Bool.self, forKey: .fadeWindows)) ?? d.fadeWindows
     autoFixAfterSleep = (try? c.decodeIfPresent(Bool.self, forKey: .autoFixAfterSleep)) ?? d.autoFixAfterSleep
     centerLock = (try? c.decodeIfPresent(CenterLock.self, forKey: .centerLock)) ?? d.centerLock
     earProtector = (try? c.decodeIfPresent(Bool.self, forKey: .earProtector)) ?? d.earProtector
     hqGuard = (try? c.decodeIfPresent(Bool.self, forKey: .hqGuard)) ?? d.hqGuard
-    waveform = try c.decodeIfPresent(Bool.self, forKey: .waveform) ?? d.waveform
+    waveform = (try? c.decodeIfPresent(Bool.self, forKey: .waveform)) ?? d.waveform
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
@@ -602,9 +616,9 @@ struct Settings: Codable, Equatable {
     nowPlayingNoteSeen = (try? c.decodeIfPresent(Bool.self, forKey: .nowPlayingNoteSeen)) ?? d.nowPlayingNoteSeen
     pauseRoute = (try? c.decodeIfPresent(PauseRoute.self, forKey: .pauseRoute)) ?? d.pauseRoute
     editedFrom = (try? c.decodeIfPresent(String.self, forKey: .editedFrom)) ?? nil
-    trayOpen = try c.decodeIfPresent(Bool.self, forKey: .trayOpen) ?? d.trayOpen
-    nightGuardDb = try c.decodeIfPresent(Double.self, forKey: .nightGuardDb) ?? d.nightGuardDb
-    balanceLock = try c.decodeIfPresent(Bool.self, forKey: .balanceLock) ?? d.balanceLock
+    trayOpen = (try? c.decodeIfPresent(Bool.self, forKey: .trayOpen)) ?? d.trayOpen
+    nightGuardDb = (try? c.decodeIfPresent(Double.self, forKey: .nightGuardDb)) ?? d.nightGuardDb
+    balanceLock = (try? c.decodeIfPresent(Bool.self, forKey: .balanceLock)) ?? d.balanceLock
     quietFloor = (try? c.decodeIfPresent([String: Double].self, forKey: .quietFloor)) ?? [:]
     quietFloorDismissed = (try? c.decodeIfPresent(Set<String>.self, forKey: .quietFloorDismissed)) ?? []
     fairLevel = (try? c.decodeIfPresent(Bool.self, forKey: .fairLevel)) ?? d.fairLevel
@@ -620,9 +634,16 @@ struct Settings: Codable, Equatable {
   }
 
   static func load() -> Settings {
-    guard let data = UserDefaults.standard.data(forKey: key),
-          var s = try? JSONDecoder().decode(Settings.self, from: data)
+    let data = UserDefaults.standard.data(forKey: key)
+    guard let data, var s = try? JSONDecoder().decode(Settings.self, from: data)
     else {
+      // Saved settings that can't be read at all are kept aside before the
+      // defaults below get saved over them.
+      if let data {
+        let backup = "\(key).backup-\(Int(Date().timeIntervalSince1970))"
+        UserDefaults.standard.set(data, forKey: backup)
+        NSLog("BassShake: saved settings unreadable; raw copy kept under %@", backup)
+      }
       var s = Settings()
       s.bands = Preset.all[1].bands()
       return s
@@ -660,6 +681,33 @@ struct Settings: Codable, Equatable {
   }
 }
 
+
+// Tolerant (in extensions, so the memberwise inits stay): a bad field keeps
+// the rest of the device's remembered sound or the mode's snapshot.
+extension Settings.DeviceSound {
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    bands = (try? c.decodeIfPresent([EQBand].self, forKey: .bands)) ?? EQBand.defaults
+    bass = (try? c.decodeIfPresent(Double.self, forKey: .bass)) ?? 0
+    boostDb = (try? c.decodeIfPresent(Double.self, forKey: .boostDb)) ?? 0
+    character = (try? c.decodeIfPresent(SoundCharacter.self, forKey: .character)) ?? .neutral
+    presetName = (try? c.decodeIfPresent(String.self, forKey: .presetName)) ?? nil
+    userPresetID = (try? c.decodeIfPresent(UUID.self, forKey: .userPresetID)) ?? nil
+    studioEars = (try? c.decodeIfPresent(Bool.self, forKey: .studioEars)) ?? false
+  }
+}
+
+extension Settings.Snapshot {
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    bands = (try? c.decodeIfPresent([EQBand].self, forKey: .bands)) ?? EQBand.defaults
+    bass = (try? c.decodeIfPresent(Double.self, forKey: .bass)) ?? 0
+    character = (try? c.decodeIfPresent(SoundCharacter.self, forKey: .character)) ?? .neutral
+    presetName = (try? c.decodeIfPresent(String.self, forKey: .presetName)) ?? nil
+    userPresetID = (try? c.decodeIfPresent(UUID.self, forKey: .userPresetID)) ?? nil
+    deviceUID = (try? c.decodeIfPresent(String.self, forKey: .deviceUID)) ?? nil
+  }
+}
 
 /// Decodes what it can; a broken element becomes nil instead of failing the array.
 struct Lossy<T: Decodable>: Decodable {

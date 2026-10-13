@@ -41,6 +41,9 @@ final class FairLevel: ObservableObject {
   /// Slow average of the dominant app's level (dB), reset when it changes.
   private var avgDb: Double?
   private var gainDb = 0.0
+  /// The last app Fair Level matched; survives holds (mixed audio, silence)
+  /// so only a different app resets the gain.
+  private var lastApp: String?
 
   /// Call once from AudioController.bootstrap.
   func attach(_ c: AudioController) {
@@ -76,6 +79,7 @@ final class FairLevel: ObservableObject {
       timer = nil
       avgDb = nil
       dominant = nil
+      lastApp = nil
       gainDb = 0
       controller?.fairLevelDb = 0
     }
@@ -97,6 +101,16 @@ final class FairLevel: ObservableObject {
     if dominant != top.0 {
       dominant = top.0
       avgDb = top.1
+    }
+    // A different app took over: drop any lift to 0 dB, so +10 dB earned by
+    // a quiet app never lands on the next one. A cut is kept and eases up as
+    // usual (safer than jumping louder). The engine glides the change.
+    if lastApp != top.0 {
+      if lastApp != nil, gainDb > 0 {
+        gainDb = 0
+        c.fairLevelDb = 0
+      }
+      lastApp = top.0
     }
     if pinned.contains(top.0) { return }   // leave this app alone: freeze
 
