@@ -621,6 +621,8 @@ final class LatencyLab: ObservableObject {
   }
 
   func selectInput(_ endpoint: AudioEndpoint) {
+    // Tell AudioController first so HQ Guard leaves this pick alone.
+    NotificationCenter.default.post(name: .bassShakeUserPickedInput, object: endpoint.uid)
     labQueue.async { LatencyDevices.setDefaultInput(endpoint.id) }
   }
 
@@ -1052,4 +1054,9 @@ extension LatencyLab {
       return out
     }
   }
+}
+
+extension Notification.Name {
+  /// Posted with the picked input's UID as `object` (Latency Lab's input picker).
+  static let bassShakeUserPickedInput = Notification.Name("bassshake.userPickedInput")
 }

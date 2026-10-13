@@ -108,7 +108,7 @@ final class AudioController: ObservableObject {
         settings.enabled ? start() : stop()
       }
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
-      hqGuardOn.store(settings.hqGuard)
+      hqGuardOn.store(settings.hqGuard && settings.enabled)
       if settings.powerSaver != oldValue.powerSaver { PowerSaver.shared.sync(settings.powerSaver) }
       pushParams()
       scheduleSave()
@@ -150,7 +150,8 @@ final class AudioController: ObservableObject {
     curveEngine = punch_engine_create()
     punch_engine_prepare(curveEngine, 48_000, 2, 512)
     settings = Settings.load()
-    hqGuardOn.store(settings.hqGuard)
+    hqGuardOn.store(settings.hqGuard && settings.enabled)
+    hqGuardSessionActive.store(true)
     PowerSaver.shared.sync(settings.powerSaver)
     pushParams()
     // Nothing here may talk to coreaudiod or tccd. This initializer runs
@@ -425,6 +426,9 @@ final class AudioController: ObservableObject {
 
   func selectInput(_ d: OutputDevice) {
     audioQueue.async {
+      // A deliberate pick (Microphone menu / Mic Test): HQ Guard leaves it,
+      // even a Bluetooth headset's own mic.
+      self.userChosenInputUID = d.uid
       try? Devices.setDefaultInput(d.id)
       self.refreshInputsOffMain()
     }
@@ -855,7 +859,9 @@ final class AudioController: ObservableObject {
   /// 8-24 kHz mono, sounds muffled) because its own microphone is the
   /// default input; moving the input to the Mac's mic lets it return to
   /// full-quality stereo (A2DP) without re-pairing. Then a fresh audio
-  /// connection, like quitting and reopening. `auto` (after wake) only does
+  /// connection, like quitting and reopening. When the headset is in call
+  /// mode it also names the apps holding its mic (often System Settings'
+  /// Sound pane, whose input meter opens it). `auto` (after wake) only does
   /// the safe parts and stays quiet unless it fixed something.
   func checkAndFix(auto: Bool = false) {
     guard !doctorRunning else { return }
@@ -864,45 +870,93 @@ final class AudioController: ObservableObject {
     audioQueue.async {
       var notes: [String] = []
       var waitForBluetooth = false
+      if !auto, self.hqGuardPausedUntil > ProcessInfo.processInfo.systemUptime {
+        self.hqGuardPausedUntil = 0
+        self.hqGuardSwitches.removeAll()
+        notes.append("HQ Guard had paused after macOS kept switching the microphone back. Turned it back on.")
+      }
       let outID = Devices.defaultOutput()
       let out = Devices.allOutputs().first { $0.id == outID }
-      let rate = Devices.nominalSampleRate(outID)
       let ins = Devices.allInputs()
       let input = ins.first { $0.id == Devices.defaultInput() }
-      if let out, out.isBluetooth, (input?.isBluetooth ?? false) || (rate > 0 && rate < 32000) {
-        if let mic = ins.first(where: { $0.isBuiltIn }) ?? ins.first(where: { !$0.isBluetooth }) {
-          try? Devices.setDefaultInput(mic.id)
-          waitForBluetooth = true
-          notes.append("\(out.name) was stuck in call mode (muffled). Switched the microphone to \(mic.name) so it returns to full quality.")
-        } else {
-          notes.append("\(out.name) is in call mode (muffled). Quit apps using its microphone (FaceTime, Zoom, Discord) or reconnect it.")
-        }
-      }
-      let mute = AudioObjectPropertyAddress.output(kAudioDevicePropertyMute)
-      if !auto, HAL.has(outID, mute), ((try? HAL.get(outID, mute, default: UInt32(0))) ?? 0) != 0 {
-        try? HAL.set(outID, mute, UInt32(0))
-        notes.append("Your output was muted. Unmuted it.")
-      }
-      DispatchQueue.main.async {
-        if !auto {
-          if balanceOff { self.centerBalance(); notes.append("Left/right balance was off. Centered it.") }
-          if self.bypassed { self.bypassed = false; notes.append("A/B was on Original. Switched back.") }
-          if self.dj.anyActive { self.dj = DJState(); notes.append("Turned off DJ effects.") }
-          if case .audioServiceStuck = self.status {
-            notes.append("macOS's audio service isn't responding. Use Restart macOS Audio below.")
+      // Bluetooth call mode (HFP): low sample rate, or the headset mic open.
+      var headsetMic: OutputDevice?
+      var callMode = false
+      if let out, out.isBluetooth {
+        let rate = Devices.nominalSampleRate(outID)
+        headsetMic = Self.headsetInput(for: out, in: ins)
+        let micRunning = headsetMic.map {
+          ((try? HAL.get($0.id, .global(kAudioDevicePropertyDeviceIsRunningSomewhere), default: UInt32(0))) ?? 0) != 0
+        } ?? false
+        callMode = (rate > 0 && rate <= 24_000) || micRunning
+        // After wake, a headset mic the user picked on purpose stays.
+        if let input, input.isBluetooth, !(auto && input.uid == self.userChosenInputUID) {
+          let sameHeadset = headsetMic?.id == input.id
+          if let mic = Self.hqGuardTarget(ins) {
+            try? Devices.setDefaultInput(mic.id)
+            waitForBluetooth = true
+            notes.append(callMode
+              ? "\(out.name) was stuck in call mode (muffled). Switched the microphone to \(mic.name) so it returns to full quality."
+              : sameHeadset
+                ? "The microphone was set to \(out.name), which drops it to call quality (muffled) whenever an app listens. Switched the microphone to \(mic.name)."
+                : "Switched the microphone from \(input.name) to \(mic.name) so Bluetooth headphones stay in full quality.")
+          } else {
+            notes.append("This Mac has no other microphone to switch to (built-in, display or USB), so \(out.name) drops to call quality (muffled) whenever an app uses its microphone.")
           }
-          if !self.conflictingDrivers.isEmpty { notes.append("An old audio driver is installed. ⋯ → Sound → Find Old Audio Drivers.") }
         }
-        if self.settings.enabled && (!auto || waitForBluetooth) {
-          self.startFailures = 0
-          self.scheduleRebuild(delay: waitForBluetooth ? 1.5 : 0.1)
-          if !auto { notes.append("Reconnected The Bass Shaker's audio.") }
-        }
-        if !auto && notes.count <= 1 { notes.insert("Everything looked fine.", at: 0) }
-        self.doctorRunning = false
-        if !notes.isEmpty { self.doctorReport = notes }
-        self.log.notice("check & fix (auto \(auto)): \(notes.joined(separator: " | "), privacy: .public)")
       }
+      // Name who holds the headset mic, after giving apps that follow the
+      // default input a moment to let go of it.
+      let found = notes, switched = waitForBluetooth, inCallMode = callMode, mic = headsetMic
+      self.audioQueue.asyncAfter(deadline: .now() + (switched && inCallMode ? 1.0 : 0)) {
+        var notes = found
+        if let out, inCallMode {
+          let held = mic.map { Self.micHolders($0.id).filter { !$0.isOwn } } ?? []
+          let holders = held.map(\.name)
+          if !holders.isEmpty {
+            let who = ListFormatter.localizedString(byJoining: holders)
+            let one = holders.count == 1
+            let action = held.allSatisfy { !$0.resolved }
+              ? "Turn off Siri or Dictation listening, or reconnect the headphones."
+              : "Close \(one ? "it" : "them")."
+            notes.append("\(who) \(one ? "is" : "are") using your \(out.name) microphone, which forces call-quality sound. \(action)")
+            self.log.notice("check & fix: headset mic held by \(holders.joined(separator: ", "), privacy: .public)")
+          } else if !switched {
+            notes.append("\(out.name) is in call mode (muffled). Quit apps using its microphone (FaceTime, Zoom, Discord) or reconnect it.")
+          }
+        }
+        let mute = AudioObjectPropertyAddress.output(kAudioDevicePropertyMute)
+        if !auto, HAL.has(outID, mute), ((try? HAL.get(outID, mute, default: UInt32(0))) ?? 0) != 0 {
+          try? HAL.set(outID, mute, UInt32(0))
+          notes.append("Your output was muted. Unmuted it.")
+        }
+        self.finishCheck(notes: notes, auto: auto, balanceOff: balanceOff, waitForBluetooth: switched)
+      }
+    }
+  }
+
+  /// Main-thread half of Check & Fix (app state, rebuild, banner).
+  private func finishCheck(notes: [String], auto: Bool, balanceOff: Bool, waitForBluetooth: Bool) {
+    DispatchQueue.main.async {
+      var notes = notes
+      if !auto {
+        if balanceOff { self.centerBalance(); notes.append("Left/right balance was off. Centered it.") }
+        if self.bypassed { self.bypassed = false; notes.append("A/B was on Original. Switched back.") }
+        if self.dj.anyActive { self.dj = DJState(); notes.append("Turned off DJ effects.") }
+        if case .audioServiceStuck = self.status {
+          notes.append("macOS's audio service isn't responding. Use Restart macOS Audio below.")
+        }
+        if !self.conflictingDrivers.isEmpty { notes.append("An old audio driver is installed. ⋯ → Sound → Find Old Audio Drivers.") }
+      }
+      if self.settings.enabled && (!auto || waitForBluetooth) {
+        self.startFailures = 0
+        self.scheduleRebuild(delay: waitForBluetooth ? 1.5 : 0.1)
+        if !auto { notes.append("Reconnected The Bass Shaker's audio.") }
+      }
+      if !auto && notes.count <= 1 { notes.insert("Everything looked fine.", at: 0) }
+      self.doctorRunning = false
+      if !notes.isEmpty { self.doctorReport = notes }
+      self.log.notice("check & fix (auto \(auto)): \(notes.joined(separator: " | "), privacy: .public)")
     }
   }
 
@@ -1204,9 +1258,12 @@ final class AudioController: ObservableObject {
         self?.refreshDevices()
         self?.scheduleRebuild()
       }
+      // A reconnecting headset may switch the input before the output.
+      self?.scheduleHQGuard()
     }
     listeners.add(systemObject, .global(kAudioHardwarePropertyDefaultInputDevice)) { [weak self] in
       DispatchQueue.main.async { self?.refreshDevices() }
+      self?.scheduleHQGuard()
     }
     listeners.add(systemObject, .global(kAudioHardwarePropertyDevices)) { [weak self] in
       DispatchQueue.main.async { self?.refreshDevices() }
@@ -1231,6 +1288,7 @@ final class AudioController: ObservableObject {
     observers.append(ws.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
       guard let self else { return }
       self.isSleeping = true
+      self.hqGuardSessionActive.store(false)
       self.rebuildWork?.cancel()
       self.audioQueue.async { self.pipelineStop(fade: false) }
     })
@@ -1246,15 +1304,25 @@ final class AudioController: ObservableObject {
     observers.append(ws.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
       guard let self else { return }
       self.isSleeping = true
+      self.hqGuardSessionActive.store(false)
       self.rebuildWork?.cancel()
       self.audioQueue.async { self.pipelineStop(fade: false) }
     })
     observers.append(ws.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
       self?.isSleeping = false
+      self?.hqGuardSessionActive.store(true)
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.5) }
+    })
+    // A mic picked in Latency Lab: HQ Guard leaves it, like our Microphone
+    // menu. queue: nil runs this during post(), so the UID is queued on
+    // audioQueue before the Lab changes the default input.
+    observers.append(NotificationCenter.default.addObserver(forName: .bassShakeUserPickedInput, object: nil, queue: nil) { [weak self] n in
+      guard let self, let uid = n.object as? String else { return }
+      self.audioQueue.async { self.userChosenInputUID = uid }
     })
     observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
       self?.isSleeping = false
+      self?.hqGuardSessionActive.store(true)
       DispatchQueue.main.async { self?.scheduleRebuild(delay: 1.5) }
       // Bluetooth reconnects a few seconds after wake, sometimes in call mode.
       DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
@@ -1349,8 +1417,17 @@ final class AudioController: ObservableObject {
   private var stalledStreak = 0
   private var everHeardAudio = false
   private var hqGuardTick = 0
+  // HQ Guard state, audioQueue only.
+  private var hqGuardWork: DispatchWorkItem?
+  private var hqGuardSwitches: [TimeInterval] = []
+  private var hqGuardPausedUntil: TimeInterval = 0
+  private var hqGuardNoTargetLogged = false
+  /// UID of the mic picked in our Microphone menu / Mic Test (HQ Guard leaves it).
+  private var userChosenInputUID: String?
   private var lastSpikeEvents: UInt32 = 0
   let hqGuardOn = AtomicFlag()
+  /// False while another user has the Mac (fast user switching) or asleep.
+  private let hqGuardSessionActive = AtomicFlag()
   /// Bumped each time the Ear Protector catches a blast (banner/notification).
   @Published private(set) var earAlerts = 0
   @Published var earAlertVisible = false
@@ -1366,10 +1443,17 @@ final class AudioController: ObservableObject {
 
   /// AirPods HQ Guard (audioQueue): a Bluetooth headset whose own mic is the
   /// default input drops to call mode (16 kHz mono, muffled) as soon as any
-  /// app opens the mic. While nobody is using that mic, keep the default
-  /// input on the Mac's own mic so the headset stays in full-quality stereo.
-  /// Call apps can still pick the headset mic explicitly.
-  private func keepBluetoothInStereo() {
+  /// app opens the mic, and macOS makes it the default on every reconnect.
+  /// Keep the default input on another mic (built-in, else a wired one such
+  /// as a Studio Display or USB mic; never another Bluetooth device) so the
+  /// headset stays in full-quality stereo. A headset mic picked in our
+  /// Microphone menu / Mic Test / Latency Lab is left alone, and so are call
+  /// apps holding it. A running headset mic is switched only when System
+  /// Settings' Sound pane is its sole holder (it follows the default and lets
+  /// go, which releases call mode). `afterInputChange` (right after a default
+  /// input/output change, e.g. a reconnect) is only logged.
+  private func keepBluetoothInStereo(afterInputChange: Bool) {
+    guard hqGuardSessionActive.load() else { return }
     // Three cheap property reads first; enumerate devices only when it may act.
     func isBT(_ id: AudioObjectID) -> Bool {
       let t = (try? HAL.get(id, .global(kAudioDevicePropertyTransportType), default: UInt32(0))) ?? 0
@@ -1377,13 +1461,134 @@ final class AudioController: ObservableObject {
     }
     let outID = Devices.defaultOutput(), inID = Devices.defaultInput()
     guard outID != 0, inID != 0, isBT(outID), isBT(inID) else { return }
-    let running = (try? HAL.get(inID, .global(kAudioDevicePropertyDeviceIsRunningSomewhere), default: UInt32(0))) ?? 0
-    guard running == 0 else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    guard now >= hqGuardPausedUntil else { return }
     let ins = Devices.allInputs()
-    guard let input = ins.first(where: { $0.id == inID }), let mic = ins.first(where: { $0.isBuiltIn }) else { return }
+    guard let input = ins.first(where: { $0.id == inID }) else { return }
+    if input.uid == userChosenInputUID { return }
+    let running = (try? HAL.get(inID, .global(kAudioDevicePropertyDeviceIsRunningSomewhere), default: UInt32(0))) ?? 0
+    if running != 0 {
+      // Act on a running headset mic only when every holder is System Settings'
+      // Sound pane (it follows the default and lets go). Unknown holders, e.g.
+      // a call app doing IO through a voice-processing aggregate, are left alone.
+      let holders = Self.micHolders(inID)
+      if holders.isEmpty || holders.contains(where: { $0.isOwn || !$0.isSystemSettings }) { return }
+    }
+    guard let mic = Self.hqGuardTarget(ins) else {
+      if !hqGuardNoTargetLogged {
+        hqGuardNoTargetLogged = true
+        log.notice("HQ guard: \(input.name, privacy: .public) mic is the default input but there is no non-Bluetooth mic to switch to")
+      }
+      return
+    }
+    // Something keeps switching it back (the user in System Settings, or a
+    // device that insists): stop fighting for a while.
+    hqGuardSwitches = hqGuardSwitches.filter { now - $0 < 60 } + [now]
+    if hqGuardSwitches.count > 3 {
+      hqGuardPausedUntil = now + 600
+      hqGuardSwitches.removeAll()
+      log.notice("HQ guard: default input keeps returning to \(input.name, privacy: .public); pausing 10 min")
+      return
+    }
+    hqGuardNoTargetLogged = false
     try? Devices.setDefaultInput(mic.id)
-    log.notice("HQ guard: default input \(input.name, privacy: .public) -> \(mic.name, privacy: .public)")
+    log.notice("HQ guard: default input \(input.name, privacy: .public) -> \(mic.name, privacy: .public) (running \(running != 0), after change \(afterInputChange))")
     refreshInputsOffMain()
+  }
+
+  /// HAL listener (listenerQueue) → audioQueue, debounced: the default input
+  /// or output just changed, often a Bluetooth reconnect that made the
+  /// headset mic the default. Catch it before an app opens that mic.
+  private func scheduleHQGuard() {
+    audioQueue.async {
+      self.hqGuardWork?.cancel()
+      let w = DispatchWorkItem { [weak self] in
+        guard let self else { return }
+        self.hqGuardWork = nil
+        // The user moved off the mic they picked in our UI (and it is still
+        // connected): that pick no longer counts.
+        if let chosen = self.userChosenInputUID {
+          let cur = Devices.defaultInput()
+          let curUID = try? HAL.string(cur, .global(kAudioDevicePropertyDeviceUID))
+          if curUID != chosen, Devices.allInputs().contains(where: { $0.uid == chosen }) {
+            self.userChosenInputUID = nil
+          }
+        }
+        guard self.hqGuardOn.load(), self.hqGuardSessionActive.load() else { return }
+        self.keepBluetoothInStereo(afterInputChange: true)
+      }
+      self.hqGuardWork = w
+      self.audioQueue.asyncAfter(deadline: .now() + 0.4, execute: w)
+    }
+  }
+
+  /// A mic that is safe to make the default instead of a Bluetooth headset's
+  /// own: built-in, else USB (Studio Display, USB mics), else another wired
+  /// one. Never Bluetooth, virtual/aggregate, AirPlay or an iPhone.
+  private static func hqGuardTarget(_ ins: [OutputDevice]) -> OutputDevice? {
+    let excluded: Set<UInt32> = [
+      UInt32(kAudioDeviceTransportTypeUnknown), UInt32(kAudioDeviceTransportTypeAirPlay),
+      UInt32(kAudioDeviceTransportTypeContinuityCaptureWired), UInt32(kAudioDeviceTransportTypeContinuityCaptureWireless),
+    ]
+    func usable(_ d: OutputDevice) -> Bool {
+      guard !d.isBluetooth, !d.isAggregateOrVirtual, !excluded.contains(d.transport) else { return false }
+      return ((try? HAL.get(d.id, .global(kAudioDevicePropertyDeviceIsAlive), default: UInt32(1))) ?? 1) != 0
+    }
+    return ins.first { $0.isBuiltIn && usable($0) }
+      ?? ins.first { $0.transport == UInt32(kAudioDeviceTransportTypeUSB) && usable($0) }
+      ?? ins.first(where: usable)
+  }
+
+  /// The input half of a Bluetooth output (same device, or same address:
+  /// "EC-66-…:output" / "EC-66-…:input"), else one with the same name.
+  private static func headsetInput(for out: OutputDevice, in ins: [OutputDevice]) -> OutputDevice? {
+    func address(_ uid: String) -> Substring { uid.split(separator: ":").first ?? Substring(uid) }
+    let bt = ins.filter(\.isBluetooth)
+    return bt.first { $0.id == out.id }
+      ?? bt.first { address($0.uid) == address(out.uid) }
+      ?? bt.first { $0.name == out.name }
+  }
+
+  struct MicHolder { let name: String; let isOwn: Bool; let isSystemSettings: Bool; let resolved: Bool }
+
+  /// A mic holder that isn't an app (a background daemon), named so the user
+  /// knows what it is.
+  private static func serviceName(bundleID: String, name: String) -> String {
+    let s = (bundleID + " " + name).lowercased()
+    if s.contains("corespeechd") || s.contains("com.apple.siri") { return "Siri" }
+    if s.contains("avconferenced") { return "FaceTime" }
+    if s.contains("speechrecognitioncore") || s.contains("dictation") { return "Dictation" }
+    return "a macOS background service"
+  }
+
+  /// audioQueue. Processes reading from `device` right now, named as the
+  /// user knows them (System Settings' Sound pane runs as Sound.appex).
+  private static func micHolders(_ device: AudioObjectID) -> [MicHolder] {
+    let procs = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyProcessObjectList),
+                                of: AudioObjectID.self, zero: 0)) ?? []
+    var out: [MicHolder] = []
+    for p in procs where p != unknownObject {
+      guard ((try? HAL.get(p, .global(kAudioProcessPropertyIsRunningInput), default: UInt32(0))) ?? 0) != 0 else { continue }
+      let devs = (try? HAL.array(p, .input(kAudioProcessPropertyDevices), of: AudioObjectID.self, zero: 0)) ?? []
+      // Voice-processing apps (FaceTime, WebRTC, Teams) read through a
+      // private aggregate whose active sub-devices include the headset.
+      let uses = devs.contains(device) || devs.contains { d in
+        let subs = (try? HAL.array(d, .global(kAudioAggregateDevicePropertyActiveSubDeviceList), of: AudioObjectID.self, zero: 0)) ?? []
+        return subs.contains(device)
+      }
+      guard uses else { continue }
+      let pid = (try? HAL.get(p, .global(kAudioProcessPropertyPID), default: pid_t(-1))) ?? -1
+      let bundleID = (try? HAL.string(p, .global(kAudioProcessPropertyBundleID))) ?? ""
+      let owner = AppAttribution.owner(pid: pid, bundleID: bundleID)
+      let bundleMatch = bundleID.hasPrefix("com.apple.systempreferences") || bundleID == "com.apple.Settings"
+        || (bundleID.hasPrefix("com.apple.") && bundleID.hasSuffix("Settings.extension"))
+      let settings = bundleMatch || owner.bundleID == "com.apple.systempreferences" || owner.bundleID == "com.apple.Settings"
+      let resolved = owner.resolved || settings
+      let name = settings ? "System Settings" : (resolved ? owner.name : Self.serviceName(bundleID: bundleID, name: owner.name))
+      if out.contains(where: { $0.name == name }) { continue }
+      out.append(MicHolder(name: name, isOwn: pid == getpid(), isSystemSettings: settings, resolved: resolved))
+    }
+    return out
   }
 
   /// Mutes the Mac's output (Ear Protector banner's Mute button).
@@ -1426,7 +1631,7 @@ final class AudioController: ObservableObject {
     }
     checkEarProtector()
     hqGuardTick &+= 1
-    if hqGuardTick % 3 == 0 && hqGuardOn.load() { keepBluetoothInStereo() }
+    if hqGuardTick % 3 == 0 && hqGuardOn.load() { keepBluetoothInStereo(afterInputChange: false) }
     let dCallbacks = s.callbacks &- lastStats.callbacks
     let dSilent = s.silentCallbacks &- lastStats.silentCallbacks
     let dDead = s.deadOutputCallbacks &- lastStats.deadOutputCallbacks
