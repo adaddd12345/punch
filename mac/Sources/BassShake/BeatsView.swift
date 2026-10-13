@@ -299,7 +299,7 @@ private struct StemPad: View {
     })
     .contentShape(Rectangle())
     .gesture(DragGesture(minimumDistance: 0)
-      .onChanged { g in if abs(g.translation.height) > 3 { p.onLevel(1 - g.location.y / height) } }
+      .onChanged { g in if abs(g.translation.height) > 3 { p.onLevel(1 - Double(g.location.y / height)) } }
       .onEnded { g in if abs(g.translation.height) <= 3 { p.onTap() } })
     .stemAccessibility(p)
     .help("\(p.stem.name): click to mute, drag up or down to set its level")
