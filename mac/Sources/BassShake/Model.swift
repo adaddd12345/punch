@@ -546,7 +546,7 @@ struct Settings: Codable, Equatable {
   /// the preset as a small chip under its name. Song and cover only while
   /// What's Playing is on. Nothing playing: Mini looks as it always did.
   var showPlayingChannel = true
-  /// The menu-bar icon carries the Mac's volume: 0–3 small waves beside the
+  /// The menu-bar icon carries the Mac's volume: 6 rising level bars beside the
   /// shaker, a slash while muted or at 0 (⋯ › Look).
   var menuBarVolume = true
 

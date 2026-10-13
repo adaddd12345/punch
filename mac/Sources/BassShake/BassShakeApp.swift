@@ -764,46 +764,48 @@ enum MenuBarIcon {
 
 /// What the menu-bar icon says about the Mac's volume.
 enum VolumeGlyph: Hashable {
-  /// 0–3 waves (0: no level to show, e.g. HDMI with no software volume).
-  case waves(Int)
+  /// 0–6 lit bars (0 also when the level can't be read, e.g. HDMI with no software volume).
+  case bars(Int)
   /// Muted or at 0: nothing comes out of the Mac.
   case slash
 
+  static let barCount = 6
+
   init(_ s: MacVolumeState) {
     if s.silent { self = .slash; return }
-    guard s.known, s.canSetVolume, let v = s.volume else { self = .waves(0); return }
-    self = .waves(v < 0.34 ? 1 : (v < 0.67 ? 2 : 3))
+    guard s.known, s.canSetVolume, let v = s.volume else { self = .bars(0); return }
+    self = .bars(max(1, min(Self.barCount, Int((v * Double(Self.barCount)).rounded(.up)))))
   }
 }
 
 extension MenuBarIcon {
   private static var cache: [VolumeGlyph: NSImage] = [:]
 
-  /// The shaker, unchanged, with small speaker waves beside it (always 23 wide,
-  /// so the icon never shifts as the level changes) or a slash through it.
+  /// The shaker, unchanged, with a stack of 6 rising bars beside it: lit bars solid, the rest
+  /// faint, so the level reads at a glance. Always the same width; muted dims every bar and
+  /// slashes the shaker.
   static func image(for glyph: VolumeGlyph) -> NSImage {
     if let hit = cache[glyph] { return hit }
     let base = image
-    let img = NSImage(size: NSSize(width: 23, height: 18), flipped: true) { _ in
+    let n = VolumeGlyph.barCount
+    let barW: CGFloat = 2, gap: CGFloat = 1.2, x0: CGFloat = 20.5
+    let width = (x0 + CGFloat(n) * barW + CGFloat(n - 1) * gap + 0.5).rounded(.up)
+    let img = NSImage(size: NSSize(width: width, height: 18), flipped: true) { _ in
       base.draw(in: NSRect(x: 0, y: 0, width: 18, height: 18), from: .zero, operation: .sourceOver, fraction: 1,
                 respectFlipped: true, hints: nil)
       guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
-      ctx.setLineCap(.round)
-      switch glyph {
-      case .waves(let n):
-        // Arcs around a point just right of the shaker's body, like the speaker glyph.
-        let c = CGPoint(x: 16.8, y: 11.5)
-        for i in 0..<min(3, n) {
-          let r = 2.2 + CGFloat(i) * 1.7
-          let p = CGMutablePath()
-          p.addArc(center: c, radius: r, startAngle: -.pi / 4, endAngle: .pi / 4, clockwise: false)
-          ctx.addPath(p)
-          ctx.setStrokeColor(NSColor.black.cgColor)
-          ctx.setLineWidth(1.25)
-          ctx.strokePath()
-        }
-      case .slash:
+      var lit = 0
+      if case .bars(let k) = glyph { lit = k }
+      for i in 0..<n {
+        let h = 4 + CGFloat(i) * 2  // 4 … 14 pt, bottoms aligned
+        let r = CGRect(x: x0 + CGFloat(i) * (barW + gap), y: 16 - h, width: barW, height: h)
+        ctx.setFillColor(NSColor.black.withAlphaComponent(i < lit ? 1 : 0.25).cgColor)
+        ctx.addPath(CGPath(roundedRect: r, cornerWidth: 0.6, cornerHeight: 0.6, transform: nil))
+        ctx.fillPath()
+      }
+      if glyph == .slash {
         // A clear gap around the slash so it reads against the mark.
+        ctx.setLineCap(.round)
         let a = CGPoint(x: 3.0, y: 2.5), b = CGPoint(x: 17.0, y: 16.5)
         ctx.setBlendMode(.clear)
         ctx.setLineWidth(3.6)

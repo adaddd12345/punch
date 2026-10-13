@@ -577,7 +577,12 @@ struct MacVolumeTile: View {
             .lineLimit(1)
             .truncationMode(.middle)
         }
-        Spacer(minLength: 0)
+        if s.canSetVolume {
+          VolumePills(level: s.silent ? 0 : (s.volume ?? 0), dragging: model.dragging)
+            .padding(.leading, 4)
+        } else {
+          Spacer(minLength: 0)
+        }
         if MacLook.valueText(s) != nil { value(s).frame(width: 48, alignment: .trailing) }
       }
       .frame(height: 24)
@@ -653,6 +658,44 @@ struct MacVolumeTile: View {
       .lineLimit(1)
       .fixedSize()
     }
+  }
+}
+
+/// A tight row of small rounded pills that fills with the volume: as many as fit, each one a
+/// step. While dragging, a trackpad tick marks every pill crossed and the newest pill pops.
+struct VolumePills: View {
+  let level: Double
+  let dragging: Bool
+  @State private var lastLit = -1
+  @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  private static let pillW: CGFloat = 3, gap: CGFloat = 2, pillH: CGFloat = 10
+
+  var body: some View {
+    GeometryReader { g in
+      let n = max(1, Int((g.size.width + Self.gap) / (Self.pillW + Self.gap)))
+      let lit = Int((level * Double(n)).rounded())
+      HStack(spacing: Self.gap) {
+        ForEach(0..<n, id: \.self) { i in
+          Capsule()
+            .fill(Color.primary.opacity(i < lit ? (contrast == .increased ? 0.85 : 0.6) : 0.12))
+            .frame(width: Self.pillW, height: Self.pillH)
+            .scaleEffect(y: dragging && i == lit - 1 && !reduceMotion ? 1.3 : 1)
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      .animation(reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.6), value: lit)
+      .onChange(of: lit) { _, new in
+        if dragging && lastLit >= 0 && new != lastLit {
+          NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        }
+        lastLit = new
+      }
+    }
+    .frame(height: Self.pillH * 1.3)
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
   }
 }
 
