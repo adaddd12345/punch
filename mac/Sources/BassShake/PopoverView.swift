@@ -20,6 +20,8 @@ struct PopoverView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorSchemeContrast) private var contrast
   @State private var showDJ = false
+  @State private var showBeats = false
+  @ObservedObject private var beats = BeatPlayer.shared
   @ObservedObject private var latencyLab = LatencyLab.shared
   @State private var showLatencyLab = false
   @State private var showHearingFit = false
@@ -87,7 +89,7 @@ struct PopoverView: View {
     .background(sizeShortcuts)
     .onChange(of: controller.settings.viewSize) { _, new in
       // Mini has no footer, so no Live/DJ tray either.
-      if new == .mini { showLive = false; showDJ = false }
+      if new == .mini { showLive = false; showDJ = false; showBeats = false }
     }
     .padding(12)
     .environment(\.labelLevel, controller.settings.labelLevel)
@@ -106,18 +108,32 @@ struct PopoverView: View {
     .onChange(of: showLive) { _, on in
       if on {
         showDJ = false
+        showBeats = false
         LiveDrawer.shared.show(model: controller.live)
-      } else if !showDJ {
+      } else if !showDJ && !showBeats {
         LiveDrawer.shared.hide()
       }
     }
     .onChange(of: showDJ) { _, on in
       LiveDrawer.shared.onHide = { [weak controller] in controller?.dj.held = [] }
       if on {
+        showBeats = false
         LiveDrawer.shared.show(DJView(controller: controller))
-      } else if !showLive {
+      } else if !showLive && !showBeats {
         LiveDrawer.shared.hide()
       }
+    }
+    .onChange(of: showBeats) { _, on in
+      if on {
+        showLive = false
+        showDJ = false
+        LiveDrawer.shared.show(BeatsView(player: beats))
+      } else if !showLive && !showDJ {
+        LiveDrawer.shared.hide()
+      }
+    }
+    .onChange(of: beats.revealCount) { _, _ in
+      if ownsDrawer && size != .mini { showBeats = true }
     }
     .onAppear {
       visible = true
@@ -146,6 +162,7 @@ struct PopoverView: View {
       meters.reset()
       showLive = false
       showDJ = false
+      showBeats = false
       if ownsDrawer { LiveDrawer.shared.hide() }
       controller.live.setMetering(false)
       // A pad held while the popover closed never gets its release event.
@@ -431,7 +448,7 @@ struct PopoverView: View {
     HStack(spacing: 8) {
       LiveChannelsButton(model: controller.live, expanded: $showLive)
       Button {
-        if showDJ { showDJ = false } else { showLive = false; showDJ = true }
+        if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
         HStack(spacing: 3) {
           Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
@@ -444,6 +461,20 @@ struct PopoverView: View {
       }
       .buttonStyle(.plain)
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
+      Button {
+        if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
+      } label: {
+        HStack(spacing: 3) {
+          Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 9, weight: .bold))
+          if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)) }
+        }
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .foregroundStyle(beats.playing ? Color.white : Color.primary)
+        .background(Capsule().fill(beats.playing ? Color.accentColor
+                                   : (showBeats ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08))))
+      }
+      .buttonStyle(.plain)
+      .help("Beats: play lofi beat drops, mute parts and change the tempo")
       LatencyChip(lab: latencyLab) { withAnimation { showLatencyLab = true } }
       Spacer()
       if case .running(_, let sr) = controller.status {

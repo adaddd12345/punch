@@ -86,6 +86,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     return false
   }
 
+  /// A `.bassdrop` beat opened from Finder: add it and show it in Beats.
+  func application(_ application: NSApplication, open urls: [URL]) {
+    let drops = urls.filter { $0.pathExtension.lowercased() == "bassdrop" }
+    guard !drops.isEmpty else { return }
+    BeatPlayer.shared.importDrops(drops)
+    if !popover.isShown && !controller.pinned { togglePopover(nil) }
+  }
+
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
   func applicationWillTerminate(_ notification: Notification) {

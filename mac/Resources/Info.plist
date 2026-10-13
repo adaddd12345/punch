@@ -27,6 +27,25 @@
   <key>SUEnableAutomaticChecks</key><true/>
   <key>SUScheduledCheckInterval</key><integer>3600</integer>
   <key>SUAllowsAutomaticUpdates</key><true/>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>app.bassshake.beatdrop</string>
+      <key>UTTypeDescription</key><string>Bass Shaker Beat</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.archive</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict><key>public.filename-extension</key><array><string>bassdrop</string></array></dict>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Bass Shaker Beat</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>app.bassshake.beatdrop</string></array>
+    </dict>
+  </array>
   <key>NSHumanReadableCopyright</key><string>© 2026 The Bass Shaker</string>
 </dict>
 </plist>

@@ -31,3 +31,8 @@
 - He hasn't measured CPU with the popup really closed (target 1–3%).
 - Real-Mac checks still needed: the Icons-only layout, Hearing Fit, Mic Test, Fair Level, and the Ear Protector's false-trigger rate.
 - Diagnostics: ask him to run a Terminal one-liner that saves a report to the Desktop, `sample` for CPU, and the `/Library/Logs/DiagnosticReports` `cpu_resource` files.
+
+**Beats (stem player, added 2026-10-13):**
+- Footer "Beats" button opens a drawer (`BeatsView.swift`, `BeatPlayer.swift`): pick a drop, play/pause, tap a stem to mute, drag across it for level, BPM 60–100 (time-stretch, pitch kept). Beat strips are read-only on purpose; editing stays in the cloud beat maker (`~/music2`), which exists so Claude can write more beats.
+- Drops are `.bassdrop` zips made by `~/music2/tools/export_drop.py songs/x.json` (drop.json + one AAC per stem). Double-click imports into `~/Library/Application Support/The Bass Shaker/Beats/`.
+- Beats play through their own AVAudioEngine (on `bassshake.beats` queue). Our tap excludes our process, so beats bypass the EQ, like Latency Lab.
