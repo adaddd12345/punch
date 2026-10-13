@@ -1,58 +1,65 @@
 import SwiftUI
 
-/// The pin glyph: a dart flying at you, seen from the front and a little up and to the right.
-/// The tip is nearest (bottom left), the body foreshortened, and the three fins fan out behind
-/// it like a Y. It never turns; the button's fill shows pinned. Replaces SF Symbols "pin".
+/// The pin glyph: a dart in a target, drawn as one rounded line. Pinned, the dart is stuck in
+/// the bullseye, coming in from the upper right, and both rings open where its shaft passes.
+/// Unpinned, the dart waits back out past the target and the rings close.
+/// The change is only a slide along the dart's own line (never a turn); it snaps under Reduce Motion.
 struct DartShape: Shape {
+  /// 1 = stuck in the bullseye, 0 = withdrawn up and to the right.
+  var progress: CGFloat
+  var animatableData: CGFloat {
+    get { progress }
+    set { progress = newValue }
+  }
+
+  // Unit-square geometry (0...1), scaled to the rect.
+  static let center = CGPoint(x: 0.31, y: 0.69)
+  static let dir = CGVector(dx: 0.7071, dy: -0.7071)   // toward the upper right
+  static let rings: [(radius: CGFloat, gap: CGFloat)] = [(0.275, 0.26), (0.13, 0.23)]  // gap = chord
+  static let length: CGFloat = 0.43                   // tip to tail
+  static let withdraw: CGFloat = 0.39
+
   func path(in r: CGRect) -> Path {
-    // Screen axes: u runs from the tip back to the tail (up and right), v across the body.
-    let u = CGVector(dx: 0.66, dy: -0.75), v = CGVector(dx: 0.75, dy: 0.66)
-    let tip = CGPoint(x: 0.17, y: 0.83), ku: CGFloat = 0.95, kv: CGFloat = 1.32
-    func p(_ t: CGFloat, _ s: CGFloat) -> CGPoint {
-      CGPoint(x: r.minX + (tip.x + ku * t * u.dx + kv * s * v.dx) * r.width,
-              y: r.minY + (tip.y + ku * t * u.dy + kv * s * v.dy) * r.height)
+    let s = min(r.width, r.height)
+    let c = CGPoint(x: r.minX + Self.center.x * r.width, y: r.minY + Self.center.y * r.height)
+    func pt(_ along: CGFloat, _ across: CGFloat = 0) -> CGPoint {
+      CGPoint(x: c.x + (along * Self.dir.dx - across * Self.dir.dy) * s,
+              y: c.y + (along * Self.dir.dy + across * Self.dir.dx) * s)
     }
+    let p = max(0, min(1, progress))
+    let a = atan2(Self.dir.dy, Self.dir.dx)
     var path = Path()
-    // Point and barrel: fat near the camera, narrowing toward the shaft.
-    path.move(to: p(0, 0))
-    path.addLine(to: p(0.12, 0.068))
-    path.addQuadCurve(to: p(0.30, 0.07), control: p(0.20, 0.105))
-    path.addLine(to: p(0.36, 0.028))
-    path.addLine(to: p(0.36, -0.028))
-    path.addLine(to: p(0.30, -0.07))
-    path.addQuadCurve(to: p(0.12, -0.068), control: p(0.20, -0.105))
-    path.closeSubpath()
-    // Shaft.
-    path.move(to: p(0.35, 0.022)); path.addLine(to: p(0.47, 0.018))
-    path.addLine(to: p(0.47, -0.018)); path.addLine(to: p(0.35, -0.022)); path.closeSubpath()
-    // Three swept fins fanning out from the shaft's end, 120° apart around the axis and
-    // foreshortened along it: each runs back from its root, flares out, and is cut square.
-    for a in [0.0, 120.0, 240.0] {
-      let c = CGFloat(cos(a * .pi / 180)), sn = CGFloat(sin(a * .pi / 180))
-      // A fin pointing along (c across the body, sn into depth, shown shortened along u).
-      func f(_ t: CGFloat, _ reach: CGFloat) -> CGPoint { p(t + sn * reach * 0.7, c * reach) }
-      path.move(to: f(0.45, 0.025))
-      path.addLine(to: f(0.60, 0.27))
-      path.addLine(to: f(0.68, 0.27))
-      path.addLine(to: f(0.62, 0.025))
-      path.closeSubpath()
+
+    // Two rings, each with an opening centred on the shaft that widens as the dart lands.
+    for ring in Self.rings {
+      let half = asin(min(1, ring.gap / 2 / ring.radius)) * p
+      let start = a + half, end = a + 2 * .pi - half
+      path.move(to: CGPoint(x: c.x + cos(start) * ring.radius * s, y: c.y + sin(start) * ring.radius * s))
+      path.addArc(center: c, radius: ring.radius * s, startAngle: .radians(Double(start)),
+                  endAngle: .radians(Double(end)), clockwise: false)
     }
-    // Grip rings cut from the barrel.
-    var rings = Path()
-    for t in [0.15, 0.22] as [CGFloat] {
-      rings.move(to: p(t, 0.13)); rings.addLine(to: p(t + 0.03, 0.13))
-      rings.addLine(to: p(t + 0.03, -0.13)); rings.addLine(to: p(t, -0.13)); rings.closeSubpath()
-    }
-    return path.subtracting(rings)
+
+    // The dart: a shaft and a pair of swept fins at the tail.
+    let tip = 0.03 + (1 - p) * (Self.withdraw - 0.03)   // pinned: buried just past the centre
+    let tail = tip + Self.length
+    // Shaft, ending in a V of fins (one stroke: fin, root, fin) so the tail reads as fletching.
+    let root = tail - 0.11
+    path.move(to: pt(tip)); path.addLine(to: pt(root))
+    path.move(to: pt(tail, -0.08)); path.addLine(to: pt(root)); path.addLine(to: pt(tail, 0.08))
+    return path
   }
 }
 
 struct DartGlyph: View {
   var pinned: Bool
   var size: CGFloat
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   var body: some View {
-    DartShape()
-            .frame(width: size, height: size)
+    DartShape(progress: pinned ? 1 : 0)
+      .stroke(style: StrokeStyle(lineWidth: max(1, size / 12), lineCap: .round, lineJoin: .round))
+      .frame(width: size, height: size)
+      .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: pinned)
       .accessibilityHidden(true)
   }
 }
