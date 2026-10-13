@@ -17,7 +17,22 @@ final class MeterModel: ObservableObject {
   static let holdSeconds = 1.5
   static let holdFallDbPerSec = 20.0
 
+  /// Short-term loudness for the Bento level line: output RMS (stereo power
+  /// mean) with VU-like ballistics, so a limited track moves instead of
+  /// sitting at the ceiling the way a peak meter does.
+  struct Loudness: Equatable {
+    var level = MeterModel.loudFloorDb   // displayed short-term loudness, dB RMS
+    var hold = MeterModel.loudFloorDb    // loudest recent moment, dB RMS
+    var holdUntil: TimeInterval = 0
+    var clipUntil: TimeInterval = 0      // an output sample went past 0 dBFS (a genuine over)
+  }
+
+  static let loudFloorDb = -48.0, loudTopDb = 0.0   // headroom above a full-scale sine (−3 dB RMS)
+  static let loudAttackTau = 0.040, loudReleaseTau = 0.300   // seconds, VU-like release
+  static let loudHoldSeconds = 0.8, loudHoldFallDbPerSec = 15.0
+
   @Published private(set) var channels = [Channel(), Channel()]
+  @Published private(set) var loudness = Loudness()
   @Published private(set) var gainReductionDb = 0.0   // <= 0, smoothed for display
   @Published private(set) var limiting = false        // latched briefly so it is visible
   private var limitingUntil: TimeInterval = 0
@@ -54,12 +69,36 @@ final class MeterModel: ObservableObject {
     if gr < -0.5 { limitingUntil = now + 0.6 }
     let lim = now < limitingUntil
     if lim != limiting { limiting = lim }
+
+    // Loudness: same dt (clamped), so 10 Hz in Power Saver keeps the timing.
+    let rL = Double(m.out_rms.0), rR = Double(m.out_rms.1)
+    let ms = (rL * rL + rR * rR) / 2
+    // Gate on output peak, not input: noise bed and echo tails sound with no
+    // input, and out_peak is exchanged to 0 each take, so a stopped IOProc
+    // can't leave a frozen out_rms showing.
+    let outSilent = m.out_peak.0 == 0 && m.out_peak.1 == 0
+    let fast = outSilent ? -120 : 10 * log10(max(ms, 1e-12))
+    var L = loudness
+    let tau = fast > L.level ? Self.loudAttackTau : Self.loudReleaseTau
+    L.level += (max(fast, Self.loudFloorDb - 1) - L.level) * (1 - exp(-dt / tau))
+    if L.level < Self.loudFloorDb + 0.1 { L.level = Self.loudFloorDb }   // snap: silence stops publishing
+    let f = max(Self.loudFloorDb, fast)
+    // At the floor the hold stays put (no new deadline), so silence publishes nothing.
+    if f > L.hold || (f == L.hold && f > Self.loudFloorDb) {
+      L.hold = f
+      L.holdUntil = now + Self.loudHoldSeconds
+    } else if now > L.holdUntil {
+      L.hold = max(L.level, L.hold - Self.loudHoldFallDbPerSec * dt)
+    }
+    if max(m.out_peak.0, m.out_peak.1) > 1.0001 { L.clipUntil = now + 1.5 }   // past full scale only
+    if L != loudness { loudness = L }
   }
 
   func reset() {
     channels = [Channel(), Channel()]
     gainReductionDb = 0
     limiting = false
+    loudness = Loudness()
   }
 
   /// dBFS → 0...1 meter position. Power-law scale gives the top 20 dB, where
@@ -67,6 +106,14 @@ final class MeterModel: ObservableObject {
   static func position(_ db: Double) -> Double {
     let x = (min(0, max(floorDb, db)) - floorDb) / -floorDb
     return pow(x, 1.7)
+  }
+
+  /// Loudness dB → 0...1 line length. Top at 0 dB RMS leaves headroom above
+  /// even heavily boosted, limited music (about −5 dB RMS → 86%), so a loud
+  /// track moves around 65–85% instead of sitting at the end.
+  static func loudPosition(_ db: Double) -> Double {
+    let x = (min(loudTopDb, max(loudFloorDb, db)) - loudFloorDb) / (loudTopDb - loudFloorDb)
+    return pow(x, 1.4)
   }
 
   /// Playback-tuned level zones (recording-style −18/−6 thresholds would

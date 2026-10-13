@@ -55,6 +55,7 @@ struct Meters {
   float inPeak[2] = {0, 0};
   float outPeak[2] = {0, 0};
   float gainReductionDb = 0;
+  float outRms[2] = {0, 0};  // short-term output RMS (50 ms), linear; a level, not reset by takeMeters
 };
 
 class Engine {
@@ -124,6 +125,8 @@ class Engine {
 
   std::atomic<float> inPeak_[2];
   std::atomic<float> outPeak_[2];
+  float msEnv_[2] = {0, 0};  // audio thread only: smoothed mean square of the output
+  std::atomic<float> outRms_[2];
 };
 
 }  // namespace punch

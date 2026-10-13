@@ -6,7 +6,7 @@ import SwiftUI
 /// (the footer stays as it is, under this; the header's controls move into
 /// the hero, so there is no header row).
 ///
-///   ┌──────── Hero: preset name · modes · output · power · L/R lines ──────┐
+///   ┌──────── Hero: preset name · modes · output · power · level line ─────┐
 ///   ├──────────────────────── EQ curve ──────────────────────────┤
 ///   ├──── Strength 55% (drag) ───┬──── Boost +3 dB (drag) ───────┤
 ///   ├──────────────────────── Presets ───────────────────────────┤
@@ -220,9 +220,9 @@ struct BentoView: View {
     .padding(heroPad)
     .frame(maxWidth: .infinity, alignment: .leading)
     .overlay(alignment: .bottom) {
-      // The L/R lines live in the (non-interactive) background: this thin
-      // strip over them carries their caption.
-      // Only with the preset showing: while an app leads, no level lines.
+      // The level line lives in the (non-interactive) background: this thin
+      // strip over it carries its caption.
+      // Only with the preset showing: while an app leads, no level line.
       if live {
         HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
           Color.clear
@@ -301,7 +301,7 @@ struct BentoView: View {
     .padding(12)
     .frame(maxWidth: .infinity, alignment: .leading)
     .overlay(alignment: .bottom) {
-      // The level lines' caption (the lines themselves are in the background).
+      // The level line's caption (the line itself is in the background).
       if live {
         Color.clear
           .frame(height: 8)
@@ -570,7 +570,7 @@ struct BentoView: View {
     .overlay(alignment: .bottom) {
       if live {
         HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
-          BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
+          BentoLevelLine(model: meters, ink: dark ? t.pastel : t.ink, dark: dark)
             .padding(.horizontal, lineInset ?? heroPad)
             .padding(.bottom, lineBottom ?? (compact ? 3 : 4))
         }
@@ -1557,19 +1557,57 @@ private struct StudyFact: View {
   }
 }
 
-/// L/R output level as two tinted hairlines. Observes only the meters.
-private struct BentoLevelLines: View {
+/// Output level as one line growing out from the centre: short-term loudness
+/// (RMS), not peaks, so a limited track still moves instead of pinning at the
+/// ceiling. Hold ticks mark the loudest recent moment; while Limit works, two
+/// faint walls close in by the gain reduction. Red only for a real over
+/// (an output sample past 0 dBFS, possible only with Limit off), on the ticks.
+/// Observes only the meters; no animation (it redraws on each meter tick).
+private struct BentoLevelLine: View {
   @ObservedObject var model: MeterModel
-  let color: Color
+  let ink: Color
+  let dark: Bool
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.colorSchemeContrast) private var contrast
+
   var body: some View {
-    Canvas { ctx, size in
-      for i in 0..<2 {
-        let w = size.width * CGFloat(MeterModel.position(model.channels[i].level))
-        if w > 0.5 {
-          // Red at the same point the classic meters turn red.
-          let hot = model.limiting || model.channels[i].level > -1.2
-          ctx.fill(Path(CGRect(x: 0, y: CGFloat(i) * 3, width: w, height: 1)),
-                   with: .color(hot ? Color(red: 1.0, green: 0.24, blue: 0.30) : color))
+    let L = model.loudness
+    let gr = min(12, max(0, -model.gainReductionDb))
+    let lineA = (dark ? 0.85 : 0.55) + (contrast == .increased ? 0.15 : 0)
+    let silent = L.level <= MeterModel.loudFloorDb + 0.5
+    let clipping = ProcessInfo.processInfo.systemUptime < L.clipUntil
+    let showTicks = !silent && (clipping || (!reduceMotion && L.hold > L.level + 0.5))
+    let clipRed = Color(red: 1.0, green: 0.24, blue: 0.30)
+    return Canvas { ctx, size in
+      let mid = size.width / 2
+      let half = size.width / 2
+      let cy = size.height / 2
+      let limiting = gr > 0.5
+      // Walls ease in over 0.5→3 dB of reduction; the line and ticks fill
+      // their loudness share of the room inside them, so they keep moving
+      // under heavy limiting and never pin against the walls.
+      let ease = CGFloat(min(1, max(0, (gr - 0.5) / 2.5)))
+      let wallX = half * CGFloat(1 - 0.16 * gr / 12)
+      let room = max(3, wallX - 3 * ease)
+      let h = max(3, room * CGFloat(MeterModel.loudPosition(L.level)))
+      // The line.
+      ctx.fill(Path(roundedRect: CGRect(x: mid - h, y: cy - 1, width: 2 * h, height: 2), cornerRadius: 1),
+               with: .color(ink.opacity(silent ? lineA * 0.35 : lineA)))
+      // Hold ticks.
+      if showTicks {
+        // Reduce Motion: no drifting hold, so clip ticks sit at the line's ends.
+        var hx = room * CGFloat(MeterModel.loudPosition(reduceMotion ? L.level : max(L.hold, L.level)))
+        hx = min(hx, limiting ? wallX - 1.5 : half - 0.75)
+        let tick = clipping ? clipRed : ink.opacity(min(1, lineA + 0.15))
+        for x in [mid - hx, mid + hx] {
+          ctx.fill(Path(CGRect(x: x - 0.75, y: 0, width: 1.5, height: size.height)), with: .color(tick))
+        }
+      }
+      // Limit walls: ease in over 0.5→3 dB of reduction.
+      if limiting {
+        let a = (dark ? 0.55 : 0.45) * Double(ease)
+        for x in [mid - wallX, mid + wallX - 1] {
+          ctx.fill(Path(CGRect(x: x, y: 0, width: 1, height: size.height)), with: .color(ink.opacity(a)))
         }
       }
     }

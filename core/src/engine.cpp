@@ -26,12 +26,14 @@ float blockPeak(const float* x, int n) {
 Engine::Engine() {
   for (auto& a : inPeak_) a.store(0.f);
   for (auto& a : outPeak_) a.store(0.f);
+  for (auto& a : outRms_) a.store(0.f);
 }
 
 void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   sampleRate_ = sampleRate;
   numChannels_ = std::clamp(numChannels, 1, kMaxChannels);
   maxFrames_ = std::max(maxFrames, 16);
+  for (auto& e : msEnv_) e = 0.f;
 
   correction_.prepare(sampleRate, numChannels_);
   hearing_.prepare(sampleRate);
@@ -210,6 +212,20 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
 
   for (int c = 0; c < std::min(numChannels, 2); ++c) atomicMax(outPeak_[c], blockPeak(ch[c], numFrames));
 
+  // Short-term output RMS for the UI's level line (tau 50 ms). Reads only;
+  // the audio is untouched, so every stage stays bit-exact when off.
+  if (numFrames > 0) {
+    const float a = 1.f - std::exp(-float(numFrames) / (0.050f * float(sampleRate_)));
+    for (int c = 0; c < std::min(numChannels, 2); ++c) {
+      double s = 0;
+      for (int i = 0; i < numFrames; ++i) s += double(ch[c][i]) * double(ch[c][i]);
+      msEnv_[c] += a * (float(s / double(numFrames)) - msEnv_[c]);
+      if (!std::isfinite(msEnv_[c])) msEnv_[c] = 0.f;
+      outRms_[c].store(std::sqrt(msEnv_[c]), std::memory_order_relaxed);
+    }
+    if (numChannels == 1) outRms_[1].store(outRms_[0].load(std::memory_order_relaxed), std::memory_order_relaxed);
+  }
+
   // Analyzer feed: drop samples if the UI is not keeping up.
   if (analyzer_.availableToWrite() >= size_t(numFrames)) {
     float mono[512];
@@ -254,6 +270,7 @@ Meters Engine::takeMeters() {
   for (int c = 0; c < 2; ++c) {
     m.inPeak[c] = inPeak_[c].exchange(0.f, std::memory_order_relaxed);
     m.outPeak[c] = outPeak_[c].exchange(0.f, std::memory_order_relaxed);
+    m.outRms[c] = outRms_[c].load(std::memory_order_relaxed);
   }
   m.gainReductionDb = std::min(limiter_.gainReductionDb(), bassLimiter_.gainReductionDb());
   return m;

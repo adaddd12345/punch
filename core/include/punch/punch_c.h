@@ -28,6 +28,7 @@ typedef struct {
   float in_peak[2];
   float out_peak[2];
   float gain_reduction_db;
+  float out_rms[2]; /* short-term output RMS (about 50 ms), linear */
 } PunchMeters;
 
 PunchEngine* punch_engine_create(void);

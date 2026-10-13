@@ -316,6 +316,33 @@ TEST(engine_bypass_is_neutral) {
   CHECK(maxErr < 1e-4);
 }
 
+TEST(engine_output_rms_meter) {
+  Engine e;
+  e.edit().limiter.enabled = false;
+  e.prepare(48000, 2, 512);
+  const int n = 48000;
+  std::vector<float> buf(size_t(n) * 2);
+  for (int i = 0; i < n; ++i)
+    buf[size_t(i) * 2] = buf[size_t(i) * 2 + 1] = 0.5f * float(std::sin(2.0 * std::numbers::pi * 1000.0 * i / 48000.0));
+  for (int s = 0; s < n; s += 512) e.processInterleaved(&buf[size_t(s) * 2], &buf[size_t(s) * 2], 2, std::min(512, n - s));
+  double ms = 0;
+  const int tail = 4800;  // last 100 ms of the output
+  for (int i = n - tail; i < n; ++i) ms += double(buf[size_t(i) * 2]) * double(buf[size_t(i) * 2]);
+  const double measured = std::sqrt(ms / tail);
+  const Meters m = e.takeMeters();
+  CHECK(measured > 0.1);
+  CHECK(std::fabs(double(m.outRms[0]) - measured) < 0.05 * measured);
+  CHECK(std::fabs(double(m.outRms[1]) - measured) < 0.05 * measured);
+  // A level, not an accumulator: reading it again does not reset it.
+  CHECK(e.takeMeters().outRms[0] == m.outRms[0]);
+
+  std::fill(buf.begin(), buf.end(), 0.f);
+  for (int s = 0; s < n; s += 512) e.processInterleaved(&buf[size_t(s) * 2], &buf[size_t(s) * 2], 2, std::min(512, n - s));
+  const Meters z = e.takeMeters();
+  CHECK(z.outRms[0] < 1e-3f);
+  CHECK(z.outRms[1] < 1e-3f);
+}
+
 TEST(engine_process_is_allocation_free) {
   Engine e;
   e.edit().eq.numBands = 10;

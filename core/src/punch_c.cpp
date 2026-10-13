@@ -163,6 +163,8 @@ PunchMeters punch_take_meters(PunchEngine* e) {
   out.out_peak[0] = m.outPeak[0];
   out.out_peak[1] = m.outPeak[1];
   out.gain_reduction_db = m.gainReductionDb;
+  out.out_rms[0] = m.outRms[0];
+  out.out_rms[1] = m.outRms[1];
   return out;
 }
 

@@ -773,14 +773,13 @@ enum Caption {
     return PointerHint(word, does: plain[word] ?? (chips ? "Your saved sound; right-click its chip below to update it." : "Your saved sound; unlike built-in presets, it sets Boost too."))
   }
 
-  /// The hero's L/R level lines, polled while showing.
+  /// The hero's level line, polled while showing.
   static func level(_ m: MeterModel) -> PointerHint {
-    func db(_ v: Double) -> String {
-      if v <= MeterModel.floorDb + 0.5 { return "—" }
-      return String(format: "%.0f", v).replacingOccurrences(of: "-", with: "\u{2212}")
-    }
-    return PointerHint("Level", value: "L \(db(m.channels[0].level))  R \(db(m.channels[1].level)) dB",
-                       does: "Turns red near the top, or while Limit is turning it down.")
+    let v = m.loudness.level <= MeterModel.loudFloorDb + 0.5 ? "\u{2014}"
+      : String(format: "%.0f dB", m.loudness.level).replacingOccurrences(of: "-", with: "\u{2212}")
+    let gr = min(12, max(0, -m.gainReductionDb))
+    return PointerHint("Level", value: gr > 0.5 ? "\(v) · Limit \u{2212}\(String(format: "%.0f", gr)) dB" : v,
+                       does: "Average loudness; faint walls close in while Limit works.")
   }
 
   /// One EQ node (empty when none is under the pointer).

@@ -385,13 +385,19 @@ private struct MacMuteButton: View {
   var body: some View {
     let s = model.state
     let usable = s.canMute || s.canSetVolume
+    // On the Bento fader the disc sits over the light steel fill, where a
+    // primary glyph on a faint disc vanishes (dark mode, glass). Use the
+    // small-dark-control style instead: light steel on a dark disc.
+    let onFader = disc && s.canSetVolume && !s.silent
     Button { model.toggleMute() } label: {
       Image(systemName: MacLook.glyph(s))
         .font(.system(size: glyphSize, weight: .semibold))
-        .foregroundStyle(s.silent ? Color.red : (usable ? Color.primary : Color.secondary))
+        .foregroundStyle(s.silent ? Color.red : (onFader ? BentoTint.steel.pastel : (usable ? Color.primary : Color.secondary)))
         .frame(width: width, height: height)
         .background {
-          if disc { Circle().fill(Color.primary.opacity(contrast == .increased ? 0.16 : 0.08)) }
+          if disc {
+            Circle().fill(onFader ? BentoInk.miniFill : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08))
+          }
         }
         .contentShape(disc ? AnyShape(Circle()) : AnyShape(Rectangle()))
     }
