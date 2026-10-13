@@ -457,14 +457,23 @@ private struct PointerHintLabel: View {
   var compact = false
   @Environment(\.colorSchemeContrast) private var contrast
 
+  /// Captions are written "[STRENGTH 55% · DRAG ↔]"; drop the brackets.
+  static func display(_ line: String) -> String {
+    var t = line.trimmingCharacters(in: .whitespaces)
+    if t.hasPrefix("["), t.hasSuffix("]") { t = String(t.dropFirst().dropLast()) }
+    return t
+  }
+
   var body: some View {
     let ink = hint.tint ?? Color.accentColor
     let high = contrast == .increased
     VStack(alignment: .leading, spacing: 2) {
       CapWidth(max: maxLine) {
-        Text(hint.line)
-          .font(.system(size: 10, weight: .semibold, design: .monospaced))
-          .tracking(0.4)
+        // The app's own type (SF Rounded, like its labels), not the
+        // reference site's mono: the idea is borrowed, not the font.
+        Text(Self.display(hint.line))
+          .font(.system(size: 10, weight: .bold, design: .rounded))
+          .monospacedDigit()
           .foregroundStyle(ink)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -472,7 +481,7 @@ private struct PointerHintLabel: View {
       if !compact, let d = hint.detail, !d.isEmpty {
         CapWidth(max: min(CGFloat(220), maxLine)) {
           Text(d)
-            .font(.system(size: 10))
+            .font(.system(size: 10, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }
