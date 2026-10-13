@@ -851,12 +851,12 @@ final class NowPlaying: ObservableObject {
     guard !browsers.isEmpty, !browserBusy else { return }
     browserBusy = true
     scriptQueue.async { [bridge] in
-      var results: [(NowBrowser, String, NowPlayingScripts.TabsState, [String]?)] = []
+      var results: [(NowBrowser, String, NowPlayingScripts.TabsState, (names: [String], windows: Int)?)] = []
       for (b, appID) in browsers {
         guard b.isLive else { results.append((b, appID, .stopped, nil)); continue }
         let state = bridge.tabs(b)
         // Only after the tabs were read: an Automation denial reads nothing more.
-        var ax: [String]? = nil
+        var ax: (names: [String], windows: Int)? = nil
         if case .tabs = state, b.hasTabStripAudio, let pid = b.pid { ax = BrowserAX.tabNames(pid: pid) }
         results.append((b, appID, state, ax))
       }
@@ -864,7 +864,7 @@ final class NowPlaying: ObservableObject {
     }
   }
 
-  private func applyBrowsers(_ results: [(NowBrowser, String, NowPlayingScripts.TabsState, [String]?)]) {
+  private func applyBrowsers(_ results: [(NowBrowser, String, NowPlayingScripts.TabsState, (names: [String], windows: Int)?)]) {
     browserBusy = false
     for (b, _, r, _) in results {
       if case .denied = r, !denied.contains(b.rawValue) {
@@ -886,7 +886,8 @@ final class NowPlaying: ObservableObject {
         if n >= 3 { next[appID] = nil }
       case .tabs(let tabs):
         failures[b.rawValue] = nil
-        var list = BrowserTabs.items(appID: appID, tabs: tabs, axNames: ax)
+        var list = BrowserTabs.items(appID: appID, tabs: tabs, axNames: ax?.names,
+                                     axWindows: ax?.windows ?? 0)
         for i in list.indices {
           if itemSeen[list[i].id] == nil { itemSeen[list[i].id] = now }
           if let vid = list[i].url.flatMap({ BrowserTabs.youTubeID($0.absoluteString) }) {

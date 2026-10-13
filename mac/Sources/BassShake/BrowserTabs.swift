@@ -196,7 +196,10 @@ enum BrowserTabs {
   /// or no tab element was found. With at least one audio marker the result is
   /// exactly the tabs making sound (certain); otherwise the media-site tabs,
   /// active tabs first, marked not certain and not known to be playing.
-  static func items(appID: String, tabs: [BrowserTab], axNames: [String]?, limit: Int = 6) -> [NowItem] {
+  /// `axWindows`: windows the tab strip walk saw. More than the script listed
+  /// means a private window may be among them: no tab is then named from the
+  /// tab strip alone.
+  static func items(appID: String, tabs: [BrowserTab], axNames: [String]?, axWindows: Int = 0, limit: Int = 6) -> [NowItem] {
     func item(_ t: BrowserTab, playing: Bool, muted: Bool, certain: Bool) -> NowItem {
       let site = siteName(t.url)
       var title = cleanTitle(t.title, site: site)
@@ -209,13 +212,16 @@ enum BrowserTabs {
       var out: [NowItem] = []
       var used = Set<Int>()
       for t in tabs where !t.title.isEmpty {
-        if let m = marked.first(where: { $0.0.hasPrefix(t.title) }) {
+        // "<title> - Audio playing": the whole title, so "Inbox" never claims "Inbox zero - …".
+        if let m = marked.first(where: { $0.0.hasPrefix(t.title + " - ") }) {
           out.append(item(t, playing: true, muted: m.1 == .muted, certain: true))
           if let i = marked.firstIndex(where: { $0.0 == m.0 }) { used.insert(i) }
         }
       }
       // A sounding tab the script didn't list (title changed between the two reads).
-      for (i, m) in marked.enumerated() where !used.contains(i) {
+      // Never when a window went unlisted: it may be incognito.
+      let listed = Set(tabs.map(\.window)).count
+      for (i, m) in marked.enumerated() where !used.contains(i) && axWindows <= listed {
         let raw = titleFromAXName(m.0)
         if tabs.contains(where: { !$0.title.isEmpty && raw.hasPrefix($0.title) }) { continue }
         let title = cleanTitle(raw, site: "")
@@ -237,8 +243,9 @@ enum BrowserTabs {
 /// Reads Chromium's tab strip through Accessibility (only when the app is
 /// already trusted; never prompts). Script queue only: every call is IPC.
 enum BrowserAX {
-  /// Tab names from every window's tab strip. nil: not trusted, or no tab found.
-  static func tabNames(pid: pid_t) -> [String]? {
+  /// Tab names from every window's tab strip, and how many windows were walked.
+  /// nil: not trusted, or no tab found. At most about a second of IPC.
+  static func tabNames(pid: pid_t) -> (names: [String], windows: Int)? {
     guard AXIsProcessTrusted() else { return nil }
     let app = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(app, 0.5)
@@ -250,10 +257,11 @@ enum BrowserAX {
     var names: [String] = []
     var found = false
     var budget = 3000
+    let deadline = ProcessInfo.processInfo.systemUptime + 1.0
     // Breadth-first: the tab strip sits near the top, web content (skipped) deep below.
     var queue: [(AXUIElement, Int)] = wins.map { ($0, 0) }
     var head = 0
-    while head < queue.count, budget > 0 {
+    while head < queue.count, budget > 0, ProcessInfo.processInfo.systemUptime < deadline {
       let (e, depth) = queue[head]
       head += 1
       budget -= 1
@@ -274,7 +282,7 @@ enum BrowserAX {
       guard depth < 14, let kids = vals[4] as? [AXUIElement] else { continue }
       queue.append(contentsOf: kids.map { ($0, depth + 1) })
     }
-    return found ? names : nil
+    return found ? (names, wins.count) : nil
   }
 
   /// A radio button whose parent is a tab group (older Chromium has no AXTabButton subrole).
