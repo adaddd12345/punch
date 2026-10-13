@@ -88,6 +88,15 @@ enum BrowserTabs {
     ("audiomack.com", "Audiomack"),
     ("beatport.com", "Beatport"),
     ("lofi.cafe", "lofi.cafe"),
+    ("x.com", "X"),
+    ("twitter.com", "X"),
+    ("tiktok.com", "TikTok"),
+    ("instagram.com", "Instagram"),
+    ("facebook.com", "Facebook"),
+    ("reddit.com", "Reddit"),
+    ("linkedin.com", "LinkedIn"),
+    ("threads.net", "Threads"),
+    ("bsky.app", "Bluesky"),
   ]
 
   static func host(_ url: String) -> String? {
@@ -117,14 +126,17 @@ enum BrowserTabs {
     if let r = t.range(of: #"^[▶►⏵🔊🔈🔉♪♫]️?\s*"#, options: .regularExpression) { t.removeSubrange(r) }
     // Site suffixes: " - YouTube", " | SoundCloud", " – Twitch", " · Spotify"...
     var names = [site, "YouTube Music", "YouTube", "Twitch", "SoundCloud", "Spotify", "Bandcamp", "Vimeo", "Mixcloud",
-                 "Netflix", "Apple Music", "Apple Podcasts", "Deezer", "TIDAL", "Tidal", "Pandora", "Dailymotion"]
+                 "Netflix", "Apple Music", "Apple Podcasts", "Deezer", "TIDAL", "Tidal", "Pandora", "Dailymotion",
+                 "X", "TikTok", "Instagram", "Facebook", "Reddit", "LinkedIn", "Threads", "Bluesky"]
       .filter { !$0.isEmpty }
     names.sort { $0.count > $1.count }
-    for sep in [" - ", " | ", " – ", " — ", " · ", " • "] {
+    for sep in [" - ", " | ", " – ", " — ", " · ", " • ", " / "] {
       for n in names {
         let suffix = sep + n
         if t.count > suffix.count, t.lowercased().hasSuffix(suffix.lowercased()) {
           t = String(t.dropLast(suffix.count))
+          // X: 'Name on X: "post"' → 'Name: "post"'.
+          if let r = t.range(of: " on X: ") { t.replaceSubrange(r, with: ": ") }
           return finish(t)
         }
       }
@@ -234,8 +246,13 @@ enum BrowserTabs {
         a.element.muted != b.element.muted ? !a.element.muted : a.offset < b.offset
       }.map(\.element).prefix(limit))
     }
-    let media = tabs.filter { mediaSite($0.url) != nil }
-    let ordered = media.filter(\.active) + media.filter { !$0.active }
+    // Without the tab strip: one tab open is certainly the one playing, whatever the site.
+    let open = tabs.filter { !$0.url.isEmpty }
+    if open.count == 1 { return [item(open[0], playing: true, muted: false, certain: true)] }
+    // Else a guess: media-site tabs (active first); none, then each window's active tab.
+    let media = open.filter { mediaSite($0.url) != nil }
+    let pool = media.isEmpty ? open.filter(\.active) : media
+    let ordered = pool.filter(\.active) + pool.filter { !$0.active }
     return ordered.prefix(limit).map { item($0, playing: false, muted: false, certain: false) }
   }
 }
