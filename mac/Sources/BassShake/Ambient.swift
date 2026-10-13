@@ -93,17 +93,12 @@ private struct AmbientSmoke: View {
   }
 }
 
-/// The 3D shaker logo, large in the centre while the popup first loads.
+/// The isometric shaker-speaker trophy, rising and spinning in the centre while the popup
+/// first loads (ShakerTrophy.swift). It fades itself and its frosted backdrop out at the end.
 struct LaunchSplash: View {
   var body: some View {
-    Image(nsImage: NSApp.applicationIconImage)
-      .resizable()
-      .interpolation(.high)
-      .aspectRatio(contentMode: .fit)
-      .frame(width: 112, height: 112)
-      .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
+    ShakerTrophySplash(backdrop: true)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(.ultraThinMaterial)
       .accessibilityHidden(true)
   }
 }

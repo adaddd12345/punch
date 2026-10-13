@@ -157,7 +157,7 @@ struct PopoverView: View {
       if !Self.splashShown {
         Self.splashShown = true
         splash = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: reduceMotion)) {
           withAnimation(.easeOut(duration: reduceMotion ? 0 : 0.35)) { splash = false }
         }
       }
