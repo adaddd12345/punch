@@ -41,7 +41,9 @@ jobs:
   mac-app-fallback:
     name: The Bass Shaker.app (macOS, Intel fallback)
     needs: mac-app
-    if: ${{ always() && needs.mac-app.result == 'cancelled' }}
+    # "Not acquired" can surface as failure or cancelled, so fall back on
+    # anything but success (a real build error just fails again on Intel).
+    if: ${{ always() && needs.mac-app.result != 'success' && needs.mac-app.result != 'skipped' }}
     uses: ./.github/workflows/mac-app.yml
     with:
       runner: macos-26-intel
