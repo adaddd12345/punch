@@ -444,14 +444,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       closedByDockPress = nil
       if Date() < c.at.addingTimeInterval(1.2), hypot(c.point.x - p.x, c.point.y - p.y) < DockGeometry.tileSize { return }
     }
-    guard let s = DockGeometry.screen(at: p) else { return }
+    guard let s = DockGeometry.screen(at: p) ?? NSScreen.main else { return }
     if let id = DockGeometry.displayID(of: s) { lastDockClick = (id, p) }
-    if StatusItemVisibility.usable(statusItem, on: s) {
-      showPopover(.statusItem)
-    } else {
-      let a = DockGeometry.anchor(forClick: p, on: s)
-      showPopover(.dock(a.point, a.edge))
-    }
+    // Always right above the tile that was clicked: opening it up at the
+    // menu bar (the far end of the screen) read as the Dock icon doing nothing.
+    let a = DockGeometry.anchor(forClick: p, on: s)
+    showPopover(.dock(a.point, a.edge))
   }
 
   /// Displays added/removed/rearranged, or the Dock moved or resized: keep a
