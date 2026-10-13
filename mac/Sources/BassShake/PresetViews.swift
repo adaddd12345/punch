@@ -31,9 +31,14 @@ struct PresetIconView: View {
 }
 
 /// Built-in and user presets in one horizontally scrolling strip, plus "+".
+/// Mouse users scroll it by grabbing and dragging or with the wheel
+/// (DragScroll.swift); trackpads scroll it natively. Soft fades on the sides
+/// that have more chips.
 struct PresetStrip: View {
   @ObservedObject var controller: AudioController
   @Binding var editor: PresetEditor.Mode?
+  /// Owned once (autoclosure init). The strip re-renders only when an end flips.
+  @StateObject private var edges = ScrollEdges()
 
   var body: some View {
     ScrollViewReader { proxy in
@@ -62,7 +67,7 @@ struct PresetStrip: View {
               Button("Delete", role: .destructive) { controller.deleteUserPreset(p.id) }
             }
           }
-          Button { editor = .create } label: {
+          Button { if !DragScrollGate.suppressTap { editor = .create } } label: {
             Image(systemName: "plus")
               .font(.system(size: 10, weight: .bold))
               .frame(width: 24, height: 22)
@@ -72,7 +77,9 @@ struct PresetStrip: View {
           .pointerHint(Caption.savePreset)
           .id("plus")
         }
+        .background(DragScrollProbe(edges: edges).accessibilityHidden(true))
       }
+      .mask { ScrollEdgeFadeMask(edges: edges) }
       .onChange(of: controller.settings.userPresets.count) { _, _ in
         withAnimation { proxy.scrollTo(controller.settings.userPresetID ?? UUID(), anchor: .trailing) }
       }
@@ -129,7 +136,8 @@ struct Chip<Icon: View>: View {
   private var selectedText: Color { bento && scheme == .dark ? Color.black : Color.white }
 
   var body: some View {
-    styled(Button(action: action) {
+    // A drag-scroll that ends over this chip doesn't select it.
+    styled(Button(action: { if !DragScrollGate.suppressTap { action() } }) {
       HStack(spacing: 4) {
         icon()
         if labels == .full || (labels == .half && !compact) {
