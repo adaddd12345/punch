@@ -17,6 +17,8 @@ C++20 DSP core, SwiftUI + AppKit UI, Sparkle auto-updates. Bundle id `app.basssh
 - App (on a Mac with Xcode 16+): `swift build -c release` from repo root, or `mac/scripts/bundle.sh 0.1.0-dev 1` → `build/The Bass Shaker.app`.
 - CI compiles with Xcode 16.4 / macOS 15.5 SDK: avoid newer-only APIs.
 
+- Shipping betas / the Sparkle update pipeline: see docs/UPDATES.md. Handoff notes: docs/HANDOFF.md.
+
 ## Rules that matter
 - Never call the HAL (Core Audio object APIs) on the main thread; use `audioQueue` / `listenerQueue`.
 - Settings fields: add with a default and a `try?` decode line (old saved data must keep loading).
