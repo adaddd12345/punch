@@ -16,6 +16,9 @@ final class WaveformModel: ObservableObject {
   /// display scales to the recent peak (fast up, ~1.5 s down), capped so
   /// silence and hiss stay flat.
   @Published private(set) var scale: Float = 1
+  /// Nothing (audible) is coming in: the view fades the trace out instead
+  /// of leaving a dead line that makes the EQ look frozen.
+  @Published private(set) var idle = true
   private var envelope: Float = 0
 
   private var ring = [Float](repeating: 0, count: 16384)
@@ -42,6 +45,7 @@ final class WaveformModel: ObservableObject {
         mins = mins.map { abs($0) < 1e-3 ? 0 : $0 * 0.5 }
         maxs = maxs.map { abs($0) < 1e-3 ? 0 : $0 * 0.5 }
       }
+      if !idle && idleFrames > 2 { idle = true }
       return
     }
     idleFrames = 0
@@ -72,9 +76,11 @@ final class WaveformModel: ObservableObject {
       lo[c] = mn
       hi[c] = mx
     }
-    mins = lo
-    maxs = hi
+    if lo != mins { mins = lo }
+    if hi != maxs { maxs = hi }
     let peak = max(lo.map(abs).max() ?? 0, hi.map(abs).max() ?? 0)
+    let quiet = peak < 1e-4   // a running but silent tap
+    if idle != quiet { idle = quiet }
     envelope = max(peak, envelope * 0.94)               // ~1.5 s fall at 30 fps
     scale = 0.85 / max(envelope, 0.004)                  // at most ~48 dB of zoom
   }
@@ -97,6 +103,12 @@ struct WaveformView: View {
   }
 
   var body: some View {
+    trace
+      .opacity(model.idle ? 0 : 1)
+      .animation(.easeOut(duration: 0.3), value: model.idle)
+  }
+
+  private var trace: some View {
     Canvas { ctx, size in
       let n = model.mins.count
       guard n > 1 else { return }

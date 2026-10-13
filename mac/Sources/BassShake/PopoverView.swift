@@ -15,6 +15,9 @@ struct PopoverView: View {
   @State private var loginOn = LoginItem.isOn
   @State private var confirmReset = false
   @State private var splash = false
+  /// "Connecting…" only once starting has taken a while (a normal start is
+  /// 0.15–0.5 s, and a banner popping in pushed every tile mid-animation).
+  @State private var slowStart = false
   /// The logo splash shows once per launch, on the first popup.
   private static var splashShown = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -75,6 +78,31 @@ struct PopoverView: View {
   }
 
   private var controls: some View {
+    controlStack
+      .animation(.easeOut(duration: 0.2), value: controller.settings.enabled)
+      .task(id: controller.status == .starting) {
+        slowStart = false
+        guard controller.status == .starting else { return }
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        if controller.status == .starting { slowStart = true }
+      }
+      .overlay(alignment: .top) {
+        if slowStart {
+          HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text("Connecting to your speakers or headphones…").font(.system(size: 11)).foregroundStyle(.secondary)
+          }
+          .padding(.horizontal, 10).padding(.vertical, 5)
+          .background(.regularMaterial, in: Capsule())
+          .padding(.top, 12)
+          .transition(.opacity)
+          .allowsHitTesting(false)
+        }
+      }
+      .animation(.easeOut(duration: 0.25), value: slowStart)
+  }
+
+  private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
       // Bento folds the header's controls into its hero.
       if !controller.settings.bento || size == .mini { header }
@@ -360,10 +388,7 @@ struct PopoverView: View {
              action: ("Center It", controller.centerBalance),
              secondary: ("Keep Centered", { controller.settings.balanceLock = true; controller.centerBalance() }))
     case .starting:
-      HStack(spacing: 6) {
-        ProgressView().controlSize(.small)
-        Text("Connecting to your speakers or headphones…").font(.system(size: 11)).foregroundStyle(.secondary)
-      }
+      EmptyView()  // shown late, as an overlay: see slowStart
     case .failed(let msg):
       Banner(symbol: "exclamationmark.triangle", tint: .red, text: msg,
              action: ("Retry", controller.retry), secondary: nil)

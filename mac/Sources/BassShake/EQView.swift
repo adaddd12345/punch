@@ -56,6 +56,7 @@ struct EQView: View {
         if controller.settings.waveform && controller.settings.enabled && !powerSaver {
           WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
             .allowsHitTesting(false)
+            .transition(.opacity)
         }
         Canvas { ctx, size in draw(ctx, size: size, bands: bands, showNodes: showNodes, kbDot: kbDot) }
           .id(powerSaver)  // redraw without the glow when Power Saver flips
