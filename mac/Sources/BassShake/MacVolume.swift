@@ -37,6 +37,8 @@ struct MacVolumeState: Equatable {
 
 final class MacVolume: ObservableObject {
   @Published private(set) var state = MacVolumeState()
+  /// Main only. The menu-bar icon is shown, so scrolling over it sets the volume (Tutorial Mode says so).
+  static var menuBarScroll = true
 
   /// Main only. Set by the views for the length of a drag: listener echoes
   /// don't move the control while dragging and for a moment after.

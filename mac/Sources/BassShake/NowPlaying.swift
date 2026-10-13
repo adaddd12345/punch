@@ -189,8 +189,10 @@ final class NowPlaying: ObservableObject {
   func attach(_ c: AudioController) {
     guard controller == nil else { return }
     controller = c
+    // Bento Full/Compact: What's Playing. Mini (Classic and Bento): the
+    // playing channel, on by default; song and cover still need What's Playing.
     c.$settings
-      .map { $0.showNowPlaying && $0.bento && $0.viewSize != .mini }
+      .map { ($0.showNowPlaying && $0.bento && $0.viewSize != .mini) || ($0.showPlayingChannel && $0.viewSize == .mini) }
       .removeDuplicates()
       .sink { [weak self] on in DispatchQueue.main.async { self?.setWanted(on) } }
       .store(in: &cancellables)
@@ -430,6 +432,8 @@ final class NowPlaying: ObservableObject {
 
     checkPending(now: now)
 
+    // What's Playing turned off while Mini's channel runs on: no song or cover.
+    if !mayAsk && !tracks.isEmpty { tracks = [:] }
     // Layer B, only while the popup is really visible.
     // Not before the one-time note is acknowledged: the Automation prompt would hide it.
     if now - lastPoll >= Self.pollEvery, now - lastVisible < 1.0, !polling, mayAsk {
@@ -633,7 +637,11 @@ final class NowPlaying: ObservableObject {
   }
 
   /// Layer B may raise the macOS Automation prompt only after the user has read the note.
-  private var mayAsk: Bool { controller?.settings.nowPlayingNoteSeen == true }
+  /// Mini's playing channel runs without What's Playing: then it never asks (app and icon only).
+  private var mayAsk: Bool {
+    guard let s = controller?.settings else { return false }
+    return s.showNowPlaying && s.nowPlayingNoteSeen
+  }
 
   private func isRunning(_ app: NowApp) -> Bool {
     guard let r = NSRunningApplication(processIdentifier: app.pid) else { return false }

@@ -222,6 +222,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         NSApp.dockTile.badgeLabel = v[0] && !self.badgeTitle.isEmpty ? self.badgeTitle : nil
       }
       .store(in: &cancellables)
+    // The Mac's volume on the icon: redrawn only when the glyph changes
+    // (MacVolume's HAL listeners; nothing polls).
+    Publishers.CombineLatest(controller.macVolume.$state.map(VolumeGlyph.init), controller.$settings.map(\.menuBarVolume))
+      .map { glyph, on in on ? glyph : nil }
+      .removeDuplicates()
+      .receive(on: RunLoop.main)
+      .sink { [weak self] glyph in self?.statusItem?.button?.image = glyph.map(MenuBarIcon.image(for:)) ?? MenuBarIcon.image }
+      .store(in: &cancellables)
+    controller.$settings.map(\.menuBarIconShown).removeDuplicates()
+      .receive(on: RunLoop.main)
+      .sink { MacVolume.menuBarScroll = $0 }
+      .store(in: &cancellables)
+    installScrollMonitor()
     controller.$earAlerts.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
       guard let self, !self.popover.isShown else { return }
       self.notifyProblem("Ear Protector caught a sudden loud sound and turned it down. Click to open (and mute).")
@@ -522,6 +535,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     outsideClickMonitors = []
   }
 
+  // MARK: Scroll for volume
+
+  private var scrollMonitor: Any?
+  private var scrollAccum: CGFloat = 0
+
+  /// Scrolling over the menu-bar icon steps the Mac's volume (1/16, like the
+  /// volume keys). MacVolume writes on its own queue, never here on main.
+  private func installScrollMonitor() {
+    guard scrollMonitor == nil else { return }
+    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] e in
+      guard let self, let w = self.statusItem?.button?.window, e.window === w else { return e }
+      self.scrolled(e)
+      return nil
+    }
+  }
+
+  private func scrolled(_ e: NSEvent) {
+    let mac = controller.macVolume
+    guard mac.state.canSetVolume else { return }
+    // The fling after a trackpad swipe would overshoot: fingers only.
+    if !e.momentumPhase.isEmpty { return }
+    if e.phase.contains(.began) { scrollAccum = 0 }
+    // Up (wheel away, or fingers up) is louder, whatever the scroll direction setting.
+    var dy = e.scrollingDeltaY
+    if e.isDirectionInvertedFromDevice { dy = -dy }
+    if e.hasPreciseScrollingDeltas {
+      scrollAccum += dy
+      while abs(scrollAccum) >= 12 {
+        mac.step(up: scrollAccum > 0)
+        scrollAccum -= scrollAccum > 0 ? 12 : -12
+      }
+    } else if dy != 0 {
+      mac.step(up: dy > 0)
+    }
+  }
+
   // MARK: Right-click menu
 
   private func showStatusMenu() {
@@ -555,6 +604,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     presets.submenu = sub
     menu.addItem(presets)
     menu.addItem(.separator())
+    // In your ears: where the sound goes, and the Mac's own mute.
+    let output = NSMenuItem(title: "Output", action: nil, keyEquivalent: "")
+    let outs = NSMenu()
+    for d in controller.devices {
+      let it = outs.addItem(withTitle: d.name, action: #selector(menuOutput(_:)), keyEquivalent: "")
+      it.target = self
+      it.representedObject = NSNumber(value: d.id)
+      it.state = d.id == controller.currentDeviceID ? .on : .off
+    }
+    if controller.devices.isEmpty { outs.addItem(withTitle: "No Outputs", action: nil, keyEquivalent: "").isEnabled = false }
+    output.submenu = outs
+    menu.addItem(output)
+    let v = controller.macVolume.state
+    let mute = menu.addItem(withTitle: "Mute Mac", action: v.canMute || v.canSetVolume ? #selector(menuMuteMac) : nil,
+                            keyEquivalent: "")
+    mute.target = self
+    mute.state = v.silent ? .on : .off
+    menu.addItem(.separator())
     add(controller.pinned ? "Unpin" : "Pin Open", #selector(menuPin))
     if forDock {
       add("Show in Menu Bar", #selector(menuShowInMenuBar), on: controller.settings.menuBarIconShown)
@@ -574,6 +641,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   }
 
   @objc private func menuEnabled() { controller.toggle() }
+  @objc private func menuOutput(_ sender: NSMenuItem) {
+    guard let id = (sender.representedObject as? NSNumber)?.uint32Value,
+          let d = controller.devices.first(where: { $0.id == id }) else { return }
+    controller.select(device: d)   // HAL on audioQueue
+  }
+  /// Mute, or (no mute control) 0 and back, like the popup's speaker.
+  @objc private func menuMuteMac() { controller.macVolume.toggleMute() }
   @objc private func menuFix() {
     controller.checkAndFix()
     if !popover.isShown { togglePopover(nil) }   // show what it found
@@ -686,6 +760,65 @@ enum MenuBarIcon {
     img.isTemplate = true
     return img
   }()
+}
+
+/// What the menu-bar icon says about the Mac's volume.
+enum VolumeGlyph: Hashable {
+  /// 0–3 waves (0: no level to show, e.g. HDMI with no software volume).
+  case waves(Int)
+  /// Muted or at 0: nothing comes out of the Mac.
+  case slash
+
+  init(_ s: MacVolumeState) {
+    if s.silent { self = .slash; return }
+    guard s.known, s.canSetVolume, let v = s.volume else { self = .waves(0); return }
+    self = .waves(v < 0.34 ? 1 : (v < 0.67 ? 2 : 3))
+  }
+}
+
+extension MenuBarIcon {
+  private static var cache: [VolumeGlyph: NSImage] = [:]
+
+  /// The shaker, unchanged, with small speaker waves beside it (always 23 wide,
+  /// so the icon never shifts as the level changes) or a slash through it.
+  static func image(for glyph: VolumeGlyph) -> NSImage {
+    if let hit = cache[glyph] { return hit }
+    let base = image
+    let img = NSImage(size: NSSize(width: 23, height: 18), flipped: true) { _ in
+      base.draw(in: NSRect(x: 0, y: 0, width: 18, height: 18), from: .zero, operation: .sourceOver, fraction: 1,
+                respectFlipped: true, hints: nil)
+      guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
+      ctx.setLineCap(.round)
+      switch glyph {
+      case .waves(let n):
+        // Arcs around a point just right of the shaker's body, like the speaker glyph.
+        let c = CGPoint(x: 16.8, y: 11.5)
+        for i in 0..<min(3, n) {
+          let r = 2.2 + CGFloat(i) * 1.7
+          let p = CGMutablePath()
+          p.addArc(center: c, radius: r, startAngle: -.pi / 4, endAngle: .pi / 4, clockwise: false)
+          ctx.addPath(p)
+          ctx.setStrokeColor(NSColor.black.cgColor)
+          ctx.setLineWidth(1.25)
+          ctx.strokePath()
+        }
+      case .slash:
+        // A clear gap around the slash so it reads against the mark.
+        let a = CGPoint(x: 3.0, y: 2.5), b = CGPoint(x: 17.0, y: 16.5)
+        ctx.setBlendMode(.clear)
+        ctx.setLineWidth(3.6)
+        ctx.move(to: a); ctx.addLine(to: b); ctx.strokePath()
+        ctx.setBlendMode(.normal)
+        ctx.setStrokeColor(NSColor.black.cgColor)
+        ctx.setLineWidth(1.5)
+        ctx.move(to: a); ctx.addLine(to: b); ctx.strokePath()
+      }
+      return true
+    }
+    img.isTemplate = true
+    cache[glyph] = img
+    return img
+  }
 }
 
 /// Vector fallback for the shaker mark, used only if the bundled PNGs are

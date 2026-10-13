@@ -179,22 +179,30 @@ final class LiveChannels: ObservableObject {
   /// Turns the level meter on while the list is visible, off otherwise.
   func setMetering(_ on: Bool) {
     uiMetering = on
-    applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
+    applyMetering(meteringReaders)
   }
 
   /// Keeps the meter running with the list closed (Fair Level reads `levels`).
   func setBackgroundMetering(_ on: Bool) {
     backgroundMetering = on
-    applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
+    applyMetering(meteringReaders)
     retunePoll()
   }
 
   /// What's Playing (NowPlaying.swift) reads `levels` while the popup shows.
   func setNowPlayingMetering(_ on: Bool) {
     nowPlayingMetering = on
-    applyMetering(uiMetering || backgroundMetering || nowPlayingMetering)
+    applyMetering(meteringReaders)
     retunePoll()
   }
+
+  /// The "In your ears" rows (PlayingChannel.swift), only while they're expanded on screen.
+  func setEarsMetering(_ on: Bool) {
+    earsMetering = on
+    applyMetering(meteringReaders)
+  }
+
+  private var meteringReaders: Bool { uiMetering || backgroundMetering || nowPlayingMetering || earsMetering }
 
   /// 10 Hz only when the Live Channels list is the sole reader under Power Saver.
   /// Fair Level and What's Playing's pause checks time their reads against the
@@ -216,6 +224,7 @@ final class LiveChannels: ObservableObject {
   private var uiMetering = false
   private var backgroundMetering = false
   private var nowPlayingMetering = false
+  private var earsMetering = false
 
   private func applyMetering(_ on: Bool) {
     guard on != meteringWanted else { return }
