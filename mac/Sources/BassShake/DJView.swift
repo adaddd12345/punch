@@ -59,8 +59,7 @@ struct DJView: View {
       Button {
         if pinned { controller.dj.pinned.remove(pad) } else { controller.dj.pinned.insert(pad) }
       } label: {
-        Image(systemName: pinned ? "pin.fill" : "pin")
-          .font(.system(size: 8, weight: .bold))
+        DartGlyph(pinned: pinned, size: 9)
           .foregroundStyle(pinned ? Color.white : Color.secondary)
           .padding(4)
       }
@@ -87,8 +86,7 @@ struct DJView: View {
         controller.dj.filterPinned.toggle()
         if !controller.dj.filterPinned { controller.dj.filter = 0 }
       } label: {
-        Image(systemName: dj.filterPinned ? "pin.fill" : "pin")
-          .font(.system(size: 9, weight: .bold))
+        DartGlyph(pinned: dj.filterPinned, size: 10)
           .foregroundStyle(dj.filterPinned ? Color.accentColor : Color.secondary)
       }
       .buttonStyle(.plain)

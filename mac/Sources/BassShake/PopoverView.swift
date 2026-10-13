@@ -490,8 +490,8 @@ struct PopoverView: View {
                      does: "Compact shrinks the EQ; Mini keeps preset, power, A/B, Strength, Boost, Limit.",
                      gestures: ["Click for \(view.next.title)", "⌘1 Full · ⌘2 Compact · ⌘3 Mini"], vo: false)
         if !mini { toolHairline.opacity(pinned ? 0 : 1) }
-        toolSegment(pinned ? "pin.fill" : "pin", word: "Pin", words: words, on: pinned,
-                    rotation: pinned ? 0 : 45, mini: mini, height: height) {
+        toolSegment("", word: "Pin", words: words, on: pinned, dart: true,
+                    mini: mini, height: height) {
           controller.setPinned(!pinned, from: window.window)
         }
         .accessibilityLabel(pinned ? "Unpin" : "Pin open")
@@ -524,13 +524,17 @@ struct PopoverView: View {
   /// `mini`: 28 × `height`, a 14 pt glyph in a 16 slot, no word; a 24 pt
   /// segment clicks like a 28 pt one.
   private func toolSegment(_ symbol: String, word: String, words: Bool, on: Bool = false,
-                           rotation: Double = 0, mini: Bool = false, height: CGFloat = 24,
+                           dart: Bool = false, rotation: Double = 0, mini: Bool = false, height: CGFloat = 24,
                            action: @escaping () -> Void) -> some View {
     Button(action: action) {
       if mini {
-        Image(systemName: symbol)
-          .font(.system(size: 14, weight: .semibold))
-          .rotationEffect(.degrees(rotation))
+        Group {
+          if dart { DartGlyph(pinned: on, size: 15) } else {
+            Image(systemName: symbol)
+              .font(.system(size: 14, weight: .semibold))
+              .rotationEffect(.degrees(rotation))
+          }
+        }
           .frame(width: 16)
           .foregroundStyle(on ? Color.white : Color.primary.opacity(0.75))
           .frame(width: 28, height: height)
@@ -539,9 +543,13 @@ struct PopoverView: View {
           .verticalHitSlop(height < 28 ? (28 - height) / 2 : 0)
       } else {
         HStack(spacing: 4) {
-          Image(systemName: symbol)
-            .font(.system(size: 11, weight: .semibold))
-            .rotationEffect(.degrees(rotation))
+          Group {
+            if dart { DartGlyph(pinned: on, size: 12) } else {
+              Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .rotationEffect(.degrees(rotation))
+            }
+          }
             .frame(width: 14)
           if words {
             Text(word)

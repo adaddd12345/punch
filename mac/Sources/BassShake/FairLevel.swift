@@ -127,8 +127,7 @@ struct FairLevelPinButton: View {
     if fair.isOn {
       let pinned = fair.isPinned(appID)
       Button { fair.togglePin(appID) } label: {
-        Image(systemName: pinned ? "pin.fill" : "pin")
-          .font(.system(size: 8, weight: .bold))
+        DartGlyph(pinned: pinned, size: 9)
           .frame(width: 16, height: 18)
           .foregroundStyle(pinned ? Color.accentColor : Color.secondary)
       }
