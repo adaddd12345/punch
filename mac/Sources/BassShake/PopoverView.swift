@@ -233,8 +233,7 @@ struct PopoverView: View {
           .toggleStyle(.switch)
           .controlSize(.small)
           .labelsHidden()
-          .pointerHint(controller.settings.enabled ? "[SHAKER ON · CLICK = PLAIN MAC SOUND]" : "[SHAKER OFF · CLICK = ON]",
-                       detail: "Off sends audio to your speakers untouched.")
+          .pointerHint(Caption.power(on: controller.settings.enabled))
       }
     }
   }
@@ -250,8 +249,9 @@ struct PopoverView: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel("Labels: \(controller.settings.labelLevel.title)")
-    .pointerHint("[LABELS: \(controller.settings.labelLevel.title.uppercased()) → \(controller.settings.labelLevel.next.title.uppercased())]",
-                 detail: "More or fewer words in the popup.")
+    .pointerHint("Labels", value: controller.settings.labelLevel.title,
+                 does: "Shows more or fewer words in this window.",
+                 gestures: ["Click for \(controller.settings.labelLevel.next.title)"])
     if role != .launchWindow {
       Button {
         controller.settings.viewSize = controller.settings.viewSize.next
@@ -263,7 +263,9 @@ struct PopoverView: View {
       .buttonStyle(.plain)
       .accessibilityLabel("View size: \(controller.settings.viewSize.title)")
       .accessibilityHint("Switches to \(controller.settings.viewSize.next.title)")
-      .pointerHint("[VIEW: \(controller.settings.viewSize.title.uppercased()) → \(controller.settings.viewSize.next.title.uppercased())]")
+      .pointerHint("Size", value: controller.settings.viewSize.title,
+                   does: "Makes this window bigger or smaller.",
+                   gestures: ["Click for \(controller.settings.viewSize.next.title)"], vo: false)
     }
     if role != .launchWindow {
       Button {
@@ -276,7 +278,9 @@ struct PopoverView: View {
       }
       .buttonStyle(.plain)
       .accessibilityLabel(controller.pinned ? "Unpin" : "Pin open")
-      .pointerHint(controller.pinned ? "[UNPIN · CLOSES ON CLICK-AWAY]" : "[PIN · STAYS OPEN ON CLICK-AWAY]")
+      .pointerHint("Pin", value: controller.pinned ? "On" : "Off",
+                   does: "Keeps this window open when you click somewhere else.",
+                   gestures: [controller.pinned ? "Click to unpin" : "Click to pin"])
     }
   }
 
@@ -295,8 +299,8 @@ struct PopoverView: View {
       .buttonStyle(.plain)
       .accessibilityLabel("Compare with original sound")
       .accessibilityValue(controller.bypassed ? "Original" : "Processed")
-      .pointerHint("[A/B · NOW: \(controller.bypassed ? "ORIGINAL" : "PROCESSED") · \(GlobalHotkey.bypassLabel)]",
-                   detail: "Quick before and after. Nothing gets turned off.")
+      .pointerHint(Caption.ab(bypassed: controller.bypassed,
+                              hotkey: controller.settings.bypassHotkey ? GlobalHotkey.bypassLabel : nil))
     }
   }
 
@@ -436,13 +440,11 @@ struct PopoverView: View {
       LabeledSlider(title: "Strength", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                     range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
-        .pointerHint("[STRENGTH \(Int((controller.settings.bass * 100).rounded()))% · NOT VOLUME]",
-                     detail: "Adds bass harmonics small speakers can play.", live: true, track: false)
+        .pointerHint(Caption.strength(controller.settings.bass, scrub: false), live: true, track: false)
       LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
                     value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
                     range: 0...12, format: { String(format: "+%.0f dB", $0) })
-        .pointerHint("[BOOST +\(Int(controller.settings.boostDb.rounded())) DB · CLIPS WHEN RED]",
-                     detail: "Extra loudness on top of your Mac's volume. Volume keys still work.", live: true, track: false)
+        .pointerHint(Caption.boost(controller.settings.boostDb, scrub: false), live: true, track: false)
       HStack(spacing: 6) {
         Spacer()
         Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
@@ -482,7 +484,7 @@ struct PopoverView: View {
     .menuStyle(.borderlessButton)
     .menuIndicator(.hidden)
     .fixedSize()
-    .pointerHint("[OUT · \((controller.currentDevice?.name ?? "No output").uppercased()) · CLICK TO SWITCH]")
+    .pointerHint(Caption.output(controller.currentDevice?.name))
   }
 
   private var footer: some View {
@@ -532,7 +534,7 @@ struct PopoverView: View {
       }
       .buttonStyle(.plain)
       .accessibilityLabel("Check and fix sound issues")
-      .pointerHint("[CHECK & FIX · RESTARTS AUDIO · ~2 S]", detail: "For muffled, silent or one-sided sound.")
+      .pointerHint(Caption.checkAndFix())
       Menu {
         Button("Check & Fix Sound Issues") { controller.checkAndFix() }
         Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
@@ -604,8 +606,6 @@ struct PopoverView: View {
           }
           Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
                                                 set: { controller.settings.fadeWindows = $0 }))
-          Toggle("Pointer Hints", isOn: Binding(get: { controller.settings.pointerHints },
-                                                set: { controller.settings.pointerHints = $0 }))
         }
         SoundLikeMenu(controller: controller)
         Menu("Shortcuts") {
@@ -615,6 +615,10 @@ struct PopoverView: View {
           if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
         }
         Menu("Presets & Settings") {
+          // Stored as `pointerHints` so saved settings keep loading.
+          Toggle("Tutorial Mode", isOn: Binding(get: { controller.settings.pointerHints },
+                                                set: { controller.settings.pointerHints = $0 }))
+          Divider()
           Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
           Divider()
           Button("Export Presets…") { controller.exportPresets() }

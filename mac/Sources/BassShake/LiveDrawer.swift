@@ -25,7 +25,7 @@ final class LiveDrawer {
   private let gap: CGFloat = 6
 
   var isShown: Bool { panel?.isVisible ?? false }
-  /// Pointer Hints in the drawer (mirrors the setting; set by the popup).
+  /// Tutorial Mode in the drawer (stored as `pointerHints`; mirrors the setting, set by the popup).
   var pointerHints: Bool {
     get { hints.on }
     set { if hints.on != newValue { hints.on = newValue } }
@@ -144,7 +144,7 @@ struct HostWindowReader: NSViewRepresentable {
   }
 }
 
-/// The drawer's Pointer Hints switch, live while the drawer is open.
+/// The drawer's Tutorial Mode switch (stored as `pointerHints`), live while the drawer is open.
 final class DrawerHints: ObservableObject {
   @Published var on = true
   @Published var shown = false

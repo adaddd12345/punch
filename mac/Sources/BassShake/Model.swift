@@ -482,7 +482,7 @@ struct Settings: Codable, Equatable {
   var beatsSide = false
   /// Bento layout: the main block as pastel tiles instead of the classic stack.
   var bento = false
-  /// Pointer Hints: short captions near the pointer on dense controls.
+  /// Tutorial Mode (⋯ › Presets & Settings): a small card by the pointer saying what each control does. Key kept from "Pointer Hints".
   var pointerHints = true
   /// The preset the current sound was edited from (nil once a preset is picked or saved).
   var editedFrom: String? = nil

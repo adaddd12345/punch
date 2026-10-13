@@ -45,7 +45,7 @@ struct BentoView: View {
   private var live: Bool { s.enabled }
   /// Every tile but the hero turns calm graphite when the app is off.
   private func tint(_ t: BentoTint) -> BentoTint { live ? t : .graphite }
-  /// A tile's hue as readable text (Pointer Hints).
+  /// A tile's hue as readable text (Tutorial Mode cards).
   private func ink(_ t: BentoTint) -> Color { scheme == .dark ? t.pastel : t.ink }
 
   var body: some View {
@@ -64,16 +64,14 @@ struct BentoView: View {
                   format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
           controller.settings.bass = $0
         } accessory: { EmptyView() }
-        .pointerHint("[STRENGTH \(Int((s.bass * 100).rounded()))% · DRAG ↔ · DBL-CLICK RESET]",
-                     detail: "Deeper-sounding bass without getting louder.", live: true)
+        .pointerHint(Caption.strength(s.bass, scrub: true), live: true)
         .pointerHintTint(ink(tint(.bass)))
         ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
                   value: s.boostDb, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
                   format: { ("+", "\(Int($0.rounded()))", " dB") }) {
           if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
         } accessory: { limitCard }
-        .pointerHint("[BOOST +\(Int(s.boostDb.rounded())) DB · DRAG ↔ · LIMIT \(s.limit ? "ON" : "OFF")]",
-                     detail: "Extra loudness on top of your Mac's volume. Volume keys still work.", live: true)
+        .pointerHint(Caption.boost(s.boostDb, scrub: true), live: true)
         .pointerHintTint(ink(tint(.bass)))
       }
       presets
@@ -117,15 +115,7 @@ struct BentoView: View {
 
   /// Caption #1: what the big word means.
   private var heroHint: PointerHint {
-    if !live { return PointerHint(line: "[SHAKER OFF · PLAIN MAC SOUND]") }
-    if let base = editedBase {
-      return PointerHint(line: "[EDITED · FROM \(base.uppercased())]",
-                         detail: "You changed the EQ after picking \(base). Click + to save it, or pick a preset to go back.")
-    }
-    if isEdited {
-      return PointerHint(line: "[MY SOUND · NOT SAVED]", detail: "Click + to save it as a preset.")
-    }
-    return PointerHint(line: "[PRESET · \(heroWord.uppercased())]")
+    Caption.hero(live: live, mode: s.mode, word: heroWord, editedFrom: editedBase, unsaved: isEdited)
   }
 
   /// "+ Study · Studio Ears · Night Guard"; empty when nothing is on.
@@ -208,7 +198,7 @@ struct BentoView: View {
           }
           .id(heroKey)
           .transition(heroWordTransition)
-          .pointerHint(heroHint.line, detail: heroHint.detail)
+          .pointerHint(heroHint)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.easeOut(duration: 0.25), value: heroKey)
@@ -253,7 +243,7 @@ struct BentoView: View {
         Color.clear
           .frame(height: 12)
           .contentShape(Rectangle())
-          .pointerHint { [meters] in BentoView.levelHint(meters) }
+          .pointerHint { [meters] in Caption.level(meters) }
           .padding(.horizontal, 16)
       }
     }
@@ -291,16 +281,6 @@ struct BentoView: View {
     }
   }
 
-  /// Caption #11: the output level, polled while the caption shows.
-  static func levelHint(_ m: MeterModel) -> PointerHint {
-    func db(_ v: Double) -> String {
-      if v <= MeterModel.floorDb + 0.5 { return "—" }
-      return String(format: "%.0f", v).replacingOccurrences(of: "-", with: "\u{2212}")
-    }
-    return PointerHint(line: "[OUT L \(db(m.channels[0].level)) · R \(db(m.channels[1].level)) DB]",
-                       detail: "Red means clipping.")
-  }
-
   /// Dark inset mini-card: the output device (menu picks another).
   private var deviceCard: some View {
     Menu {
@@ -329,7 +309,7 @@ struct BentoView: View {
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
     .fixedSize()
-    .pointerHint("[OUT · \((controller.currentDevice?.name ?? "No output").uppercased()) · CLICK TO SWITCH]")
+    .pointerHint(Caption.output(controller.currentDevice?.name))
   }
 
   private var powerButton: some View {
@@ -345,8 +325,7 @@ struct BentoView: View {
     }
     .buttonStyle(BentoPressStyle())
     .accessibilityLabel(live ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
-    .pointerHint(live ? "[SHAKER ON · CLICK = PLAIN MAC SOUND]" : "[SHAKER OFF · CLICK = ON]",
-                 detail: "Off sends audio to your speakers untouched.")
+    .pointerHint(Caption.power(on: live))
   }
 
   private var limitCard: some View {
@@ -397,17 +376,11 @@ struct BentoView: View {
     VStack(spacing: 8) {
       HStack(spacing: 8) {
         ModeTile(title: "Studio Ears", symbol: "ear.badge.waveform", tint: tint(.pink), on: s.studioEars,
-                 hint: { [controller] in
-                   PointerHint(line: "[STUDIO EARS · \(controller.settings.studioEars ? "ON" : "OFF") · STACKS ON PRESET]",
-                               detail: "Leans into sub-bass and trap highs on top of any preset.")
-                 }) {
+                 hint: { [controller] in Caption.studioEars(on: controller.settings.studioEars) }) {
           controller.settings.studioEars.toggle()
         } fact: { EmptyView() }
         ModeTile(title: "Loudness", symbol: "speaker.wave.2.bubble", tint: tint(.peach), on: s.autoLoudness,
-                 hint: {
-                   PointerHint(line: "[LOUDNESS · MORE BASS AT LOW VOLUME]",
-                               detail: "At low volume your ears lose bass and treble first; this adds them back.")
-                 }) {
+                 hint: { [controller] in Caption.loudness(on: controller.settings.autoLoudness) }) {
           controller.settings.autoLoudness.toggle()
         } fact: { EmptyView() }
         ModeTile(title: "Night Guard", symbol: "moon.haze", tint: tint(.indigo), on: s.nightGuard,
@@ -438,9 +411,7 @@ struct BentoView: View {
         }
         ModeTile(title: "Check & Fix", symbol: controller.doctorRunning ? "hourglass" : "stethoscope",
                  tint: .graphite, on: controller.doctorRunning, outline: true, reserveFact: true,
-                 hint: {
-                   PointerHint(line: "[CHECK & FIX · RESTARTS AUDIO · ~2 S]", detail: "For muffled, silent or one-sided sound.")
-                 }) {
+                 hint: { Caption.checkAndFix(menu: true) }) {
           controller.checkAndFix()
         } fact: { BentoFactText(text: "Checking…") }
         .contextMenu {
@@ -455,29 +426,26 @@ struct BentoView: View {
   /// Caption #18 (Night Guard): what a click does depends on its strip.
   private var nightGuardHint: PointerHint {
     let st = controller.settings
-    let click = !st.nightGuard ? "ON" : (shownDetail != .nightGuard ? "SETTINGS" : "OFF")
-    return PointerHint(line: "[NIGHT GUARD · CAP +\(Int(st.nightGuardDb.rounded())) DB · CLICK = \(click)]",
-                       detail: "Turns down anything suddenly louder than what you've been hearing.")
+    let click = !st.nightGuard ? "Click to turn on" : (shownDetail != .nightGuard ? "Click for settings" : "Click to turn off")
+    return Caption.nightGuard(on: st.nightGuard, allowDb: st.nightGuardDb, click: click)
   }
 
   /// Caption #19 (Study / Sleep).
   private func modeHint(_ m: ListeningMode) -> PointerHint {
     let st = controller.settings
-    let detail = "Only one of Study and Sleep at a time."
-    let name = m.title.uppercased()
-    guard st.mode == m else { return PointerHint(line: "[\(name) · CLICK = ON]", detail: detail) }
-    let click = shownDetail != .mode ? "SETTINGS" : "OFF"
-    var state = "ON"
+    guard st.mode == m else { return Caption.mode(m, state: nil, click: "Click to turn on") }
+    let click = shownDetail != .mode ? "Click for settings" : "Click to turn off"
+    var state = "On"
     if m == .sleep {
       if controller.sleepFinished {
-        state = "FADED OUT"
+        state = "Faded out"
       } else if let end = controller.sleepEndsAt {
-        state = "\(max(1, Int((end.timeIntervalSinceNow / 60).rounded(.up)))) MIN LEFT"
+        state = "\(max(1, Int((end.timeIntervalSinceNow / 60).rounded(.up)))) min left"
       } else {
-        state = "NO TIMER"
+        state = "No timer"
       }
     }
-    return PointerHint(line: "[\(name) · \(state) · CLICK = \(click)]", detail: detail)
+    return Caption.mode(m, state: state, click: click)
   }
 
   /// The strip on show: the most recently turned-on mode's, or another
@@ -526,8 +494,7 @@ struct BentoView: View {
               format: { ("+", "\(Int($0.rounded()))", " dB") }) {
       v in let r = v.rounded(); if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
     } accessory: { EmptyView() }
-    .pointerHint("[ALLOW +\(Int(s.nightGuardDb.rounded())) DB · DRAG ↔ · DBL-CLICK RESET]",
-                 detail: "How much louder sudden sounds may get.", live: true)
+    .pointerHint(Caption.allow(s.nightGuardDb, scrub: true), live: true)
     .pointerHintTint(ink(tint(.indigo)))
   }
 
@@ -603,7 +570,7 @@ struct BentoView: View {
             Image(systemName: "speaker.wave.1").font(.system(size: 10, weight: .semibold))
           }
         }
-        .pointerHint(NoiseHint.line(s), detail: NoiseHint.detail)
+        .pointerHint(NoiseHint.make(s))
         .toggleStyle(.switch)
         .controlSize(.mini)
         Picker("", selection: Binding(get: { s.noiseColor }, set: { controller.settings.noiseColor = $0 })) {

@@ -38,13 +38,13 @@ struct LiveChannelsButton: View {
       .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
     }
     .buttonStyle(.plain)
-    .pointerHint(hintLine(n, mutedCount))
+    .pointerHint(hint(n, mutedCount))
   }
 
-  private func hintLine(_ n: Int, _ mutedCount: Int) -> String {
-    let apps = n == 1 ? "1 APP PLAYING" : "\(n) APPS PLAYING"
-    let muted = mutedCount > 0 ? " · \(mutedCount) MUTED" : ""
-    return "[\(apps)\(muted) · CLICK \(expanded ? "TO HIDE" : "FOR LEVELS")]"
+  private func hint(_ n: Int, _ mutedCount: Int) -> PointerHint {
+    PointerHint("Apps Playing", value: mutedCount > 0 ? "\(n) · \(mutedCount) muted" : "\(n)",
+                does: "Each app making sound, with its own level and mute.",
+                gestures: [expanded ? "Click to hide" : "Click to show"])
   }
 }
 
@@ -164,8 +164,9 @@ private struct LiveChannelRow: View {
           }
       }
       .buttonStyle(.plain)
-      .pointerHint(shakerOn ? "[\(app.name.uppercased()) · SHAPED · CLICK = UNTOUCHED]"
-                            : "[\(app.name.uppercased()) · UNTOUCHED · CLICK = SHAPED]")
+      .pointerHint(app.name, value: shakerOn ? "Effects on" : "Untouched",
+                   does: "Choose whether this app goes through The Bass Shaker.",
+                   gestures: [shakerOn ? "Click to leave untouched" : "Click to add effects"])
       Button(action: onToggle) {
         Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
           .font(.system(size: 9, weight: .bold))
@@ -174,8 +175,11 @@ private struct LiveChannelRow: View {
           .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
       }
       .buttonStyle(.plain)
-      .pointerHint(muted ? "[UNMUTE \(app.name.uppercased())]" : "[MUTE \(app.name.uppercased()) · STAYS MUTED]",
-                   detail: !muted && app.usesHelpers ? "Mutes every tab: browsers share one audio process." : nil)
+      .pointerHint(app.name, value: muted ? "Muted" : "Playing",
+                   does: muted ? "Silenced until you unmute it or quit The Bass Shaker."
+                     : (app.usesHelpers ? "Silences all its tabs; a browser plays sound as one app."
+                                        : "Silences just this app until you unmute it."),
+                   gestures: [muted ? "Click to unmute" : "Click to mute"])
     }
     .padding(.horizontal, 4)
     .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(hover ? 0.06 : 0)))

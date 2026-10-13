@@ -1,21 +1,44 @@
 import AppKit
 import SwiftUI
 
-/// Pointer Hints: short monospace captions near the pointer for dense or
-/// hidden-state controls (inspired by decart.com's bare bracketed labels).
+/// Tutorial Mode (stored as `pointerHints`): a small Bento card by the pointer
+/// that says, for a beginner, what the hovered control is and does (the idea
+/// of decart.com's quiet labels: always there, never in the way).
 ///
-///   [STRENGTH 55% · DRAG ↔ · DBL-CLICK RESET]
-///   Deeper-sounding bass without getting louder.
+///   ╭──────────────────────────────╮
+///   │ Strength                 55% │
+///   │ Makes bass feel deeper       │
+///   │ without making it louder.    │
+///   │ (Drag ↔) (Double-click…)     │
+///   ╰──────────────────────────────╯
 ///
 /// One `PointerHintHub` per window. Controls hold it as a plain reference
 /// (through the environment) and never observe it; only the overlay does, so
-/// moving the pointer redraws the caption and nothing else.
+/// moving the pointer redraws the card and nothing else.
 struct PointerHint: Equatable {
-  var line: String
-  var detail: String? = nil
-  var live: Bool = false
-  /// The line's colour (Bento: the hovered tile's ink). nil = accent colour.
-  var tint: Color? = nil
+  /// What the control is, in a word or two ("Strength").
+  var name: String
+  /// Its live value, right-aligned ("55%", "+3 dB", "On").
+  var value: String?
+  /// One plain sentence: what it does, from first principles.
+  var sentence: String?
+  /// How to use it, one tiny chip each ("Drag ↔", "Double-click to reset").
+  var gestures: [String]
+  var live: Bool
+  /// The card's tint (Bento: the hovered tile's ink). nil = accent colour.
+  var tint: Color?
+
+  init(_ name: String, value: String? = nil, does sentence: String? = nil, gestures: [String] = [],
+       live: Bool = false, tint: Color? = nil) {
+    self.name = name
+    self.value = value
+    self.sentence = sentence
+    self.gestures = gestures
+    self.live = live
+    self.tint = tint
+  }
+
+  var isEmpty: Bool { name.isEmpty }
 }
 
 enum PointerHintSpace {
@@ -40,7 +63,7 @@ final class PointerHintHub: ObservableObject {
     var hint: PointerHint
     var anchor: CGRect
     var source: (() -> PointerHint)?
-    var isEmpty: Bool { hint.line.isEmpty && source == nil }
+    var isEmpty: Bool { hint.isEmpty && source == nil }
   }
   /// Entered hinted controls, innermost (most recently entered) last.
   private var stack: [Entry] = []
@@ -172,6 +195,7 @@ final class PointerHintHub: ObservableObject {
   private func hide() {
     cancelDwell()
     if visible {
+      if let s = source { let h = s(); if shown != h { shown = h } }
       visible = false
       lastHide = Date()
     }
@@ -209,7 +233,7 @@ extension EnvironmentValues {
     get { self[HubKey.self] }
     set { self[HubKey.self] = newValue }
   }
-  /// Pointer Hints are on in this window (off: controls show native tooltips).
+  /// Tutorial Mode is on in this window (off: controls show native tooltips).
   var pointerHintsOn: Bool {
     get { self[HintsOnKey.self] }
     set { self[HintsOnKey.self] = newValue }
@@ -230,14 +254,21 @@ extension View {
   /// Static or slow-changing text: re-evaluated whenever the host view re-renders.
   /// `track: false` for native AppKit sliders: no zero-distance drag gesture
   /// on top of their own mouse tracking.
-  func pointerHint(_ line: String, detail: String? = nil, live: Bool = false, track: Bool = true) -> some View {
-    modifier(PointerHintModifier(hint: PointerHint(line: line, detail: detail, live: live), make: nil, live: live, track: track))
+  /// `vo: false` when the control already has its own VoiceOver hint.
+  func pointerHint(_ name: String, value: String? = nil, does sentence: String? = nil, gestures: [String] = [],
+                   live: Bool = false, track: Bool = true, vo: Bool = true) -> some View {
+    pointerHint(PointerHint(name, value: value, does: sentence, gestures: gestures), live: live, track: track, vo: vo)
+  }
+
+  /// A ready-made caption (computed by the host view).
+  func pointerHint(_ hint: PointerHint, live: Bool = false, track: Bool = true, vo: Bool = true) -> some View {
+    modifier(PointerHintModifier(hint: hint, make: nil, live: live, track: track, vo: vo))
   }
 
   /// Fast live value (meters, limiter): the closure is polled by the overlay
   /// only while this hint is visible, via TimelineView(.periodic(by: 1.0/15.0)).
   func pointerHint(live: Bool = false, _ make: @escaping () -> PointerHint) -> some View {
-    modifier(PointerHintModifier(hint: nil, make: make, live: live, track: true))
+    modifier(PointerHintModifier(hint: nil, make: make, live: live, track: true, vo: true))
   }
 
   /// Colour for the hints under this view.
@@ -284,6 +315,8 @@ private struct PointerHintModifier: ViewModifier {
   let make: (() -> PointerHint)?
   let live: Bool
   let track: Bool
+  /// Adds the sentence as the VoiceOver hint (off when the control has its own).
+  let vo: Bool
 
   @Environment(\.pointerHintHub) private var hub
   @Environment(\.pointerHintsOn) private var on
@@ -298,13 +331,13 @@ private struct PointerHintModifier: ViewModifier {
     return h
   }
 
-  private var current: PointerHint { tinted(hint ?? make?() ?? PointerHint(line: "")) }
+  private var current: PointerHint { tinted(hint ?? make?() ?? PointerHint("")) }
 
-  /// Native tooltip when hints are off: the sentence, else the line.
+  /// Native tooltip when Tutorial Mode is off: the sentence, else the name.
   private var helpText: String {
     let h = hint ?? make?()
-    if let d = h?.detail, !d.isEmpty { return d }
-    return (h?.line ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    if let d = h?.sentence, !d.isEmpty { return d }
+    return h?.name ?? ""
   }
 
   func body(content: Content) -> some View {
@@ -344,7 +377,7 @@ private struct PointerHintModifier: ViewModifier {
       }
       .onDisappear { hub?.ended(id: id) }
       .help(on ? "" : helpText)
-      .modifier(OptionalA11yHint(text: hint?.detail))
+      .modifier(OptionalA11yHint(text: vo ? hint?.sentence : nil))
   }
 }
 
@@ -359,7 +392,7 @@ private struct OptionalA11yHint: ViewModifier {
 
 // MARK: - Overlay
 
-/// Draws the caption. Observes only the hub.
+/// Draws the card. Observes only the hub.
 struct PointerHintOverlay: View {
   @ObservedObject var hub: PointerHintHub
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -368,10 +401,19 @@ struct PointerHintOverlay: View {
     GeometryReader { g in
       if let hint = hub.shown {
         let inset = CGFloat(8)
-        // Short windows (drawers sized to their rows): one line only.
-        let compact = g.size.height < hub.anchor.height + CGFloat(44) + CGFloat(2) * inset
+        // Short windows (drawers sized to their rows) get less of the card,
+        // so it never has to sit on the hovered control. A small anchor's
+        // card goes wholly above or below it, so only the larger gap counts.
+        // Measured heights: full ~78 pt, sentence ~60, brief ~46, name ~30.
+        let a = hub.anchor
+        let above = a.minY - CGFloat(6) - inset
+        let below = g.size.height - inset - a.maxY - CGFloat(6)
+        let room = a.height <= CGFloat(56) ? max(above, below) : g.size.height - CGFloat(2) * inset
+        let density: PointerHintCard.Density = room >= CGFloat(80) ? .full
+          : (room >= CGFloat(62) ? .sentence : (room >= CGFloat(48) ? .brief : .name))
+        let width = min(PointerHintCard.maxWidth, max(CGFloat(80), g.size.width - CGFloat(2) * inset))
         HintPlacement(anchor: hub.anchor, pointer: hub.pointer, reduceMotion: reduceMotion) {
-          label(hint, maxLine: max(CGFloat(40), g.size.width - CGFloat(16)), compact: compact)
+          card(hint, width: width, density: density)
         }
         .transaction { $0.animation = nil }   // pinned to the pointer, no easing
         .opacity(hub.visible ? 1 : 0)
@@ -382,19 +424,19 @@ struct PointerHintOverlay: View {
     .accessibilityHidden(true)
   }
 
-  @ViewBuilder private func label(_ hint: PointerHint, maxLine: CGFloat, compact: Bool) -> some View {
+  @ViewBuilder private func card(_ hint: PointerHint, width: CGFloat, density: PointerHintCard.Density) -> some View {
     if let src = hub.source, hub.visible {
       TimelineView(.periodic(from: .now, by: 1.0 / 15.0)) { _ in
-        PointerHintLabel(hint: src(), maxLine: maxLine, compact: compact)
+        PointerHintCard(hint: src(), maxWidth: width, density: density, shown: hub.visible)
       }
     } else {
-      PointerHintLabel(hint: hint, maxLine: maxLine, compact: compact)
+      PointerHintCard(hint: hint, maxWidth: width, density: density, shown: hub.visible)
     }
   }
 }
 
-/// Places the caption in one pass, using the label's real size (no measured
-/// state, so no frame with a stale or zero size).
+/// Places the card in one pass, using its real size (no measured state, so
+/// no frame with a stale or zero size).
 private struct HintPlacement: Layout {
   let anchor: CGRect
   let pointer: CGPoint
@@ -429,8 +471,10 @@ private struct HintPlacement: Layout {
       if y > maxY { y = a.minY - CGFloat(6) - h }
       if y < inset {
         let bx = a.maxX + CGFloat(8)
-        x = bx + w <= container.width - inset ? bx : a.minX - CGFloat(8) - w
-        y = a.midY - h / CGFloat(2)
+        let lx = a.minX - CGFloat(8) - w
+        if bx + w <= container.width - inset { x = bx; y = a.midY - h / CGFloat(2) }
+        else if lx >= inset { x = lx; y = a.midY - h / CGFloat(2) }
+        else { y = (a.minY - inset) > (container.height - inset - a.maxY) ? a.minY - CGFloat(6) - h : a.maxY + CGFloat(6) }
       }
     } else if reduceMotion {
       x = a.minX
@@ -449,55 +493,109 @@ private struct HintPlacement: Layout {
   }
 }
 
-/// `[LINE]` plus an optional sentence. No container: a halo keeps it legible
-/// over blur and pastels; Increase Contrast adds a solid plate.
-private struct PointerHintLabel: View {
-  let hint: PointerHint
-  let maxLine: CGFloat
-  var compact = false
-  @Environment(\.colorSchemeContrast) private var contrast
+/// The Tutorial Mode card, a tiny Bento tile:
+///   row 1  name (bold) ······ live value (heavy, the tile's ink)
+///   row 2  one plain sentence (secondary, up to 2 lines)
+///   row 3  gesture chips
+/// Translucent material with a faint wash of the hovered tile's hue, a
+/// top-lit hairline rim and a small soft shadow. Increase Contrast: a solid
+/// plate with a 1 pt ink border and primary text.
+struct PointerHintCard: View {
+  enum Density { case full, sentence, brief, name }
+  static let maxWidth = CGFloat(230)
+  static let radius = CGFloat(12)
 
-  /// Captions are written "[STRENGTH 55% · DRAG ↔]"; drop the brackets.
-  static func display(_ line: String) -> String {
-    var t = line.trimmingCharacters(in: .whitespaces)
-    if t.hasPrefix("["), t.hasSuffix("]") { t = String(t.dropFirst().dropLast()) }
-    return t
-  }
+  let hint: PointerHint
+  let maxWidth: CGFloat
+  var density: Density = .full
+  var shown = true
+  @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     let ink = hint.tint ?? Color.accentColor
     let high = contrast == .increased
-    VStack(alignment: .leading, spacing: 2) {
-      CapWidth(max: maxLine) {
-        // The app's own type (SF Rounded, like its labels), not the
-        // reference site's mono: the idea is borrowed, not the font.
-        Text(Self.display(hint.line))
-          .font(.system(size: 10, weight: .bold, design: .rounded))
-          .monospacedDigit()
-          .foregroundStyle(ink)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      }
-      if !compact, let d = hint.detail, !d.isEmpty {
-        CapWidth(max: min(CGFloat(220), maxLine)) {
+    let dark = scheme == .dark
+    let pad = CGFloat(8)
+    CapWidth(max: maxWidth - pad * CGFloat(2)) {
+      VStack(alignment: .leading, spacing: 3) {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+          Text(hint.name)
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(Color.primary)
+            .lineLimit(1)
+            .layoutPriority(1)
+          if let v = hint.value, !v.isEmpty {
+            Spacer(minLength: 10)
+            Text(v)
+              .font(.system(size: 11, weight: .heavy, design: .rounded))
+              .monospacedDigit()
+              .foregroundStyle(high ? Color.primary : ink)
+              .brightness(dark || high ? 0 : -0.12)
+              .lineLimit(1)
+              .truncationMode(.middle)
+          }
+        }
+        if density != .name, let d = hint.sentence, !d.isEmpty {
           Text(d)
             .font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
+            .foregroundStyle(high ? Color.primary : (dark ? Color.secondary : Color.primary.opacity(0.72)))
+            .lineLimit(density == .brief ? 1 : 2)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if density == .full, !hint.gestures.isEmpty {
+          HStack(spacing: 4) {
+            ForEach(hint.gestures, id: \.self) { GestureChip(text: $0, ink: ink, high: high) }
+          }
+          .padding(.top, 2)
         }
       }
     }
-    .padding(.horizontal, high ? 4 : 0)
-    .padding(.vertical, high ? 2 : 0)
-    .background {
-      if high {
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
-          .fill(Color(nsColor: .windowBackgroundColor))
-          .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(ink, lineWidth: 1))
-      }
-    }
-    .shadow(color: Color(nsColor: .windowBackgroundColor).opacity(high ? 0 : 0.9), radius: 1.5)
+    .padding(pad)
+    .background { plate(ink: ink, high: high, dark: dark) }
+    .transaction { $0.animation = nil }   // only the scale below animates
+    .scaleEffect(shown || reduceMotion ? 1 : 0.98)
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.1), value: shown)
     .fixedSize()
+  }
+
+  @ViewBuilder private func plate(ink: Color, high: Bool, dark: Bool) -> some View {
+    let shape = RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+    if high {
+      shape.fill(Color(nsColor: .windowBackgroundColor))
+        .overlay(shape.strokeBorder(ink, lineWidth: 1))
+    } else {
+      let wash = LinearGradient(colors: [ink.opacity(dark ? 0.18 : 0.10), ink.opacity(dark ? 0.07 : 0.04)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing)
+      let rim = LinearGradient(colors: [Color.white.opacity(dark ? 0.20 : 0.70), Color.white.opacity(dark ? 0.04 : 0.15)],
+                               startPoint: .top, endPoint: .bottom)
+      shape.fill(dark ? Material.regularMaterial : Material.thickMaterial)
+        .overlay(shape.fill(wash))
+        .overlay(shape.strokeBorder(Color.primary.opacity(dark ? 0.12 : 0.08), lineWidth: 0.5))
+        .overlay(shape.strokeBorder(rim, lineWidth: 0.75))
+        .shadow(color: Color.black.opacity(dark ? 0.30 : 0.10), radius: 4, y: 1)
+    }
+  }
+}
+
+/// "Drag ↔", "Click", "Double-click to reset": 9 pt in a capsule.
+private struct GestureChip: View {
+  let text: String
+  let ink: Color
+  let high: Bool
+
+  var body: some View {
+    Text(text)
+      .font(.system(size: 9, weight: .semibold, design: .rounded))
+      .foregroundStyle(high ? Color.primary : Color.secondary)
+      .lineLimit(1)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(Capsule().fill(ink.opacity(high ? 0 : 0.12)))
+      .overlay {
+        if high { Capsule().strokeBorder(Color.primary.opacity(0.6), lineWidth: 0.5) }
+      }
   }
 }
 
@@ -519,25 +617,174 @@ private struct CapWidth: Layout {
   }
 }
 
-// MARK: - Shared captions
+// MARK: - Captions
+//
+// The copy, in one place so the Bento and classic layouts say the same
+// thing. Rules: a name a beginner would use, one plain sentence (12 words at
+// most, no jargon, "you" where natural), and only the gestures that work.
+
+enum Caption {
+  static let drag = "Drag ↔"
+  static let resetTap = "Double-click to reset"
+
+  /// Strength. `scrub`: the Bento drag-the-number tile (double-click resets);
+  /// otherwise the classic slider.
+  static func strength(_ bass: Double, scrub: Bool) -> PointerHint {
+    PointerHint("Strength", value: "\(Int((bass * 100).rounded()))%",
+                does: "Makes bass feel deeper without making it louder.",
+                gestures: scrub ? [drag, resetTap] : ["Drag the slider"])
+  }
+
+  static func boost(_ db: Double, scrub: Bool) -> PointerHint {
+    PointerHint("Boost", value: "+\(Int(db.rounded())) dB",
+                does: "Makes everything louder, even past your Mac's max volume.",
+                gestures: scrub ? [drag, resetTap] : ["Drag the slider"])
+  }
+
+  static func power(on: Bool) -> PointerHint {
+    PointerHint("Power", value: on ? "On" : "Off",
+                does: "Turns The Bass Shaker on or off. Off: your Mac's normal sound.",
+                gestures: [on ? "Click to turn off" : "Click to turn on"])
+  }
+
+  static func output(_ device: String?) -> PointerHint {
+    PointerHint("Output", value: device ?? "None",
+                does: "Picks where your sound comes out.",
+                gestures: ["Click to choose"])
+  }
+
+  static func checkAndFix(menu: Bool = false) -> PointerHint {
+    PointerHint("Check & Fix",
+                does: "Fixes silent, muffled or one-sided sound with a 2-second restart.",
+                gestures: menu ? ["Click", "Right-click for options"] : ["Click"])
+  }
+
+  static func studioEars(on: Bool) -> PointerHint {
+    PointerHint("Studio Ears", value: on ? "On" : "Off",
+                does: "Adds deep bass and crisp highs on top of any preset.",
+                gestures: [on ? "Click to turn off" : "Click to turn on"])
+  }
+
+  static func loudness(on: Bool) -> PointerHint {
+    PointerHint("Loudness", value: on ? "On" : "Off",
+                does: "Adds more bass and treble the lower your volume goes.",
+                gestures: [on ? "Click to turn off" : "Click to turn on"])
+  }
+
+  /// `click`: what a click does now ("Click to turn on", "Click for settings"…).
+  static func nightGuard(on: Bool, allowDb: Double, click: String) -> PointerHint {
+    PointerHint("Night Guard", value: on ? "+\(Int(allowDb.rounded())) dB max" : "Off",
+                does: "Turns down sudden loud parts, like explosions after quiet talking.",
+                gestures: [click])
+  }
+
+  static func allow(_ db: Double, scrub: Bool) -> PointerHint {
+    PointerHint("Allow", value: "+\(Int(db.rounded())) dB",
+                does: "How much louder a sudden sound may get before it's turned down.",
+                gestures: scrub ? [drag, resetTap] : ["Drag the slider"])
+  }
+
+  /// Study / Sleep. `state`: "On", "12 min left"…; nil while off.
+  static func mode(_ m: ListeningMode, state: String?, click: String) -> PointerHint {
+    let does = m == .sleep
+      ? "Soft sound that can fade out; swaps out your preset until off."
+      : "Calm sound for focus; swaps out your preset until turned off."
+    return PointerHint(m.title, value: state ?? "Off", does: does, gestures: [click])
+  }
+
+  static func ab(bypassed: Bool, hotkey: String?) -> PointerHint {
+    PointerHint("A/B Compare", value: bypassed ? "Original" : "Effects on",
+                does: "Quick before-and-after: hear your Mac without effects. Nothing turns off.",
+                gestures: ["Click"] + (hotkey.map { ["Or press \($0)"] } ?? []))
+  }
+
+  static func preset(_ p: Preset) -> PointerHint {
+    PointerHint(p.name, value: "Preset", does: plain[p.name] ?? p.subtitle, gestures: ["Click to use"])
+  }
+
+  static func userPreset(_ name: String) -> PointerHint {
+    PointerHint(name, value: "Your preset", does: "A sound you saved earlier.",
+                gestures: ["Click to use", "Right-click to edit"])
+  }
+
+  static let savePreset = PointerHint("Save Preset", does: "Saves the sound you hear now, so you can return to it.",
+                                      gestures: ["Click"])
+
+  /// One plain sentence per built-in preset (their subtitles are for experts).
+  private static let plain: [String: String] = [
+    "Flat": "Your Mac's own sound: no bass or treble changes.",
+    "Bass Shake": "Deep, punchy bass with a little extra sparkle on top.",
+    "Bass Boost": "Lots more low bass; everything else stays the same.",
+    "Laptop": "Helps small laptop speakers sound fuller and less thin.",
+    "Vocal": "Makes voices clearer and easier to follow.",
+    "Treble": "Brighter, crisper highs for dull-sounding speakers.",
+    "Loudness": "Always a bit more bass and treble, for quiet listening.",
+    "Podcast": "Warm, close voices with less room echo and hiss.",
+    "Basic Enhance": "A light all-round lift: a bit fuller and clearer.",
+    "Underground Rap": "Gritty, distorted mids over clean, hard-hitting bass.",
+    "Ambience": "Wider sound that feels like it's all around your head.",
+    "AirPods Max 2": "Evens out AirPods Max and adds a little bass.",
+    "Powerbeats Pro 2": "Makes Powerbeats Pro 2 less harsh and more even.",
+    "B&W Px7 S2e": "Tightens the Px7 S2e's boomy bass and clears up voices.",
+  ]
+
+  /// The big word in the Bento hero.
+  static func hero(live: Bool, mode: ListeningMode, word: String, editedFrom: String?, unsaved: Bool) -> PointerHint {
+    if !live { return PointerHint("Off", does: "Nothing is changed: your Mac plays its normal sound.") }
+    if mode != .off { return PointerHint(word, value: "Paused", does: "\(mode.title) plays its own sound until you turn it off.") }
+    if let base = editedFrom {
+      return PointerHint("Edited", value: "from \(base)", does: "You changed the sound; click + below to save it.")
+    }
+    if unsaved { return PointerHint("My Sound", value: "Not saved", does: "Your own sound; click + below to save it.") }
+    return PointerHint(word, value: "In use", does: "The sound in use; pick another from the presets below.")
+  }
+
+  /// The hero's L/R level lines, polled while showing.
+  static func level(_ m: MeterModel) -> PointerHint {
+    func db(_ v: Double) -> String {
+      if v <= MeterModel.floorDb + 0.5 { return "—" }
+      return String(format: "%.0f", v).replacingOccurrences(of: "-", with: "\u{2212}")
+    }
+    return PointerHint("Level", value: "L \(db(m.channels[0].level))  R \(db(m.channels[1].level)) dB",
+                       does: "How loud it plays right now; red means it's at the top.")
+  }
+
+  /// One EQ node (empty when none is under the pointer).
+  static func eqNode(_ b: EQBand?) -> PointerHint {
+    guard let b else { return PointerHint("") }
+    let range = b.freq < 250 ? "Bass" : (b.freq < 2_000 ? "Mids" : "Treble")
+    let f = b.freq >= 1000 ? String(format: "%.1f kHz", b.freq / 1000) : String(format: "%.0f Hz", b.freq)
+    let g = String(format: "%+.1f dB", b.gain).replacingOccurrences(of: "-", with: "\u{2212}")
+    return PointerHint("\(range) · \(f)", value: g,
+                       does: "Turns one range of sounds up or down; sideways picks the range.",
+                       gestures: ["Drag", "Double-click: 0 dB", "Hold ⇧: fine"])
+  }
+}
 
 /// Limit's caption, live from the meters (Bento card and classic switch).
 enum LimitHint {
   static func make(on: Bool, meters: MeterModel) -> PointerHint {
-    let detail = "Stops distortion by easing back the bass first."
-    guard on else { return PointerHint(line: "[LIMIT OFF · PEAKS CAN CLIP]", detail: detail) }
+    let does = "Keeps loud parts clean by turning the bass down first."
+    guard on else { return PointerHint("Limit", value: "Off", does: does, gestures: ["Click to turn on"]) }
     let r = min(12, max(0, -meters.gainReductionDb))
-    if r < 0.1 { return PointerHint(line: "[LIMIT ON · NOTHING HELD BACK]", detail: detail) }
-    return PointerHint(line: "[LIMIT ON · HOLDING BASS −\(String(format: "%.1f", r)) DB]", detail: detail)
+    let v = r < 0.1 ? "On" : "\u{2212}\(String(format: "%.1f", r)) dB"
+    return PointerHint("Limit", value: v, does: does, gestures: ["Click to turn off"])
+  }
+
+  /// The EQ's Limit badge (hover only).
+  static func badge(meters: MeterModel) -> PointerHint {
+    let r = min(12, max(0, -meters.gainReductionDb))
+    return PointerHint("Limit", value: r < 0.1 ? "0 dB" : "\u{2212}\(String(format: "%.1f", r)) dB",
+                       does: "How much the sound is turned down right now to stay clean.")
   }
 }
 
 /// Background noise's caption (#21), Bento and classic.
 enum NoiseHint {
-  static let detail = "Plays under your music to mask distractions."
-  static func line(_ s: Settings) -> String {
-    guard s.noiseOn else { return "[NOISE · OFF · CLICK = ON]" }
-    let pct = Int(((s.noiseDb + 60) / 36 * 100).rounded())
-    return "[NOISE · \(s.noiseColor.title.uppercased()) · \(max(0, min(100, pct)))%]"
+  static func make(_ s: Settings) -> PointerHint {
+    let does = "Plays a steady hiss under your music to hide distractions."
+    guard s.noiseOn else { return PointerHint("Noise", value: "Off", does: does, gestures: ["Click to turn on"]) }
+    let pct = max(0, min(100, Int(((s.noiseDb + 60) / 36 * 100).rounded())))
+    return PointerHint("Noise", value: "\(s.noiseColor.title) · \(pct)%", does: does, gestures: ["Click to turn off"])
   }
 }

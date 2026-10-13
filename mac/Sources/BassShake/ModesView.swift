@@ -16,15 +16,13 @@ struct ModesView: View {
         } action: {
           controller.settings.studioEars.toggle()
         }
-        .pointerHint("[STUDIO EARS · \(s.studioEars ? "ON" : "OFF") · STACKS ON PRESET]",
-                     detail: "Leans into sub-bass and trap highs on top of any preset.")
+        .pointerHint(Caption.studioEars(on: s.studioEars))
         Chip(title: "Loudness", selected: s.autoLoudness) {
           Image(systemName: "speaker.wave.2.bubble").font(.system(size: 9, weight: .semibold))
         } action: {
           controller.settings.autoLoudness.toggle()
         }
-        .pointerHint("[LOUDNESS · MORE BASS AT LOW VOLUME]",
-                     detail: "At low volume your ears lose bass and treble first; this adds them back.")
+        .pointerHint(Caption.loudness(on: s.autoLoudness))
         Spacer(minLength: 4)
         ForEach([ListeningMode.study, .sleep]) { m in
           Chip(title: m.title, selected: s.mode == m, compact: true) {
@@ -34,8 +32,8 @@ struct ModesView: View {
               controller.setMode(s.mode == m ? .off : m)
             }
           }
-          .pointerHint(s.mode == m ? "[\(m.title.uppercased()) · ON · CLICK = OFF]" : "[\(m.title.uppercased()) · CLICK = ON]",
-                       detail: "Only one of Study and Sleep at a time.")
+          .pointerHint(Caption.mode(m, state: s.mode == m ? "On" : nil,
+                                    click: s.mode == m ? "Click to turn off" : "Click to turn on"))
         }
       }
       nightGuardRow
@@ -55,8 +53,8 @@ struct ModesView: View {
       } action: {
         controller.settings.nightGuard.toggle()
       }
-      .pointerHint("[NIGHT GUARD · CAP +\(Int(s.nightGuardDb.rounded())) DB · CLICK = \(s.nightGuard ? "OFF" : "ON")]",
-                   detail: "Turns down anything suddenly louder than what you've been hearing.")
+      .pointerHint(Caption.nightGuard(on: s.nightGuard, allowDb: s.nightGuardDb,
+                                      click: s.nightGuard ? "Click to turn off" : "Click to turn on"))
       if s.nightGuard {
         if labels == .full {
           Text("Allow")
@@ -162,7 +160,7 @@ struct ModesView: View {
             Image(systemName: "speaker.wave.1").font(.system(size: 10, weight: .semibold))
           }
         }
-        .pointerHint(NoiseHint.line(s), detail: NoiseHint.detail)
+        .pointerHint(NoiseHint.make(s))
         .toggleStyle(.switch)
         .controlSize(.mini)
         Picker("", selection: Binding(get: { s.noiseColor }, set: { controller.settings.noiseColor = $0 })) {

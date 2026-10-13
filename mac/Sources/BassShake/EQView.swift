@@ -61,7 +61,7 @@ struct EQView: View {
                        yFor: { y($0, size.height) })
             .transition(.opacity)
         }
-        // With Pointer Hints on, the hint is the pointer's readout; the
+        // With Tutorial Mode on, the hint is the pointer's readout; the
         // in-graph readout stays for the keyboard.
         if let i = hintsOn ? (focused && kbActive && grabbed == nil ? kbBand : nil) : (grabbed ?? hovered ?? (focused ? kbBand : nil)),
            i < bands.count {
@@ -74,7 +74,7 @@ struct EQView: View {
         }
       }
       .contentShape(Rectangle())
-      .pointerHint(nodeHint(bands), detail: (grabbed ?? hovered) == nil ? nil : "Up/down = louder/quieter. Left/right = pitch range.", live: true)
+      .pointerHint(Caption.eqNode((grabbed ?? hovered).flatMap { bands.indices.contains($0) ? bands[$0] : nil }), live: true)
       .accessibilityRepresentation {
         VStack {
           ForEach(bands.indices, id: \.self) { i in
@@ -117,14 +117,6 @@ struct EQView: View {
   }
 
   /// Caption #9: the node under the pointer (empty space: nothing).
-  private func nodeHint(_ bands: [EQBand]) -> String {
-    guard let i = grabbed ?? hovered, bands.indices.contains(i) else { return "" }
-    let b = bands[i]
-    let f = b.freq >= 1000 ? String(format: "%.1fK", b.freq / 1000) : String(format: "%.0f", b.freq)
-    let g = String(format: "%+.1f", b.gain).replacingOccurrences(of: "-", with: "\u{2212}")
-    return "[\(f) HZ \(g) DB · DRAG · ⇧ FINE · ⌥CLICK RESET]"
-  }
-
   // MARK: - Geometry
 
   private func x(_ f: Double, _ w: CGFloat) -> CGFloat { w * CGFloat(log10(f / 20) / 3) }
@@ -430,10 +422,7 @@ private struct LimitOverlay: View {
       .foregroundStyle(active ? Color.white : Color.orange)
       .background(Capsule().fill(active ? Color.orange : Color.orange.opacity(0.15)))
       // Hover only (no gestures), so EQ drags still pass through.
-      .pointerHint {
-        let r = min(12, max(0, -meters.gainReductionDb))
-        return PointerHint(line: r < 0.1 ? "[LIMIT · NOTHING HELD BACK]" : "[LIMIT −\(String(format: "%.1f", r)) DB · BASS HELD BACK]")
-      }
+      .pointerHint { [meters] in LimitHint.badge(meters: meters) }
       .position(x: size.width - 46, y: 12)
     }
     .frame(width: size.width, height: size.height)
