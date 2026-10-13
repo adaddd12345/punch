@@ -112,7 +112,7 @@ struct PopoverView: View {
       if controller.settings.bento && size != .mini {
         driverSection
         BentoView(controller: controller, meters: meters, editor: $editor, size: size,
-                  heroIcons: AnyView(headerIcons), abButton: AnyView(abButton))
+                  heroIcons: AnyView(windowTools(words: size == .full && labels == .full)))
       } else if size != .mini {
         driverSection
         if shows(.classicEQ) {
@@ -260,7 +260,7 @@ struct PopoverView: View {
   // MARK: - Sections
 
   private var header: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 6) {
       // The full app logo (the Liquid Glass shaker), not the menu-bar glyph.
       Image(nsImage: NSApp.applicationIconImage)
         .resizable()
@@ -273,11 +273,12 @@ struct PopoverView: View {
         Text("The Bass Shaker")
           .font(.system(size: 14, weight: .bold, design: .rounded))
           .lineLimit(1)
+          .minimumScaleFactor(0.8)
           .layoutPriority(1)
       }
-      Spacer(minLength: 4)
+      Spacer(minLength: 0)
       if size != .mini && !controller.settings.bento { deviceMenu }
-      headerIcons
+      windowTools(words: false)
       abButton
       if size == .mini || !controller.settings.bento {
         Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
@@ -289,49 +290,81 @@ struct PopoverView: View {
     }
   }
 
-  /// Labels, view size and pin. In Bento they sit in the hero instead of a header row.
-  @ViewBuilder private var headerIcons: some View {
-    Button {
-      controller.settings.labelLevel = controller.settings.labelLevel.next
-    } label: {
-      Image(systemName: controller.settings.labelLevel.symbol)
-        .font(.system(size: 10, weight: .semibold))
-        .foregroundStyle(.secondary)
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel("Labels: \(controller.settings.labelLevel.title)")
-    .pointerHint("Labels", value: controller.settings.labelLevel.title,
-                 gestures: ["Click for \(controller.settings.labelLevel.next.title)"])
-    if role != .launchWindow {
-      Button {
-        controller.settings.viewSize = controller.settings.viewSize.next
-      } label: {
-        Image(systemName: controller.settings.viewSize.symbol)
-          .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(.secondary)
+  /// Labels, view size and pin as one segmented chip. In Bento it sits in the
+  /// hero's bottom bar; words beside the icons only at Full size with All labels.
+  /// The launch window shows the Labels segment alone.
+  private func windowTools(words: Bool) -> some View {
+    let level = controller.settings.labelLevel
+    let view = controller.settings.viewSize
+    let pinned = controller.pinned
+    let chip = RoundedRectangle(cornerRadius: 8, style: .continuous)
+    return HStack(spacing: 0) {
+      toolSegment(level.symbol, word: "Labels", words: words) {
+        controller.settings.labelLevel = level.next
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel("View size: \(controller.settings.viewSize.title)")
-      .accessibilityHint("Switches to \(controller.settings.viewSize.next.title)")
-      .pointerHint("Size", value: controller.settings.viewSize.title,
-                   does: "Mini keeps just the power switch and main sliders.",
-                   gestures: ["Click for \(controller.settings.viewSize.next.title)", "⌘1 Full · ⌘2 Compact · ⌘3 Mini"], vo: false)
-    }
-    if role != .launchWindow {
-      Button {
-        controller.setPinned(!controller.pinned, from: window.window)
-      } label: {
-        Image(systemName: controller.pinned ? "pin.fill" : "pin")
-          .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(controller.pinned ? Color.accentColor : Color.secondary)
-          .rotationEffect(.degrees(controller.pinned ? 0 : 45))
+      .accessibilityLabel("Labels: \(level.title)")
+      .pointerHint("Labels", value: level.title, does: "Shows or hides the words next to icons.",
+                   gestures: ["Click for \(level.next.title)"])
+      if role != .launchWindow {
+        toolHairline
+        toolSegment(view.symbol, word: "Size", words: words) {
+          controller.settings.viewSize = view.next
+        }
+        .accessibilityLabel("View size: \(view.title)")
+        .accessibilityHint("Switches to \(view.next.title)")
+        .pointerHint("Size", value: view.title,
+                     does: "Compact shrinks the top tile and EQ; Mini keeps only sliders.",
+                     gestures: ["Click for \(view.next.title)", "⌘1 Full · ⌘2 Compact · ⌘3 Mini"], vo: false)
+        toolHairline.opacity(pinned ? 0 : 1)
+        toolSegment(pinned ? "pin.fill" : "pin", word: "Pin", words: words, on: pinned,
+                    rotation: pinned ? 0 : 45) {
+          controller.setPinned(!pinned, from: window.window)
+        }
+        .accessibilityLabel(pinned ? "Unpin" : "Pin open")
+        .pointerHint("Pin", value: pinned ? "On" : "Off",
+                     does: "Keeps this window open when you click somewhere else.",
+                     gestures: [pinned ? "Click to unpin" : "Click to pin"])
       }
-      .buttonStyle(.plain)
-      .accessibilityLabel(controller.pinned ? "Unpin" : "Pin open")
-      .pointerHint("Pin", value: controller.pinned ? "On" : "Off",
-                   does: "Keeps this window open when you click somewhere else.",
-                   gestures: [controller.pinned ? "Click to unpin" : "Click to pin"])
     }
+    .frame(height: 24)
+    .background(chip.fill(Color.primary.opacity(0.08)))
+    .clipShape(chip)
+    .fixedSize()
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Window")
+  }
+
+  /// One segment of the window tools: icon, plus its word when there's room.
+  /// `on`: dark fill, white icon (Pin while pinned).
+  private func toolSegment(_ symbol: String, word: String, words: Bool, on: Bool = false,
+                           rotation: Double = 0, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      HStack(spacing: 4) {
+        Image(systemName: symbol)
+          .font(.system(size: 11, weight: .semibold))
+          .rotationEffect(.degrees(rotation))
+          .frame(width: 14)
+        if words {
+          Text(word)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .lineLimit(1)
+            .fixedSize()
+        }
+      }
+      .foregroundStyle(on ? Color.white : Color.primary.opacity(0.75))
+      .padding(.horizontal, words ? 8 : 0)
+      .frame(minWidth: 24, minHeight: 24)
+      .background(Rectangle().fill(on ? BentoInk.miniFill : Color.clear))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(BentoPressStyle())
+  }
+
+  private var toolHairline: some View {
+    Rectangle()
+      .fill(Color.primary.opacity(0.12))
+      .frame(width: 0.5, height: 12)
+      .accessibilityHidden(true)
   }
 
   /// A/B compare (only while on). In Bento it sits next to Power.

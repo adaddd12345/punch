@@ -80,7 +80,6 @@ struct EQView: View {
         }
       }
       .contentShape(Rectangle())
-      .pointerHint(Caption.eqNode((grabbed ?? hovered).flatMap { bands.indices.contains($0) ? bands[$0] : nil }), live: true)
       .accessibilityRepresentation {
         VStack {
           ForEach(bands.indices, id: \.self) { i in
@@ -98,8 +97,11 @@ struct EQView: View {
       .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .space, .delete]) { press in
         handleKey(press)
       }
-      .gesture(dragGesture(size: size))
+      .gesture(dragGesture(size: size, frameOrigin: geo.frame(in: .global).origin))
       .simultaneousGesture(TapGesture(count: 2).onEnded { resetHovered() })
+      // Outside the drag: as an inner gesture, the hint's own drag would win
+      // and the EQ's drag would never fire.
+      .pointerHint(Caption.eqNode((grabbed ?? hovered).flatMap { bands.indices.contains($0) ? bands[$0] : nil }), live: true)
       .onContinuousHover { phase in
         switch phase {
         case .active(let p):
@@ -297,12 +299,15 @@ struct EQView: View {
 
   // MARK: - Interaction
 
-  private func dragGesture(size: CGSize) -> some Gesture {
-    DragGesture(minimumDistance: 0)
+  /// Measured in global coordinates, so the node doesn't lurch when a view
+  /// above the EQ changes height mid-drag; local only to pick the node.
+  private func dragGesture(size: CGSize, frameOrigin: CGPoint) -> some Gesture {
+    DragGesture(minimumDistance: 0, coordinateSpace: .global)
       .onChanged { v in
         if kbActive { kbActive = false }
         if grabbed == nil {
-          guard let i = nearest(v.startLocation, size: size) else { return }
+          let start = CGPoint(x: v.startLocation.x - frameOrigin.x, y: v.startLocation.y - frameOrigin.y)
+          guard let i = nearest(start, size: size) else { return }
           grabbed = i
           controller.pushUndo()
           if NSEvent.modifierFlags.contains(.option), EQBand.defaults.indices.contains(i) {

@@ -49,50 +49,78 @@ struct HiddenWhilePlaying<Content: View>: View {
 }
 
 /// Cover (or app icon), song and artist (or app name). Click opens the app.
+/// A note after a key that missed takes the title's place for a few seconds;
+/// when it offers Accessibility, a click on the note (only) opens that.
 struct NowPlayingHeadline: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
+  /// Cover size and title size (Full 48 / 15, Compact 40 / 13).
+  var art: CGFloat = 48
+  var title: CGFloat = 15
   @Environment(\.labelLevel) private var labels
 
   var body: some View {
     let track = model.route(app) == .script ? app.bundleID.flatMap { model.tracks[$0] } : nil
     let paused = track.map { !$0.playing } ?? model.showsPaused(app)
     let sub = subtitle(track, paused: paused)
-    Button { model.open(app) } label: {
-      HStack(alignment: .center, spacing: 10) {
-        NowArt(artwork: track?.artwork, icon: model.icon(app), size: 52)
+    let note = model.notice
+    Button {
+      model.open(app)
+    } label: {
+      HStack(alignment: .center, spacing: 8) {
+        NowArt(artwork: track?.artwork, icon: model.icon(app), size: art)
         VStack(alignment: .leading, spacing: 2) {
-          Text(title(track))
-            .font(.system(size: 18, weight: .heavy, design: .rounded))
-            .tracking(-0.3)
-            .lineLimit(1)
-            .minimumScaleFactor(0.75)
-            .foregroundStyle(Color.primary)
-          // No line when there's nothing to say: the title centres on the art.
-          if !sub.isEmpty {
-            Text(sub)
-              .font(.system(size: 11, weight: .medium, design: .rounded))
+          if let n = note {
+            if n.settings {
+              NoticeText(text: n.text)
+                .contentShape(Rectangle())
+                .highPriorityGesture(TapGesture().onEnded { MediaKeys.openSettings() })
+                .pointerHint(Caption.noticeSettings(app.name))
+                .transition(.opacity)
+            } else {
+              NoticeText(text: n.text).transition(.opacity)
+            }
+          } else {
+            Text(songTitle(track))
+              .font(.system(size: title, weight: .heavy, design: .rounded))
+              .tracking(-0.3)
               .lineLimit(1)
-              .truncationMode(.tail)
-              .foregroundStyle(.secondary)
+              .minimumScaleFactor(0.85)
+              .foregroundStyle(Color.primary)
+              .transition(.opacity)
+            if !sub.isEmpty {
+              // No line when there's nothing to say: the title centres on the art.
+              Text(sub)
+                .font(.system(size: 11, weight: .medium, design: .rounded))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(.secondary)
+                .transition(.opacity)
+            }
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.easeOut(duration: 0.2), value: note?.text)
       }
       .contentShape(Rectangle())
     }
     .buttonStyle(BentoPressStyle())
     .pointerHint(Caption.nowPlaying(app.name, song: track != nil, paused: paused))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(accessibility(track, paused: paused))
+    .accessibilityLabel(note.map { $0.text } ?? accessibility(track, paused: paused))
+    .accessibilityActions {
+      if note?.settings == true {
+        Button("Open Accessibility Settings") { MediaKeys.openSettings() }
+      }
+    }
   }
 
   private func accessibility(_ t: NowTrack?, paused: Bool) -> String {
     let rest = subtitle(t, paused: paused, state: false)
-    return "\(paused ? "Paused" : "Playing"): \(title(t))" + (rest.isEmpty ? "" : ", \(rest)")
+    return "\(paused ? "Paused" : "Playing"): \(songTitle(t))" + (rest.isEmpty ? "" : ", \(rest)")
   }
 
-  private func title(_ t: NowTrack?) -> String {
+  private func songTitle(_ t: NowTrack?) -> String {
     guard let t, !t.title.isEmpty else { return app.name }
     return t.title
   }
@@ -110,56 +138,49 @@ struct NowPlayingHeadline: View {
   }
 }
 
-/// The hero's second line, in order of importance: play/pause (or mute, for
-/// apps with no pause), next (Spotify / Music with a song), then a small mute.
-/// A note after a key that missed takes the space between. Never a permission
-/// card after a click: a button that needs Accessibility shows a lock, and its
-/// hover card says so before anyone clicks.
+/// The transport, beside the headline in player order: a small mute, the big
+/// play/pause (or mute, for apps with no pause), then next (Spotify / Music
+/// with a song). `extras: false` (Compact) keeps only the big button. Never a
+/// permission card after a click: a button that needs Accessibility shows a
+/// lock, and its hover card says so before anyone clicks.
 struct NowPlayingControls: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
   /// The primary button's fill; nil while The Bass Shaker is off.
   let tint: Color?
+  /// The primary disc's size (Full 40, Compact 32).
+  var primary: CGFloat = 40
+  /// Mute and Next beside it.
+  var extras: Bool = true
 
   var body: some View {
     let route = model.route(app)
     HStack(spacing: 8) {
-      PrimaryButton(model: model, app: app, size: 40, glyph: 16, fill: tint)
-      if route == .script {
-        NextButton(model: model, app: app)
-      }
-      if let n = model.notice {
-        NoticeText(text: n.text, settings: n.settings)
-          .transition(.opacity)
-      }
-      Spacer(minLength: 4)
-      if route != .mute {
+      // Hidden while a note shows, to give it room; Play stays put (trailing).
+      if extras && route != .mute && model.notice == nil {
         MuteButton(model: model, app: app, compact: false)
       }
+      PrimaryButton(model: model, app: app, size: primary, glyph: (primary * CGFloat(0.4)).rounded(), fill: tint)
+      if extras && route == .script {
+        NextButton(model: model, app: app)
+      }
     }
-    .frame(height: 40)
-    .animation(.easeOut(duration: 0.2), value: model.notice?.text)
+    .fixedSize()
   }
 }
 
-/// A note after a key that missed. With `settings`, it opens Accessibility.
+/// A note after a key that missed, in the headline's subtitle line.
 private struct NoticeText: View {
   let text: String
-  let settings: Bool
 
   var body: some View {
-    let label = Text(text)
+    Text(text)
       .font(.system(size: 10, weight: .medium, design: .rounded))
       .foregroundStyle(.secondary)
-      .lineLimit(2)
+      .lineLimit(3)
+      .truncationMode(.tail)
       .fixedSize(horizontal: false, vertical: true)
       .frame(maxWidth: .infinity, alignment: .leading)
-    if settings {
-      Button { MediaKeys.openSettings() } label: { label.contentShape(Rectangle()) }
-        .buttonStyle(.plain)
-    } else {
-      label
-    }
   }
 }
 
@@ -246,9 +267,9 @@ private struct NextButton: View {
   var body: some View {
     Button { model.nextTrack(app) } label: {
       Image(systemName: "forward.fill")
-        .font(.system(size: 11, weight: .bold))
+        .font(.system(size: 10, weight: .bold))
         .foregroundStyle(Color.primary)
-        .frame(width: 28, height: 28)
+        .frame(width: 24, height: 24)
         .background(Circle().fill(Color.primary.opacity(0.10)))
         .contentShape(Circle())
     }
@@ -264,12 +285,14 @@ struct NowPlayingTiles: View {
   let on: Bool
   /// The Bass Shaker is on (tiles turn graphite when it's off, like the rest).
   let active: Bool
+  /// Compact size: one row per tile, no text.
+  var compact: Bool = false
 
   var body: some View {
     if on, model.hero != nil, !model.others.isEmpty {
       HStack(spacing: 8) {
         ForEach(model.others) { app in
-          NowSubTile(model: model, app: app, active: active)
+          NowSubTile(model: model, app: app, active: active, compact: compact)
             .transition(.opacity.combined(with: .scale(scale: 0.96)))
         }
       }
@@ -283,6 +306,7 @@ private struct NowSubTile: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
   let active: Bool
+  var compact: Bool = false
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
 
@@ -292,34 +316,15 @@ private struct NowSubTile: View {
     let tint: BentoTint = active ? .frost : .graphite
     let dark = scheme == .dark
     BentoTile(tint: tint, interactive: true, glassID: "now." + app.id) {
-      VStack(alignment: .leading, spacing: 6) {
-        Button { model.open(app) } label: {
-          HStack(spacing: 6) {
-            NowArt(artwork: track?.artwork, icon: model.icon(app), size: 22)
-            if labels != .icons {
-              VStack(alignment: .leading, spacing: 0) {
-                Text(track.map { $0.title.isEmpty ? app.name : $0.title } ?? app.name)
-                  .font(.system(size: 11, weight: .semibold, design: .rounded))
-                  .lineLimit(1)
-                  .truncationMode(.tail)
-                if labels == .full, let line = track.map({ (paused ? "Paused · " : "") + ($0.artist.isEmpty ? app.name : $0.artist) })
-                    ?? (paused ? "Paused" : nil) {
-                  Text(line)
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundStyle(.secondary)
-                }
-              }
-            }
-            Spacer(minLength: 0)
+      if compact {
+        // Compact: art, play/pause, mute in one row; no text.
+        HStack(spacing: 6) {
+          Button { model.open(app) } label: {
+            NowArt(artwork: track?.artwork, icon: model.icon(app), size: 22).contentShape(Rectangle())
           }
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .pointerHint(Caption.alsoPlaying(app.name, song: track != nil, paused: paused))
-        .accessibilityLabel("\(app.name), \(paused ? "paused" : "also playing")")
-        HStack(spacing: 4) {
+          .buttonStyle(.plain)
+          .pointerHint(Caption.alsoPlaying(app.name, song: track != nil, paused: paused))
+          .accessibilityLabel("\(app.name), \(paused ? "paused" : "also playing")")
           PrimaryButton(model: model, app: app, size: 22, glyph: 9, fill: dark ? tint.pastel : tint.ink)
           Spacer(minLength: 0)
           if model.route(app) != .mute {
@@ -327,6 +332,43 @@ private struct NowSubTile: View {
           }
         }
         .frame(height: 22)
+      } else {
+        VStack(alignment: .leading, spacing: 6) {
+          Button { model.open(app) } label: {
+            HStack(spacing: 6) {
+              NowArt(artwork: track?.artwork, icon: model.icon(app), size: 22)
+              if labels != .icons {
+                VStack(alignment: .leading, spacing: 0) {
+                  Text(track.map { $0.title.isEmpty ? app.name : $0.title } ?? app.name)
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                  if labels == .full, let line = track.map({ (paused ? "Paused · " : "") + ($0.artist.isEmpty ? app.name : $0.artist) })
+                      ?? (paused ? "Paused" : nil) {
+                    Text(line)
+                      .font(.system(size: 9, weight: .medium, design: .rounded))
+                      .lineLimit(1)
+                      .truncationMode(.tail)
+                      .foregroundStyle(.secondary)
+                  }
+                }
+              }
+              Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .pointerHint(Caption.alsoPlaying(app.name, song: track != nil, paused: paused))
+          .accessibilityLabel("\(app.name), \(paused ? "paused" : "also playing")")
+          HStack(spacing: 4) {
+            PrimaryButton(model: model, app: app, size: 22, glyph: 9, fill: dark ? tint.pastel : tint.ink)
+            Spacer(minLength: 0)
+            if model.route(app) != .mute {
+              MuteButton(model: model, app: app, compact: true)
+            }
+          }
+          .frame(height: 22)
+        }
       }
     }
     .frame(maxWidth: .infinity)
@@ -384,8 +426,8 @@ private struct MuteButton: View {
     let muted = model.isMuted(app.id)
     Button { model.toggleMute(app) } label: {
       Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-        .font(.system(size: compact ? 7 : 10, weight: .bold))
-        .frame(width: compact ? 18 : 28, height: compact ? 18 : 28)
+        .font(.system(size: compact ? 7 : 9, weight: .bold))
+        .frame(width: compact ? 18 : 24, height: compact ? 18 : 24)
         .foregroundStyle(muted ? Color.white : Color.primary.opacity(0.7))
         .background(Circle().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
         .contentShape(Circle())
@@ -511,6 +553,11 @@ extension Caption {
     PointerHint("\(playing ? "Pause" : "Play") \(name)",
                 does: "To \(playing ? "pause" : "play") from here, allow The Bass Shaker in Accessibility.",
                 gestures: ["Click to allow in Accessibility"])
+  }
+
+  /// The headline while its note offers Accessibility (a few seconds).
+  static func noticeSettings(_ name: String) -> PointerHint {
+    PointerHint("Allow Accessibility", does: "Then the play button pauses \(name) instead of muting it.")
   }
 
   static let noteTurnOff = PointerHint("Turn Off", does: "Hides What's Playing only; The Bass Shaker stays on.")

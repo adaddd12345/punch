@@ -590,16 +590,16 @@ final class NowPlaying: ObservableObject {
       if !MediaKeys.trusted { preflightStale = true }
       refreshAccess(now: now)
       if !keysAllowed {
-        show(p.id, "\(name) muted. Allow Accessibility to pause instead ›", settings: true, now: now)
+        show(p.id, "\(name) muted. Allow Accessibility to pause ›", settings: true, now: now)
       } else if !MediaKeys.postGranted {
         // Allowed in System Settings, but this run may not post until relaunch: keep the key route.
-        show(p.id, "\(name) muted. Quit and reopen The Bass Shaker to finish allowing Accessibility.",
+        show(p.id, "\(name) muted. Reopen The Bass Shaker to finish.",
              settings: false, now: now)
       } else {
         keyless.insert(p.id)
         // A key nobody owns can launch Music.
         let music = !musicWasRunning && known[p.id]?.bundleID != NowPlayer.music.rawValue
-        show(p.id, "\(name) didn't pause, so it's muted instead." + (music ? " Music may have opened." : ""),
+        show(p.id, "\(name) didn't pause, so it's muted." + (music ? " Music may have opened." : ""),
              settings: false, now: now)
       }
     case .play:

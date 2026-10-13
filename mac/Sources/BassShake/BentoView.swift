@@ -25,10 +25,8 @@ struct BentoView: View {
   let meters: MeterModel
   @Binding var editor: PresetEditor.Mode?
   let size: ViewSize
-  /// The header's small controls (labels, view size, pin), from PopoverView.
+  /// The window tools chip (labels, view size, pin), from PopoverView.
   var heroIcons: AnyView = AnyView(EmptyView())
-  /// A/B compare, from PopoverView (empty while off).
-  var abButton: AnyView = AnyView(EmptyView())
 
   /// Which mode's settings strip shows: the one turned on most recently.
   private enum Detail { case nightGuard, mode }
@@ -73,9 +71,12 @@ struct BentoView: View {
   private var stack: some View {
     VStack(spacing: 8) {
       hero
+      // The editor opens right under the hero when the presets tile is hidden,
+      // so "Save Current Sound as Preset…" from the hero menu is seen.
+      if !s.shows(.bentoPresets), let mode = editor { editorView(mode) }
       // What's Playing: other playing apps (nothing while the feature is off).
       if s.shows(.bentoNowPlaying) {
-        NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live)
+        NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
       }
       if s.shows(.bentoEQ) {
         BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
@@ -86,7 +87,10 @@ struct BentoView: View {
         .pointerHintTint(live ? ink(.bass) : nil)
       }
       if s.shows(.bentoDials) { dials }
-      if s.shows(.bentoPresets) { presets }
+      if s.shows(.bentoPresets) {
+        presets
+        if let mode = editor { editorView(mode) }
+      }
       if s.shows(.bentoModes) { modeGrid }
       if s.shows(.bentoModeSettings) { modeDetails }
     }
@@ -94,8 +98,18 @@ struct BentoView: View {
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
     .animation(.easeOut(duration: 0.2), value: live)
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: lastDetail)
+    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
     .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
     .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
+  }
+
+  /// The preset editor (create or edit), sliding in under whatever opened it.
+  @ViewBuilder private func editorView(_ mode: PresetEditor.Mode) -> some View {
+    PresetEditor(controller: controller, mode: mode) {
+      withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = nil }
+    }
+    .id(mode == .create ? "create" : "edit")
+    .transition(.opacity.combined(with: .move(edge: .top)))
   }
 
   /// Strength and Boost, side by side.
@@ -136,7 +150,7 @@ struct BentoView: View {
     if !live { return "Off" }
     if let p = userPreset { return p.name }
     if let n = presetSource.name { return n }
-    // Edited: the preset it came from (with "· edited" beside it); no base: plain EQ.
+    // Edited: the preset it came from (the note line says "Edited"); no base: plain EQ.
     return s.mode == .off ? (s.editedFrom ?? "Custom EQ") : "Custom EQ"
   }
 
@@ -180,21 +194,6 @@ struct BentoView: View {
 
   private var presetBoost: Double { userPreset?.boostDb ?? 0 }
 
-  /// The app's mark (the menu-bar shaker), small and faint in the hero's top-left
-  /// corner, level with the small controls on the right: a watermark, not an object.
-  private func heroMark(_ color: Color) -> some View {
-    Image(nsImage: MenuBarIcon.image)
-      .renderingMode(.template)
-      .resizable()
-      .interpolation(.high)
-      .aspectRatio(contentMode: .fit)
-      .frame(width: 12, height: 12)
-      .foregroundStyle(color)
-  }
-
-  /// The word plus its Edited tag: they come and go together.
-  private var heroKey: String { heroWord + (editedBase != nil ? "·edited" : "") }
-
   private var heroWordTransition: AnyTransition {
     if reduceMotion || powerSaver { return .opacity }
     return .asymmetric(
@@ -202,26 +201,29 @@ struct BentoView: View {
       removal: .modifier(active: BlurRise(amount: -1), identity: BlurRise(amount: 0)))
   }
 
+  /// Compact shrinks the hero as well as the EQ.
+  private var compact: Bool { size == .compact }
+  private var heroPad: CGFloat { compact ? 12 : 16 }
+
+  /// Every picker chip in the hero: one shape, one fill. Dark fill means "on".
+  private var chipShape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
+
+  /// The hero, in four groups that keep their order everywhere: media (art,
+  /// title, transport), sound (preset, A/B, Power), output, window tools.
+  /// One primary action per state, always the big disc at the top row's right
+  /// end: Power while nothing plays, play/pause while something does.
   private var hero: some View {
     let t = heroTint
     let dark = scheme == .dark
     let shape = RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous)
     return VStack(alignment: .leading, spacing: 0) {
-      // The old header row's small controls, quiet in the top-right corner.
-      HStack(spacing: 8) {
-        Spacer(minLength: 0)
-        heroIcons
-      }
-      .frame(height: 14)
       NowPlayingSwitch(model: nowPlaying, on: s.showNowPlaying) {
-        presetRows(t, dark: dark)
+        if compact { idleCompact(t, dark: dark) } else { idleFull(t, dark: dark) }
       } playing: { app in
-        playingRows(app, t, dark: dark)
+        if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
       }
     }
-    .padding(.horizontal, 16)
-    .padding(.top, 8)
-    .padding(.bottom, 16)
+    .padding(heroPad)
     .frame(maxWidth: .infinity, alignment: .leading)
     .overlay(alignment: .bottom) {
       // The L/R lines live in the (non-interactive) background: this thin
@@ -230,10 +232,10 @@ struct BentoView: View {
       if live {
         HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
           Color.clear
-            .frame(height: 12)
+            .frame(height: compact ? 8 : 12)
             .contentShape(Rectangle())
             .pointerHint { [meters] in Caption.level(meters) }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, heroPad)
         }
       }
     }
@@ -242,116 +244,228 @@ struct BentoView: View {
     // Liquid Glass: plain glass under the wash (the wash, not .tint, carries the
     // colour, so it stays when the window isn't key).
     .modifier(BentoGlassSurface(on: glass, radius: BentoRadius.hero, interactive: false))
+    .animation(.easeOut(duration: 0.2), value: modesLine)
+    .animation(.easeOut(duration: 0.2), value: editedBase)
   }
 
-  /// The hero as it always was: the big preset word, then modes and output.
-  private func presetRows(_ t: BentoTint, dark: Bool) -> some View {
+  // MARK: Hero layouts
+
+  /// Full, nothing playing: the big preset word (a menu) with A/B and Power,
+  /// an optional note line, then output and window tools.
+  private func idleFull(_ t: BentoTint, dark: Bool) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(alignment: .center, spacing: 8) {
-        ZStack(alignment: .leading) {
-          HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(heroWord)
-              .font(.system(size: 38, weight: .heavy, design: .rounded))
-              .tracking(-0.8)
-              .lineLimit(1)
-              .minimumScaleFactor(0.5)
-              .foregroundStyle(Color.primary)
-              .modifier(SoftShadow(on: !powerSaver, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
-            if editedBase != nil {
-              Text("· edited")
-                .font(.system(size: 13, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
-            }
-          }
-          .id(heroKey)
-          .transition(heroWordTransition)
-          .pointerHint(heroHint)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.easeOut(duration: 0.25), value: heroKey)
-        .accessibilityElement(children: .combine)
-        heroTrailing
+        bigWord(t, dark: dark, font: 38, chevron: 12, scale: 0.5)
+        if live { abChip(compact: false) }
+        powerButton(size: 40)
       }
-      HStack(alignment: .center, spacing: 8) {
-        if live && !modesLine.isEmpty {
-          modesText(droppable: false).transition(.opacity)
-        }
-        Spacer(minLength: 4)
-        deviceCard
-      }
-      .padding(.top, 4)
-      .animation(.easeOut(duration: 0.2), value: modesLine)
-    }
-    .overlay(alignment: .topLeading) {
-      // The app's mark as a quiet watermark, centred on the hero's top icon row
-      // (13 pt above these rows). Preset layout only: with What's Playing leading
-      // it would sit on the cover art, and the sound line already shows the mark.
-      // An overlay, so it never sizes the hero.
-      if !powerSaver {
-        heroMark(dark ? t.pastel : t.ink)
-          .opacity(dark ? 0.30 : 0.26)
-          .offset(y: -13)
-          .allowsHitTesting(false)
-          .accessibilityHidden(true)
+      .frame(height: 48)
+      if live && (editedBase != nil || !modesLine.isEmpty) {
+        noteLine
+          .frame(height: 16)
           .transition(.opacity)
       }
-    }
-  }
-
-  /// What's Playing leads: cover, song, artist and app, then play/pause (the
-  /// biggest control); the preset and output stay as one quiet line underneath.
-  private func playingRows(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack(alignment: .center, spacing: 8) {
-        NowPlayingHeadline(model: nowPlaying, app: app)
-        heroTrailing
-      }
-      .padding(.top, 2)
-      NowPlayingControls(model: nowPlaying, app: app, tint: live ? (dark ? t.pastel : t.ink) : nil)
+      utilityBar
         .padding(.top, 8)
+    }
+  }
+
+  /// Compact, nothing playing: everything on one row.
+  private func idleCompact(_ t: BentoTint, dark: Bool) -> some View {
+    HStack(alignment: .center, spacing: 8) {
+      bigWord(t, dark: dark, font: 22, chevron: 10, scale: 0.6)
+      if live { abChip(compact: true) }
+      outputChip(iconOnly: true)
+      heroIcons
+      powerButton(size: 32)
+    }
+    .frame(height: 32)
+  }
+
+  /// Full, something playing: the song leads with its transport; the sound
+  /// and the utility bars sit underneath.
+  private func playingFull(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .center, spacing: 8) {
-        soundLine(t)
-        Spacer(minLength: 4)
-        deviceCard(narrow: true)
+        NowPlayingHeadline(model: nowPlaying, app: app, art: 48, title: 15)
+        NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 40, extras: true)
       }
-      .padding(.top, 6)
-      .animation(.easeOut(duration: 0.2), value: modesLine)
+      .frame(height: 48)
+      HStack(alignment: .center, spacing: 8) {
+        soundChip(t)
+        if live { abChip(compact: false) }
+        powerButton(size: 24)
+      }
+      .frame(height: 24)
+      utilityBar
     }
   }
 
-  /// The preset in a small line (What's Playing on): glyph, name, Edited, modes.
-  private func soundLine(_ t: BentoTint) -> some View {
-    HStack(alignment: .center, spacing: 5) {
-      Image(nsImage: MenuBarIcon.image)
-        .renderingMode(.template)
-        .resizable()
-        .interpolation(.high)
-        .frame(width: 10, height: 10)
-        .foregroundStyle(live ? ink(t) : Color.secondary)
-        .accessibilityHidden(true)
-      Text(heroWord)
-        .font(.system(size: 12, weight: .heavy, design: .rounded))
-        .lineLimit(1)
-        .truncationMode(.tail)
-        .foregroundStyle(Color.primary)
-        .layoutPriority(2)
-      if editedBase != nil {
-        Text("· edited")
-          .font(.system(size: 11, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary)
+  /// Compact, something playing: the song with play/pause, then one bar.
+  private func playingCompact(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .center, spacing: 8) {
+        NowPlayingHeadline(model: nowPlaying, app: app, art: 40, title: 13)
+        NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 32, extras: false)
+      }
+      .frame(height: 40)
+      HStack(alignment: .center, spacing: 8) {
+        soundChip(t)
+        if live { abChip(compact: true) }
+        outputChip(iconOnly: true)
+        heroIcons
+        powerButton(size: 24)
+      }
+      .frame(height: 24)
+    }
+  }
+
+  private func transportTint(_ t: BentoTint, dark: Bool) -> Color? { live ? (dark ? t.pastel : t.ink) : nil }
+
+  /// Output (flexible) then the window tools.
+  private var utilityBar: some View {
+    HStack(alignment: .center, spacing: 8) {
+      outputChip(iconOnly: false)
+      heroIcons
+    }
+    .frame(height: 24)
+  }
+
+  /// "Edited · + Study · Night Guard" under the big word.
+  private var noteLine: some View {
+    HStack(spacing: 4) {
+      if editedBase != nil { Text("Edited").lineLimit(1).fixedSize() }
+      if editedBase != nil && !modesLine.isEmpty { Text("·").fixedSize() }
+      if !modesLine.isEmpty { modesText(droppable: false) }
+      Spacer(minLength: 0)
+    }
+    .font(.system(size: 11, weight: .medium, design: .rounded))
+    .foregroundStyle(.secondary)
+  }
+
+  // MARK: Hero controls
+
+  /// The big preset word and its chevron: a menu of presets (plain text while off).
+  private func bigWord(_ t: BentoTint, dark: Bool, font: CGFloat, chevron: CGFloat, scale: CGFloat) -> some View {
+    ZStack(alignment: .leading) {
+      presetMenu {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+          Text(heroWord)
+            .font(.system(size: font, weight: .heavy, design: .rounded))
+            .tracking(font >= 30 ? -0.8 : -0.4)
+            .lineLimit(1)
+            .minimumScaleFactor(scale)
+            .foregroundStyle(Color.primary)
+            .modifier(SoftShadow(on: !powerSaver, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
+          if live {
+            Image(systemName: "chevron.down")
+              .font(.system(size: chevron, weight: .heavy))
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+      .id(heroWord)
+      .transition(heroWordTransition)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .animation(.easeOut(duration: 0.25), value: heroWord)
+  }
+
+  /// The preset as a chip (What's Playing, Compact): glyph, name, Edited,
+  /// modes, chevron. A menu of presets.
+  private func soundChip(_ t: BentoTint) -> some View {
+    presetMenu {
+      HStack(alignment: .center, spacing: 6) {
+        Image(nsImage: MenuBarIcon.image)
+          .renderingMode(.template)
+          .resizable()
+          .interpolation(.high)
+          .aspectRatio(contentMode: .fit)
+          .frame(width: 12, height: 12)
+          .foregroundStyle(live ? ink(t) : Color.secondary)
+          .accessibilityHidden(true)
+        Text(heroWord)
+          .font(.system(size: 12, weight: .heavy, design: .rounded))
           .lineLimit(1)
-          .fixedSize()
+          .truncationMode(.tail)
+          .foregroundStyle(Color.primary)
+          .layoutPriority(2)
+        if editedBase != nil {
+          Text("· edited")
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize()
+        }
+        if live && !modesLine.isEmpty { modesText(droppable: true).transition(.opacity) }
+        Spacer(minLength: 0)
+        if live {
+          Image(systemName: "chevron.down")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.secondary)
+        }
       }
-      if live && !modesLine.isEmpty { modesText(droppable: true).transition(.opacity) }
+      .padding(.horizontal, 8)
+      .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24, alignment: .leading)
+      .background(chipShape.fill(Color.primary.opacity(0.08)))
     }
-    .layoutPriority(1)
-    .accessibilityElement(children: .combine)
-    .pointerHint(heroHint)
+    .frame(maxWidth: .infinity)
   }
 
-  /// `droppable`: left out when even "+ 2 modes" doesn't fit (the sound line).
+  /// The preset picker behind the big word and the sound chip. While off: the label alone.
+  @ViewBuilder private func presetMenu<L: View>(@ViewBuilder _ label: () -> L) -> some View {
+    if live {
+      Menu {
+        Section {
+          ForEach(Preset.all) { p in
+            Button { controller.apply(preset: p) } label: {
+              if s.mode == .off && s.userPresetID == nil && s.presetName == p.name {
+                Label(p.name, systemImage: "checkmark")
+              } else {
+                Text(p.name)
+              }
+            }
+          }
+        }
+        if !s.userPresets.isEmpty {
+          Section("Your Presets") {
+            ForEach(s.userPresets) { p in
+              Button { controller.apply(userPreset: p) } label: {
+                if s.mode == .off && s.userPresetID == p.id {
+                  Label(p.name, systemImage: "checkmark")
+                } else {
+                  Text(p.name)
+                }
+              }
+            }
+          }
+        }
+        Divider()
+        Button("Save Current Sound as Preset…") {
+          withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = .create }
+        }
+        if s.mode == .off, let p = userPreset {
+          Button("Edit Name & Icon…") {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = .edit(p.id) }
+          }
+        }
+      } label: {
+        label().contentShape(Rectangle())
+      }
+      .menuStyle(.button)
+      .buttonStyle(.plain)
+      .menuIndicator(.hidden)
+      .accessibilityLabel("Preset")
+      .accessibilityValue(heroWord)
+      .pointerHint(heroHint)
+    } else {
+      label()
+        .accessibilityElement(children: .combine)
+        .pointerHint(heroHint)
+    }
+  }
+
+  /// `droppable`: left out when even "+ 2 modes" doesn't fit (the sound chip).
   private func modesText(droppable: Bool) -> some View {
     ViewThatFits(in: .horizontal) {
       Text(modesLine).lineLimit(1).fixedSize()
@@ -367,19 +481,30 @@ struct BentoView: View {
     .layoutPriority(1)
   }
 
-  /// A/B and Power, at the right of the hero's first line.
-  @ViewBuilder private var heroTrailing: some View {
-    if live {
-      // Reserve "Original"'s width so A/B never re-flows the preset name.
+  /// A/B compare (only while on). Full reserves "Original"'s width so the
+  /// swap never re-flows the row; Compact always says "A/B" (orange while
+  /// you hear the original).
+  private func abChip(compact small: Bool) -> some View {
+    let on = controller.bypassed
+    return Button { controller.bypassed.toggle() } label: {
       ZStack {
-        Text("Original")
-          .font(.system(size: 10, weight: .bold, design: .rounded))
-          .lineLimit(1).fixedSize().footerChip().hidden()
-        abButton
+        if !small { Text("Original").hidden() }
+        Text(small || !on ? "A/B" : "Original")
       }
+      .font(.system(size: 11, weight: .bold, design: .rounded))
+      .lineLimit(1)
       .fixedSize()
+      .padding(.horizontal, 8)
+      .frame(height: 24)
+      .foregroundStyle(on ? Color.white : Color.primary)
+      .background(chipShape.fill(on ? Color.orange : Color.primary.opacity(0.08)))
+      .contentShape(chipShape)
     }
-    powerButton
+    .buttonStyle(BentoPressStyle())
+    .fixedSize()
+    .accessibilityLabel("Compare with original sound")
+    .accessibilityValue(on ? "Original" : "Processed")
+    .pointerHint(Caption.ab(bypassed: on, hotkey: s.bypassHotkey ? GlobalHotkey.bypassLabel : nil))
   }
 
   private func heroBackground(_ t: BentoTint, dark: Bool, shape: RoundedRectangle) -> some View {
@@ -398,8 +523,8 @@ struct BentoView: View {
       if live {
         HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
           BentoLevelLines(model: meters, color: dark ? t.pastel.opacity(0.85) : t.ink.opacity(0.6))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 4)
+            .padding(.horizontal, heroPad)
+            .padding(.bottom, compact ? 3 : 4)
         }
       }
     }
@@ -409,12 +534,11 @@ struct BentoView: View {
     .accessibilityHidden(true)
   }
 
-  /// Dark inset mini-card: the output device (menu picks another).
-  private var deviceCard: some View { deviceCard(narrow: live && !modesLine.isEmpty) }
-
-  /// `narrow`: leave room for text beside it (modes, or What's Playing's sound line).
-  private func deviceCard(narrow: Bool) -> some View {
-    Menu {
+  /// The output device (menu picks another). A neutral chip: the name is
+  /// information, so it shows at every label level; icon only in Compact.
+  private func outputChip(iconOnly: Bool) -> some View {
+    let name = controller.currentDevice?.name ?? "No output"
+    return Menu {
       ForEach(controller.devices) { d in
         Button {
           controller.select(device: d)
@@ -423,38 +547,51 @@ struct BentoView: View {
         }
       }
     } label: {
-      HStack(spacing: 4) {
+      HStack(spacing: 6) {
         Image(systemName: controller.currentOutputIsHeadphones ? "headphones" : "hifispeaker")
-          .font(.system(size: 9, weight: .bold))
-        if labels == .full {
-          Text(controller.currentDevice?.name ?? "No output")
-            .font(.system(size: 10, weight: .bold, design: .rounded))
+          .font(.system(size: 10, weight: .bold))
+          .frame(width: 14)
+        if !iconOnly {
+          Text(name)
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
             .lineLimit(1)
             .truncationMode(.middle)
-            .frame(maxWidth: narrow ? 96 : 150, alignment: .leading)
+          Spacer(minLength: 0)
+          Image(systemName: "chevron.down")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.secondary)
         }
       }
-      .miniCard()
+      .foregroundStyle(Color.primary)
+      .padding(.horizontal, iconOnly ? 0 : 8)
+      .frame(minWidth: 24, maxWidth: iconOnly ? 24 : .infinity, minHeight: 24, maxHeight: 24)
+      .background(chipShape.fill(Color.primary.opacity(0.08)))
+      .contentShape(chipShape)
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
-    .fixedSize()
+    .frame(maxWidth: iconOnly ? 24 : .infinity)
+    .accessibilityLabel("Output")
+    .accessibilityValue(name)
     .pointerHint(Caption.output(controller.currentDevice?.name))
   }
 
-  private var powerButton: some View {
+  /// Power: the big disc while nothing plays (40 Full, 32 Compact), a 24
+  /// circle in the sound bar while something does.
+  private func powerButton(size d: CGFloat) -> some View {
     Button {
       controller.settings.enabled.toggle()
     } label: {
       Image(systemName: "power")
-        .font(.system(size: 14, weight: .heavy))
-        .frame(width: 34, height: 34)
+        .font(.system(size: (d * CGFloat(0.4)).rounded(), weight: .heavy, design: .rounded))
+        .frame(width: d, height: d)
         .foregroundStyle(live ? heroTint.pastel : Color.secondary)
         .background(Circle().fill(live ? BentoInk.miniFill : Color.primary.opacity(0.08)))
         .contentShape(Circle())
     }
     .buttonStyle(BentoPressStyle())
+    .fixedSize()
     .accessibilityLabel(live ? "Turn The Bass Shaker off" : "Turn The Bass Shaker on")
     .pointerHint(Caption.power(on: live))
   }
@@ -481,26 +618,16 @@ struct BentoView: View {
   // MARK: - Presets
 
   private var presets: some View {
-    VStack(spacing: 8) {
-      // Not interactive: the whole strip would react to every pill press and
-      // scroll drag. The pills stay non-glass on purpose: at 6 pt spacing they
-      // would merge inside GlassEffectContainer (and be glass on glass).
-      BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
-        PresetStrip(controller: controller, editor: $editor)
-          .contentMargins(.horizontal, 8, for: .scrollContent)
-          .padding(.vertical, 8)
-          .environment(\.bentoChips, true)
-      }
-      .pointerHintTint(ink(.frost))
-      if let mode = editor {
-        PresetEditor(controller: controller, mode: mode) {
-          withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = nil }
-        }
-        .id(mode == .create ? "create" : "edit")
-        .transition(.opacity.combined(with: .move(edge: .top)))
-      }
+    // Not interactive: the whole strip would react to every pill press and
+    // scroll drag. The pills stay non-glass on purpose: at 6 pt spacing they
+    // would merge inside GlassEffectContainer (and be glass on glass).
+    BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
+      PresetStrip(controller: controller, editor: $editor)
+        .contentMargins(.horizontal, 8, for: .scrollContent)
+        .padding(.vertical, 8)
+        .environment(\.bentoChips, true)
     }
-    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
+    .pointerHintTint(ink(.frost))
   }
 
   // MARK: - Modes

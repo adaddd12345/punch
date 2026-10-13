@@ -315,7 +315,8 @@ enum PauseRoute: String, Codable { case ask, keys, mute }
 enum LabelLevel: String, Codable, CaseIterable {
   case full, half, icons
   var next: LabelLevel { self == .full ? .half : self == .half ? .icons : .full }
-  var symbol: String { self == .full ? "textformat" : self == .half ? "textformat.size.smaller" : "square.grid.2x2" }
+  /// A tag: filled with all labels, outlined with fewer, slashed with icons only.
+  var symbol: String { self == .full ? "tag.fill" : self == .half ? "tag" : "tag.slash" }
   var title: String { self == .full ? "All labels" : self == .half ? "Fewer labels" : "Icons only" }
 }
 
@@ -336,12 +337,9 @@ enum ViewSize: String, Codable, CaseIterable {
     case .mini: return .full
     }
   }
+  /// What a click does next: shrink (Full, Compact) or grow back (Mini).
   var symbol: String {
-    switch self {
-    case .full: return "rectangle.expand.vertical"
-    case .compact: return "rectangle.compress.vertical"
-    case .mini: return "minus.rectangle"
-    }
+    self == .mini ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left"
   }
   var title: String { rawValue.capitalized }
 }

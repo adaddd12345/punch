@@ -749,11 +749,11 @@ enum Caption {
   /// The big word in the Bento hero.
   static func hero(live: Bool, mode: ListeningMode, word: String, editedFrom: String?, unsaved: Bool) -> PointerHint {
     if !live { return PointerHint("Off", does: "Nothing is changed: your Mac plays its normal sound.") }
-    if mode != .off { return PointerHint(word, value: "Paused", does: "\(mode.title) plays its own sound until you turn it off.") }
+    if mode != .off { return PointerHint(word, value: "Paused", does: "\(mode.title) is on; picking a preset here turns it off.") }
     if let base = editedFrom {
-      return PointerHint("\(base) · edited", value: "Not saved", does: "Save it with + below, or press ⌘Z to undo.")
+      return PointerHint("\(base) · edited", value: "Not saved", does: "Save it from this menu, or press ⌘Z to undo.")
     }
-    if unsaved { return PointerHint(word, value: "Not saved", does: "Save it with + below, or press ⌘Z to undo.") }
+    if unsaved { return PointerHint(word, value: "Not saved", does: "Save it from this menu, or press ⌘Z to undo.") }
     return PointerHint(word, does: plain[word] ?? "Your saved sound; right-click its chip below to update it.")
   }
 
