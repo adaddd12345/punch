@@ -3,7 +3,10 @@ import SwiftUI
 
 // Reshuffle: hold any block of the popup still for half a second and every
 // block lifts slightly; drag one up or down to reorder (the others make room
-// with a spring), then Done, Esc, Return or a click outside the blocks.
+// with a spring), then Done, Return or a click outside the blocks. Esc
+// mid-drag puts the block back; otherwise Esc ends like Done. The order is
+// saved only on release; Reset Order (beside Done, and in Edit Layout)
+// returns to the default.
 // Whole blocks only (LayoutSection, same order as Edit Layout); the footer
 // stays put. Hiding stays in Edit Layout.
 //
@@ -14,8 +17,11 @@ import SwiftUI
 // never start it.
 //
 // Nothing here writes view state from geometry: block heights go into a plain
-// dictionary (no redraw), and the order changes once per reflow step and once
-// per drop.
+// dictionary (no redraw), frozen when a drag begins. Mid-drag no block moves
+// in layout (render offsets only), the pointer is read in window space, and
+// the slot comes from ReshuffleSlot's settled positions with hysteresis, so
+// measuring can never feed back into the order: one state change per step,
+// one per drop.
 
 final class Reshuffle: ObservableObject {
   /// Blocks are lifted and draggable; their controls don't respond.
@@ -29,6 +35,19 @@ final class Reshuffle: ObservableObject {
   var heights: [String: CGFloat] = [:]
   /// May a hold start now (full popup, nothing else open)?
   var canStart: () -> Bool = { false }
+  /// A block is being dragged right now (plain: read on the redraws the drag makes).
+  var dragging = false
+  /// Cancels the drag in progress back to the order it began with (set by BentoView).
+  var cancelDrag: (() -> Void)?
+  /// Scrolls a tall popup's blocks while a dragged block nears an edge.
+  let autoScroll = ReshuffleAutoScroll()
+  var hostWindow: NSWindow? { window }
+
+  /// Esc: a drag in progress goes back to where it began; otherwise rearranging ends.
+  func escape() {
+    if dragging, let cancel = cancelDrag { cancel(); return }
+    withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { set(false) }
+  }
 
   private var monitor: Any?
   private var pending: DispatchWorkItem?
@@ -77,6 +96,8 @@ final class Reshuffle: ObservableObject {
     swallowUp = false
     hovered = nil
     overDone = false
+    dragging = false
+    autoScroll.end()
     if on { on = false; Self.anyOn = false }
   }
 
@@ -147,15 +168,20 @@ final class Reshuffle: ObservableObject {
   }
 }
 
-/// One block's reshuffle chrome: the lift, the outline, its drop slot while
-/// dragged, the drag itself, and VoiceOver's move actions.
+/// One block's reshuffle chrome: the lift, the outline, the drag itself, and
+/// VoiceOver's move actions.
+///
+/// While a block is dragged nothing moves in layout: the dragged block and the
+/// blocks it passes are only offset (render-time), so no frame changes under
+/// the pointer and nothing is ever re-measured mid-drag. The drag reads the
+/// pointer in window space (`.global`), never in the moving block's own space.
 struct ReshuffleBlock: ViewModifier {
   let key: String
   let name: String
   @ObservedObject var model: Reshuffle
   /// This block is the one being dragged.
   let lifted: Bool
-  /// Its drag offset (only while lifted).
+  /// Its render offset: the dragged block's follow, or a passed block's shift.
   let offset: CGFloat
   let onDrag: (CGFloat) -> Void
   let onDrop: () -> Void
@@ -163,14 +189,13 @@ struct ReshuffleBlock: ViewModifier {
   let move: (Int) -> Void
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
-  @Environment(\.colorScheme) private var scheme
 
   private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous) }
 
   func body(content: Content) -> some View {
     let on = model.on
     // Reduce Motion: outlines only, no scale.
-    let scale: CGFloat = !on || reduceMotion ? 1 : (lifted ? 1.0 : 0.98)
+    let scale: CGFloat = !on || reduceMotion ? 1 : (lifted ? 1.02 : 0.98)
     let soft = on && !powerSaver && !reduceMotion
     content
       // Controls inside stop responding while blocks move.
@@ -183,6 +208,10 @@ struct ReshuffleBlock: ViewModifier {
             .onDisappear { model.heights[key] = nil; model.hover(key, false) }
         }
       }
+      // Lifted: an opaque card, so nothing under it shows through.
+      .background {
+        if lifted { shape.fill(Color(nsColor: .windowBackgroundColor)) }
+      }
       .overlay {
         if on {
           shape.strokeBorder(Color.accentColor.opacity(lifted ? 0.9 : 0.6), lineWidth: lifted ? 1.5 : 1)
@@ -191,23 +220,16 @@ struct ReshuffleBlock: ViewModifier {
         }
       }
       .scaleEffect(scale)
-      .shadow(color: .black.opacity(soft ? (lifted ? 0.22 : 0.08) : 0), radius: lifted ? 12 : 4, y: lifted ? 6 : 1)
-      .offset(y: lifted ? offset : 0)
-      // The drop slot: where the block lands, under the block being dragged
-      // (offset doesn't move layout, so this stays at the slot).
-      .background {
-        if lifted {
-          shape.strokeBorder(Color.accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-            .background(shape.fill(Color.accentColor.opacity(scheme == .dark ? 0.10 : 0.07)))
-        }
-      }
-      .zIndex(lifted ? 1 : 0)
-      // The dragged block follows the pointer exactly; the others spring.
-      .transaction { if lifted { $0.animation = nil } }
+      .shadow(color: .black.opacity(soft ? (lifted ? 0.28 : 0.08) : 0), radius: lifted ? 14 : 4, y: lifted ? 8 : 1)
+      .offset(y: offset)
+      // The dragged block follows the pointer 1:1; the others glide (the
+      // caller animates their shifts with one spring).
+      .transaction { if lifted && model.dragging { $0.animation = nil } }
+      .zIndex(lifted ? 10 : 0)
       .contentShape(Rectangle())
       .onHover { model.hover(key, $0) }
       .gesture(
-        DragGesture(minimumDistance: 1)
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
           .onChanged { onDrag($0.translation.height) }
           .onEnded { _ in onDrop() },
         including: on ? .gesture : .subviews)
@@ -220,12 +242,175 @@ struct ReshuffleBlock: ViewModifier {
   }
 }
 
-/// The small "Done" capsule over the top of the popup while reshuffling.
+/// Where a dragged block lands, from its position against the others'
+/// settled places (never their animated ones). Pure: same input, same answer.
+///
+/// `start`: the shown blocks top to bottom when the drag began; `heights`:
+/// their heights then; `target`: the dragged block's current slot (index in
+/// the new order); `dy`: how far the pointer has moved it from its start slot.
+/// It moves one step up when its top passes the upper neighbour's settled
+/// middle by `margin`, one step down when its bottom passes the lower
+/// neighbour's; after a step the neighbour's settled middle jumps by the
+/// dragged block's height, so stepping back needs another 2 × margin + 8 pt of
+/// travel: no oscillation on a boundary.
+enum ReshuffleSlot {
+  static let spacing: CGFloat = 8
+  static let margin: CGFloat = 12
+
+  /// A block with nothing in it (e.g. What's Playing with nothing playing)
+  /// never takes part: it keeps its place and is never a step.
+  static func visible(_ all: [String], key: String, heights: [String: CGFloat]) -> [String] {
+    all.filter { $0 == key || (heights[$0] ?? 0) >= 1 }
+  }
+
+  /// The whole order with the dragged block at `target` among the visible ones.
+  static func order(_ all: [String], key: String, target: Int, heights: [String: CGFloat]) -> [String] {
+    let vis = visible(all, key: key, heights: heights)
+    var moved = vis.filter { $0 != key }
+    moved.insert(key, at: min(max(target, 0), moved.count))
+    var it = moved.makeIterator()
+    return all.map { vis.contains($0) ? (it.next() ?? $0) : $0 }
+  }
+
+  static func top(of key: String, in order: [String], heights: [String: CGFloat]) -> CGFloat {
+    var y: CGFloat = 0
+    for k in order {
+      if k == key { return y }
+      y += (heights[k] ?? 0) + spacing
+    }
+    return y
+  }
+
+  static func target(start: [String], key: String, heights: [String: CGFloat], current: Int, dy: CGFloat) -> Int {
+    let h = heights[key] ?? 0
+    let top = Self.top(of: key, in: start, heights: heights) + dy
+    let bottom = top + h
+    let n = visible(start, key: key, heights: heights).count
+    var t = current
+    for _ in 0...n {
+      let o = order(start, key: key, target: t, heights: heights)
+      let vo = visible(o, key: key, heights: heights)
+      if t > 0 {
+        let a = vo[t - 1]
+        let mid = Self.top(of: a, in: o, heights: heights) + (heights[a] ?? 0) / 2
+        if top < mid - margin { t -= 1; continue }
+      }
+      if t < n - 1 {
+        let b = vo[t + 1]
+        let mid = Self.top(of: b, in: o, heights: heights) + (heights[b] ?? 0) / 2
+        if bottom > mid + margin { t += 1; continue }
+      }
+      break
+    }
+    return t
+  }
+}
+
+/// Scrolls the popup's block column while a dragged block is held near its
+/// top or bottom edge (only when the column scrolls: a tall popup).
+final class ReshuffleAutoScroll {
+  private weak var scrollView: NSScrollView?
+  private var timer: Timer?
+  /// Points scrolled down since the drag began (content moved up under the pointer).
+  private(set) var scrolled: CGFloat = 0
+  private var step: (() -> Void)?
+
+  static let edge: CGFloat = 36
+  static let maxSpeed: CGFloat = 9
+
+  func begin(in window: NSWindow?, step: @escaping () -> Void) {
+    end()
+    scrolled = 0
+    self.step = step
+    guard let window, let cv = window.contentView else { return }
+    let p = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+    scrollView = Self.find(in: cv, at: p)
+    guard scrollView != nil else { return }
+    let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
+    RunLoop.main.add(t, forMode: .common)
+    RunLoop.main.add(t, forMode: .eventTracking)
+    timer = t
+  }
+
+  func end() {
+    timer?.invalidate()
+    timer = nil
+    scrollView = nil
+    step = nil
+  }
+
+  /// The vertically scrollable scroll view under the pointer.
+  private static func find(in view: NSView, at p: NSPoint) -> NSScrollView? {
+    for sub in view.subviews.reversed() where !sub.isHidden {
+      if let hit = find(in: sub, at: p) { return hit }
+    }
+    if let sv = view as? NSScrollView, let doc = sv.documentView,
+       doc.frame.height > sv.contentView.bounds.height + 1,
+       sv.convert(sv.bounds, to: nil).contains(p) {
+      return sv
+    }
+    return nil
+  }
+
+  private func tick() {
+    guard let sv = scrollView, let w = sv.window, let doc = sv.documentView else { return }
+    let p = w.convertPoint(fromScreen: NSEvent.mouseLocation)
+    let r = sv.convert(sv.bounds, to: nil)  // window space, y up
+    var speed: CGFloat = 0
+    if p.y > r.maxY - Self.edge { speed = -min(1, (p.y - (r.maxY - Self.edge)) / Self.edge) }      // toward the top
+    else if p.y < r.minY + Self.edge { speed = min(1, ((r.minY + Self.edge) - p.y) / Self.edge) }  // toward the bottom
+    guard speed != 0 else { return }
+    let clip = sv.contentView
+    let maxY = max(0, doc.frame.height - clip.bounds.height)
+    // Flipped documents grow y downward; others upward.
+    let down = speed * Self.maxSpeed
+    var o = clip.bounds.origin
+    let cur = doc.isFlipped ? o.y : maxY - o.y
+    let next = min(max(cur + down, 0), maxY)
+    let moved = next - cur
+    guard abs(moved) > 0.01 else { return }
+    o.y = doc.isFlipped ? next : maxY - next
+    clip.scroll(to: o)
+    sv.reflectScrolledClipView(clip)
+    scrolled += moved
+    step?()
+  }
+}
+
+/// The small "Done" capsule over the top of the popup while reshuffling,
+/// with a quieter "Reset Order" beside it.
 struct ReshuffleDone: View {
   @ObservedObject var model: Reshuffle
+  /// The order isn't the default (Reset Order has something to do).
+  let canReset: Bool
+  let reset: () -> Void
   let done: () -> Void
 
   var body: some View {
+    HStack(spacing: 6) {
+      if canReset {
+        Button(action: reset) {
+          Text("Reset Order")
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(.regularMaterial))
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { model.overDone = $0 }
+        .accessibilityLabel("Reset Block Order")
+        .transition(.opacity)
+      }
+      doneButton
+    }
+    .onDisappear { model.overDone = false }
+  }
+
+  private var doneButton: some View {
     Button(action: done) {
       Text("Done")
         .font(.system(size: 11, weight: .semibold, design: .rounded))
@@ -239,11 +424,10 @@ struct ReshuffleDone: View {
     .buttonStyle(.plain)
     .keyboardShortcut(.defaultAction)
     .onHover { model.overDone = $0 }
-    .onDisappear { model.overDone = false }
     .accessibilityLabel("Done Rearranging")
-    // Esc as well as Return.
+    // Esc: cancels a drag in progress, else ends like Done.
     .background {
-      Button("", action: done).keyboardShortcut(.cancelAction).opacity(0).frame(width: 0, height: 0)
+      Button("") { model.escape() }.keyboardShortcut(.cancelAction).opacity(0).frame(width: 0, height: 0)
         .accessibilityHidden(true)
     }
   }

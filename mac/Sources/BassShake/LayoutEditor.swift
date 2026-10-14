@@ -177,6 +177,12 @@ struct LayoutEditorView: View {
         .controlSize(.small)
         .disabled(!anyHidden)
         .pointerHint("Show All", does: "Brings back this layout's sections, and Mac Volume in both layouts.")
+      Button("Reset Order") {
+        if controller.settings.bento { controller.settings.bentoOrder = [] } else { controller.settings.classicOrder = [] }
+      }
+        .controlSize(.small)
+        .disabled((controller.settings.bento ? controller.settings.bentoOrder : controller.settings.classicOrder).isEmpty)
+        .pointerHint("Reset Order", does: "Default block order; hidden sections stay hidden.")
       Button("Done", action: onClose)
         .controlSize(.small)
         .buttonStyle(.borderedProminent)

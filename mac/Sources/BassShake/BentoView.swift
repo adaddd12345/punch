@@ -94,15 +94,30 @@ struct BentoView: View {
     VStack(spacing: 8) {
       // One ForEach keyed by section at every size, so ⌘1/2/3 resizes each
       // block in place and a reorder moves blocks rather than rebuilding them.
-      ForEach(drag?.order ?? blockKeys, id: \.self) { key in
+      // Mid-drag the layout order stays as it was; blocks only shift (offsets).
+      ForEach(drag?.start ?? blockKeys, id: \.self) { key in
         if blockShown(key) {
           VStack(spacing: 8) { block(key) }
+            // Lifted: plain frosted tiles, so its glass never merges with the blocks it passes.
+            .environment(\.bentoGlass, glass && drag?.key != key ? BentoGlassSpace(id: glassSpace) : nil)
             .modifier(ReshuffleBlock(key: key, name: sectionName(key), model: reshuffle,
-                                     lifted: drag?.key == key, offset: dragOffset(key),
+                                     lifted: drag?.key == key && drag?.cancelled == false, offset: dragOffset(key),
                                      onDrag: { dragBlock(key, by: $0) }, onDrop: dropBlock,
                                      move: { moveBlock(key, by: $0) }))
             .transition(key.hasSuffix(".modeSettings") ? .opacity.combined(with: .move(edge: .top)) : .opacity)
         }
+      }
+    }
+    // The drop slot: exactly the dragged block's height, at its target place.
+    .background(alignment: .top) {
+      if let d = drag, !d.cancelled {
+        let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
+        shape.strokeBorder(Color.accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+          .background(shape.fill(Color.accentColor.opacity(scheme == .dark ? 0.10 : 0.07)))
+          .frame(height: d.heights[d.key] ?? 0)
+          .offset(y: ReshuffleSlot.top(of: d.key, in: d.order, heights: d.heights))
+          .allowsHitTesting(false)
+          .transition(.opacity)
       }
     }
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
@@ -112,7 +127,7 @@ struct BentoView: View {
     .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
     .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
     .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
-    .onChange(of: reshuffle.on) { _, on in if !on { drag = nil } }
+    .onChange(of: reshuffle.on) { _, on in if !on { endDrag() } }
   }
 
   // MARK: - Blocks
@@ -200,74 +215,114 @@ struct BentoView: View {
 
   // MARK: - Reorder
 
-  /// A block being dragged in reshuffle mode.
+  /// A block being dragged in reshuffle mode. Everything here is frozen when
+  /// the drag begins; only `translation` and `target` change, and only from
+  /// the pointer (never from layout).
   private struct BlockDrag {
     let key: String
     /// The shown blocks, top to bottom, as they stood when the drag began.
     let start: [String]
-    /// The same, live: the dragged block at the slot it would drop into.
-    var order: [String]
-    /// Heights when the drag began (layout doesn't change mid-drag).
+    /// Heights when the drag began (nothing re-measures mid-drag).
     let heights: [String: CGFloat]
+    /// The dragged block's slot among the blocks that show something.
+    var target: Int
+    /// The pointer's travel (window space).
+    var translation: CGFloat = 0
+    /// The pointer's travel plus any auto-scroll: the block's offset from its start slot.
     var dy: CGFloat = 0
+    /// Esc cancelled it: the rest of this mouse drag does nothing.
+    var cancelled = false
+
+    var order: [String] { ReshuffleSlot.order(start, key: key, target: target, heights: heights) }
   }
 
-  private func top(of key: String, in order: [String], heights: [String: CGFloat]) -> CGFloat {
-    var y: CGFloat = 0
-    for k in order {
-      if k == key { return y }
-      y += (heights[k] ?? 0) + 8
-    }
-    return y
-  }
-
-  /// The dragged block sits under the pointer; its slot is where it would land.
+  /// Render-time shift of each block: the dragged one follows the pointer;
+  /// the ones it has passed move by its height to open its slot.
   private func dragOffset(_ key: String) -> CGFloat {
-    guard let d = drag, d.key == key else { return 0 }
-    return top(of: key, in: d.start, heights: d.heights) + d.dy - top(of: key, in: d.order, heights: d.heights)
+    guard let d = drag, !d.cancelled, d.start.contains(key) else { return 0 }
+    if key == d.key { return d.dy }
+    return ReshuffleSlot.top(of: key, in: d.order, heights: d.heights)
+      - ReshuffleSlot.top(of: key, in: d.start, heights: d.heights)
   }
 
   private var reflow: Animation? { reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82) }
 
-  private func dragBlock(_ key: String, by dy: CGFloat) {
+  private func dragBlock(_ key: String, by translation: CGFloat) {
     guard reshuffle.on else { return }
     var d: BlockDrag
     if let cur = drag, cur.key == key {
       d = cur
     } else {
+      guard drag == nil else { return }
       let shown = blockKeys.filter { blockShown($0) }
-      d = BlockDrag(key: key, start: shown, order: shown, heights: reshuffle.heights)
+      let heights = reshuffle.heights
+      guard let i = ReshuffleSlot.visible(shown, key: key, heights: heights).firstIndex(of: key) else { return }
+      d = BlockDrag(key: key, start: shown, heights: heights, target: i)
+      reshuffle.dragging = true
+      reshuffle.cancelDrag = { cancelDrag() }
+      reshuffle.autoScroll.begin(in: reshuffle.hostWindow) { [reshuffle] in
+        // The column scrolled under a still pointer: re-place the block.
+        guard reshuffle.dragging else { return }
+        stepDrag()
+      }
       Reshuffle.tick()
+      // Lift (no reflow yet).
+      withAnimation(reflow) { drag = d }
     }
-    d.dy = dy
-    // The slot: after every other block whose middle the dragged block's middle has passed.
-    let h = d.heights[key] ?? 0
-    let center = top(of: key, in: d.start, heights: d.heights) + dy + h / 2
-    let others = d.start.filter { $0 != key }
-    var y: CGFloat = 0
-    var slot = 0
-    for o in others {
-      let ho = d.heights[o] ?? 0
-      if center > y + ho / 2 { slot += 1 }
-      y += ho + 8
-    }
-    var order = others
-    order.insert(key, at: slot)
-    if order != d.order {
-      d.order = order
+    guard !d.cancelled else { return }
+    d.translation = translation
+    place(&d)
+  }
+
+  /// Auto-scroll moved the content: same pointer travel, new scroll.
+  private func stepDrag() {
+    guard var d = drag, !d.cancelled else { return }
+    place(&d)
+  }
+
+  private func place(_ d: inout BlockDrag) {
+    d.dy = d.translation + reshuffle.autoScroll.scrolled
+    let t = ReshuffleSlot.target(start: d.start, key: d.key, heights: d.heights, current: d.target, dy: d.dy)
+    if t != d.target {
+      d.target = t
       NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-      // One state change per step: the others spring to their new places.
+      // One state change per step: the passed blocks spring aside together.
       withAnimation(reflow) { drag = d }
     } else {
       drag = d
     }
   }
 
+  /// The order is committed only here, on release.
   private func dropBlock() {
     guard let d = drag else { return }
-    if d.order != d.start { save(shown: d.order) }
+    reshuffle.dragging = false
+    reshuffle.autoScroll.end()
+    reshuffle.cancelDrag = nil
+    if d.cancelled { drag = nil; return }
     Reshuffle.tick()
-    withAnimation(reflow) { drag = nil }
+    // The layout takes the new order as the offsets go to zero: it settles in place.
+    withAnimation(reflow) {
+      if d.order != d.start { save(shown: d.order) }
+      drag = nil
+    }
+  }
+
+  /// Esc mid-drag: everything glides back to the order the drag began with.
+  private func cancelDrag() {
+    guard var d = drag, !d.cancelled else { return }
+    d.cancelled = true
+    reshuffle.dragging = false
+    reshuffle.autoScroll.end()
+    Reshuffle.tick()
+    withAnimation(reflow) { drag = d }
+  }
+
+  private func endDrag() {
+    reshuffle.dragging = false
+    reshuffle.autoScroll.end()
+    reshuffle.cancelDrag = nil
+    drag = nil
   }
 
   /// VoiceOver: one step up or down among the shown blocks.

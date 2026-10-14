@@ -406,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       guard let button = statusItem?.button else { return }
       LiveDrawer.shared.preferSide = false
       dockAnchor.orderOut(nil)
+      PopupSpace.shared.set(PopupSpace.below(button))
       popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
       button.highlight(true)
     case .dock(let p, let edge):
@@ -413,6 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       // A popup against the Dock puts its tray beside it, not over the Dock.
       LiveDrawer.shared.preferSide = true
       dockAnchor.place(at: p)
+      PopupSpace.shared.set(PopupSpace.from(dock: p, edge: edge))
       popover.show(relativeTo: v.bounds, of: v, preferredEdge: edge)
     }
     anchoredAt = anchor

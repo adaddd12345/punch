@@ -33,6 +33,8 @@ struct PopoverView: View {
   @State private var showLayoutEditor = false
   /// Hold any block to rearrange (Reshuffle.swift).
   @StateObject private var reshuffle: Reshuffle
+  /// How tall the menu-bar popup may be where it hangs.
+  @ObservedObject private var space = PopupSpace.shared
 
   /// Where this copy of the controls lives.
   enum Role { case menuBar, launchWindow, pinned }
@@ -134,13 +136,16 @@ struct PopoverView: View {
         if size != .mini { driverSection }
         // One BentoView at every size, so ⌘1/2/3 resizes its tiles in place.
         // Classic Full and Compact are the same blocks, flat (stripped back).
-        BentoView(controller: controller, meters: meters, editor: $editor, size: size,
-                  heroIcons: AnyView(size == .mini
-                    ? windowTools(words: false, mini: true, height: 32, capsule: true)
-                    : windowTools(words: size == .full && labels == .full)),
-                  flat: !controller.settings.bento,
-                  macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
-                  reshuffle: reshuffle)
+        // Taller than the space it hangs in: the blocks scroll, the footer stays.
+        OverflowScroll {
+          BentoView(controller: controller, meters: meters, editor: $editor, size: size,
+                    heroIcons: AnyView(size == .mini
+                      ? windowTools(words: false, mini: true, height: 32, capsule: true)
+                      : windowTools(words: size == .full && labels == .full)),
+                    flat: !controller.settings.bento,
+                    macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
+                    reshuffle: reshuffle)
+        }
       }
       // Under the stack, so a mute never pushes What's Playing down.
       mutedNotice
@@ -164,6 +169,8 @@ struct PopoverView: View {
     .padding(12)
     .environment(\.labelLevel, controller.settings.labelLevel)
     .frame(width: 360)
+    // Never taller than the screen space it hangs in (menu-bar popover only).
+    .frame(maxHeight: role == .menuBar ? space.maxHeight : nil, alignment: .top)
     .background(PopupBackground(style: controller.settings.backgroundStyle, active: visible))
     // "Updated to …" floats over the top row, outside the layout: showing or
     // hiding it never changes the popup's height, so nothing below jumps.
@@ -178,7 +185,15 @@ struct PopoverView: View {
     // Rearranging: a small Done at the top (Return / Esc too).
     .overlay(alignment: .top) {
       if reshuffle.on {
-        ReshuffleDone(model: reshuffle) {
+        let bento = controller.settings.bento
+        ReshuffleDone(model: reshuffle,
+                      canReset: !(bento ? controller.settings.bentoOrder : controller.settings.classicOrder).isEmpty,
+                      reset: {
+                        reshuffle.cancelDrag?()
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                          if bento { controller.settings.bentoOrder = [] } else { controller.settings.classicOrder = [] }
+                        }
+                      }) {
           withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { reshuffle.set(false) }
         }
         .padding(.top, 4)
@@ -1101,6 +1116,52 @@ struct AppDetailsMenu: View {
     case .notAsked: return "Not asked yet"
     case .blocked: return "Blocked in System Settings"
     case .off: return "Off"
+    }
+  }
+}
+
+/// How tall the menu-bar popup may be where it hangs (under the menu-bar
+/// icon, or above / beside the Dock), so a tall popup scrolls its blocks
+/// instead of running off the screen. Set once per opening, never from layout.
+final class PopupSpace: ObservableObject {
+  static let shared = PopupSpace()
+  /// The popup's largest height (points), or nil: no limit known.
+  @Published private(set) var maxHeight: CGFloat?
+
+  /// The popover's arrow plus a little air.
+  static let chrome: CGFloat = 28
+
+  func set(_ h: CGFloat?) {
+    let v = h.map { max(320, $0.rounded(.down)) }
+    if v != maxHeight { maxHeight = v }
+  }
+
+  /// Under the menu-bar icon: down to the Dock (or the screen's bottom).
+  static func below(_ button: NSView) -> CGFloat? {
+    guard let w = button.window, let s = w.screen ?? NSScreen.main else { return nil }
+    return w.frame.minY - s.visibleFrame.minY - chrome
+  }
+
+  /// From the Dock: above a bottom Dock up to the menu bar; beside a side Dock, the screen's height.
+  static func from(dock p: NSPoint, edge: NSRectEdge) -> CGFloat? {
+    guard let s = NSScreen.screens.first(where: { $0.frame.insetBy(dx: -4, dy: -4).contains(p) }) ?? NSScreen.main
+    else { return nil }
+    let vf = s.visibleFrame
+    return edge == .maxY ? vf.maxY - p.y - chrome : vf.height - chrome
+  }
+}
+
+/// The popup's blocks as they are when they fit; a scrolling column when the
+/// popup would be taller than the space it hangs in (the footer stays put).
+struct OverflowScroll<Content: View>: View {
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    ViewThatFits(in: .vertical) {
+      content()
+      ScrollView(.vertical) { content() }
+        .scrollIndicators(.automatic)
+        .scrollBounceBehavior(.basedOnSize)
     }
   }
 }
