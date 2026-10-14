@@ -196,13 +196,26 @@ final class LiveChannels: ObservableObject {
     retunePoll()
   }
 
-  /// The "In your ears" rows (PlayingChannel.swift), only while they're expanded on screen.
-  func setEarsMetering(_ on: Bool) {
-    earsMetering = on
+  /// The "In your ears" rows (PlayingChannel.swift), only while they're expanded
+  /// on screen. A count, so two rows instances (Mini and the full popup) don't
+  /// switch each other off. Pair each begin with one end.
+  func beginEarsMetering() {
+    earsReaders += 1
     applyMetering(meteringReaders)
   }
 
-  private var meteringReaders: Bool { uiMetering || backgroundMetering || nowPlayingMetering || earsMetering }
+  func endEarsMetering() {
+    earsReaders = max(0, earsReaders - 1)
+    applyMetering(meteringReaders)
+  }
+
+  /// The popup closed: every ears reader stops (a row's own onDisappear may not run).
+  func stopEarsMetering() {
+    earsReaders = 0
+    applyMetering(meteringReaders)
+  }
+
+  private var meteringReaders: Bool { uiMetering || backgroundMetering || nowPlayingMetering || earsReaders > 0 }
 
   /// 10 Hz only when the Live Channels list is the sole reader under Power Saver.
   /// Fair Level and What's Playing's pause checks time their reads against the
@@ -224,7 +237,7 @@ final class LiveChannels: ObservableObject {
   private var uiMetering = false
   private var backgroundMetering = false
   private var nowPlayingMetering = false
-  private var earsMetering = false
+  private var earsReaders = 0
 
   private func applyMetering(_ on: Bool) {
     guard on != meteringWanted else { return }

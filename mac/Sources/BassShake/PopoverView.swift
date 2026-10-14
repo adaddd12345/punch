@@ -244,6 +244,7 @@ struct PopoverView: View {
       showBeats = false
       if ownsDrawer { LiveDrawer.shared.hide() }
       controller.live.setMetering(false)
+      controller.live.stopEarsMetering()
       NowPlaying.shared.windowDisappeared()
       // A pad held while the popover closed never gets its release event.
       controller.dj.held = []

@@ -450,8 +450,12 @@ extension Caption {
       return PointerHint("What's Playing", does: "Picked by you; the loudest returns once this goes quiet.",
                          gestures: ["Click opens \(name)"])
     }
-    return PointerHint("What's Playing", does: "The loudest app over the last few seconds.",
-                       gestures: ["Click opens \(name)"])
+    // Power Saver keeps the per-app meter off most of the time: then the hero is
+    // whoever macOS says has played longest (NowPlaying.tick), not the loudest.
+    let does = PowerSaver.isOn
+      ? "In Power Saver, usually the app playing longest, not loudest."
+      : "The loudest app over the last few seconds."
+    return PointerHint("What's Playing", does: does, gestures: ["Click opens \(name)"])
   }
 
   /// A small tile. Its click is unexpected (it moves, it doesn't open), so it gets a chip.

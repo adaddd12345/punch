@@ -109,7 +109,8 @@ struct PlayingChannelMini<Chip: View>: View {
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
                         chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
                         browser: app.isBrowser)
-    // A locked key route opens the app: never a permission prompt from Mini.
+    // A locked key route opens the app, never the Accessibility screen from Mini
+    // (an app with undecided Automation may still get macOS's Automation prompt).
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
       NowArt(artwork: artwork, icon: model.icon(app), size: art)
         .overlay {
@@ -332,8 +333,8 @@ private struct EarsRows: View {
       shape.fill(Color.primary.opacity(0.05))
     }
     .animation(.easeOut(duration: 0.25), value: order)
-    .onAppear { model.setEarsMetering(true) }
-    .onDisappear { model.setEarsMetering(false) }
+    .onAppear { model.beginEarsMetering() }
+    .onDisappear { model.endEarsMetering() }
     // Restarted when the playing set changes: the loop reads `playing` from
     // the view value it started with, so a new app must start a new loop.
     .task(id: playing.map(\.id)) {

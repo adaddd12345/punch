@@ -204,9 +204,8 @@ enum BrowserTabs {
   /// or no tab element was found. With at least one audio marker the result is
   /// exactly the tabs making sound (certain); otherwise the media-site tabs,
   /// active tabs first, marked not certain and not known to be playing.
-  /// `axWindows`: windows the tab strip walk saw. More than the script listed
-  /// means a private window may be among them: no tab is then named from the
-  /// tab strip alone.
+  /// `axWindows`: windows the tab strip walk saw (unused: a tab named only by
+  /// the tab strip is never an item, since it may be in a private window).
   static func items(appID: String, tabs: [BrowserTab], axNames: [String]?, axWindows: Int = 0, limit: Int = 6) -> [NowItem] {
     func item(_ t: BrowserTab, playing: Bool, muted: Bool, certain: Bool) -> NowItem {
       let site = siteName(t.url)
@@ -215,28 +214,21 @@ enum BrowserTabs {
       return NowItem(id: "\(appID):\(t.window):\(t.tab)", appID: appID, title: title, subtitle: site,
                      url: URL(string: t.url), artwork: nil, playing: playing, certain: certain, muted: muted)
     }
-    let marked = (axNames ?? []).compactMap { n in audio(n).map { (n, $0) } }
+    let marked = (axNames ?? []).compactMap { n in audio(n).map { (titleFromAXName(n), $0) } }
     if !marked.isEmpty {
       var out: [NowItem] = []
       var used = Set<Int>()
       for t in tabs where !t.title.isEmpty {
-        // "<title> - Audio playing": the whole title, so "Inbox" never claims "Inbox zero - …".
-        if let m = marked.first(where: { $0.0.hasPrefix(t.title + " - ") }) {
-          out.append(item(t, playing: true, muted: m.1 == .muted, certain: true))
-          if let i = marked.firstIndex(where: { $0.0 == m.0 }) { used.insert(i) }
+        // Exact title, and each marked tab-strip name is claimed once: "Inbox" never
+        // claims "Inbox zero - Audio playing", and two same-titled tabs can't share one marker.
+        if let i = marked.indices.first(where: { !used.contains($0) && marked[$0].0 == t.title }) {
+          used.insert(i)
+          out.append(item(t, playing: true, muted: marked[i].1 == .muted, certain: true))
         }
       }
-      // A sounding tab the script didn't list (title changed between the two reads).
-      // Never when a window went unlisted: it may be incognito.
-      let listed = Set(tabs.map(\.window)).count
-      for (i, m) in marked.enumerated() where !used.contains(i) && axWindows <= listed {
-        let raw = titleFromAXName(m.0)
-        if tabs.contains(where: { !$0.title.isEmpty && raw.hasPrefix($0.title) }) { continue }
-        let title = cleanTitle(raw, site: "")
-        guard !title.isEmpty else { continue }
-        out.append(NowItem(id: "\(appID):ax:\(raw)", appID: appID, title: title, subtitle: "", url: nil,
-                           artwork: nil, playing: true, certain: true, muted: m.1 == .muted))
-      }
+      // A sounding tab the script didn't list is never shown: the tab strip also
+      // shows private windows (and kAXWindows only sees the current Space, so a
+      // window count can't rule them out). Only listed, non-private tabs become items.
       // Muted tabs after the ones you hear.
       return Array(out.enumerated().sorted { a, b in
         a.element.muted != b.element.muted ? !a.element.muted : a.offset < b.offset

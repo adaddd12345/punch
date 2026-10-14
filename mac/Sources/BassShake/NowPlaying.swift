@@ -137,9 +137,12 @@ struct NowItem: Equatable, Identifiable {
 /// per playing tab; YouTube stills come from i.ytimg.com (same ephemeral session).
 ///
 /// Main-thread state. AppleScript runs on `scriptQueue` (Spotify / Music) and
-/// `browserQueue` (browsers), both serial and never main, so a slow Music cover
-/// or click can't hold up the tabs (or the other way round);
-/// nothing here touches Core Audio (levels come from LiveChannels' atomics).
+/// `browserQueue` (browsers), both serial and never main. Polls of one kind never
+/// queue behind the other's, but every script still takes one process-wide lock
+/// (`osaLock`: NSAppleScript isn't safe to run concurrently), so a running script
+/// delays any other by up to its timeout. The Music cover is therefore read only
+/// when no command or tab focus is waiting, with a short timeout.
+/// Nothing here touches Core Audio (levels come from LiveChannels' atomics).
 final class NowPlaying: ObservableObject {
   static let shared = NowPlaying()
 
@@ -612,6 +615,8 @@ final class NowPlaying: ObservableObject {
         shown.insert(app.id)
         let has = player ? tracks[bid] != nil : items[app.id] != nil
         guard !has, !answered.contains(bid), detailsAllowed(bid) else { continue }
+        // Undecided and already asked: polling won't run its read, so no bars.
+        if gate.status[bid] == AutomationGate.undecided && gate.wasAsked(bid) { continue }
         if waitSince[app.id] == nil { waitSince[app.id] = now; fresh = true }
         if now - (waitSince[app.id] ?? now) < Self.detailsWaitSeconds { next.insert(app.id) }
       }
@@ -703,8 +708,9 @@ final class NowPlaying: ObservableObject {
 
   /// The big button: script, media key or mute, whichever this app can honour.
   /// Undecided Automation: the click also raises macOS's prompt again (off main).
+  /// Locked (its click opens Accessibility): no Automation prompt too, one screen per click.
   func primary(_ app: NowApp) {
-    askOnClick(app.bundleID)
+    if !locked(app) { askOnClick(app.bundleID) }
     primaryAction(app)
   }
 
@@ -926,9 +932,13 @@ final class NowPlaying: ObservableObject {
         next[id] = nil
         failures[id] = nil
       case .unavailable:
+        // A read that didn't run (not allowed yet, broken script) or failed: answered
+        // for the loading bars all the same; the last song stays until three in a row.
+        answered.insert(id)
         failed(id)
       case .track(let title, let artist, let isPlaying, let artKey, let artURL):
         if title.isEmpty && artist.isEmpty {
+          answered.insert(id)
           failed(id)   // often mid-skip: keep the last song for now
           continue
         }
@@ -967,6 +977,8 @@ final class NowPlaying: ObservableObject {
         DispatchQueue.main.async { self?.artLoaded(img, key: key, cacheKey: key, id: p.rawValue) }
       }.resume()
     case .music:
+      // A click is queued: postpone (the next poll asks again while the cover is missing).
+      if NowPlayingScripts.urgentWaiting { return }
       artLoading.insert(key)
       scriptQueue.async { [weak self, bridge] in
         // The cover is cached by the ID of the track it was read from, which may
@@ -1087,9 +1099,13 @@ final class NowPlaying: ObservableObject {
         next[appID] = nil
         failures[b.rawValue] = nil
       case .unavailable:
+        // A read that didn't run (not allowed yet, broken script) or failed: answered
+        // for the loading bars all the same; the last tabs stay until three in a row.
+        answered.insert(b.rawValue)
         failed()
       case .tabs(let tabs) where tabs.isEmpty:
         // No tabs from a browser that plays: a window mid-change or a script hiccup.
+        answered.insert(b.rawValue)
         failed()
       case .tabs(let tabs):
         answered.insert(b.rawValue)
@@ -1158,8 +1174,10 @@ final class NowPlaying: ObservableObject {
     }
     let window = parts[parts.count - 2], tab = parts[parts.count - 1]
     let index = Int(tab) ?? 1
+    NowPlayingScripts.beginUrgent()
     browserQueue.async { [browserBridge] in
       let code: Int? = b.isLive ? browserBridge.focus(b, window: window, tab: tab, index: index) : 0
+      NowPlayingScripts.endUrgent()
       DispatchQueue.main.async {
         if code == NowPlayingScripts.notPermitted {
           self.gate.record(b.rawValue, AutomationGate.denied)
@@ -1266,8 +1284,10 @@ final class NowPlaying: ObservableObject {
       t.playing.toggle()   // shows at once; the next poll confirms
       tracks[p.rawValue] = t
     }
+    NowPlayingScripts.beginUrgent()
     scriptQueue.async { [bridge] in
       let code: Int? = p.isLive ? bridge.command(p, cmd) : nil
+      NowPlayingScripts.endUrgent()
       DispatchQueue.main.async {
         self.commandBusy.remove(p.rawValue)
         if code == NowPlayingScripts.notPermitted {
@@ -1363,7 +1383,7 @@ final class NowPlayingScripts {
       let source = """
       if application id "\(id)" is running then
         tell application id "\(id)"
-          with timeout of 5 seconds
+          with timeout of 2 seconds
             try
               set t to current track
               if (count of artworks of t) > 0 then return {(persistent ID of t) as text, \(prop) of artwork 1 of t}
@@ -1375,6 +1395,8 @@ final class NowPlayingScripts {
       """
       let key = "art.\(n)"
       if broken.contains(key) { continue }
+      // A click is waiting for the lock: the cover can wait for the next poll.
+      if Self.urgentWaiting { return nil }
       if case .success(let d) = run(key: key, source) {
         guard d.numberOfItems >= 2, let pid = d.atIndex(1)?.stringValue, !pid.isEmpty, let a = d.atIndex(2),
               a.descriptorType != typeUnicodeText, a.data.count > 32 else { return nil }
@@ -1417,6 +1439,15 @@ final class NowPlayingScripts {
   /// NSAppleScript is not thread-safe: the player and browser queues each have a
   /// bridge, but only one script compiles or runs at a time across all of them.
   private static let osaLock = NSLock()
+
+  /// Clicks (play/pause/next, a tab focus) queued or running: the Music cover
+  /// read (lowest priority) is skipped meanwhile and retried on a later poll.
+  private static let urgentLock = NSLock()
+  private static var urgentCount = 0
+  static var urgentWaiting: Bool { urgentLock.lock(); defer { urgentLock.unlock() }; return urgentCount > 0 }
+  /// Any thread. Pair each `beginUrgent` with one `endUrgent`.
+  static func beginUrgent() { urgentLock.lock(); urgentCount += 1; urgentLock.unlock() }
+  static func endUrgent() { urgentLock.lock(); urgentCount = max(0, urgentCount - 1); urgentLock.unlock() }
 
   /// `cache: false` for one-off sources (a tab click): compiled, run, dropped.
   func run(key: String, _ source: String, cache: Bool = true) -> Outcome {

@@ -121,9 +121,7 @@ final class NowStack: ObservableObject {
     model.$others.sink { [weak self] _ in self?.schedule() }.store(in: &cancellables)
     model.$items.sink { [weak self] _ in self?.schedule() }.store(in: &cancellables)
     model.$detailsPending.sink { [weak self] _ in self?.schedule() }.store(in: &cancellables)
-    // A pinned song / tab that pauses gives the hero back.
-    model.$tracks.sink { [weak self] _ in if self?.pinned != nil { self?.schedule() } }.store(in: &cancellables)
-    model.$pausedByUs.sink { [weak self] _ in if self?.pinned != nil { self?.schedule() } }.store(in: &cancellables)
+    // No tracks / pausedByUs subscriptions: a pick holds paused or not (see rebuild).
   }
 
   #if DEBUG
@@ -465,7 +463,8 @@ struct NowStackTile: View {
 
 /// The art as the play/pause button: the action's glyph over it while
 /// hovered, paused or muted. Locked (the key needs Accessibility): it opens
-/// the app instead, never a permission prompt from a small tile.
+/// the app instead, never the Accessibility screen from a small tile (an app
+/// whose Automation is undecided may still get macOS's Automation prompt first).
 struct NowEntryArtButton: View {
   @ObservedObject var model: NowPlaying
   let entry: NowEntry
