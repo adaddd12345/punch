@@ -77,6 +77,19 @@ uint32_t punch_spike_guard_events(const PunchEngine* e);
 /* DJ effects. filter: -1..1 (<0 low-pass sweep, >0 high-pass sweep, 0 off). */
 void punch_set_dj(PunchEngine* e, bool low_kill, bool mid_kill, bool high_kill, float filter, bool echo, bool crush,
                   bool drive);
+/* DJ performance pads (each glides in/out; all off = bit-exact).
+ * tape_stop: slows to a halt over 1 s; release crossfades back to live.
+ * chipmunk: +7 semitones; screw: -5 semitones (chipmunk wins if both).
+ * roll: loops the last 1/8 note at the detected tempo (120 BPM if unknown),
+ *       halving to 1/16 then 1/32 every beat held.
+ * lofi: cassette wow & flutter, saturation, 3.5 kHz low-pass, narrow, hiss.
+ * pump: ducks -9 dB on every beat (follows kicks when the tempo is unknown). */
+void punch_set_dj_fx(PunchEngine* e, bool tape_stop, bool chipmunk, bool screw, bool roll, bool lofi, bool pump);
+/* Keep the tempo tracker running with no DJ effect on (e.g. while the DJ
+ * panel is showing) so Roll and Pump know the BPM on the first press. */
+void punch_set_dj_track_tempo(PunchEngine* e, bool on);
+/* Detected tempo in BPM (0 = unknown / unsure). Any thread. */
+float punch_dj_bpm(const PunchEngine* e);
 
 /* Correction stage (applied before the user EQ): headphone correction or
  * additive layers like Studio Ears. */
