@@ -390,25 +390,29 @@ struct BentoView: View {
   /// Full, something playing: the song leads with its transport; the sound
   /// and the utility bars sit underneath.
   private func playingFull(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    // Hierarchy: the media on top, then a clear 16 gap, then the tweaks as one
+    // tight block (6 between its two rows) so they read as a set beneath it.
+    VStack(alignment: .leading, spacing: 16) {
       HStack(alignment: .center, spacing: 8) {
         NowPlayingHeadline(model: nowPlaying, app: app, art: 48, title: 15)
         NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 40, extras: true)
       }
       .frame(height: 48)
-      HStack(alignment: .center, spacing: 8) {
-        soundChip(t)
-        if live { abChip(compact: false) }
-        powerButton(size: 24)
+      VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .center, spacing: 8) {
+          soundChip(t)
+          if live { abChip(compact: false) }
+          powerButton(size: 24)
+        }
+        .frame(height: 24)
+        utilityBar
       }
-      .frame(height: 24)
-      utilityBar
     }
   }
 
   /// Compact, something playing: the song with play/pause, then one bar.
   private func playingCompact(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 12) {
       HStack(alignment: .center, spacing: 8) {
         NowPlayingHeadline(model: nowPlaying, app: app, art: 40, title: 13)
         NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 32, extras: false)
