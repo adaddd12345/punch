@@ -285,6 +285,7 @@ enum Loudness {
 struct DJState: Equatable {
   enum Pad: String, CaseIterable, Identifiable {
     case low, mid, high, echo, crush, drive
+    case tapeStop, chipmunk, screw, roll, lofi, pump
     var id: String { rawValue }
     var title: String {
       switch self {
@@ -294,6 +295,12 @@ struct DJState: Equatable {
       case .echo: return "ECHO"
       case .crush: return "CRUSH"
       case .drive: return "DRIVE"
+      case .tapeStop: return "TAPE STOP"
+      case .chipmunk: return "CHIPMUNK"
+      case .screw: return "SCREW"
+      case .roll: return "ROLL"
+      case .lofi: return "LOFI"
+      case .pump: return "PUMP"
       }
     }
     var help: String {
@@ -304,6 +311,12 @@ struct DJState: Equatable {
       case .echo: return "Echo: 3/8-second repeats; the tail rings out when you let go"
       case .crush: return "Bit-crusher: lo-fi, gritty digital"
       case .drive: return "Distortion: hard, saturated"
+      case .tapeStop: return "Tape stop: the song grinds to a halt; let go and it snaps back"
+      case .chipmunk: return "Pitch up +7: the chipmunk vocal (Drake's \"Little Birdie\")"
+      case .screw: return "Pitch down: slowed, Houston-screwed"
+      case .roll: return "Roll: repeats the moment you press, faster the longer you hold"
+      case .lofi: return "Lofi cassette: wobble, warmth, hiss, dull highs"
+      case .pump: return "Pump: the mix ducks on every beat, sidechain-style"
       }
     }
   }
