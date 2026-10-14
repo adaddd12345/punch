@@ -102,11 +102,15 @@ final class LiveDrawer {
     // past six rows, so it stays compact). Aligned to the popover content.
     let vis = (panel.parent ?? panel).screen?.visibleFrame
     if side {
-      // Top edges line up; right of the popup, or left when that runs off screen.
+      // Right of the popup, or left when that runs off screen; never past either edge.
       var x = r.maxX + gap
       if let vis, x + panel.frame.width > vis.maxX - 4 { x = r.minX - gap - panel.frame.width }
-      var y = r.maxY - panel.frame.height
-      if let vis { y = max(y, vis.minY + 4) }
+      if let vis { x = min(max(x, vis.minX + 4), vis.maxX - 4 - panel.frame.width) }
+      // Hanging from the Dock, the pointer is down at the footer (the DJ /
+      // Live / Beats buttons): bottom edges line up so the tray opens beside
+      // it. From the menu bar, top edges line up.
+      var y = preferSide ? r.minY : r.maxY - panel.frame.height
+      if let vis { y = min(max(y, vis.minY + 4), vis.maxY - 4 - panel.frame.height) }
       panel.setFrameOrigin(NSPoint(x: x, y: y))
       return
     }
