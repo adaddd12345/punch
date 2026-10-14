@@ -565,6 +565,8 @@ final class NowPlaying: ObservableObject {
     // What's Playing turned off while Mini's channel runs on: no song or cover.
     if !mayAsk && !tracks.isEmpty { tracks = [:] }
     if !mayAsk && !items.isEmpty { items = [:] }
+    // Nothing read earlier comes back when details return: the next poll answers.
+    if !mayAsk { itemsMemo.removeAll(); tracksMemo.removeAll() }
     // Before the poll: an app new on screen moves the poll up to this tick.
     refreshPending(now: now)
     // Layer B, only while the popup is really visible.
@@ -838,7 +840,8 @@ final class NowPlaying: ObservableObject {
   /// Mini's playing channel runs without What's Playing: then it never asks (app and icon only).
   private var mayAsk: Bool {
     guard let s = controller?.settings else { return false }
-    return s.showNowPlaying && s.nowPlayingNoteSeen
+    // Song & Video Details off: apps only (no scripts, Accessibility reads or stills).
+    return s.showNowPlaying && s.nowPlayingNoteSeen && s.playingDetails
   }
 
   private func isRunning(_ app: NowApp) -> Bool {
@@ -1210,7 +1213,8 @@ final class NowPlaying: ObservableObject {
   /// Statuses for App Details on each open (no prompt; a quit app keeps its last).
   /// Only apps not known to be allowed, on their own queue (never ahead of a poll).
   private func refreshAutomation() {
-    guard let seen = controller?.settings.automationSeen, !seen.isEmpty else { return }
+    guard controller?.settings.playingDetails == true,
+          let seen = controller?.settings.automationSeen, !seen.isEmpty else { return }
     let running = seen.filter { gate.status[$0] != AutomationGate.allowed && RunningApps.isLive($0) }
     guard !running.isEmpty else { return }
     checkQueue.async {

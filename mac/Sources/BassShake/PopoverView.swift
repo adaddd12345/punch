@@ -972,8 +972,13 @@ struct PopoverView: View {
           // Off by default; the first time it's turned on, a one-time note explains it.
           Toggle("Show What's Playing", isOn: Binding(get: { controller.settings.showNowPlaying },
                                                       set: { controller.settings.showNowPlaying = $0 }))
+          // Off: apps only (icon, name, Playing / Paused / Muted); nothing is read from them.
+          Toggle("Song & Video Details", isOn: Binding(get: { controller.settings.playingDetails },
+                                                       set: { controller.settings.playingDetails = $0 }))
+            .help("Off: just each app's icon and name; no songs, tabs or covers.")
           // Per-app Automation (AutomationGate): which apps What's Playing may script.
           AppDetailsMenu(controller: controller)
+            .disabled(!controller.settings.playingDetails)
           // Mini: the app you hear most leads (its icon plays and pauses).
           Toggle("Show Playing App in Mini", isOn: Binding(get: { controller.settings.showPlayingChannel },
                                                            set: { controller.settings.showPlayingChannel = $0 }))

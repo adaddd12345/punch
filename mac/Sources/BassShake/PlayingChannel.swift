@@ -60,14 +60,18 @@ struct PlayingChannelMini<Chip: View>: View {
       disc(text.artwork)
       VStack(alignment: .leading, spacing: 1) {
         Button { model.open(app) } label: {
-          Text(text.title)
-            .font(.system(size: nameSize, weight: .heavy, design: .rounded))
-            .tracking(-0.2)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .foregroundStyle(Color.primary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+          // Mini has no second line: with a cover, the app's icon leads the title.
+          HStack(alignment: .center, spacing: 4) {
+            if text.artwork != nil { NowInlineIcon(icon: model.icon(app), font: nameSize - 1).transition(.opacity) }
+            Text(text.title)
+              .font(.system(size: nameSize, weight: .heavy, design: .rounded))
+              .tracking(-0.2)
+              .lineLimit(1)
+              .truncationMode(.tail)
+              .foregroundStyle(Color.primary)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: paused))

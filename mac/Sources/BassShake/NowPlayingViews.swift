@@ -99,7 +99,7 @@ struct NowPlayingHeadline: View {
   private func content(_ entry: NowEntry, _ text: NowEntryText,
                        _ note: (id: String, text: String, settings: Bool)?) -> some View {
       HStack(alignment: .center, spacing: 8) {
-        NowArt(artwork: text.artwork, icon: model.icon(app), size: art, badge: entry.item != nil ? true : nil)
+        NowArt(artwork: text.artwork, icon: model.icon(app), size: art)
           .modifier(NowMorph(id: entry.id))
         VStack(alignment: .leading, spacing: 2) {
           if let n = note {
@@ -124,12 +124,7 @@ struct NowPlayingHeadline: View {
                 .minimumScaleFactor(0.85)
                 .foregroundStyle(Color.primary)
                 .contentTransition(.opacity)
-              Text(text.subtitle)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
+              NowSubtitle(text: text.subtitle, icon: text.artwork != nil ? model.icon(app) : nil, font: 11)
             }
             .modifier(StillWhileMorphing())
           }
@@ -290,19 +285,17 @@ private struct NextButton: View {
 
 // The small tiles under the hero (NowPlayingTiles) live in NowStack.swift.
 
-/// Cover art with the app's icon as a small badge, or just the app's icon.
+/// Cover art (or a tab's still), or just the app's icon. Never a badge: with
+/// art, the app's icon leads the words instead (NowSubtitle).
 struct NowArt: View {
   let artwork: NSImage?
   let icon: NSImage
   let size: CGFloat
-  /// The app's icon on the art's corner. nil: only from 30 pt up (a browser
-  /// tab's still asks for it at any size, so the browser always shows).
-  var badge: Bool? = nil
   @Environment(\.powerSaver) private var powerSaver
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
-    ZStack(alignment: .bottomTrailing) {
+    ZStack {
       if let artwork {
         Image(nsImage: artwork)
           .resizable()
@@ -313,13 +306,6 @@ struct NowArt: View {
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
           .transition(.opacity)
-        if badge ?? (size >= 30) {
-          Image(nsImage: icon)
-            .resizable()
-            .interpolation(.high)
-            .frame(width: size * 0.4, height: size * 0.4)
-            .offset(x: size * 0.12, y: size * 0.12)
-        }
       } else {
         Image(nsImage: icon)
           .resizable()
@@ -332,6 +318,45 @@ struct NowArt: View {
     // A still or cover that arrives after the words fades in, never pops.
     .animation(.easeOut(duration: 0.3), value: artwork.map(ObjectIdentifier.init))
     .accessibilityHidden(true)
+  }
+}
+
+/// A small app icon that leads a line of words, about the line's height
+/// (11 pt type: 13 pt). Only beside a cover or still; beside the app's own
+/// icon it would say the same thing twice.
+struct NowInlineIcon: View {
+  let icon: NSImage
+  /// The line's font size.
+  let font: CGFloat
+
+  var body: some View {
+    let d = (font * 1.2).rounded()
+    Image(nsImage: icon)
+      .resizable()
+      .interpolation(.high)
+      .frame(width: d, height: d)
+      .accessibilityHidden(true)
+  }
+}
+
+/// A tile's second line: "[icon] Russ · Spotify". The icon only when the art
+/// is a cover or still (`icon` nil otherwise).
+struct NowSubtitle: View {
+  let text: String
+  let icon: NSImage?
+  let font: CGFloat
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 4) {
+      if let icon { NowInlineIcon(icon: icon, font: font).transition(.opacity) }
+      Text(text)
+        .font(.system(size: font, weight: .medium, design: .rounded))
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .foregroundStyle(.secondary)
+        .contentTransition(.opacity)
+    }
+    .animation(.easeOut(duration: 0.2), value: icon != nil)
   }
 }
 

@@ -552,6 +552,10 @@ struct Settings: Codable, Equatable {
   /// the preset as a small chip under its name. Song and cover only while
   /// What's Playing is on. Nothing playing: Mini looks as it always did.
   var showPlayingChannel = true
+  /// Song & Video Details (⋯ › Presets & Settings): What's Playing reads songs,
+  /// tabs and covers. Off: no AppleScript, Accessibility reads or stills; each
+  /// app is one tile with its icon, name and Playing / Paused / Muted.
+  var playingDetails = true
   /// The menu-bar icon carries the Mac's volume: a stack of 10 pills beside the
   /// shaker, a slash while muted or at 0 (⋯ › Look).
   var menuBarVolume = true
@@ -648,6 +652,7 @@ struct Settings: Codable, Equatable {
     showInMenuBar = (try? c.decodeIfPresent(Bool.self, forKey: .showInMenuBar)) ?? d.showInMenuBar
     showMacVolume = (try? c.decodeIfPresent(Bool.self, forKey: .showMacVolume)) ?? d.showMacVolume
     showPlayingChannel = (try? c.decodeIfPresent(Bool.self, forKey: .showPlayingChannel)) ?? d.showPlayingChannel
+    playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
   }
 

@@ -443,12 +443,8 @@ struct NowStackTile: View {
               .truncationMode(.tail)
               .foregroundStyle(Color.primary)
               .contentTransition(.opacity)
-            Text(text.subtitle)
-              .font(.system(size: compact ? 9 : 10, weight: .medium, design: .rounded))
-              .lineLimit(1)
-              .truncationMode(.tail)
-              .foregroundStyle(.secondary)
-              .contentTransition(.opacity)
+            NowSubtitle(text: text.subtitle, icon: text.artwork != nil ? model.icon(app) : nil,
+                        font: compact ? 9 : 10)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
@@ -512,7 +508,7 @@ struct NowEntryArtButton: View {
                         chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
                         browser: app.isBrowser)
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
-      NowArt(artwork: artwork, icon: model.icon(app), size: size, badge: entry.item != nil)
+      NowArt(artwork: artwork, icon: model.icon(app), size: size)
         .overlay {
           if showGlyph {
             ZStack {
