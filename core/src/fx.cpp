@@ -230,8 +230,9 @@ void DjFx::trackTempo(float* const* ch, int numChannels, int numFrames) {
     }
     tempo_.process(mono, size_t(n));
   }
-  // Keep the last good reading until the tracker has a new estimate.
-  if (tempo_.bpm() > 0.0) bpm_.store(tempo_.confidence() >= 0.4 ? float(tempo_.bpm()) : 0.f, std::memory_order_relaxed);
+  // Keep the last good reading until the tracker has a new confident one
+  // (an unsure moment must not flip Roll/Pump back to their no-tempo modes).
+  if (tempo_.bpm() > 0.0 && tempo_.confidence() >= 0.4) bpm_.store(float(tempo_.bpm()), std::memory_order_relaxed);
 }
 
 void DjFx::process(float* const* ch, int numChannels, int numFrames) {

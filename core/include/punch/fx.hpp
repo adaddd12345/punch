@@ -129,6 +129,8 @@ class DjPerform {
   // Latest tempo (0 = unknown). Audio thread.
   void setBpm(double bpm) { bpm_ = bpm; }
   bool idle() const;
+  // Roll is looping a silent slice. Any thread.
+  bool rollSilent() const { return rollSilent_.load(std::memory_order_relaxed); }
   // Before the classic DJ chain / after it.
   void processPre(float* const* ch, int numChannels, int numFrames);
   void processPost(float* const* ch, int numChannels, int numFrames);
@@ -143,6 +145,7 @@ class DjPerform {
     float read(double pos) const;
   };
   void recordHistory(float* const* ch, int numChannels, int numFrames);
+  int rollSliceLen() const;
   void captureRoll();
 
   double sampleRate_ = 48000.0;
@@ -153,6 +156,7 @@ class DjPerform {
   // Input history (always written) and its write index.
   std::array<Ring, kMaxChannels> hist_;
   int histW_ = 0;
+  int histFilled_ = 0;  // frames recorded since reset (saturates)
 
   // Roll.
   std::array<std::vector<float>, kMaxChannels> loop_;
@@ -160,6 +164,7 @@ class DjPerform {
   bool rollLatched_ = false;  // a press has been captured for the current hold
   int rollLen_ = 1, rollMinLen_ = 1, rollPos_ = 0, rollFade_ = 1;
   int rollBeat_ = 1, rollElapsed_ = 0, rollNextHalve_ = 0;
+  std::atomic<bool> rollSilent_{false};
 
   // Pitch (two-head delay-line shifter, Hann crossfade).
   std::array<Ring, kMaxChannels> pitchBuf_;
@@ -213,6 +218,7 @@ class DjFx {
   void process(float* const* ch, int numChannels, int numFrames);
   // Detected tempo (BPM, 0 when unknown or unsure). Any thread.
   float bpm() const { return bpm_.load(std::memory_order_relaxed); }
+  bool rollSilent() const { return perform_.rollSilent(); }
 
  private:
   void updateFilter(float v);

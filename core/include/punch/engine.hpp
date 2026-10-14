@@ -45,6 +45,11 @@ struct EngineParams {
   LoudnessGuardParams guard;  // Night Guard
   SpikeGuardParams spike;     // Ear Protector (works in A/B too)
   float outputGainDb = 0.f;  // post-EQ boost, protected by the limiter
+  // Boost leveler: a positive outputGainDb only uses the headroom the music
+  // leaves under the limiter ceiling (slow peak estimate, 20 ms attack, 2 s
+  // release), so quiet tracks get the whole Boost and loud masters aren't
+  // squashed by the limiter. Never cuts below unity. Off = bit-exact.
+  bool boostLeveler = false;
   LimiterParams limiter;
   bool bypass = false;
 
@@ -85,6 +90,8 @@ class Engine {
   uint32_t spikeEvents() const { return spike_.events(); }
   // Tempo the DJ stage detected (BPM, 0 when unknown); any thread.
   float djBpm() const { return dj_.bpm(); }
+  // Roll is looping a silent slice (expected silent output); any thread.
+  bool djRollSilent() const { return dj_.rollSilent(); }
   // Post-processing mono feed for the UI spectrum analyzer.
   SpscRing<float>& analyzerFeed() { return analyzer_; }
 
@@ -114,6 +121,10 @@ class Engine {
   Ambience ambience_;
   NoiseBed noise_;
   Smoothed outGain_;
+  Smoothed leveler_;          // 0 = off, 1 = boost leveler fully in
+  float levelEnv_ = 0.f;      // slow peak estimate of the signal entering the boost
+  float levelAtt_ = 0.f, levelRel_ = 0.f;
+  float levelCeil_ = 0.891f;  // linear
   DjFx dj_;
   LoudnessGuard guard_;
   SpikeGuard spike_;

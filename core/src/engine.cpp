@@ -50,7 +50,13 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   noise_.prepare(sampleRate);
   outGain_.prepare(sampleRate, 15.0);
   outGain_.snap(1.f);
-  limiter_.prepare(sampleRate, numChannels_);
+  leveler_.prepare(sampleRate, 20.0);
+  levelAtt_ = float(1.0 - std::exp(-1.0 / (0.020 * sampleRate)));
+  levelRel_ = float(1.0 - std::exp(-1.0 / (2.0 * sampleRate)));
+  levelEnv_ = 0.f;
+  // 5 ms look-ahead: a gentle attack ramp when the limiter does a lot of the
+  // work (a big Boost with Limit off); the bass stage already delays 12 ms.
+  limiter_.prepare(sampleRate, numChannels_, 5.f);
   bassLimiter_.prepare(sampleRate, numChannels_, maxFrames_);
 
   scratch_.assign(size_t(numChannels_), std::vector<float>(size_t(maxFrames_), 0.f));
@@ -69,6 +75,7 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   eq_.snapToTargets();
   eq_.reset();
   outGain_.snap(outGain_.target());
+  leveler_.snap(leveler_.target());
 }
 
 void Engine::publish() {
@@ -121,6 +128,7 @@ void Engine::applySnapshot(const EngineParams& p) {
     guard_.setParams({});
     spike_.setParams(p.spike);   // protection stays on while comparing
     outGain_.setTarget(1.f);
+    leveler_.setTarget(0.f);
     LimiterParams lp = p.limiter;
     lp.ceilingDb = 0.f;
     lp.enabled = true;
@@ -143,6 +151,8 @@ void Engine::applySnapshot(const EngineParams& p) {
   guard_.setParams(p.guard);
   spike_.setParams(p.spike);
   outGain_.setTarget(dbToGain(std::clamp(p.outputGainDb, -60.f, 24.f)));
+  leveler_.setTarget(p.boostLeveler && p.outputGainDb > 0.f ? 1.f : 0.f);
+  levelCeil_ = dbToGain(std::min(p.limiter.ceilingDb, 0.f));
   limiter_.setParams(p.limiter);
   // Both limiter stages always run (constant latency); "off" crossfades to a
   // plain delay inside each, so toggling Limit never jumps or replays.
@@ -172,9 +182,20 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   // DJ effects, then Night Guard (so a guarded level isn't undone by them).
   dj_.process(ch, numChannels, numFrames);
   guard_.process(ch, numChannels, numFrames);
-  if (!(outGain_.settled() && outGain_.current() == 1.f)) {
+  // Boost, through the leveler when it's on: the gain above unity is capped
+  // at the room between the music's slow peak level and the ceiling.
+  const bool level = !(leveler_.settled() && leveler_.current() == 0.f);
+  if (!level) levelEnv_ = 0.f;
+  if (level || !(outGain_.settled() && outGain_.current() == 1.f)) {
     for (int i = 0; i < numFrames; ++i) {
-      const float g = outGain_.next();
+      float g = outGain_.next();
+      if (level) {
+        float peak = 0.f;
+        for (int c = 0; c < numChannels; ++c) peak = std::max(peak, std::fabs(ch[c][i]));
+        levelEnv_ += (peak - levelEnv_) * (peak > levelEnv_ ? levelAtt_ : levelRel_);
+        const float a = leveler_.next();
+        if (g > 1.f) g += a * (std::clamp(levelCeil_ / std::max(levelEnv_, 1e-9f), 1.f, g) - g);
+      }
       for (int c = 0; c < numChannels; ++c) ch[c][i] *= g;
     }
   }
@@ -208,6 +229,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     noise_.reset();
     limiter_.reset();
     bassLimiter_.reset();
+    levelEnv_ = 0.f;
   }
 
   for (int c = 0; c < std::min(numChannels, 2); ++c) atomicMax(outPeak_[c], blockPeak(ch[c], numFrames));

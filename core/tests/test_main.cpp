@@ -316,6 +316,63 @@ TEST(engine_bypass_is_neutral) {
   CHECK(maxErr < 1e-4);
 }
 
+// Boost leveler: +12 dB on a loud master (Limit off, safety-net limiter)
+// only uses the headroom there is, so the kicks don't pump the mix; a
+// quiet track gets the whole Boost.
+static std::vector<double> levelerRun(bool leveler, float amp, bool kicks, double* peakOut) {
+  Engine e;
+  e.edit().autoPreamp = false;
+  e.edit().outputGainDb = 12.f;
+  e.edit().boostLeveler = leveler;
+  e.edit().limiter = {-1.f, 80.f, true, 600.f, 1.f, 0.f};
+  e.prepare(48000, 2, 512);
+  const int fs = 48000, n = fs * 6, beat = fs / 2, kick = fs / 10;
+  std::vector<float> buf(size_t(n) * 2);
+  for (int i = 0; i < n; ++i) {
+    const double t = double(i) / fs;
+    double x = amp * std::sin(2.0 * std::numbers::pi * 1000.0 * t);
+    if (kicks && i % beat < kick) x += 0.5 * std::sin(2.0 * std::numbers::pi * 60.0 * t) * (1.0 - double(i % beat) / kick);
+    buf[size_t(i) * 2] = buf[size_t(i) * 2 + 1] = float(x);
+  }
+  for (int s = 0; s < n; s += 512) e.processInterleaved(&buf[size_t(s) * 2], &buf[size_t(s) * 2], 2, std::min(512, n - s));
+  const int L = e.latencyFrames();
+  double peak = 0;
+  for (int i = 2 * fs; i < n; ++i) peak = std::max(peak, double(std::fabs(buf[size_t(i) * 2])));
+  *peakOut = peak;
+  // Gain (dB) on the 1 kHz tone (quadrature demodulation, 20 ms windows),
+  // through the kicks and between them, after 2 s.
+  std::vector<double> gains;
+  const int win = fs / 50;
+  for (int w = 2 * fs; w + win <= n; w += win) {
+    double re = 0, im = 0;
+    for (int i = w; i < w + win; ++i) {
+      const double ph = 2.0 * std::numbers::pi * 1000.0 * double(i - L) / fs;
+      re += double(buf[size_t(i) * 2]) * std::sin(ph);
+      im += double(buf[size_t(i) * 2]) * std::cos(ph);
+    }
+    gains.push_back(20.0 * std::log10(2.0 * std::hypot(re, im) / win / amp));
+  }
+  return gains;
+}
+
+TEST(engine_boost_leveler) {
+  const double ceiling = std::pow(10.0, -1.0 / 20.0);
+  for (bool lev : {false, true}) {
+    double peak = 0;
+    const auto g = levelerRun(lev, 0.5f, true, &peak);
+    const double lo = *std::min_element(g.begin(), g.end()), hi = *std::max_element(g.begin(), g.end());
+    std::printf("  loud +12 dB, leveler %d: tone gain %.1f..%.1f dB, peak %.3f\n", int(lev), lo, hi, peak);
+    CHECK(peak <= ceiling + 1e-4);
+    if (lev) {
+      CHECK(hi - lo < 2.5);  // the kicks barely duck the rest of the mix
+      CHECK(lo > -1.5);      // and it never drops far below the original level
+    }
+  }
+  double peak = 0;
+  const auto q = levelerRun(true, 0.03f, false, &peak);
+  for (double v : q) CHECK_NEAR(v, 12.0, 0.3);  // quiet: the whole Boost
+}
+
 TEST(engine_output_rms_meter) {
   Engine e;
   e.edit().limiter.enabled = false;

@@ -55,6 +55,15 @@ void punch_set_bypass(PunchEngine* e, bool bypass);
  * room the rest of the mix leaves (mids never duck for the bass), and bass
  * boosts no longer cost auto-headroom. 0 = off. */
 void punch_set_bass_priority(PunchEngine* e, float crossover_hz);
+/* Limiter shape: program-dependent slow release (ms, 0 = off) and a soft
+ * clipper knee below the ceiling (dB, 0 = off). Kept by punch_set_limiter. */
+void punch_set_limiter_shape(PunchEngine* e, float slow_release_ms, float clip_knee_db);
+/* Boost leveler: a positive output gain only uses the headroom the music
+ * leaves under the limiter ceiling (slow peak estimate). Off = bit-exact. */
+void punch_set_boost_leveler(PunchEngine* e, bool on);
+/* Peak gain (dB) of the pending correction + user EQ, their preamps
+ * included. Control thread. */
+double punch_eq_peak_boost_db(const PunchEngine* e);
 
 /* Character stages (modes / genre presets). */
 void punch_set_compressor(PunchEngine* e, bool enabled, float threshold_db, float ratio, float attack_ms,
@@ -90,6 +99,8 @@ void punch_set_dj_fx(PunchEngine* e, bool tape_stop, bool chipmunk, bool screw, 
 void punch_set_dj_track_tempo(PunchEngine* e, bool on);
 /* Detected tempo in BPM (0 = unknown / unsure). Any thread. */
 float punch_dj_bpm(const PunchEngine* e);
+/* True while Roll loops a slice that is pure silence (expected silent output). Any thread. */
+bool punch_dj_roll_silent(const PunchEngine* e);
 
 /* Correction stage (applied before the user EQ): headphone correction or
  * additive layers like Studio Ears. */

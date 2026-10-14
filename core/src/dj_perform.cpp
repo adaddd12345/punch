@@ -76,7 +76,11 @@ void DjPerform::prepare(double sampleRate, int numChannels) {
   lofiMix_.prepare(fs, 25.0);
   pumpMix_.prepare(fs, 15.0);
   setParams(p_);
-  for (auto* s : {&rollMix_, &pitchMix_, &semis_, &tapeMix_, &lofiMix_, &pumpMix_}) s->snap(s->target());
+  for (auto* s : {&pitchMix_, &semis_, &tapeMix_, &lofiMix_, &pumpMix_}) s->snap(s->target());
+  // Roll is never snapped on: after a rebuild the history is empty, so a
+  // held Roll waits for a whole slice of audio and then fades in.
+  rollMix_.snap(0.f);
+  rollMix_.setTarget(p_.roll ? 1.f : 0.f);
   reset();
 }
 
@@ -85,7 +89,9 @@ void DjPerform::reset() {
     for (auto& r : *rs) std::fill(r.d.begin(), r.d.end(), 0.f);
   for (auto& l : loop_) std::fill(l.begin(), l.end(), 0.f);
   histW_ = pitchW_ = tapeW_ = lofiW_ = 0;
+  histFilled_ = 0;
   rollLatched_ = false;
+  rollSilent_.store(false, std::memory_order_relaxed);
   rollLen_ = rollMinLen_ = rollFade_ = rollBeat_ = 1;
   rollPos_ = rollElapsed_ = rollNextHalve_ = 0;
   pitchPhase_ = 0.0;
@@ -129,42 +135,75 @@ void DjPerform::recordHistory(float* const* ch, int numChannels, int numFrames) 
     for (int i = 0; i < numFrames; ++i) r.at(histW_ + i) = ch[c][i];
   }
   histW_ = (histW_ + numFrames) & hist_[0].mask;
+  histFilled_ = std::min(histFilled_ + numFrames, 1 << 30);
+}
+
+int DjPerform::rollSliceLen() const {
+  const double bpm = bpm_ > 0.0 ? std::clamp(bpm_, 60.0, 200.0) : 120.0;
+  return std::min(std::max(8, int(std::lround(sampleRate_ * 60.0 / bpm))) / 2, int(loop_[0].size()));
 }
 
 void DjPerform::captureRoll() {
   const double bpm = bpm_ > 0.0 ? std::clamp(bpm_, 60.0, 200.0) : 120.0;
   rollBeat_ = std::max(8, int(std::lround(sampleRate_ * 60.0 / bpm)));
-  rollLen_ = std::min(rollBeat_ / 2, int(loop_[0].size()));  // an eighth note
+  rollLen_ = rollSliceLen();  // an eighth note
   rollMinLen_ = rollBeat_ / 8;                               // down to a 32nd
   rollFade_ = std::max(1, std::min(rollLen_ / 4, int(0.002 * sampleRate_)));
   rollPos_ = 0;
   rollElapsed_ = 0;
   rollNextHalve_ = rollBeat_;
+  float peak = 0.f;
   for (int c = 0; c < numChannels_; ++c) {
     Ring& h = hist_[size_t(c)];
     float* l = loop_[size_t(c)].data();
-    for (int k = 0; k < rollLen_; ++k) l[k] = h.at(histW_ - rollLen_ + k);
+    for (int k = 0; k < rollLen_; ++k) {
+      l[k] = h.at(histW_ - rollLen_ + k);
+      peak = std::max(peak, std::fabs(l[k]));
+    }
   }
+  rollSilent_.store(peak < 1e-6f, std::memory_order_relaxed);
 }
 
 void DjPerform::processPre(float* const* ch, int numChannels, int numFrames) {
   numChannels = std::min(numChannels, numChannels_);
   if (numFrames <= 0) return;
-  if (!p_.roll) rollLatched_ = false;
+  if (!p_.roll && rollLatched_) {
+    rollLatched_ = false;
+    rollSilent_.store(false, std::memory_order_relaxed);
+  }
+  // Roll starts using the history up to the end of the previous block, but
+  // only once it holds a whole slice (after a reset it's silence): until
+  // then the audio passes through.
+  if (p_.roll && !rollLatched_) {
+    if (histFilled_ >= rollSliceLen()) {
+      captureRoll();
+      rollLatched_ = true;
+      rollMix_.setTarget(1.f);
+    } else {
+      rollMix_.snap(0.f);
+    }
+  }
   if (idle()) {
     recordHistory(ch, numChannels, numFrames);
     return;
   }
 
-  // Starts, using the history up to the end of the previous block.
-  if (p_.roll && !rollLatched_) {
-    captureRoll();
-    rollLatched_ = true;
-  }
+  // Delay-line effects start from the recent past as this stage played it:
+  // through Roll's loop while Roll is in (no jump back to the live input).
+  const bool rollIn = rollLatched_ || !off(rollMix_);
+  const float rmNow = rollMix_.current();
+  const auto past = [&](int c, int k) {
+    const float x = hist_[size_t(c)].at(histW_ - k);
+    if (!rollIn || rmNow == 0.f) return x;
+    const int pos = ((rollPos_ - k) % rollLen_ + rollLen_) % rollLen_;
+    const float edge = float(std::min(pos, rollLen_ - 1 - pos)) + 0.5f;
+    const float w = std::min(1.f, edge / float(rollFade_));
+    return x + rmNow * (w * loop_[size_t(c)][size_t(pos)] - x);
+  };
   const auto prime = [&](std::array<Ring, kMaxChannels>& buf, int& w, int count) {
     w = 0;
     for (int c = 0; c < numChannels; ++c)
-      for (int k = 1; k <= count; ++k) buf[size_t(c)].at(-k) = hist_[size_t(c)].at(histW_ - k);
+      for (int k = 1; k <= count; ++k) buf[size_t(c)].at(-k) = past(c, k);
   };
   if (!pitchRunning_ && !off(pitchMix_)) {
     prime(pitchBuf_, pitchW_, pitchBuf_[0].mask);
@@ -173,7 +212,9 @@ void DjPerform::processPre(float* const* ch, int numChannels, int numFrames) {
     pitchRunning_ = true;
   }
   if (p_.tapeStop && !tapeHeld_) {
-    if (!tapeRunning_ || tapeMix_.current() < 0.05f) {
+    // Re-pressed while the last stop is still fading out: start a new one
+    // if that one already reached the halt.
+    if (!tapeRunning_ || tapeMix_.current() < 0.05f || tapeT_ >= tapeStopSamples_) {
       prime(tapeBuf_, tapeW_, 8);
       tapeT_ = tapeLag_ = 0.0;
     }
@@ -188,7 +229,7 @@ void DjPerform::processPre(float* const* ch, int numChannels, int numFrames) {
   }
   recordHistory(ch, numChannels, numFrames);
 
-  const bool rollOn = rollLatched_ || !off(rollMix_);
+  const bool rollOn = rollIn;
   const double tapeMaxLag = double(tapeBuf_[0].mask) - 8.0;
   constexpr float kHiss = 0.0017f;  // about -60 dBFS RMS before the low-pass
   constexpr float kTwoPi = 2.f * std::numbers::pi_v<float>;

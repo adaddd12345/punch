@@ -20,9 +20,11 @@ jobs:
     name: Build + publish (${{ inputs.runner }})
     # macOS 26 SDK (Liquid Glass); the app's deployment target stays 14.4.
     runs-on: ${{ inputs.runner }}
-    # Publish releases and the update feed in push order.
+    # Publish releases and the update feed in push order. One group per
+    # runner: the Intel fallback of an older run must not queue against (and
+    # displace a pending job of) a newer run's main job.
     concurrency:
-      group: publish-${{ github.ref }}
+      group: publish-${{ github.ref }}-${{ inputs.runner }}
       cancel-in-progress: false
     outputs:
       started: ${{ steps.started.outputs.started }}
@@ -77,8 +79,20 @@ jobs:
           name: BassShake-0.1.0-beta.${{ github.run_number }}
           path: build/BassShake-*.zip
           if-no-files-found: error
-      - name: Publish beta prerelease
+      # A newer push may have shipped while this run waited or built (e.g. a
+      # slow Intel fallback): never publish an older commit over it.
+      - name: Still the branch head?
+        id: head
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/claude/macos-audio-routing-research-xpbcuk' }}
+        run: |
+          HEAD_SHA="$(git ls-remote origin "${{ github.ref }}" | cut -f1)"
+          if [ "$HEAD_SHA" = "${{ github.sha }}" ]; then
+            echo "latest=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::${{ github.sha }} is no longer the head of ${{ github.ref_name }} ($HEAD_SHA); not publishing"
+          fi
+      - name: Publish beta prerelease
+        if: ${{ steps.head.outputs.latest == '1' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v0.1.0-beta.${{ github.run_number }}
@@ -103,7 +117,7 @@ jobs:
             Requires macOS 14.4 or later. No driver is installed and no restart is needed;
             quitting The Bass Shaker instantly returns your Mac's audio to normal.
       - name: Sign update + write Sparkle appcast
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/claude/macos-audio-routing-research-xpbcuk' }}
+        if: ${{ steps.head.outputs.latest == '1' }}
         env:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
           GH_TOKEN: ${{ github.token }}
@@ -111,6 +125,11 @@ jobs:
         run: |
           if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
             echo "::warning::SPARKLE_ED_PRIVATE_KEY secret is not set; skipping the auto-update feed"
+            exit 0
+          fi
+          # Check again: the release upload takes a while.
+          if [ "$(git ls-remote origin "${{ github.ref }}" | cut -f1)" != "${{ github.sha }}" ]; then
+            echo "::notice::A newer commit is on ${{ github.ref_name }}; not writing the update feed"
             exit 0
           fi
           # Start from the live feed so the previous builds stay listed.

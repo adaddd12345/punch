@@ -57,6 +57,7 @@ void TempoTracker::reset() {
   onsetWrite_ = 0;
   onsetCount_ = 0;
   framesSinceUpdate_ = 0;
+  acfLag_ = -1;
   bpm_ = 0.0;
   confidence_ = 0.0;
 }
@@ -88,14 +89,15 @@ void TempoTracker::pushOnsetFrame(float value) {
   onset_[size_t(onsetWrite_)] = value;
   onsetWrite_ = (onsetWrite_ + 1) % size;
   onsetCount_ = std::min(onsetCount_ + 1, size);
+  if (acfLag_ >= 0) stepEstimate();
   if (++framesSinceUpdate_ >= int(kUpdateSec * kFrameRate) &&
-      onsetCount_ >= int(kMinSecToReport * kFrameRate)) {
+      onsetCount_ >= int(kMinSecToReport * kFrameRate) && acfLag_ < 0) {
     framesSinceUpdate_ = 0;
-    estimate();
+    beginEstimate();
   }
 }
 
-void TempoTracker::estimate() {
+void TempoTracker::beginEstimate() {
   // Linearise the newest onsetCount_ frames (oldest first) and remove the mean.
   const int size = int(onset_.size());
   const int n = onsetCount_;
@@ -104,15 +106,37 @@ void TempoTracker::estimate() {
   for (int i = 0; i < n; ++i) mean += onset_[size_t((start + i) % size)];
   mean /= n;
   for (int i = 0; i < n; ++i) work_[size_t(i)] = float(onset_[size_t((start + i) % size)] - mean);
+  acfN_ = n;
+  acfMean_ = mean;
+  acfMaxLag_ = std::min(n - 1, kCombSize * maxLag_ + kCombSize);
+  // Finish within ~3/4 of the update interval.
+  const int frames = std::max(1, int(0.75 * kUpdateSec * kFrameRate));
+  acfStep_ = std::max(1, (acfMaxLag_ + frames) / frames);
+  acfLag_ = 0;
+  stepEstimate();
+}
 
+void TempoTracker::stepEstimate() {
   // Biased autocorrelation, normalised so r[0] = 1. "Biased" (divide by n,
   // not n - lag) tapers long lags, which gently favours the faster octave.
-  const int maxLagNeeded = std::min(n - 1, kCombSize * maxLag_ + kCombSize);
-  for (int lag = 0; lag <= maxLagNeeded; ++lag) {
+  const int n = acfN_;
+  const float* w = work_.data();
+  const int end = std::min(acfMaxLag_ + 1, acfLag_ + acfStep_);
+  for (int lag = acfLag_; lag < end; ++lag) {
     double acc = 0.0;
-    for (int i = 0; i + lag < n; ++i) acc += double(work_[size_t(i)]) * double(work_[size_t(i + lag)]);
+    for (int i = 0; i + lag < n; ++i) acc += double(w[i]) * double(w[i + lag]);
     acf_[size_t(lag)] = acc;
   }
+  acfLag_ = end;
+  if (acfLag_ > acfMaxLag_) {
+    acfLag_ = -1;
+    finishEstimate();
+  }
+}
+
+void TempoTracker::finishEstimate() {
+  const double mean = acfMean_;
+  const int maxLagNeeded = acfMaxLag_;
   if (acf_[0] < 1e-9 || mean < 1e-4) {  // silence or a flat envelope
     confidence_ = 0.0;
     return;

@@ -45,7 +45,12 @@ class TempoTracker {
   static constexpr double kPriorOctaves = 1.0;  // tempo-prior width (std dev)
 
   void pushOnsetFrame(float value);
-  void estimate();
+  // An estimate is spread over the following onset frames (a fixed slice of
+  // autocorrelation lags per frame), so no audio callback pays for a whole
+  // one: begin snapshots the window, step does a slice, finish picks the tempo.
+  void beginEstimate();
+  void stepEstimate();
+  void finishEstimate();
 
   double fs_ = 48000.0;
   int hop_ = 240;
@@ -63,6 +68,9 @@ class TempoTracker {
   int onsetCount_ = 0;
   int framesSinceUpdate_ = 0;
   int minLag_ = 60, maxLag_ = 200;
+  int acfLag_ = -1;          // next lag to compute; -1 = no estimate running
+  int acfN_ = 0, acfMaxLag_ = 0, acfStep_ = 1;
+  double acfMean_ = 0.0;
 
   double bpm_ = 0.0;
   double confidence_ = 0.0;

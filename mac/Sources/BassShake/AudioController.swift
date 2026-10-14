@@ -500,18 +500,26 @@ final class AudioController: ObservableObject {
   /// starts at 0 dB Boost: +12 dB set for quiet laptop speakers must not
   /// land on a new pair of headphones.
   private func deviceChanged(from old: AudioObjectID) {
-    guard settings.perDevice, settings.mode == .off else { return }
+    guard settings.perDevice else { return }
+    // Only on a real switch (not the first device found at launch). Only a
+    // positive Boost is risky; a cut stays. Modes don't switch sounds, but
+    // the Boost rule still applies in them.
+    func resetBoostForNewDevice(_ uid: String) {
+      guard old != 0, settings.boostDb > 0 else { return }
+      log.notice("new device \(uid, privacy: .public): Boost starts at 0 dB")
+      settings.boostDb = 0
+    }
+    guard settings.mode == .off else {
+      if let uid = currentDevice?.uid, settings.deviceSounds[uid] == nil { resetBoostForNewDevice(uid) }
+      return
+    }
     // Bank the outgoing device's sound first (a pending save may not have run).
     if let oldUID = devices.first(where: { $0.id == old })?.uid {
       settings.deviceSounds[oldUID] = currentSound
     }
     guard let uid = currentDevice?.uid else { return }
     guard let sound = settings.deviceSounds[uid] else {
-      // Only on a real switch (not the first device found at launch).
-      if old != 0, settings.boostDb != 0 {
-        log.notice("new device \(uid, privacy: .public): Boost starts at 0 dB")
-        settings.boostDb = 0
-      }
+      resetBoostForNewDevice(uid)
       return
     }
     log.notice("per-device sound for \(uid, privacy: .public)")
@@ -1065,6 +1073,8 @@ final class AudioController: ObservableObject {
   /// makeup) may add, and the total above which the limiter always runs.
   static let maxLiftDb = 12.0
   static let autoLimitAboveDb = 6.0
+  /// Rough peak lift (dB) of the Bass slider at full amount, for the above.
+  static let bassPeakDb = 4.0
 
   private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, _ live: LiveState = LiveState()) {
     let fade = live.fade, headphones = live.headphones
@@ -1124,12 +1134,14 @@ final class AudioController: ObservableObject {
     let boost = s.mode == .sleep ? 0 : s.boostDb
     let fair = s.mode == .sleep ? min(0, live.fairDb) : live.fairDb
     // Gain safety: the automatic lifts (Fair Level, loudness makeup) never take
-    // the total past +12 dB over the EQ's highest node; the user's own Boost is
+    // the total past +12 dB over the EQ's peak; the user's own Boost is
     // never trimmed. Past +6 dB in total the limiter
     // runs even with Limit off. The toggle stays as the user set it (only
     // the engine's safety net turns on; no auto headroom or compression), and
     // the output gain and the limiter's on/off both glide in the engine.
-    let eqPeak = max(0, s.bands.map(\.gain).max() ?? 0)
+    // The peak is the real response of correction + EQ (preamps included),
+    // plus a rough allowance for the Bass slider's harmonics.
+    let eqPeak = max(0, punch_eq_peak_boost_db(e) + bass * Self.bassPeakDb)
     var auto = loudnessMakeup + fair
     if auto > 0 { auto = min(auto, max(0, Self.maxLiftDb - eqPeak - max(0, boost))) }
     let lift = boost + auto
@@ -1143,10 +1155,19 @@ final class AudioController: ObservableObject {
                     d.isOn(.pump))
     punch_set_dj_track_tempo(e, d.listening)
     punch_set_limiter(e, !unlimited || safetyLimit, Float(c.ceilingDb), 80)
+    // Safety net (Limit off, big lift): the Boost only uses the headroom the
+    // music leaves (boost leveler), and the limiter that catches the rest is
+    // gentle (slow program release, soft clip knee) so a loud master isn't
+    // pumped or muffled. Limit on keeps its own tuning.
+    let safetyNet = unlimited && safetyLimit
+    punch_set_boost_leveler(e, safetyNet)
+    punch_set_limiter_shape(e, safetyNet ? 600 : 0, safetyNet ? 1 : 0)
     // Bass-priority limiting (docs/research/22-loudness-fighting.md): bass
     // boosts are limited against the room the rest of the mix leaves, so the
     // vocals never duck and bass boosts don't turn the whole song down.
-    punch_set_bass_priority(e, 150)
+    // Not when a broadband lift is what's over: there it would pin the bass
+    // at its floor and muffle the sound.
+    punch_set_bass_priority(e, safetyNet && lift >= eqPeak ? 0 : 150)
   }
 
   private func scheduleSave() {
@@ -1797,9 +1818,9 @@ final class AudioController: ObservableObject {
     // numbers). First restart once; if it happens again within a minute,
     // step aside so the Mac plays normally, and say why.
     let audible = dCallbacks > dSilent ? dCallbacks - dSilent : 0
-    // Silence by design never counts: all three DJ kills held, or the sleep
-    // timer's fade. (Stepping aside then would blast unprocessed audio.)
-    let silentByDesign = silenceExpected.load()
+    // Silence by design never counts: all three DJ kills held, Roll looping a
+    // silent slice, or the sleep timer's fade. (Stepping aside then would blast unprocessed audio.)
+    let silentByDesign = silenceExpected.load() || punch_dj_roll_silent(engine)
     // Ratio in Double: never overflows, whatever the counters do.
     if audible > 0 && Double(dDead) * 10 >= Double(audible) * 9 && !silentByDesign { deadStreak += 1 } else { deadStreak = 0 }
     if deadStreak >= 2 {

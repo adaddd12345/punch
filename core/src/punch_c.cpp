@@ -71,6 +71,18 @@ void punch_set_bass_priority(PunchEngine* e, float crossover_hz) {
   e->engine.edit().limiter.bassPriorityHz = std::max(0.f, crossover_hz);
 }
 
+void punch_set_limiter_shape(PunchEngine* e, float slow_release_ms, float clip_knee_db) {
+  auto& l = e->engine.edit().limiter;
+  l.slowReleaseMs = std::max(0.f, slow_release_ms);
+  l.clipKneeDb = std::max(0.f, clip_knee_db);
+}
+void punch_set_boost_leveler(PunchEngine* e, bool on) { e->engine.edit().boostLeveler = on; }
+double punch_eq_peak_boost_db(const PunchEngine* e) {
+  const EngineParams& p = e->engine.pending();
+  return punch::eqPeakBoostDb({&p.correction, &p.eq}, e->engine.sampleRate()) + double(p.correction.preampDb) +
+         double(p.eq.preampDb);
+}
+
 void punch_set_compressor(PunchEngine* e, bool enabled, float threshold_db, float ratio, float attack_ms,
                           float release_ms, float makeup_db, float sidechain_hp_hz) {
   e->engine.edit().compressor = {threshold_db, ratio, attack_ms, release_ms, 6.f, makeup_db, sidechain_hp_hz, enabled};
@@ -129,6 +141,7 @@ void punch_set_dj_fx(PunchEngine* e, bool tape_stop, bool chipmunk, bool screw, 
 
 void punch_set_dj_track_tempo(PunchEngine* e, bool on) { e->engine.edit().dj.trackTempo = on; }
 float punch_dj_bpm(const PunchEngine* e) { return e->engine.djBpm(); }
+bool punch_dj_roll_silent(const PunchEngine* e) { return e->engine.djRollSilent(); }
 
 void punch_set_correction_num_bands(PunchEngine* e, int n) {
   e->engine.edit().correction.numBands = std::clamp(n, 0, punch::kMaxEqBands);
