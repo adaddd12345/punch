@@ -617,36 +617,12 @@ enum NowLoading {
   static func subtitleWidth(_ id: String) -> CGFloat { 0.38 + 0.14 * seed(id, salt: 2) }
 }
 
-/// Breathes 0.5 <-> 0.8 over 1.2 s while active and on screen; a steady 0.65
-/// otherwise, and under Reduce Motion or Power Saver.
+/// Loading bars sit at a steady 0.65. (They used to breathe with a
+/// repeatForever animation, which leaked into layout while the popup window
+/// was resizing and overflowed the main thread's stack: beta.130 crash.)
 struct LoadingBreath: ViewModifier {
   let active: Bool
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.powerSaver) private var powerSaver
-  @State private var high = false
-  @State private var visible = false
-
-  private var breathing: Bool { active && visible && !reduceMotion && !powerSaver }
-
-  func body(content: Content) -> some View {
-    content
-      .opacity(breathing ? (high ? 0.8 : 0.5) : 0.65)
-      .onAppear { visible = true; sync() }
-      .onDisappear { visible = false; sync() }
-      .onChange(of: breathing) { _, _ in sync() }
-  }
-
-  private func sync() {
-    if breathing {
-      high = false
-      withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { high = true }
-    } else {
-      // A plain set ends the repeating animation (no frames while idle).
-      var t = Transaction()
-      t.disablesAnimations = true
-      withTransaction(t) { high = false }
-    }
-  }
+  func body(content: Content) -> some View { content.opacity(0.65) }
 }
 
 /// One line of text that is a bar while loading: `fraction` of the column,
