@@ -443,6 +443,7 @@ private struct LimitOverlay: View {
   let size: CGSize
   let bassEdgeX: CGFloat
   let yFor: (Double) -> CGFloat
+  @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     let gr = min(12, max(0, -meters.gainReductionDb))
@@ -473,7 +474,10 @@ private struct LimitOverlay: View {
           .monospacedDigit()
       }
       .padding(.horizontal, 6).padding(.vertical, 2)
-      .foregroundStyle(active ? Color.white : Color.orange)
+      // White or orange type on orange measured near 2:1; dark ink on the
+      // solid badge, and a deeper orange on the pale one in light mode.
+      .foregroundStyle(active ? Color.black.opacity(0.85)
+                       : (scheme == .dark ? Color.orange : Color(red: 0.60, green: 0.26, blue: 0)))
       .background(Capsule().fill(active ? Color.orange : Color.orange.opacity(0.15)))
       // Hover only (no gestures), so EQ drags still pass through.
       .pointerHint { [meters] in LimitHint.badge(meters: meters) }

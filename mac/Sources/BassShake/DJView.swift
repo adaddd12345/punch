@@ -171,7 +171,7 @@ struct DJView: View {
           if !controller.dj.filterPinned { controller.dj.filter = 0 }
         } label: {
           DartGlyph(pinned: dj.filterPinned, size: 11)
-            .foregroundStyle(dj.filterPinned ? DJStyle.filterAccent : Color.secondary)
+            .foregroundStyle(dj.filterPinned ? DJStyle.filterAccent : DJStyle.faint)
         }
         .buttonStyle(PinButtonStyle(minSize: 24))
         .help(dj.filterPinned ? "Unpin: the filter springs back to off when you let go"
@@ -202,7 +202,8 @@ enum DJStyle {
   /// Text inside the tiles. Fixed opacities, not the adaptive primary and
   /// secondary styles, so glass behind a tile never flips them.
   static let ink = Color.primary.opacity(0.9)
-  static let faint = Color.primary.opacity(0.5)
+  /// Pins, LP/HP and pad details at rest: 0.5 fell near 2:1 on the light tiles.
+  static let faint = Color.primary.opacity(0.68)
   /// A killed isolator band.
   static let killRGB = (0.77, 0.19, 0.18)
   static let kill = Color(red: killRGB.0, green: killRGB.1, blue: killRGB.2)
@@ -543,7 +544,7 @@ private struct IsolatorBar: View {
     let on = dj.isOn(b)
     return Button { DJActions.togglePin(b, controller) } label: {
       DartGlyph(pinned: pinned, size: 10)
-        .foregroundStyle(on ? Color.white.opacity(pinned ? 1 : 0.75) : Color.secondary)
+        .foregroundStyle(on ? Color.white.opacity(pinned ? 1 : 0.75) : DJStyle.faint)
     }
     .buttonStyle(PinButtonStyle(minSize: 24))
     .help(pinned ? "Unpin \(b.name)" : "Pin \(b.name) killed")

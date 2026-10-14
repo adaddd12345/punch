@@ -857,6 +857,8 @@ struct PopoverView: View {
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       } label: {
         Image(nsImage: MenuBarIcon.menuGlyph)
+          .renderingMode(.template)
+          .foregroundStyle(.secondary)
       }
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)

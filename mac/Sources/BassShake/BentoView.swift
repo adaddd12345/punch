@@ -698,7 +698,8 @@ struct BentoView: View {
       }
     }
     .font(.system(size: 11, weight: .medium, design: .rounded))
-    .foregroundStyle(.secondary)
+    // Dark: full primary; .secondary went to 2:1 on the gold hero.
+    .foregroundStyle(scheme == .dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
     .layoutPriority(1)
   }
 
@@ -854,7 +855,7 @@ struct BentoView: View {
       }
       .padding(.horizontal, 8)
       .frame(height: 20)
-      .foregroundStyle(s.limit ? Color.white : Color.primary.opacity(0.6))
+      .foregroundStyle(s.limit ? Color.white : Color.primary.opacity(0.8))
       .background(inner.fill(s.limit ? BentoInk.miniFill : Color.primary.opacity(mini ? chipFill : 0.08)))
       .contentShape(inner)
       .verticalHitSlop(mini ? 2 : 0)
@@ -1368,6 +1369,20 @@ struct BentoGlassSurface: ViewModifier {
   }
 }
 
+/// For a control overlaid on a glass tile from outside it (to keep it out of
+/// the tile's drag). Inside GlassEffectContainer, plain views drawn over a
+/// glass shape end up under the glass and show only as a faint frosted blob;
+/// an identity glass effect (no glass of its own) puts them back on top.
+struct BentoAboveGlass: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(macOS 26, *) {
+      content.glassEffect(.identity, in: Rectangle())
+    } else {
+      content
+    }
+  }
+}
+
 /// The pastel wash inside a glass tile: the same hue and diagonal as
 /// BentoFill, retuned for glass (which is lighter in light mode and darker in
 /// dark), with no rim or drop shadow (the glass draws its own edge).
@@ -1382,12 +1397,16 @@ struct BentoGlassWash: View {
   /// Frost (EQ, presets, What's Playing) and graphite (off) stay faint.
   private var neutral: Bool { tint.name == BentoTint.frost.name || tint.name == BentoTint.graphite.name }
 
-  private enum Level { case strong, base, faint }
+  private enum Level { case strong, lit, fill, base, faint }
 
   private func alpha(_ level: Level) -> Double {
     let a: Double
     switch level {
     case .strong: a = dark ? 0.55 : 0.78
+    // Dark mode: a lit tile or a fader's fill carries white type, so its light
+    // pastel stays lower than the hero's (0.55 left white words near 3:1).
+    case .lit: a = dark ? 0.46 : 0.78
+    case .fill: a = dark ? 0.36 : 0.78
     case .base: a = neutral ? (dark ? 0.08 : 0.16) : (dark ? 0.32 : 0.48)
     case .faint: a = dark ? 0.10 : 0.16
     }
@@ -1405,6 +1424,9 @@ struct BentoGlassWash: View {
     ZStack {
       switch look {
       case .outline:
+        // Clear glass needs a dimming layer in dark mode: over a light
+        // backdrop it went pale and its white type fell near 3:1.
+        if dark { shape.fill(Color.black.opacity(0.4)) }
         // The same hairline as BentoFill: marks a one-shot action, not a toggle.
         shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.26), Color.primary.opacity(0.10)],
                                           startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
@@ -1412,11 +1434,11 @@ struct BentoGlassWash: View {
         shape.fill(wash(.faint))
         GeometryReader { g in
           Rectangle()
-            .fill(wash(.strong))
+            .fill(wash(.fill))
             .frame(width: g.size.width * CGFloat(min(1, max(0, f))))
         }
       case .lit:
-        shape.fill(wash(.strong))
+        shape.fill(wash(.lit))
         // The lit glow, inside the glass (Power Saver never gets here).
         shape.stroke(tint.pastel.opacity(dark ? 0.75 : 0.95), lineWidth: 8)
           .blur(radius: 6)
@@ -1702,7 +1724,7 @@ private struct ScrubTile<Accessory: View>: View {
       }
     }
     // Outside the drag, double-click and cursor: Limit is its own button.
-    .overlay(alignment: .topTrailing) { accessory().padding([.top, .trailing], 12) }
+    .overlay(alignment: .topTrailing) { accessory().padding([.top, .trailing], 12).modifier(BentoAboveGlass()) }
     .onDisappear {
       if cursorPushed { NSCursor.pop(); cursorPushed = false }
       start = nil
@@ -1742,7 +1764,7 @@ private struct ModeTile<Fact: View>: View {
             Image(systemName: symbol)
               .symbolVariant(on ? .fill : .none)
               .font(.system(size: 11, weight: .semibold))
-              .foregroundStyle(dark ? tint.pastel : tint.ink)
+              .foregroundStyle(glyphInk(dark: dark))
               .frame(width: 14)
             if labels != .icons {
               VStack(alignment: .leading, spacing: 0) {
@@ -1773,13 +1795,20 @@ private struct ModeTile<Fact: View>: View {
     .animation(.easeOut(duration: 0.15), value: on)
   }
 
+  /// The glyph's hue. Graphite (Check & Fix, every tile while off) is a mid
+  /// grey in dark mode, about 2:1 on the tile, so it takes a lighter grey.
+  private func glyphInk(dark: Bool) -> Color {
+    guard dark else { return tint.ink }
+    return tint.name == BentoTint.graphite.name ? Color(white: 0.82) : tint.pastel
+  }
+
   private func glyph(dark: Bool) -> some View {
     ZStack {
       Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))
       Image(systemName: symbol)
         .symbolVariant(on ? .fill : .none)
         .font(.system(size: 9, weight: .bold))
-        .foregroundStyle(on ? Color.white : (dark ? tint.pastel : tint.ink))
+        .foregroundStyle(on ? Color.white : glyphInk(dark: dark))
     }
     .frame(width: 18, height: 18)
   }
@@ -1804,7 +1833,8 @@ private extension Text {
   func bentoFact() -> some View {
     font(.system(size: 10, weight: .medium, design: .rounded))
       .monospacedDigit()
-      .foregroundStyle(.secondary)
+      // Not .secondary: on a lit tile in dark mode that fell to about 3.5:1.
+      .foregroundStyle(Color.primary.opacity(0.8))
       .lineLimit(1)
       .minimumScaleFactor(0.8)
   }

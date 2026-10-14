@@ -396,12 +396,15 @@ private struct MacMuteButton: View {
         .font(.system(size: glyphSize, weight: .semibold))
         // On the fader: an inverted solid disc (dark on light, light on dark) so it
         // stands out over any fill level; the faint steel-on-tint disc vanished.
-        .foregroundStyle(s.silent ? Color.red : (onFader ? Color(nsColor: .windowBackgroundColor) : (usable ? Color.primary : Color.secondary)))
+        // Silent: a solid red disc with a white glyph (a red glyph on the faint disc read as pink).
+        .foregroundStyle(disc && s.silent ? Color.white
+                         : s.silent ? Color.red : (onFader ? Color(nsColor: .windowBackgroundColor) : (usable ? Color.primary : Color.secondary)))
         .frame(width: width, height: height)
         .background {
           if disc {
-            Circle().fill(onFader ? Color.primary.opacity(contrast == .increased ? 0.95 : 0.82)
-                                  : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08))
+            Circle().fill(s.silent ? Color.red
+                          : onFader ? Color.primary.opacity(contrast == .increased ? 0.95 : 0.82)
+                                    : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08))
           }
         }
         .contentShape(disc ? AnyShape(Circle()) : AnyShape(Rectangle()))
@@ -569,7 +572,8 @@ struct MacVolumeTile: View {
         if !mini && labels == .full {
           Text("Mac")
             .font(.system(size: 12, weight: .semibold, design: .rounded))
-            .foregroundStyle(.secondary)
+            // Dark: full primary; .secondary washed out to 2:1 on the fader's fill.
+            .foregroundStyle(scheme == .dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
             .lineLimit(1)
             .fixedSize()
         }
@@ -620,6 +624,7 @@ struct MacVolumeTile: View {
       MacMuteButton(model: model, glyphSize: 14, width: 24, height: 24, disc: true)
         .padding(.leading, inset)
         .onHover { overDisc = $0; syncCursor() }
+        .modifier(BentoAboveGlass())
     }
     .onDisappear {
       if cursorPushed { NSCursor.pop(); cursorPushed = false }

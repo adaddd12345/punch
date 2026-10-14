@@ -764,17 +764,16 @@ enum MenuBarIcon {
 
 extension MenuBarIcon {
   /// The shaker for the footer's ⋯ menu: 13 pt like its 11 pt semibold
-  /// neighbours, in the secondary label colour (redrawn per appearance) so it
-  /// carries the same weight as the stethoscope and power glyphs beside it.
+  /// neighbours. A template, tinted .secondary by the view so it carries the
+  /// same weight as the stethoscope beside it (a colour baked into a shared
+  /// image was dimmed again by the menu button and kept a stale appearance).
   static let menuGlyph: NSImage = {
     let base = image
     let img = NSImage(size: NSSize(width: 13, height: 13), flipped: false) { r in
       base.draw(in: r)
-      NSColor.secondaryLabelColor.set()
-      r.fill(using: .sourceAtop)
       return true
     }
-    img.isTemplate = false
+    img.isTemplate = true
     return img
   }()
 }
