@@ -121,7 +121,7 @@ struct SplitFlapText: View {
 
 /// "Updated to …": a thin capsule floating over the top of the popup, never in
 /// its layout, so it comes and goes without the window changing size. Rolls in,
-/// holds ~2.5 s (hover holds it longer), rolls out like a departures board, then
+/// holds ~1.5 s (hover holds it; a click sends it away at once), rolls out like a departures board, then
 /// the capsule fades and is removed. Reduce Motion / Power Saver: a plain fade.
 struct UpdatedCapsule: View {
   let version: String
@@ -132,6 +132,8 @@ struct UpdatedCapsule: View {
 
   @State private var stage: FlapStage = .below
   @State private var hover = false
+  /// Clicked anywhere but What's New: roll out now, hover or not.
+  @State private var tapped = false
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
@@ -176,19 +178,22 @@ struct UpdatedCapsule: View {
     .scaleEffect(scrub == nil && stage == .below && !still ? 0.96 : 1)
     .animation(.easeOut(duration: 0.2), value: stage == .below)
     .onHover { hover = $0 }
+    .contentShape(Capsule())
+    .onTapGesture { tapped = true }
     .onAppear {
       guard scrub == nil else { return }
       // Rolls in cell by cell; under Reduce Motion / Power Saver the cells don't
       // animate and the capsule's own fade carries it.
       stage = .shown
     }
-    .task(id: hover) {
+    .task(id: hover || tapped ? (tapped ? 2 : 1) : 0) {
       guard scrub == nil else { return }
-      if hover {
+      if hover && !tapped {
         if stage == .gone { stage = .shown }  // caught mid roll-out: roll back
         return
       }
-      try? await Task.sleep(for: .seconds(2.5))
+      // A glance, like a system HUD: 1.5 s, or at once when clicked.
+      if !tapped { try? await Task.sleep(for: .seconds(1.5)) }
       guard !Task.isCancelled else { return }
       if still {
         withAnimation(.easeOut(duration: 0.2)) { dismiss() }

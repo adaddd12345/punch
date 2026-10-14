@@ -394,11 +394,14 @@ private struct MacMuteButton: View {
     Button { model.toggleMute() } label: {
       Image(systemName: MacLook.glyph(s))
         .font(.system(size: glyphSize, weight: .semibold))
-        .foregroundStyle(s.silent ? Color.red : (onFader ? BentoTint.steel.pastel : (usable ? Color.primary : Color.secondary)))
+        // On the fader: an inverted solid disc (dark on light, light on dark) so it
+        // stands out over any fill level; the faint steel-on-tint disc vanished.
+        .foregroundStyle(s.silent ? Color.red : (onFader ? Color(nsColor: .windowBackgroundColor) : (usable ? Color.primary : Color.secondary)))
         .frame(width: width, height: height)
         .background {
           if disc {
-            Circle().fill(onFader ? BentoInk.miniFill : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08))
+            Circle().fill(onFader ? Color.primary.opacity(contrast == .increased ? 0.95 : 0.82)
+                                  : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08))
           }
         }
         .contentShape(disc ? AnyShape(Circle()) : AnyShape(Rectangle()))
