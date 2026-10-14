@@ -1130,7 +1130,7 @@ final class NowPlaying: ObservableObject {
           }
           // No still (yet): the site's own icon. Items are never from private windows.
           if list[i].artwork == nil, let host = SiteIcon.host(list[i].url) {
-            if let hit = iconCache[host] { list[i].favicon = hit } else { loadIcon(host) }
+            if let hit = iconCache[host] { list[i].favicon = hit } else { loadIcon(host, page: list[i].url) }
           }
         }
         // Heard tabs first, then a stable order (first seen), so tiles don't shuffle.
@@ -1178,12 +1178,13 @@ final class NowPlaying: ObservableObject {
     if next != items { items = next }
   }
 
-  /// A site's icon from its own host only (SiteIcon: https, ephemeral, 3 s,
-  /// 512 KB, same-domain redirects). Failures aren't retried this session.
-  private func loadIcon(_ host: String) {
+  /// A site's icon: its host's touch icons, else the one the page itself declares,
+  /// else favicon.ico (SiteIcon: https, ephemeral, no cookies, 3 s, size caps,
+  /// same-domain redirects). Failures aren't retried this session.
+  private func loadIcon(_ host: String, page: URL?) {
     guard !iconLoading.contains(host), !iconFailed.contains(host) else { return }
     iconLoading.insert(host)
-    iconLoader.load(host: host) { [weak self] img in
+    iconLoader.load(host: host, page: page) { [weak self] img in
       DispatchQueue.main.async { self?.iconLoaded(img, host: host) }
     }
   }
@@ -1353,7 +1354,7 @@ class ArtRedirectGuard: NSObject, URLSessionTaskDelegate {
     guard let to = request.url, let from = task.originalRequest?.url else { completionHandler(nil); return }
     let ok = (NowPlaying.isSpotifyArt(from) && NowPlaying.isSpotifyArt(to))
       || (BrowserTabs.isYouTubeStill(from) && BrowserTabs.isYouTubeStill(to))
-      || SiteIcon.allowsRedirect(from: from, to: to)
+      || (self is SiteIconLoader && SiteIcon.sameSite(from: from, to: to))
     completionHandler(ok ? request : nil)
   }
 }
