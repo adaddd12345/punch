@@ -27,6 +27,10 @@ struct BentoView: View {
   let size: ViewSize
   /// The window tools chip (labels, view size, pin), from PopoverView.
   var heroIcons: AnyView = AnyView(EmptyView())
+  /// Classic: the same blocks, stripped back. No plates or glass (a faint
+  /// grouped surface at most), the original EQ, sliders, preset pills and
+  /// power switch. Full and Compact only (Classic Mini is PopoverView's).
+  var flat = false
 
   /// Which mode's settings strip shows: the one turned on most recently.
   private enum Detail { case nightGuard, mode }
@@ -59,13 +63,19 @@ struct BentoView: View {
   /// Liquid Glass tiles (macOS 26+, ⋯ › Look). Power Saver and Reduce
   /// Transparency keep the classic frosted fill.
   private var glass: Bool {
-    guard #available(macOS 26, *) else { return false }
+    guard #available(macOS 26, *), !flat else { return false }
     return s.liquidGlass && !powerSaver && !reduceTransparency
+  }
+
+  /// Edit Layout's choice: each layout keeps its own keys.
+  private func shows(_ bento: LayoutSection, _ classic: LayoutSection) -> Bool {
+    s.shows(flat ? classic : bento)
   }
 
   var body: some View {
     stack
       .modifier(BentoGlassContainer())
+      .environment(\.bentoFlat, flat)
       .environment(\.bentoGlass, glass ? BentoGlassSpace(id: glassSpace) : nil)
       // Always set, so a tile's glassEffectID never comes and goes with `glass`.
       .environment(\.bentoGlassNamespace, glassSpace)
@@ -81,14 +91,24 @@ struct BentoView: View {
         if let mode = editor { editorView(mode) }
       } else {
         hero
+        // Classic: a hairline where the hero's plate would end.
+        if flat { Divider().opacity(0.5) }
         // The editor opens right under the hero when the presets tile is hidden,
         // so "Save Current Sound as Preset…" from the hero menu is seen.
-        if !s.shows(.bentoPresets), let mode = editor { editorView(mode) }
+        if !shows(.bentoPresets, .classicPresets), let mode = editor { editorView(mode) }
         // What's Playing: everything else playing, one small tile per tab or app (NowStack.swift).
-        if s.shows(.bentoNowPlaying) {
+        if shows(.bentoNowPlaying, .classicNowPlaying) {
           NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
         }
-        if s.shows(.bentoEQ) {
+        if flat {
+          // The original EQ: grid, labels and its own faint backing.
+          if s.shows(.classicEQ) {
+            EQView(controller: controller)
+              .frame(height: size == .full ? 150 : 112)
+              .opacity(live ? 1 : 0.45)
+          }
+          if size == .full && s.shows(.classicMeters) { MeterView(model: meters) }
+        } else if s.shows(.bentoEQ) {
           BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
             EQView(controller: controller, chrome: false,
                    filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
@@ -98,14 +118,18 @@ struct BentoView: View {
         }
       }
       // One identity at every size, so ⌘3 resizes the dials in place.
-      if mini || s.shows(.bentoDials) { dials }
+      if flat {
+        if s.shows(.classicSliders) { flatSliders }
+      } else if mini || s.shows(.bentoDials) {
+        dials
+      }
       if !mini {
-        if s.shows(.bentoPresets) {
-          presets
+        if shows(.bentoPresets, .classicPresets) {
+          if flat { PresetStrip(controller: controller, editor: $editor) } else { presets }
           if let mode = editor { editorView(mode) }
         }
-        if s.shows(.bentoModes) { modeGrid }
-        if s.shows(.bentoModeSettings) { modeDetails }
+        if shows(.bentoModes, .classicModes) { modeGrid }
+        if shows(.bentoModeSettings, .classicModeSettings) { modeDetails }
       }
     }
     .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
@@ -146,6 +170,30 @@ struct BentoView: View {
       } accessory: { limitCard(mini: mini) }
       .pointerHint(Caption.boost(s.boostDb, scrub: true), live: true)
       .pointerHintTint(ink(tint(.bass)))
+    }
+  }
+
+  /// Classic's Strength and Boost: the original slider rows, Limit under them.
+  private var flatSliders: some View {
+    VStack(spacing: 4) {
+      LabeledSlider(title: "Strength", symbol: "waveform.path",
+                    value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
+                    range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+        .pointerHint(Caption.strength(s.bass, scrub: false), live: true, track: false)
+      LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
+                    value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
+                    range: 0...12, format: { String(format: "+%.0f dB", $0) })
+        .pointerHint(Caption.boost(s.boostDb, scrub: false), live: true, track: false)
+      HStack(spacing: 6) {
+        Spacer()
+        Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
+          IconText(title: "Limit", symbol: "ear", size: 10)
+            .foregroundStyle(s.limit ? Color.orange : Color.secondary)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .pointerHint { [controller] in LimitHint.make(on: controller.settings.limit, meters: controller.meters) }
+      }
     }
   }
 
@@ -208,7 +256,86 @@ struct BentoView: View {
   /// title, transport), sound (preset, A/B, Power), output, window tools.
   /// One primary action per state, always the big disc at the top row's right
   /// end: Power while nothing plays, play/pause while something does.
-  private var hero: some View {
+  @ViewBuilder private var hero: some View {
+    if flat { flatHero } else { bentoHero }
+  }
+
+  /// Classic: the same groups and order on the popup's own background, no
+  /// plate, no level line (Full keeps the meters under the EQ).
+  private var flatHero: some View {
+    let t = heroTint
+    let dark = scheme == .dark
+    return NowPlayingSwitch(model: nowPlaying, on: s.showNowPlaying) {
+      if compact { flatIdleCompact(t, dark: dark) } else { flatIdleFull(t, dark: dark) }
+    } playing: { app in
+      if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .pointerHintTint(ink(t))
+    .animation(.easeOut(duration: 0.2), value: modesLine)
+    .animation(.easeOut(duration: 0.2), value: editedBase)
+  }
+
+  /// Classic Full, nothing playing: logo, preset word, A/B, power switch; the
+  /// note line under the word; then output and window tools.
+  private func flatIdleFull(_ t: BentoTint, dark: Bool) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(alignment: .center, spacing: 8) {
+        appLogo(26)
+        bigWord(t, dark: dark, font: 20, chevron: 9, scale: 0.6)
+        if live { abChip(compact: false) }
+        powerButton(size: 32)
+      }
+      .frame(height: 32)
+      // The note shares the tools' row (under the word), so the hero never
+      // changes height: 32 + 8 + 24.
+      HStack(alignment: .center, spacing: 8) {
+        if live && (editedBase != nil || !modesLine.isEmpty) {
+          noteLine
+            .padding(.leading, 34)
+            .transition(.opacity)
+        } else {
+          Spacer(minLength: 0)
+        }
+        flatOutput
+        heroIcons
+      }
+      .frame(height: 24)
+    }
+  }
+
+  /// Classic's output icon, only while Mac Volume (and the output row under
+  /// it) is hidden: otherwise the picker would show twice.
+  @ViewBuilder private var flatOutput: some View {
+    if !s.showMacVolume { outputChip(iconOnly: true) }
+  }
+
+  /// Classic Compact, nothing playing: one 24 pt row.
+  private func flatIdleCompact(_ t: BentoTint, dark: Bool) -> some View {
+    HStack(alignment: .center, spacing: 8) {
+      appLogo(22)
+      bigWord(t, dark: dark, font: 15, chevron: 8, scale: 0.7)
+      if live { abChip(compact: true) }
+      flatOutput
+      heroIcons
+      powerButton(size: 24)
+    }
+    .frame(height: 24)
+  }
+
+  /// The full app logo (the Liquid Glass shaker), grey while off.
+  private func appLogo(_ d: CGFloat) -> some View {
+    Image(nsImage: NSApp.applicationIconImage)
+      .resizable()
+      .interpolation(.high)
+      .aspectRatio(contentMode: .fit)
+      .frame(width: d, height: d)
+      .saturation(live ? 1 : 0)
+      .opacity(live ? 1 : 0.6)
+      .accessibilityHidden(true)
+  }
+
+  private var bentoHero: some View {
     let t = heroTint
     let dark = scheme == .dark
     let shape = RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous)
@@ -417,7 +544,7 @@ struct BentoView: View {
       HStack(alignment: .center, spacing: 8) {
         soundChip(t)
         if live { abChip(compact: true) }
-        outputChip(iconOnly: true)
+        if flat { flatOutput } else { outputChip(iconOnly: true) }
         heroIcons
         powerButton(size: 24)
       }
@@ -430,7 +557,12 @@ struct BentoView: View {
   /// Output (flexible) then the window tools.
   private var utilityBar: some View {
     HStack(alignment: .center, spacing: 8) {
-      outputChip(iconOnly: false)
+      if flat {
+        Spacer(minLength: 0)
+        flatOutput
+      } else {
+        outputChip(iconOnly: false)
+      }
       heroIcons
     }
     .frame(height: 24)
@@ -456,12 +588,12 @@ struct BentoView: View {
       presetMenu {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
           Text(heroWord)
-            .font(.system(size: font, weight: .heavy, design: .rounded))
-            .tracking(font >= 30 ? -0.8 : -0.4)
+            .font(.system(size: font, weight: flat ? .bold : .heavy, design: .rounded))
+            .tracking(font >= 30 ? -0.8 : (flat ? -0.2 : -0.4))
             .lineLimit(1)
             .minimumScaleFactor(scale)
             .foregroundStyle(Color.primary)
-            .modifier(SoftShadow(on: !powerSaver, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
+            .modifier(SoftShadow(on: !powerSaver && !flat, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
           if live {
             Image(systemName: "chevron.down")
               .font(.system(size: chevron, weight: .heavy))
@@ -519,7 +651,8 @@ struct BentoView: View {
 
   /// The preset picker behind the big word and the sound chip. While off: the label alone.
   private func presetMenu<L: View>(@ViewBuilder _ label: @escaping () -> L) -> some View {
-    PresetMenu(controller: controller, editor: $editor, chips: size != .mini && s.shows(.bentoPresets), label: label)
+    PresetMenu(controller: controller, editor: $editor, chips: size != .mini && shows(.bentoPresets, .classicPresets),
+               label: label)
   }
 
   /// `droppable`: left out when even "+ 2 modes" doesn't fit (the sound chip).
@@ -637,8 +770,22 @@ struct BentoView: View {
   }
 
   /// Power: the big disc while nothing plays (40 Full, 32 Compact), a 24
-  /// circle in the sound bar while something does.
-  private func powerButton(size d: CGFloat) -> some View {
+  /// circle in the sound bar while something does. Classic: the original switch.
+  @ViewBuilder private func powerButton(size d: CGFloat) -> some View {
+    if flat {
+      Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled },
+                                              set: { controller.settings.enabled = $0 }))
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .labelsHidden()
+        .fixedSize()
+        .pointerHint(Caption.power(on: live))
+    } else {
+      bentoPower(size: d)
+    }
+  }
+
+  private func bentoPower(size d: CGFloat) -> some View {
     Button {
       controller.settings.enabled.toggle()
     } label: {
@@ -810,8 +957,25 @@ struct BentoView: View {
       : "Instrumental music works best for reading and writing; lyrics compete with words. Noise helps some people focus and distracts others, so try both.")
   }
 
-  /// Night Guard's allowance: the same drag-the-number tile as Strength/Boost.
-  private var nightGuardRow: some View {
+  /// Night Guard's allowance: the same drag-the-number tile as Strength/Boost
+  /// (Classic: the original slider row on the faint surface).
+  @ViewBuilder private var nightGuardRow: some View {
+    if flat {
+      BentoTile(tint: tint(.indigo), glassID: "detail.nightGuard") {
+        LabeledSlider(title: "Allow", symbol: "moon.haze",
+                      value: Binding(get: { s.nightGuardDb }, set: { v in
+                        let r = v.rounded()
+                        if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
+                      }),
+                      range: 3...15, format: { "+\(Int($0.rounded())) dB" })
+      }
+      .pointerHint(Caption.allow(s.nightGuardDb, scrub: false), live: true, track: false)
+    } else {
+      bentoAllow
+    }
+  }
+
+  private var bentoAllow: some View {
     ScrubTile(title: "Allow", symbol: "moon.haze", tint: tint(.indigo),
               value: s.nightGuardDb, range: 3...15, defaultValue: Self.defaultAllow,
               detent: Self.defaultAllow, tickStep: 1, step: 1, glassID: "detail.nightGuard",
@@ -1013,23 +1177,66 @@ struct BentoTile<Content: View>: View {
   @ViewBuilder let content: () -> Content
   @Environment(\.bentoGlass) private var glass
   @Environment(\.bentoGlassNamespace) private var glassSpace
+  /// Classic: one faint surface, no wash, rim, shadow or glass.
+  @Environment(\.bentoFlat) private var flat
 
   /// One fixed structure whether glass is on or off (only the background
   /// branches), so toggling glass never resets the content's state.
   var body: some View {
+    let r = flat ? min(radius, BentoRadius.flat) : radius
     content()
       .padding(padding)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background {
-        if glass != nil {
-          BentoGlassWash(tint: tint, look: look, radius: radius)
+        if flat {
+          BentoFlatFill(tint: tint, look: look, radius: r)
+        } else if glass != nil {
+          BentoGlassWash(tint: tint, look: look, radius: r)
         } else {
-          BentoFill(tint: tint, look: look, radius: radius)
+          BentoFill(tint: tint, look: look, radius: r)
         }
       }
-      .modifier(BentoClip(on: clipped, radius: radius))
-      .modifier(BentoGlassSurface(on: glass != nil, radius: radius, interactive: interactive,
+      .modifier(BentoClip(on: clipped, radius: r))
+      .modifier(BentoGlassSurface(on: glass != nil && !flat, radius: r, interactive: interactive,
                                   clear: look == .outline, id: glassID, space: glassSpace))
+  }
+}
+
+/// Classic's tile: the faint backing the original EQ always had. On (a lit
+/// mode) is a soft pastel wash; no glow, rim or shadow.
+private struct BentoFlatFill: View {
+  let tint: BentoTint
+  let look: BentoLook
+  let radius: CGFloat
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.colorSchemeContrast) private var contrast
+
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+    let hc = contrast == .increased
+    let faint = Color.primary.opacity(hc ? 0.10 : 0.045)
+    let wash = tint.pastel.opacity((scheme == .dark ? 0.16 : 0.26) + (hc ? 0.12 : 0))
+    ZStack {
+      switch look {
+      case .outline:
+        shape.strokeBorder(Color.primary.opacity(hc ? 0.35 : 0.14), lineWidth: hc ? 1 : 0.5)
+      case .lit:
+        shape.fill(wash)
+      case .fader(let f):
+        shape.fill(faint)
+        GeometryReader { g in
+          Rectangle()
+            .fill(wash)
+            .frame(width: g.size.width * CGFloat(min(1, max(0, f))))
+        }
+        .clipShape(shape)
+      default:
+        shape.fill(faint)
+      }
+    }
+    .animation(.easeOut(duration: 0.15), value: look == .lit)
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
   }
 }
 
@@ -1056,7 +1263,16 @@ private struct BentoGlassNamespaceKey: EnvironmentKey {
   static let defaultValue: Namespace.ID? = nil
 }
 
+private struct BentoFlatKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
 extension EnvironmentValues {
+  /// Set by BentoView in the Classic layout: tiles draw as one faint surface.
+  var bentoFlat: Bool {
+    get { self[BentoFlatKey.self] }
+    set { self[BentoFlatKey.self] = newValue }
+  }
   var bentoGlass: BentoGlassSpace? {
     get { self[BentoGlassKey.self] }
     set { self[BentoGlassKey.self] = newValue }
@@ -1473,29 +1689,39 @@ private struct ModeTile<Fact: View>: View {
   @ViewBuilder let fact: () -> Fact
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.bentoFlat) private var flat
 
   var body: some View {
     let dark = scheme == .dark
     Button(action: action) {
       BentoTile(tint: tint, look: outline ? .outline : (on ? .lit : .quiet), interactive: true) {
-        VStack(alignment: .leading, spacing: 4) {
-          ZStack {
-            Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))
+        if flat {
+          // Classic: one slim row, glyph beside the words; a fixed 28 pt
+          // content height, so a fact appearing never moves the grid.
+          HStack(alignment: .center, spacing: 6) {
+            // A bare glyph (no disc), so the name fits a third of the width.
             Image(systemName: symbol)
               .symbolVariant(on ? .fill : .none)
-              .font(.system(size: 9, weight: .bold))
-              .foregroundStyle(on ? Color.white : (dark ? tint.pastel : tint.ink))
+              .font(.system(size: 11, weight: .semibold))
+              .foregroundStyle(dark ? tint.pastel : tint.ink)
+              .frame(width: 14)
+            if labels != .icons {
+              VStack(alignment: .leading, spacing: 0) {
+                titleText
+                if on { fact() }
+              }
+            }
+            Spacer(minLength: 0)
           }
-          .frame(width: 18, height: 18)
-          if labels != .icons {
-            Text(title)
-              .font(.system(size: 12, weight: .semibold, design: .rounded))
-              .lineLimit(1)
-              .minimumScaleFactor(0.85)
+          .frame(height: 28)
+        } else {
+          VStack(alignment: .leading, spacing: 4) {
+            glyph(dark: dark)
+            if labels != .icons { titleText }
+            if on { fact() } else if reserveFact { Text(" ").bentoFact().hidden() }
           }
-          if on { fact() } else if reserveFact { Text(" ").bentoFact().hidden() }
+          .frame(maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxHeight: .infinity, alignment: .topLeading)
       }
       .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
     }
@@ -1506,6 +1732,24 @@ private struct ModeTile<Fact: View>: View {
     .accessibilityLabel(title)
     .accessibilityAddTraits(on ? .isSelected : [])
     .animation(.easeOut(duration: 0.15), value: on)
+  }
+
+  private func glyph(dark: Bool) -> some View {
+    ZStack {
+      Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))
+      Image(systemName: symbol)
+        .symbolVariant(on ? .fill : .none)
+        .font(.system(size: 9, weight: .bold))
+        .foregroundStyle(on ? Color.white : (dark ? tint.pastel : tint.ink))
+    }
+    .frame(width: 18, height: 18)
+  }
+
+  private var titleText: some View {
+    Text(title)
+      .font(.system(size: 12, weight: .semibold, design: .rounded))
+      .lineLimit(1)
+      .minimumScaleFactor(0.85)
   }
 }
 
@@ -1632,4 +1876,6 @@ enum BentoRadius {
   static let inner: CGFloat = 6
   /// The hero: 16 pt padding, kept concentric with its inner 6.
   static let hero: CGFloat = 22
+  /// Classic's faint surfaces: the original EQ backing's radius.
+  static let flat: CGFloat = 12
 }

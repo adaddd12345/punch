@@ -44,19 +44,24 @@ struct LayoutSection: Identifiable, Equatable {
   // Classic, top to bottom.
   static let classicHeader = LayoutSection(key: "classic.header", name: "Top Bar", symbol: "power", tint: .butter,
                                            height: 32, locked: "Always shown: it has the on/off switch.")
+  static let classicNowPlaying = LayoutSection(key: "classic.nowPlaying", name: "More Playing Apps", symbol: "music.note.list",
+                                               tint: .aqua, height: 36, when: "With What's Playing on")
   static let classicEQ = LayoutSection(key: "classic.eq", name: "EQ Curve", symbol: "slider.vertical.3", tint: .frost, height: 56)
   static let classicPresets = LayoutSection(key: "classic.presets", name: "Presets", symbol: "square.stack", tint: .frost, height: 36)
   static let classicMeters = LayoutSection(key: "classic.meters", name: "Level Meters", symbol: "chart.bar.fill", tint: .mint,
                                            height: 36, when: "Full size only")
   static let classicSliders = LayoutSection(key: "classic.sliders", name: "Strength & Boost", symbol: "waveform.path", tint: .bass, height: 44)
   static let classicModes = LayoutSection(key: "classic.modes", name: "Modes", symbol: "square.grid.3x2", tint: .indigo, height: 44)
+  static let classicModeSettings = LayoutSection(key: "classic.modeSettings", name: "Mode Settings", symbol: "slider.horizontal.3",
+                                                 tint: .lilac, height: 36, when: "Night Guard, Study, Sleep")
   static let classicFooter = LayoutSection(key: "classic.footer", name: "Bottom Bar", symbol: "ellipsis.circle", tint: .graphite,
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
   static let bento: [LayoutSection] = [macVolume, bentoHero, bentoNowPlaying, bentoEQ, bentoDials, bentoPresets, bentoModes,
                                        bentoModeSettings, bentoFooter]
-  static let classic: [LayoutSection] = [macVolume, classicHeader, classicEQ, classicPresets, classicMeters, classicSliders,
-                                         classicModes, classicFooter]
+  /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
+  static let classic: [LayoutSection] = [macVolume, classicHeader, classicNowPlaying, classicEQ, classicMeters, classicSliders,
+                                         classicPresets, classicModes, classicModeSettings, classicFooter]
 }
 
 extension Settings {

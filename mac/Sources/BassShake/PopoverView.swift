@@ -73,11 +73,6 @@ struct PopoverView: View {
 
   private var size: ViewSize { role == .launchWindow ? .full : controller.settings.viewSize }
 
-  /// Edit Layout's choice for this section (Mini always shows its few controls).
-  private func shows(_ section: LayoutSection) -> Bool {
-    size == .mini || controller.settings.shows(section)
-  }
-
   private var controls: some View {
     controlStack
       .animation(.easeOut(duration: 0.2), value: controller.settings.enabled)
@@ -108,8 +103,9 @@ struct PopoverView: View {
     let s = controller.settings
     let mini = size == .mini
     return MutedNotice(live: controller.live,
-                       heroShown: mini ? s.showPlayingChannel : (s.bento && s.showNowPlaying),
-                       tilesShown: !mini && s.bento && s.showNowPlaying && s.shows(.bentoNowPlaying))
+                       heroShown: mini ? s.showPlayingChannel : s.showNowPlaying,
+                       tilesShown: !mini && s.showNowPlaying
+                         && s.shows(s.bento ? .bentoNowPlaying : .classicNowPlaying))
   }
 
   private var controlStack: some View {
@@ -119,36 +115,24 @@ struct PopoverView: View {
       macSlot
       // In your ears: the output, and every playing app behind a chevron.
       earsSlot
-      // Bento folds the header's controls into its hero; Mini has its own row 1.
-      if !controller.settings.bento && size != .mini { header }
-      // Banners sit above Mini's row 1, full width.
+      // Banners sit above the hero (and Mini's row 1), full width.
       statusBanner
-      // Bento: under the stack, so a mute never pushes What's Playing down.
-      if !controller.settings.bento { mutedNotice }
       NowPlayingNote(controller: controller, mini: size == .mini)
-      if controller.settings.bento {
+      if !controller.settings.bento && size == .mini {
+        classicMini
+      } else {
         if size != .mini { driverSection }
         // One BentoView at every size, so ⌘1/2/3 resizes its tiles in place.
+        // Classic Full and Compact are the same blocks, flat (stripped back).
         BentoView(controller: controller, meters: meters, editor: $editor, size: size,
                   heroIcons: AnyView(size == .mini
                     ? windowTools(words: false, mini: true, height: 32, capsule: true)
-                    : windowTools(words: size == .full && labels == .full)))
-        mutedNotice
-      } else if size == .mini {
-        classicMini
-      } else {
-        driverSection
-        if shows(.classicEQ) {
-          EQView(controller: controller)
-            .frame(height: size == .full ? 150 : 112)
-            .opacity(controller.settings.enabled ? 1 : 0.45)
-        }
-        if shows(.classicPresets) { presetStrip }
-        if size == .full && shows(.classicMeters) { MeterView(model: meters) }
+                    : windowTools(words: size == .full && labels == .full)),
+                  flat: !controller.settings.bento)
       }
-      if size != .mini && !controller.settings.bento && shows(.classicSliders) { sliders }
+      // Under the stack, so a mute never pushes What's Playing down.
+      mutedNotice
       if size != .mini {
-        if !controller.settings.bento && shows(.classicModes) { tray }
         Divider().opacity(0.5)
         footer
       }
@@ -311,36 +295,6 @@ struct PopoverView: View {
                 currentID: controller.currentDeviceID, headphones: controller.currentOutputIsHeadphones,
                 bento: controller.settings.bento, mini: size == .mini,
                 select: { [controller] d in controller.select(device: d) })
-    }
-  }
-
-  /// Classic Full and Compact (Mini draws `classicMini`; Bento folds this into its hero).
-  private var header: some View {
-    HStack(spacing: 6) {
-      // The full app logo (the Liquid Glass shaker), not the menu-bar glyph.
-      Image(nsImage: NSApp.applicationIconImage)
-        .resizable()
-        .interpolation(.high)
-        .aspectRatio(contentMode: .fit)
-        .frame(width: 26, height: 26)
-        .saturation(controller.settings.enabled ? 1 : 0)
-        .opacity(controller.settings.enabled ? 1 : 0.6)
-      if labels == .full {
-        Text("The Bass Shaker")
-          .font(.system(size: 14, weight: .bold, design: .rounded))
-          .lineLimit(1)
-          .minimumScaleFactor(0.8)
-          .layoutPriority(1)
-      }
-      Spacer(minLength: 0)
-      deviceMenu
-      windowTools(words: false)
-      abButton
-      Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled }, set: { controller.settings.enabled = $0 }))
-        .toggleStyle(.switch)
-        .controlSize(.small)
-        .labelsHidden()
-        .pointerHint(Caption.power(on: controller.settings.enabled))
     }
   }
 
@@ -610,26 +564,6 @@ struct PopoverView: View {
       .accessibilityHidden(true)
   }
 
-  /// A/B compare (only while on). In Bento it sits next to Power.
-  @ViewBuilder private var abButton: some View {
-    if controller.settings.enabled {
-      Button { controller.bypassed.toggle() } label: {
-        Text(controller.bypassed ? "Original" : "A/B")
-          .font(.system(size: 10, weight: .bold, design: .rounded))
-          .lineLimit(1)
-          .fixedSize()
-          .footerChip()
-          .foregroundStyle(controller.bypassed ? Color.white : Color.primary)
-          .background(Capsule().fill(controller.bypassed ? Color.orange : Color.primary.opacity(0.08)))
-      }
-      .buttonStyle(.plain)
-      .accessibilityLabel("Compare with original sound")
-      .accessibilityValue(controller.bypassed ? "Original" : "Processed")
-      .pointerHint(Caption.ab(bypassed: controller.bypassed,
-                              hotkey: controller.settings.bypassHotkey ? GlobalHotkey.bypassLabel : nil))
-    }
-  }
-
   @ViewBuilder private var statusBanner: some View {
     switch controller.status {
     case .needsPermission:
@@ -694,120 +628,8 @@ struct PopoverView: View {
     }
   }
 
-  private var presetStrip: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      PresetStrip(controller: controller, editor: $editor)
-      if let mode = editor {
-        PresetEditor(controller: controller, mode: mode) {
-          withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { editor = nil }
-        }
-        .id(mode == .create ? "create" : "edit")
-        .transition(.opacity.combined(with: .move(edge: .top)))
-      }
-    }
-    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
-  }
-
-  /// The bottom tray (modes): collapses and opens; its state is remembered.
-  private var tray: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Button {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { controller.settings.trayOpen.toggle() }
-      } label: {
-        HStack(spacing: 4) {
-          Image(systemName: "chevron.right")
-            .font(.system(size: 8, weight: .bold))
-            .rotationEffect(.degrees(controller.settings.trayOpen ? 90 : 0))
-            .frame(width: 10)
-          if labels == .full {
-            Text("MODES")
-              .font(.system(size: 9, weight: .bold, design: .rounded))
-          } else {
-            Image(systemName: "slider.horizontal.3").font(.system(size: 9, weight: .bold))
-          }
-          if !controller.settings.trayOpen, labels == .full, let active = activeModesSummary {
-            Text(active)
-              .font(.system(size: 9, weight: .medium, design: .rounded))
-              .foregroundStyle(.tertiary)
-              .lineLimit(1)
-              .truncationMode(.tail)
-          }
-          Spacer()
-        }
-        .foregroundStyle(.secondary)
-        .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .help(controller.settings.trayOpen ? "Collapse" : "Show modes")
-      if controller.settings.trayOpen {
-        ModesView(controller: controller)
-          .animation(.spring(response: 0.3, dampingFraction: 0.85), value: controller.settings.mode)
-          .transition(.opacity.combined(with: .move(edge: .top)))
-      }
-    }
-  }
-
-  /// What's on, for the collapsed tray's label.
-  private var activeModesSummary: String? {
-    let s = controller.settings
-    var on: [String] = []
-    if s.studioEars { on.append("Studio Ears") }
-    if s.autoLoudness { on.append("Loudness") }
-    if s.nightGuard { on.append("Night Guard") }
-    if s.mode != .off { on.append(s.mode.title) }
-    return on.isEmpty ? nil : on.joined(separator: " · ")
-  }
-
-  private var sliders: some View {
-    VStack(spacing: 4) {
-      LabeledSlider(title: "Strength", symbol: "waveform.path",
-                    value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
-                    range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
-        .pointerHint(Caption.strength(controller.settings.bass, scrub: false), live: true, track: false)
-      LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
-                    value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
-                    range: 0...12, format: { String(format: "+%.0f dB", $0) })
-        .pointerHint(Caption.boost(controller.settings.boostDb, scrub: false), live: true, track: false)
-      HStack(spacing: 6) {
-        Spacer()
-        Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
-          IconText(title: "Limit", symbol: "ear", size: 10)
-            .foregroundStyle(controller.settings.limit ? Color.orange : Color.secondary)
-        }
-        .toggleStyle(.switch)
-        .controlSize(.mini)
-        .pointerHint { [controller] in LimitHint.make(on: controller.settings.limit, meters: controller.meters) }
-      }
-    }
-  }
-
   private var currentInputName: String {
     controller.inputs.first(where: { $0.id == controller.currentInputID })?.name ?? "None"
-  }
-
-  /// Output picker (top right): follows and sets the system default output.
-  private var deviceMenu: some View {
-    Menu {
-      ForEach(controller.devices) { d in
-        Button {
-          controller.select(device: d)
-        } label: {
-          if d.id == controller.currentDeviceID {
-            Label(d.name, systemImage: "checkmark")
-          } else {
-            Text(d.name)
-          }
-        }
-      }
-    } label: {
-      // Icon only: headphones or speaker (the name is in the menu and tooltip).
-      Image(systemName: controller.currentOutputIsHeadphones ? "headphones" : "hifispeaker")
-        .font(.system(size: 11, weight: .semibold))
-    }
-    .menuStyle(.borderlessButton)
-    .menuIndicator(.hidden)
-    .fixedSize()
-    .pointerHint(Caption.output(controller.currentDevice?.name))
   }
 
   private var footer: some View {
@@ -1036,7 +858,9 @@ struct PopoverView: View {
   }
 }
 
-private struct LabeledSlider: View {
+/// One slider row: label (74, or a 16 glyph) | slider | value (44).
+/// Classic's Strength, Boost and Night Guard's Allow; MacVolumeRow shares the columns.
+struct LabeledSlider: View {
   let title: String
   let symbol: String
   @Binding var value: Double
