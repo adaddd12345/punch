@@ -9,8 +9,22 @@ final class LiveDrawer {
 
   /// The popover's window, captured by `HostWindowReader`.
   weak var host: NSWindow? {
-    didSet { if host !== oldValue { hide() } }
+    didSet {
+      guard host !== oldValue else { return }
+      hide()
+      // Follow the popup: it resizes (a banner leaves) and moves.
+      hostObservers.forEach(NotificationCenter.default.removeObserver)
+      hostObservers = []
+      if let host {
+        for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+          hostObservers.append(NotificationCenter.default.addObserver(forName: name, object: host, queue: .main) {
+            [weak self] _ in if self?.isShown == true { self?.reposition() }
+          })
+        }
+      }
+    }
   }
+  private var hostObservers: [NSObjectProtocol] = []
   private var panel: DrawerPanel?
   private var resizeObserver: NSObjectProtocol?
   /// The popover's content view: the tray matches its width and hangs from
@@ -101,24 +115,25 @@ final class LiveDrawer {
     // Origin only: the hosting controller owns the size (the list scrolls
     // past six rows, so it stays compact). Aligned to the popover content.
     let vis = (panel.parent ?? panel).screen?.visibleFrame
-    if side {
+    let h = panel.frame.height, w = panel.frame.width
+    let below = r.minY - gap - h
+    // Decided by geometry, not only the Dock flag (a late close event can clear
+    // it): no room under the popup means it hangs near the Dock, so beside it.
+    let noRoomBelow = vis.map { below < $0.minY + 4 } ?? false
+    if side || noRoomBelow {
       // Right of the popup, or left when that runs off screen; never past either edge.
       var x = r.maxX + gap
-      if let vis, x + panel.frame.width > vis.maxX - 4 { x = r.minX - gap - panel.frame.width }
-      if let vis { x = min(max(x, vis.minX + 4), vis.maxX - 4 - panel.frame.width) }
-      // Hanging from the Dock, the pointer is down at the footer (the DJ /
-      // Live / Beats buttons): bottom edges line up so the tray opens beside
-      // it. From the menu bar, top edges line up.
-      var y = preferSide ? r.minY : r.maxY - panel.frame.height
-      if let vis { y = min(max(y, vis.minY + 4), vis.maxY - 4 - panel.frame.height) }
+      if let vis, x + w > vis.maxX - 4 { x = r.minX - gap - w }
+      if let vis { x = min(max(x, vis.minX + 4), vis.maxX - 4 - w) }
+      // Near the Dock the pointer is down at the footer (the DJ / Live / Beats
+      // buttons): bottom edges line up. From the menu bar, top edges line up.
+      let low = preferSide || noRoomBelow
+      var y = low ? r.minY : r.maxY - h
+      if let vis { y = min(max(y, vis.minY + 4), vis.maxY - 4 - h) }
       panel.setFrameOrigin(NSPoint(x: x, y: y))
       return
     }
-    var y = r.minY - gap - panel.frame.height
-    // Keep it on screen: on a short display, overlap the popover's bottom
-    // rather than run off the edge.
-    if let vis { y = max(y, vis.minY + 4) }
-    panel.setFrameOrigin(NSPoint(x: r.minX, y: y))
+    panel.setFrameOrigin(NSPoint(x: r.minX, y: below))
   }
 }
 

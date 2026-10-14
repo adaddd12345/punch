@@ -610,10 +610,7 @@ struct PopoverView: View {
     case .unsupported:
       Banner(symbol: "xmark.octagon", tint: .red, text: "Requires macOS 14.4 or later.", action: nil, secondary: nil)
     case _ where updates.justUpdatedTo != nil:
-      Banner(symbol: TourSpeakerGlyph.symbol, tint: .accentColor,
-             text: "Updated to \(updates.justUpdatedTo ?? ""). Enjoy the new build.",
-             action: ("OK", { updates.justUpdatedTo = nil }),
-             secondary: ("What's New", { Links.open(.help); updates.justUpdatedTo = nil }))
+      UpdatedNote(version: updates.justUpdatedTo ?? "") { updates.justUpdatedTo = nil }
     default:
       EmptyView()
     }
@@ -959,6 +956,41 @@ private struct MiniDial<Accessory: View>: View {
         .accessibilityLabel(title)
         .accessibilityValue(f.0 + f.1 + f.2)
     }
+  }
+}
+
+/// "Updated to …": one thin line that fades away by itself after ~2.5 s
+/// (hover holds it). What's New is a small link on the line.
+private struct UpdatedNote: View {
+  let version: String
+  let dismiss: () -> Void
+  @State private var hover = false
+  @Environment(\.colorSchemeContrast) private var contrast
+
+  var body: some View {
+    HStack(spacing: 6) {
+      TourSpeakerGlyph(size: 12)
+        .foregroundStyle(contrast == .increased ? Color.primary : Color.accentColor)
+      Text("Updated to \(version)")
+        .font(.system(size: 11, weight: .medium))
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Spacer(minLength: 4)
+      Button("What's New") { Links.open(.help); dismiss() }
+        .buttonStyle(.plain)
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(Color.accentColor)
+    }
+    .padding(.horizontal, 10)
+    .frame(height: 24)
+    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.accentColor.opacity(0.10)))
+    .onHover { hover = $0 }
+    .task(id: hover) {
+      guard !hover else { return }
+      try? await Task.sleep(for: .seconds(2.5))
+      if !Task.isCancelled { withAnimation(.easeOut(duration: 0.4)) { dismiss() } }
+    }
+    .transition(.opacity)
   }
 }
 
