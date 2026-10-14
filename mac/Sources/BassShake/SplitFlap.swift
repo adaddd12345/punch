@@ -195,15 +195,12 @@ struct UpdatedCapsule: View {
       // A glance, like a system HUD: 1.5 s, or at once when clicked.
       if !tapped { try? await Task.sleep(for: .seconds(1.5)) }
       guard !Task.isCancelled else { return }
-      if still {
-        withAnimation(.easeOut(duration: 0.2)) { dismiss() }
-        return
-      }
+      if still { dismiss(); return }
       stage = .gone
       // The capsule starts fading as the last cell clears the line (no empty beat).
       try? await Task.sleep(for: .seconds(timing.total(cells: cells) - 0.05))
       guard !Task.isCancelled else { return }
-      withAnimation(.easeOut(duration: 0.16)) { dismiss() }
+      dismiss()   // the owner animates the removal (and the band's collapse)
     }
     .accessibilityElement(children: .contain)
   }
@@ -227,5 +224,80 @@ private struct CapsuleBackground: View {
         .overlay(edge)
         .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
     }
+  }
+}
+
+/// The band at the top of the popup while "Updated to …" shows: the content
+/// moves down by the capsule's height + 8 pt, so the capsule covers nothing, and
+/// (`tapered`) the content fades out toward the top over 18 pt under the
+/// capsule, onto whatever the popup's background is (glass, material, ambient;
+/// a mask, so no extra blur). `progress` 1 → 0 collapses both in one animation:
+/// it is animatable data, so the popup's height (and so its window) follows the
+/// animation frame by frame instead of snapping to the end size.
+struct UpdateBand: ViewModifier, Animatable {
+  var progress: CGFloat
+  /// Mask the content. Only switched while the popup opens (a mask costs an
+  /// offscreen pass, and adding or removing it rebuilds the content).
+  var tapered: Bool
+
+  /// Where the capsule sits (from the popup's top edge) and how tall it is.
+  static let capsuleTop: CGFloat = 12
+  static let capsuleHeight: CGFloat = 24
+  /// The extra inset: the capsule plus 8 pt clear under it.
+  static let inset: CGFloat = capsuleHeight + 8
+  static let taper: CGFloat = 18
+
+  var animatableData: CGFloat {
+    get { progress }
+    set { progress = newValue }
+  }
+
+  @ViewBuilder func body(content: Content) -> some View {
+    let p = min(max(progress, 0), 1)
+    // Whole points: the window follows this height, and half points would blur it.
+    let padded = BandLayout(top: (Self.inset * p).rounded()) { content }
+    if tapered {
+      padded.mask(alignment: .top) {
+        VStack(spacing: 0) {
+          Color.black.opacity(1 - p).frame(height: Self.capsuleTop + Self.capsuleHeight)
+          LinearGradient(stops: [.init(color: .black.opacity(1 - p), location: 0),
+                                 .init(color: .black.opacity(1 - p * 0.6), location: 0.45),
+                                 .init(color: .black, location: 1)],
+                         startPoint: .top, endPoint: .bottom)
+            .frame(height: Self.taper)
+          Color.black
+        }
+      }
+    } else {
+      padded
+    }
+  }
+}
+
+/// `.padding(.top, top)`, except the content is offered the same height every
+/// frame while the band collapses: its own ideal height whenever that fits
+/// (the window trails the animation by a frame, and a height that changed
+/// every frame made the whole popup measure itself again, ~45 ms a frame).
+/// Only when the popup is capped shorter than its content does the content get
+/// the smaller height (and scroll), as it would with plain padding.
+private struct BandLayout: Layout {
+  var top: CGFloat
+
+  private func childHeight(_ proposal: ProposedViewSize, _ child: LayoutSubview) -> CGFloat? {
+    let ideal = child.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil)).height
+    guard let h = proposal.height, h.isFinite else { return ideal }
+    return min(ideal, max(0, h - top))
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let child = subviews.first else { return .zero }
+    let s = child.sizeThatFits(ProposedViewSize(width: proposal.width, height: childHeight(proposal, child)))
+    return CGSize(width: s.width, height: s.height + top)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard let child = subviews.first else { return }
+    let p = ProposedViewSize(width: bounds.width, height: childHeight(ProposedViewSize(width: bounds.width, height: bounds.height), child))
+    child.place(at: CGPoint(x: bounds.minX, y: bounds.minY + top), anchor: .topLeading, proposal: p)
   }
 }

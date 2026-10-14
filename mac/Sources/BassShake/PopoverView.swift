@@ -18,6 +18,8 @@ struct PopoverView: View {
   /// "Connecting…" only once starting has taken a while (a normal start is
   /// 0.15–0.5 s, and a banner popping in pushed every tile mid-animation).
   @State private var slowStart = false
+  /// This opening shows "Updated to …": its band tapers the content (set as the popup opens).
+  @State private var updateTaper = false
   /// The trophy plays once ever, on the very first launch, at full length. Never again, and
   /// never a shortened version: under Reduce Motion or Power Saver it is simply skipped.
   private static var splashShown = UserDefaults.standard.bool(forKey: "trophyShown")
@@ -76,6 +78,9 @@ struct PopoverView: View {
   }
 
   private var labels: LabelLevel { controller.settings.labelLevel }
+
+  /// The "Updated to …" capsule (and its band) is up.
+  private var bandShown: Bool { visible && updates.justUpdatedTo != nil }
 
   private var size: ViewSize { role == .launchWindow ? .full : controller.settings.viewSize }
 
@@ -167,19 +172,28 @@ struct PopoverView: View {
       if new == .mini { showLive = false; showDJ = false; showBeats = false; reshuffle.set(false) }
     }
     .padding(12)
+    // "Updated to …": the popup grows a band at the top for the capsule, so it
+    // covers nothing, and the band collapses once the capsule has rolled out.
+    .modifier(UpdateBand(progress: bandShown ? 1 : 0, tapered: updateTaper))
     .environment(\.labelLevel, controller.settings.labelLevel)
     .frame(width: 360)
     // Never taller than the screen space it hangs in (menu-bar popover only).
     .frame(maxHeight: role == .menuBar ? space.maxHeight : nil, alignment: .top)
     .background(PopupBackground(style: controller.settings.backgroundStyle, active: visible))
-    // "Updated to …" floats over the top row, outside the layout: showing or
-    // hiding it never changes the popup's height, so nothing below jumps.
+    // "Updated to …" sits in the band UpdateBand makes for it. Its dismissal is
+    // the one state change that collapses the band (the popup's height follows
+    // the same animation frame by frame).
     .overlay(alignment: .top) {
-      if visible, let v = updates.justUpdatedTo {
-        UpdatedCapsule(version: v, glass: controller.settings.liquidGlass) { updates.justUpdatedTo = nil }
-          .padding(.top, 12)
-          .transition(reduceMotion || controller.settings.powerSaver
-                      ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
+      if bandShown, let v = updates.justUpdatedTo {
+        UpdatedCapsule(version: v, glass: controller.settings.liquidGlass) {
+          let quick = reduceMotion || controller.settings.powerSaver
+          withAnimation(quick ? .easeOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 1)) {
+            updates.justUpdatedTo = nil
+          }
+        }
+          .padding(.top, UpdateBand.capsuleTop)
+          // Its last cell has gone: the empty capsule fades quickly, ahead of the band.
+          .transition(.asymmetric(insertion: .opacity, removal: .opacity.animation(.easeOut(duration: 0.12))))
       }
     }
     // Rearranging: a small Done at the top (Return / Esc too).
@@ -257,6 +271,7 @@ struct PopoverView: View {
     }
     .onAppear {
       visible = true
+      updateTaper = updates.justUpdatedTo != nil
       reshuffle.canStart = { [weak controller] in
         guard let c = controller else { return false }
         return c.settings.viewSize != .mini || role == .launchWindow
