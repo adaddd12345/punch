@@ -83,6 +83,8 @@ class Engine {
   // Night Guard's current reduction in dB (<= 0); any thread.
   float loudnessGuardCutDb() const { return guard_.cutDb(); }
   uint32_t spikeEvents() const { return spike_.events(); }
+  // Tempo the DJ stage detected (BPM, 0 when unknown); any thread.
+  float djBpm() const { return dj_.bpm(); }
   // Post-processing mono feed for the UI spectrum analyzer.
   SpscRing<float>& analyzerFeed() { return analyzer_; }
 

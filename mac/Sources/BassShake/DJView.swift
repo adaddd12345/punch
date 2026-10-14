@@ -16,7 +16,7 @@ struct DJView: View {
           .foregroundStyle(.secondary)
         Spacer()
         if dj.anyActive {
-          Button("Reset") { controller.dj = DJState() }
+          Button("Reset") { controller.dj = DJState(listening: dj.listening) }
             .buttonStyle(.plain)
             .font(.system(size: 9, weight: .semibold, design: .rounded))
             .foregroundStyle(.secondary)
@@ -32,7 +32,11 @@ struct DJView: View {
     }
     .padding(12)
     // The drawer can close mid-press (no release event): let go of held pads.
-    .onDisappear { controller.dj.held = [] }
+    .onAppear { controller.dj.listening = true }
+    .onDisappear {
+      controller.dj.held = []
+      controller.dj.listening = false
+    }
   }
 
   private func padView(_ pad: DJState.Pad, tint: Color) -> some View {

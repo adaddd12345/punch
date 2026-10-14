@@ -167,6 +167,9 @@ void DjFx::prepare(double sampleRate, int numChannels) {
   for (auto* s : {&gLow_, &gMid_, &gHigh_, &isoWet_, &filterPos_, &filterWet_, &echoSend_, &crushMix_, &driveMix_})
     s->snap(s->target());
   updateFilter(filterPos_.current());
+  perform_.prepare(sampleRate, numChannels_);
+  tempo_.prepare(sampleRate);
+  tracking_ = false;
   reset();
 }
 
@@ -180,6 +183,8 @@ void DjFx::reset() {
   held_.fill(0.f);
   holdCount_ = 0;
   echoTail_ = 0;
+  perform_.reset();
+  tempo_.reset();
 }
 
 void DjFx::setParams(const DjParams& p) {
@@ -195,6 +200,48 @@ void DjFx::setParams(const DjParams& p) {
   echoSend_.setTarget(p.echo ? 1.f : 0.f);
   crushMix_.setTarget(p.crush ? 1.f : 0.f);
   driveMix_.setTarget(p.drive ? 1.f : 0.f);
+  perform_.setParams(p);
+}
+
+void DjFx::trackTempo(float* const* ch, int numChannels, int numFrames) {
+  // Tempo for Roll and Pump: runs while the DJ panel asks for it or any DJ
+  // effect is on (it costs ~0.15% of a core, so not all the time). Reads
+  // the stage's input only.
+  const DjParams& p = p_;
+  const bool want = p.trackTempo || p.lowKill || p.midKill || p.highKill || std::fabs(p.filter) > 0.01f || p.echo ||
+                    p.crush || p.drive || p.tapeStop || p.chipmunk || p.screw || p.roll || p.lofi || p.pump ||
+                    !perform_.idle();
+  if (!want) {
+    tracking_ = false;
+    return;
+  }
+  if (!tracking_) {
+    tempo_.reset();  // a new listening session: don't trust an old song's tempo
+    tracking_ = true;
+  }
+  float mono[256];
+  for (int s = 0; s < numFrames; s += 256) {
+    const int n = std::min(256, numFrames - s);
+    for (int i = 0; i < n; ++i) {
+      float m = 0.f;
+      for (int c = 0; c < numChannels; ++c) m += ch[c][s + i];
+      m /= float(numChannels);
+      mono[i] = std::isfinite(m) ? m : 0.f;
+    }
+    tempo_.process(mono, size_t(n));
+  }
+  // Keep the last good reading until the tracker has a new estimate.
+  if (tempo_.bpm() > 0.0) bpm_.store(tempo_.confidence() >= 0.4 ? float(tempo_.bpm()) : 0.f, std::memory_order_relaxed);
+}
+
+void DjFx::process(float* const* ch, int numChannels, int numFrames) {
+  numChannels = std::min(numChannels, numChannels_);
+  if (numChannels <= 0 || numFrames <= 0) return;
+  trackTempo(ch, numChannels, numFrames);
+  perform_.setBpm(double(bpm_.load(std::memory_order_relaxed)));
+  perform_.processPre(ch, numChannels, numFrames);
+  processClassic(ch, numChannels, numFrames);
+  perform_.processPost(ch, numChannels, numFrames);
 }
 
 void DjFx::updateFilter(float v) {
@@ -208,8 +255,7 @@ void DjFx::updateFilter(float v) {
   filtFor_ = v;
 }
 
-void DjFx::process(float* const* ch, int numChannels, int numFrames) {
-  numChannels = std::min(numChannels, numChannels_);
+void DjFx::processClassic(float* const* ch, int numChannels, int numFrames) {
   const bool isoIdle = isoWet_.settled() && isoWet_.current() == 0.f;
   const bool filtIdle = filterWet_.settled() && filterWet_.current() == 0.f;
   const bool echoIdle = echoSend_.settled() && echoSend_.current() == 0.f;

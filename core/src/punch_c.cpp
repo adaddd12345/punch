@@ -107,8 +107,28 @@ uint32_t punch_spike_guard_events(const PunchEngine* e) { return e->engine.spike
 
 void punch_set_dj(PunchEngine* e, bool low_kill, bool mid_kill, bool high_kill, float filter, bool echo, bool crush,
                   bool drive) {
-  e->engine.edit().dj = {low_kill, mid_kill, high_kill, filter, echo, crush, drive};
+  auto& d = e->engine.edit().dj;
+  d.lowKill = low_kill;
+  d.midKill = mid_kill;
+  d.highKill = high_kill;
+  d.filter = filter;
+  d.echo = echo;
+  d.crush = crush;
+  d.drive = drive;
 }
+
+void punch_set_dj_fx(PunchEngine* e, bool tape_stop, bool chipmunk, bool screw, bool roll, bool lofi, bool pump) {
+  auto& d = e->engine.edit().dj;
+  d.tapeStop = tape_stop;
+  d.chipmunk = chipmunk;
+  d.screw = screw;
+  d.roll = roll;
+  d.lofi = lofi;
+  d.pump = pump;
+}
+
+void punch_set_dj_track_tempo(PunchEngine* e, bool on) { e->engine.edit().dj.trackTempo = on; }
+float punch_dj_bpm(const PunchEngine* e) { return e->engine.djBpm(); }
 
 void punch_set_correction_num_bands(PunchEngine* e, int n) {
   e->engine.edit().correction.numBands = std::clamp(n, 0, punch::kMaxEqBands);

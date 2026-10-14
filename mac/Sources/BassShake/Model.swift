@@ -324,6 +324,9 @@ struct DJState: Equatable {
   var pinned: Set<Pad> = []
   var filter: Double = 0        // -1...1 (low-pass ... high-pass)
   var filterPinned = false
+  /// The DJ panel is showing: the engine keeps its tempo tracker running so
+  /// Roll and Pump know the BPM on the first press. Not an effect.
+  var listening = false
 
   func isOn(_ p: Pad) -> Bool { held.contains(p) || pinned.contains(p) }
   var anyActive: Bool { !held.isEmpty || !pinned.isEmpty || abs(filter) > 0.01 }

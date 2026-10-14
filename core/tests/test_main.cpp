@@ -974,6 +974,133 @@ TEST(dj_filter_through_centre_does_not_click) {
   CHECK(maxStep < 0.02f);  // 100 Hz at 0.5: ~0.0065 per sample
 }
 
+// --- DJ performance pads ---------------------------------------------------
+
+// Runs a DjFx over a stereo signal in 512-frame blocks.
+static void runDj(DjFx& d, std::vector<float>& l, std::vector<float>& r) {
+  for (size_t s = 0; s < l.size(); s += 512) {
+    float* q[2] = {l.data() + s, r.data() + s};
+    d.process(q, 2, int(std::min<size_t>(512, l.size() - s)));
+  }
+}
+
+static std::vector<float> sine(double hz, double fs, size_t n, double amp) {
+  std::vector<float> x(n);
+  for (size_t i = 0; i < n; ++i) x[i] = float(amp * std::sin(2 * std::numbers::pi * hz * double(i) / fs));
+  return x;
+}
+
+TEST(dj_pads_off_are_bit_exact) {
+  const double fs = 48000;
+  DjFx d;
+  d.prepare(fs, 2);
+  DjParams p;
+  p.trackTempo = true;  // the tracker only listens
+  d.setParams(p);
+  auto l = sine(220, fs, 24000, 0.5), r = sine(330, fs, 24000, 0.5);
+  const auto l0 = l, r0 = r;
+  runDj(d, l, r);
+  CHECK(l == l0 && r == r0);
+  // Every pad on, then off again: once settled the stage is transparent.
+  p.tapeStop = p.chipmunk = p.screw = p.roll = p.lofi = p.pump = true;
+  d.setParams(p);
+  runDj(d, l, r);
+  p = DjParams{};
+  d.setParams(p);
+  l = l0; r = r0;
+  runDj(d, l, r);
+  l = l0; r = r0;
+  runDj(d, l, r);
+  CHECK(l == l0 && r == r0);
+}
+
+TEST(dj_pads_stay_finite) {
+  for (double fs : {44100.0, 192000.0}) {
+    DjFx d;
+    d.prepare(fs, 2);
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<float> ud(-1.f, 1.f);
+    const size_t n = size_t(fs * 0.5);
+    bool ok = true;
+    float peak = 0.f;
+    for (int round = 0; round < 8; ++round) {
+      DjParams p;
+      p.tapeStop = round & 1;
+      p.chipmunk = round & 2;
+      p.screw = round != 0;
+      p.roll = round & 4;
+      p.lofi = p.pump = round != 3;
+      d.setParams(p);
+      std::vector<float> l(n), r(n);
+      for (size_t i = 0; i < n; ++i) {
+        const bool loud = round % 2 == 0 || i < n / 2;  // half the time silence
+        l[i] = loud ? ud(rng) : 0.f;
+        r[i] = loud ? ud(rng) : 0.f;
+      }
+      runDj(d, l, r);
+      for (size_t i = 0; i < n; ++i)
+        for (float v : {l[i], r[i]}) {
+          ok &= std::isfinite(v) && std::fpclassify(v) != FP_SUBNORMAL;
+          peak = std::max(peak, std::fabs(v));
+        }
+    }
+    CHECK(ok);
+    CHECK(peak < 4.f);
+  }
+}
+
+TEST(dj_tape_stop_reaches_silence_and_returns) {
+  const double fs = 48000;
+  DjFx d;
+  d.prepare(fs, 2);
+  DjParams p;
+  p.tapeStop = true;
+  d.setParams(p);
+  auto l = sine(440, fs, size_t(1.3 * fs), 0.5), r = l;
+  runDj(d, l, r);
+  float early = 0.f, late = 0.f;
+  for (size_t i = size_t(0.1 * fs); i < size_t(0.3 * fs); ++i) early = std::max(early, std::fabs(l[i]));
+  for (size_t i = size_t(1.1 * fs); i < l.size(); ++i) late = std::max(late, std::fabs(l[i]));
+  CHECK(early > 0.3f);   // still playing (slower) at first
+  CHECK(late < 1e-4f);   // stopped
+  // Release: mostly back on live in ~30 ms, then exactly (bit-exact) by ~0.1 s.
+  d.setParams({});
+  auto l2 = sine(440, fs, size_t(0.2 * fs), 0.5), r2 = l2;
+  const auto ref = l2;
+  runDj(d, l2, r2);
+  double err = 0;
+  for (size_t i = size_t(0.03 * fs); i < size_t(0.04 * fs); ++i) err = std::max(err, double(std::fabs(l2[i] - ref[i])));
+  CHECK(err < 0.02);
+  err = 0;
+  for (size_t i = size_t(0.12 * fs); i < l2.size(); ++i) err = std::max(err, double(std::fabs(l2[i] - ref[i])));
+  CHECK(err == 0.0);
+}
+
+TEST(dj_pitch_shift_moves_a_sine) {
+  const double fs = 48000;
+  for (int up = 0; up < 2; ++up) {
+    DjFx d;
+    d.prepare(fs, 2);
+    DjParams p;
+    (up ? p.chipmunk : p.screw) = true;
+    d.setParams(p);
+    auto l = sine(440, fs, size_t(fs), 0.5), r = l;
+    runDj(d, l, r);
+    const double want = 440.0 * std::exp2((up ? 7.0 : -5.0) / 12.0);
+    // Strongest frequency in the second half (5 Hz grid).
+    double best = 0, bestMag = 0;
+    for (double hz = 200; hz <= 900; hz += 5) {
+      const double m = toneMag(l, hz, fs, l.size() / 2);
+      if (m > bestMag) bestMag = m, best = hz;
+    }
+    const double atDry = toneMag(l, 440, fs, l.size() / 2);
+    std::printf("  %s: want %.0f Hz, peak %.0f Hz (%.3f), 440 Hz %.3f\n", up ? "chipmunk" : "screw", want, best,
+                bestMag, atDry);
+    CHECK(std::fabs(best - want) < 0.03 * want);
+    CHECK(bestMag > 4.0 * atDry);  // the original pitch is gone
+  }
+}
+
 TEST(night_guard_recovers_at_192k) {
   const double fs = 192000;
   LoudnessGuard g;

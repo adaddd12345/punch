@@ -977,7 +977,7 @@ final class AudioController: ObservableObject {
       if !auto {
         if balanceOff { self.centerBalance(); notes.append("Left/right balance was off. Centered it.") }
         if self.bypassed { self.bypassed = false; notes.append("A/B was on Original. Switched back.") }
-        if self.dj.anyActive { self.dj = DJState(); notes.append("Turned off DJ effects.") }
+        if self.dj.anyActive { self.dj = DJState(listening: self.dj.listening); notes.append("Turned off DJ effects.") }
         if case .audioServiceStuck = self.status {
           notes.append("macOS's audio service isn't responding. Use Restart macOS Audio below.")
         }
@@ -1032,7 +1032,7 @@ final class AudioController: ObservableObject {
   }
 
   private func pushParams() {
-    silenceExpected.store((dj.isOn(.low) && dj.isOn(.mid) && dj.isOn(.high)) || fade.musicDb < -20 || sleepFinished)
+    silenceExpected.store((dj.isOn(.low) && dj.isOn(.mid) && dj.isOn(.high)) || dj.isOn(.tapeStop) || fade.musicDb < -20 || sleepFinished)
     let s = settings
     let e = engine
     let live = liveState
@@ -1139,6 +1139,9 @@ final class AudioController: ObservableObject {
     let d = live.dj
     punch_set_dj(e, d.isOn(.low), d.isOn(.mid), d.isOn(.high), Float(d.filter), d.isOn(.echo), d.isOn(.crush),
                  d.isOn(.drive))
+    punch_set_dj_fx(e, d.isOn(.tapeStop), d.isOn(.chipmunk), d.isOn(.screw), d.isOn(.roll), d.isOn(.lofi),
+                    d.isOn(.pump))
+    punch_set_dj_track_tempo(e, d.listening)
     punch_set_limiter(e, !unlimited || safetyLimit, Float(c.ceilingDb), 80)
     // Bass-priority limiting (docs/research/22-loudness-fighting.md): bass
     // boosts are limited against the room the rest of the mix leaves, so the
