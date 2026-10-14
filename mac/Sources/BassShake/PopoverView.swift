@@ -515,7 +515,7 @@ struct PopoverView: View {
   private func toolSegment(_ symbol: String, word: String, words: Bool, on: Bool = false,
                            dart: Bool = false, rotation: Double = 0, mini: Bool = false, height: CGFloat = 24,
                            action: @escaping () -> Void) -> some View {
-    Button(action: action) {
+    let button = Button(action: action) {
       if mini {
         Group {
           if dart { DartGlyph(pinned: on, size: 15) } else {
@@ -554,7 +554,10 @@ struct PopoverView: View {
         .contentShape(Rectangle())
       }
     }
-    .buttonStyle(BentoPressStyle())
+    return Group {
+      // The pin answers the pointer with a thin border (PinButtonStyle).
+      if dart { button.buttonStyle(PinButtonStyle(minSize: 0)) } else { button.buttonStyle(BentoPressStyle()) }
+    }
   }
 
   private var toolHairline: some View {

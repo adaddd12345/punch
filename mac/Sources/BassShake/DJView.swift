@@ -59,11 +59,11 @@ struct DJView: View {
       Button {
         if pinned { controller.dj.pinned.remove(pad) } else { controller.dj.pinned.insert(pad) }
       } label: {
-        DartGlyph(pinned: pinned, size: 9)
+        DartGlyph(pinned: pinned, size: 11)
           .foregroundStyle(pinned ? Color.white : Color.secondary)
-          .padding(4)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(PinButtonStyle(minSize: 24))
+      .padding(2)
       .help(pinned ? "Unpin \(pad.title)" : "Pin \(pad.title) on")
     }
     .help("\(pad.help). Hold for a hit, or pin it on.")
@@ -86,10 +86,10 @@ struct DJView: View {
         controller.dj.filterPinned.toggle()
         if !controller.dj.filterPinned { controller.dj.filter = 0 }
       } label: {
-        DartGlyph(pinned: dj.filterPinned, size: 10)
+        DartGlyph(pinned: dj.filterPinned, size: 12)
           .foregroundStyle(dj.filterPinned ? Color.accentColor : Color.secondary)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(PinButtonStyle(minSize: 24))
       .help(dj.filterPinned ? "Unpin: the filter springs back to off when you let go"
                             : "Pin: keep the filter where you leave it")
     }

@@ -63,3 +63,36 @@ struct DartGlyph: View {
       .accessibilityHidden(true)
   }
 }
+
+/// Every pin button: a generous hit area (never smaller than `minSize`) and a
+/// thin rounded border while the pointer is over it, firmer while pressed, so
+/// it's easy to aim at and clearly answers.
+struct PinButtonStyle: ButtonStyle {
+  var minSize: CGFloat = 24
+  var radius: CGFloat = 6
+  func makeBody(configuration: Configuration) -> some View {
+    PinButtonBody(configuration: configuration, minSize: minSize, radius: radius)
+  }
+}
+
+private struct PinButtonBody: View {
+  let configuration: ButtonStyle.Configuration
+  let minSize: CGFloat
+  let radius: CGFloat
+  @State private var hover = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+    let pressed = configuration.isPressed
+    configuration.label
+      .frame(minWidth: minSize, minHeight: minSize)
+      .background(shape.fill(Color.primary.opacity(pressed ? 0.10 : hover ? 0.05 : 0)))
+      .overlay(shape.strokeBorder(Color.primary.opacity(pressed ? 0.35 : hover ? 0.22 : 0), lineWidth: 1))
+      .contentShape(shape)
+      .scaleEffect(pressed && !reduceMotion ? 0.94 : 1)
+      .onHover { hover = $0 }
+      .animation(.easeOut(duration: 0.12), value: hover)
+      .animation(.spring(response: 0.2, dampingFraction: 0.6), value: pressed)
+  }
+}

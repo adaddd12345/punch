@@ -141,11 +141,10 @@ struct FairLevelPinButton: View {
     if fair.isOn {
       let pinned = fair.isPinned(appID)
       Button { fair.togglePin(appID) } label: {
-        DartGlyph(pinned: pinned, size: 9)
-          .frame(width: 16, height: 18)
+        DartGlyph(pinned: pinned, size: 11)
           .foregroundStyle(pinned ? Color.accentColor : Color.secondary)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(PinButtonStyle(minSize: 22))
       .help(pinned ? "Fair Level leaves \(appName) alone. Click to let it match \(appName)'s loudness again."
                    : "Fair Level evens out \(appName)'s loudness. Click to leave it alone.")
     }
