@@ -7,7 +7,7 @@ import SwiftUI
 // app is one entry (with its song when Spotify / Music tell us). The hero tile
 // shows the loudest app's lead entry; the rest sit under it as small tiles in
 // a stable order (new arrivals append; level jitter never reshuffles them).
-// A click on a small tile puts it in the hero (a pin) until it stops playing,
+// A click on a small tile puts it in the hero (a pin) until it leaves the stack,
 // goes away, or another is picked; then the loudest leads again.
 //
 // CPU: built from NowPlaying's slow published state only (hero, others,
@@ -102,8 +102,6 @@ final class NowStack: ObservableObject {
   /// Every entry seen, in arrival order (the lead included), so a hero swap
   /// puts the old lead back where it was rather than last.
   private var order: [String] = []
-  /// The pinned entry has been heard since it was picked.
-  private var pinHeard = false
 
   init(model: NowPlaying) {
     self.model = model
@@ -146,14 +144,11 @@ final class NowStack: ObservableObject {
 
   private func rebuild() {
     guard let model else { return }
-    let playingNow: (NowEntry) -> Bool = { !model.describe($0, state: false).paused }
-    // A pick that was paused when picked holds until it has played and stopped.
-    let heard = pinHeard
+    // A pick holds while its entry is on screen, paused or not: pausing the top tile
+    // must not bounce it away. It ends when the entry goes or another is picked.
     let r = Self.build(hero: model.hero, others: model.others, items: model.items,
-                       previousLead: lead?.id, order: order, pinned: pinned,
-                       playing: { playingNow($0) || !heard })
+                       previousLead: lead?.id, order: order, pinned: pinned)
     order = r.order
-    if let p = r.pinned, let l = r.lead, l.id == p { pinHeard = heard || playingNow(l) } else { pinHeard = false }
     let wait = model.detailsPending
     guard r.lead != lead || r.rest != rest || r.pinned != pinned || wait != pending else { return }
     // Only the ids / text changed shape the animation; a new thumbnail alone just swaps in.
@@ -179,7 +174,6 @@ final class NowStack: ObservableObject {
       order.swapAt(a, b)
     }
     pinned = e.id
-    pinHeard = false
     rebuild()
   }
 

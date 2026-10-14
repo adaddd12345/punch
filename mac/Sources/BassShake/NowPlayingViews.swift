@@ -426,7 +426,7 @@ extension Caption {
                          gestures: ["Click opens \(name)"])
     }
     if picked {
-      return PointerHint("What's Playing", does: "You picked this; the loudest returns when it stops.",
+      return PointerHint("What's Playing", does: "Picked by you; the loudest returns once this goes quiet.",
                          gestures: ["Click opens \(name)"])
     }
     return PointerHint("What's Playing", does: "The loudest app over the last few seconds.",
@@ -439,7 +439,7 @@ extension Caption {
       return PointerHint(name, does: "Stays here up to three minutes so you can press play.",
                          gestures: ["Click puts it on top", "Right-click › Open \(name)"])
     }
-    return PointerHint(name, does: "Click puts it in the top tile until it stops playing.",
+    return PointerHint(name, does: "Click puts it in the top tile.",
                        gestures: ["Right-click › Open \(name)"])
   }
 
