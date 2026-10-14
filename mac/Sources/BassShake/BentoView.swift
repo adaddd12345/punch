@@ -36,6 +36,8 @@ struct BentoView: View {
   var macBlock: AnyView? = nil
   /// Hold-to-rearrange (Reshuffle.swift).
   @ObservedObject var reshuffle: Reshuffle
+  /// Membership only (which entries, not levels): hides the What's Playing block when it would be empty.
+  @ObservedObject private var nowStack = NowStack.shared
   @State private var drag: BlockDrag?
 
   /// Which mode's settings strip shows: the one turned on most recently.
@@ -154,7 +156,11 @@ struct BentoView: View {
     default:
       guard !mini, let sec = (flat ? LayoutSection.classic : LayoutSection.bento).first(where: { $0.key == key })
       else { return false }
-      if key.hasSuffix(".nowPlaying") { return s.shows(sec) }
+      // Only while there's something besides the hero: an empty block still
+      // took a slot in the stack (a double gap).
+      if key.hasSuffix(".nowPlaying") {
+        return s.shows(sec) && s.showNowPlaying && nowStack.lead != nil && !nowStack.rest.isEmpty
+      }
       if key.hasSuffix(".modeSettings") { return s.shows(sec) && shownDetail != nil }
       return s.shows(sec)
     }

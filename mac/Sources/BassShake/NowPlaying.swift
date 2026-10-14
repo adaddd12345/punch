@@ -361,6 +361,18 @@ final class NowPlaying: ObservableObject {
   func showsUnmute(_ app: NowApp) -> Bool { mutedByUs.contains(app.id) && muted.contains(app.id) }
   /// The key reached nobody for this app this session (it has a pause key in general).
   func ignoredKey(_ app: NowApp) -> Bool { keyless.contains(app.id) }
+
+  /// System voices and helpers (VoiceOver, Spoken Content, Accessibility
+  /// Services, Siri, alerts) aren't "what's playing": they never lead or get a
+  /// tile here. Live Channels still lists them.
+  static func isSystemVoice(_ bundleID: String?, name: String) -> Bool {
+    let n = name.lowercased()
+    if n.contains("accessibility") || n == "voiceover" || n.contains("speech") || n == "siri" { return true }
+    guard let b = bundleID?.lowercased() else { return false }
+    return b.hasPrefix("com.apple.accessibility") || b.hasPrefix("com.apple.voiceover")
+      || b.hasPrefix("com.apple.speech") || b.hasPrefix("com.apple.siri") || b.contains("universalaccess")
+      || b == "com.apple.screenreaderuiserver" || b == "com.apple.systemsoundserverd"
+  }
   /// "Paused" in the headline / tile: paused by the key, not while a play is being checked.
   func showsPaused(_ app: NowApp) -> Bool {
     guard pausedByUs[app.id] != nil else { return false }
@@ -511,7 +523,7 @@ final class NowPlaying: ObservableObject {
     updateAudible(levels, now: now, dt: dt)
 
     // Muted apps stay listed (so their tile can unmute them) but rank last.
-    let playing = live.apps.filter { $0.isPlaying }
+    let playing = live.apps.filter { $0.isPlaying && !Self.isSystemVoice($0.bundleID, name: $0.name) }
     let playingIDs = Set(playing.map(\.id))
     for a in playing {
       lastHeard[a.id] = now
