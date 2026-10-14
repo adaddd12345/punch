@@ -405,16 +405,9 @@ struct NowStackTile: View {
     let tint: BentoTint = active ? .frost : .graphite
     let art: CGFloat = compact ? 24 : 32
     BentoTile(tint: tint, interactive: true, glassID: "now." + entry.id) {
-      ZStack(alignment: .leading) {
-        if loading {
-          NowSkeleton(name: app.name, art: art, title: compact ? 11 : 12, subtitle: compact ? 9 : 10)
-            .transition(.opacity)
-        } else {
-          content(app, text, art: art).transition(.opacity)
-        }
-      }
-      .animation(.easeOut(duration: 0.25), value: loading)
-      .frame(height: art)
+      // Loading: the same views, as bars (NowLoading), so nothing moves on arrival.
+      content(app, text, art: art)
+        .frame(height: art)
     }
     .frame(maxWidth: .infinity)
     // The tile's padding too (the art and mute buttons keep their own clicks).
@@ -432,6 +425,7 @@ struct NowStackTile: View {
   private func content(_ app: NowApp, _ text: NowEntryText, art: CGFloat) -> some View {
       HStack(alignment: .center, spacing: 8) {
         NowEntryArtButton(model: model, entry: entry, artwork: text.artwork, size: art)
+          .loadingArt(loading, size: art)
           .modifier(NowMorph(id: entry.id))
         Button(action: promote) {
           VStack(alignment: .leading, spacing: compact ? 0 : 1) {
@@ -443,15 +437,17 @@ struct NowStackTile: View {
               .truncationMode(.tail)
               .foregroundStyle(Color.primary)
               .contentTransition(.opacity)
+              .loadingLine(loading, fraction: NowLoading.titleWidth(entry.id), font: compact ? 11 : 12)
             NowSubtitle(text: text.subtitle, icon: text.artwork != nil ? model.icon(app) : nil,
                         font: compact ? 9 : 10)
+              .loadingLine(loading, fraction: NowLoading.subtitleWidth(entry.id), font: compact ? 9 : 10)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .pointerHint(Caption.alsoPlaying(app.name, song: text.song, paused: text.paused))
-        .accessibilityLabel(accessibility)
+        .accessibilityLabel(loading ? "Loading \(app.name)" : accessibility)
         .accessibilityHint("Shows it in the top tile")
         .accessibilityAction(named: "Open \(app.name)") { NowStack.focus(entry, model: model) }
         if wide && model.route(app) != .mute {
@@ -596,54 +592,127 @@ extension Caption {
 
 // MARK: - Loading
 
-/// A tile's song / tab on its way: soft bones where the art and two lines go,
-/// with a slow shimmer. Static (dimmed) under Reduce Motion and Power Saver.
-/// Shown at most `NowPlaying.detailsWaitSeconds`, only while on screen.
-struct NowSkeleton: View {
-  /// The app it's loading for (VoiceOver).
-  let name: String
-  let art: CGFloat
-  /// The title and second line's font sizes (the bones match their heights).
-  var title: CGFloat = 15
-  var subtitle: CGFloat = 11
+/// A song / tab on its way: the bento loading idiom. The art slot is a solid
+/// rounded square and each line a solid rounded bar (cap height, a plausible
+/// width fixed per entry), in the tile's ink at low opacity. The real views
+/// stay laid out underneath (hidden), so nothing moves when they arrive: each
+/// bar narrows or widens to its text's width as the text fades in, and the
+/// square fades into the cover. A slow breath only while on screen; still
+/// under Reduce Motion and Power Saver. Shown at most
+/// `NowPlaying.detailsWaitSeconds`.
+enum NowLoading {
+  /// The bars' ink (Color.primary, so it follows light / dark and the tint).
+  static let ink = 0.16
+  static let morph = Animation.easeOut(duration: 0.35)
+
+  /// A stable 0...1 per entry (not `hashValue`, which changes per launch).
+  static func seed(_ id: String, salt: UInt64) -> CGFloat {
+    var h: UInt64 = 14695981039346656037 &+ salt
+    for b in id.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
+    return CGFloat(h % 1000) / 1000
+  }
+  /// The title bar: ~70 % of the column.
+  static func titleWidth(_ id: String) -> CGFloat { 0.62 + 0.16 * seed(id, salt: 1) }
+  /// The second line's bar: ~45 %.
+  static func subtitleWidth(_ id: String) -> CGFloat { 0.38 + 0.14 * seed(id, salt: 2) }
+}
+
+/// Breathes 0.5 <-> 0.8 over 1.2 s while active and on screen; a steady 0.65
+/// otherwise, and under Reduce Motion or Power Saver.
+struct LoadingBreath: ViewModifier {
+  let active: Bool
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
-  @State private var phase: CGFloat = 0
+  @State private var high = false
+  @State private var visible = false
 
-  private var bones: some View {
-    HStack(alignment: .center, spacing: 8) {
-      RoundedRectangle(cornerRadius: art * 0.22, style: .continuous)
-        .frame(width: art, height: art)
-      VStack(alignment: .leading, spacing: max(3, subtitle * 0.4)) {
-        Capsule().frame(maxWidth: 160).frame(height: (title * 0.8).rounded())
-        Capsule().frame(maxWidth: 96).frame(height: (subtitle * 0.8).rounded())
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-    }
+  private var breathing: Bool { active && visible && !reduceMotion && !powerSaver }
+
+  func body(content: Content) -> some View {
+    content
+      .opacity(breathing ? (high ? 0.8 : 0.5) : 0.65)
+      .onAppear { visible = true; sync() }
+      .onDisappear { visible = false; sync() }
+      .onChange(of: breathing) { _, _ in sync() }
   }
 
-  var body: some View {
-    let still = reduceMotion || powerSaver
-    bones
-      .foregroundStyle(Color.primary.opacity(still ? 0.07 : 0.09))
-      .overlay {
-        if !still {
-          GeometryReader { g in
-            LinearGradient(colors: [.clear, Color.primary.opacity(0.10), .clear],
-                           startPoint: .leading, endPoint: .trailing)
-              .frame(width: g.size.width * 0.45)
-              .offset(x: -g.size.width * 0.45 + phase * g.size.width * 1.45)
-          }
-          .mask(bones)
-          .allowsHitTesting(false)
+  private func sync() {
+    if breathing {
+      high = false
+      withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { high = true }
+    } else {
+      // A plain set ends the repeating animation (no frames while idle).
+      var t = Transaction()
+      t.disablesAnimations = true
+      withTransaction(t) { high = false }
+    }
+  }
+}
+
+/// One line of text that is a bar while loading: `fraction` of the column,
+/// as tall as the font's cap height. The text keeps its line height either
+/// way; on arrival the bar animates to the text's width and fades as the
+/// text fades in.
+struct LoadingLine: ViewModifier {
+  let loading: Bool
+  let fraction: CGFloat
+  let font: CGFloat
+  @State private var width: CGFloat = 0
+
+  func body(content: Content) -> some View {
+    let h = (font * 0.72).rounded()
+    content
+      .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+      .opacity(loading ? 0 : 1)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .overlay(alignment: .leading) {
+        GeometryReader { g in
+          RoundedRectangle(cornerRadius: h * 0.4, style: .continuous)
+            .fill(Color.primary.opacity(NowLoading.ink))
+            .modifier(LoadingBreath(active: loading))
+            .frame(width: max(h, loading ? g.size.width * fraction : min(width, g.size.width)),
+                   height: h)
+            .frame(maxHeight: .infinity, alignment: .center)
+            .opacity(loading ? 1 : 0)
+            .animation(NowLoading.morph, value: width)
         }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
       }
-      .onAppear {
-        guard !still else { return }
-        phase = 0
-        withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) { phase = 1 }
+      .animation(NowLoading.morph, value: loading)
+  }
+}
+
+/// The art slot while loading: a rounded square that fades into the cover
+/// (or icon) in the same place.
+struct LoadingArt: ViewModifier {
+  let loading: Bool
+  let size: CGFloat
+
+  func body(content: Content) -> some View {
+    content
+      .opacity(loading ? 0 : 1)
+      .overlay {
+        RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+          .fill(Color.primary.opacity(NowLoading.ink))
+          .modifier(LoadingBreath(active: loading))
+          .frame(width: size, height: size)
+          .opacity(loading ? 1 : 0)
+          .allowsHitTesting(false)
+          .accessibilityHidden(true)
       }
-      .accessibilityElement()
-      .accessibilityLabel("Loading \(name)")
+      .allowsHitTesting(!loading)
+      .animation(NowLoading.morph, value: loading)
+  }
+}
+
+extension View {
+  /// A bar in this line's place while `loading` (see LoadingLine).
+  func loadingLine(_ loading: Bool, fraction: CGFloat, font: CGFloat) -> some View {
+    modifier(LoadingLine(loading: loading, fraction: fraction, font: font))
+  }
+  /// A rounded square in the art's place while `loading` (see LoadingArt).
+  func loadingArt(_ loading: Bool, size: CGFloat) -> some View {
+    modifier(LoadingArt(loading: loading, size: size))
   }
 }

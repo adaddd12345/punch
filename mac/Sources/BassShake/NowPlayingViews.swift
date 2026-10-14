@@ -68,21 +68,14 @@ struct NowPlayingHeadline: View {
     let entry = stack.entry(for: app)
     let text = model.describe(entry)
     let note = model.notice
-    // Its song / tab on the way: a skeleton, then the words and art fade in
-    // (never the app's name first).
+    // Its song / tab on the way: bars where the art and lines go, which
+    // turn into them in place (NowLoading; never the app's name first).
     let loading = stack.isLoading(entry) && note == nil
     Button {
       NowStack.focus(entry, model: model)
     } label: {
-      ZStack(alignment: .leading) {
-        if loading {
-          NowSkeleton(name: app.name, art: art, title: title, subtitle: 11).transition(.opacity)
-        } else {
-          content(entry, text, note).transition(.opacity)
-        }
-      }
-      .animation(.easeOut(duration: 0.25), value: loading)
-      .contentShape(Rectangle())
+      content(entry, text, note, loading: loading)
+        .contentShape(Rectangle())
     }
     .buttonStyle(BentoPressStyle())
     .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: text.paused,
@@ -97,9 +90,11 @@ struct NowPlayingHeadline: View {
   }
 
   private func content(_ entry: NowEntry, _ text: NowEntryText,
-                       _ note: (id: String, text: String, settings: Bool)?) -> some View {
+                       _ note: (id: String, text: String, settings: Bool)?,
+                       loading: Bool) -> some View {
       HStack(alignment: .center, spacing: 8) {
         NowArt(artwork: text.artwork, icon: model.icon(app), size: art)
+          .loadingArt(loading, size: art)
           .modifier(NowMorph(id: entry.id))
         VStack(alignment: .leading, spacing: 2) {
           if let n = note {
@@ -124,7 +119,9 @@ struct NowPlayingHeadline: View {
                 .minimumScaleFactor(0.85)
                 .foregroundStyle(Color.primary)
                 .contentTransition(.opacity)
+                .loadingLine(loading, fraction: NowLoading.titleWidth(entry.id), font: title)
               NowSubtitle(text: text.subtitle, icon: text.artwork != nil ? model.icon(app) : nil, font: 11)
+                .loadingLine(loading, fraction: NowLoading.subtitleWidth(entry.id), font: 11)
             }
             .modifier(StillWhileMorphing())
           }
