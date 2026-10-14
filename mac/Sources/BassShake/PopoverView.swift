@@ -177,8 +177,9 @@ struct PopoverView: View {
       }
     }
     .onChange(of: showDJ) { _, on in
-      LiveDrawer.shared.onHide = { [weak controller] in controller?.dj.held = [] }
+      LiveDrawer.shared.onHide = { [weak controller] in controller?.dj.held = []; controller?.dj.listening = false }
       if on {
+        controller.dj.listening = true  // the panel may only be re-ordered in (no onAppear)
         showBeats = false
         LiveDrawer.shared.show(DJView(controller: controller))
       } else if !showLive && !showBeats {
