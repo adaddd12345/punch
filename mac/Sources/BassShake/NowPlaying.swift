@@ -300,10 +300,10 @@ final class NowPlaying: ObservableObject {
     guard controller == nil else { return }
     controller = c
     gate.controller = c
-    // Bento Full/Compact: What's Playing. Mini (Classic and Bento): the
+    // Full/Compact (both layouts): What's Playing. Mini (both layouts): the
     // playing channel, on by default; song and cover still need What's Playing.
     c.$settings
-      .map { ($0.showNowPlaying && $0.bento && $0.viewSize != .mini) || ($0.showPlayingChannel && $0.viewSize == .mini) }
+      .map { ($0.showNowPlaying && $0.viewSize != .mini) || ($0.showPlayingChannel && $0.viewSize == .mini) }
       .removeDuplicates()
       .sink { [weak self] on in DispatchQueue.main.async { self?.setWanted(on) } }
       .store(in: &cancellables)

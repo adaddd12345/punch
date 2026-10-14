@@ -398,7 +398,7 @@ struct NowPlayingNote: View {
         Label {
           VStack(alignment: .leading, spacing: 4) {
             Text("What's Playing is on").font(.system(size: 11, weight: .bold, design: .rounded))
-            Text(message(bento: s.bento, mini: mini, channel: s.showPlayingChannel))
+            Text(message(mini: mini, channel: s.showPlayingChannel))
               .font(.system(size: 11, weight: .medium))
               .fixedSize(horizontal: false, vertical: true)
           }
@@ -432,14 +432,10 @@ struct NowPlayingNote: View {
 
   /// Only what a beginner can't guess: what the tile shows, and the one-time
   /// macOS question about Spotify / Music. (Turn Off is the button below.)
-  private func message(bento: Bool, mini: Bool, channel: Bool) -> String {
-    var t = "The top tile shows the loudest app. If your Mac asks to let The Bass Shaker control Spotify, Music or your browser (Chrome, Safari…), say OK to see the song or video. Nothing is saved or shared."
-    if mini {
-      // Mini's playing channel shows the song too (Classic and Bento).
-      if !channel { t += " Hidden at Mini size." }
-    } else if !bento {
-      t += " Needs Bento (⋯ › Look)."
-    }
+  private func message(mini: Bool, channel: Bool) -> String {
+    var t = "The top of the popup shows the loudest app. If your Mac asks to let The Bass Shaker control Spotify, Music or your browser (Chrome, Safari…), say OK to see the song or video. Nothing is saved or shared."
+    // Mini's playing channel shows the song too (Classic and Bento).
+    if mini && !channel { t += " Hidden at Mini size." }
     return t
   }
 }
