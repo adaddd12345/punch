@@ -1410,8 +1410,14 @@ final class NowPlayingScripts {
     case failure(Int)
   }
 
+  /// NSAppleScript is not thread-safe: the player and browser queues each have a
+  /// bridge, but only one script compiles or runs at a time across all of them.
+  private static let osaLock = NSLock()
+
   /// `cache: false` for one-off sources (a tab click): compiled, run, dropped.
   func run(key: String, _ source: String, cache: Bool = true) -> Outcome {
+    Self.osaLock.lock()
+    defer { Self.osaLock.unlock() }
     if cache && broken.contains(key) { return .failure(0) }
     let script: NSAppleScript
     if cache, let hit = compiled[key] {
