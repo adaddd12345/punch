@@ -97,8 +97,16 @@ extension NowPlaying {
 final class NowStack: ObservableObject {
   static let shared = NowStack(model: .shared)
 
-  /// Most cells under the hero (two rows of two). More: the first three, then "+N".
-  static let maxCells = 4
+  /// Most cells under the hero (three rows of two). More: the first five, then
+  /// the drawer ("+N", N at least 2), which opens the rest inline as tiles.
+  static let maxCells = 6
+
+  /// The tiles on screen and the ones behind the drawer (empty: no drawer).
+  static func split(_ rest: [NowEntry], open: Bool) -> (shown: [NowEntry], hidden: [NowEntry]) {
+    guard rest.count > maxCells else { return (rest, []) }
+    let hidden = Array(rest.dropFirst(maxCells - 1))
+    return (open ? rest : Array(rest.prefix(maxCells - 1)), hidden)
+  }
 
   /// The hero's entry (the loudest app's lead tab, or the app). nil: nothing playing.
   @Published private(set) var lead: NowEntry?
@@ -109,6 +117,9 @@ final class NowStack: ObservableObject {
   /// Apps whose song / tabs are still on their way (NowPlaying.detailsPending),
   /// published with the stack so a tile never shows the app's name for a frame in between.
   @Published private(set) var pending: Set<String> = []
+  /// The drawer of extra tiles is open. Kept for the session (this object
+  /// lives as long as the app); closes by itself once everything fits again.
+  @Published private(set) var drawerOpen = false
 
   private weak var model: NowPlaying?
   private var cancellables = Set<AnyCancellable>()
@@ -173,6 +184,7 @@ final class NowStack: ObservableObject {
         lead = r.lead
         rest = r.rest
         pending = wait
+        if drawerOpen && r.rest.count <= Self.maxCells { drawerOpen = false }
       }
     } else {
       lead = r.lead
@@ -180,6 +192,16 @@ final class NowStack: ObservableObject {
       pending = wait
     }
     if r.pinned != pinned { pinned = r.pinned }
+  }
+
+  /// Opens or closes the drawer: the hidden tiles fly out of (or back into) it
+  /// on the stack's one spring.
+  func setDrawer(_ open: Bool) {
+    let open = open && rest.count > Self.maxCells
+    guard open != drawerOpen else { return }
+    var t = Transaction(animation: Self.morph)
+    t[NowMorphing.self] = true
+    withTransaction(t) { drawerOpen = open }
   }
 
   /// A click on a small tile: it takes the hero, and the hero takes its place.
@@ -302,11 +324,17 @@ extension AnyTransition {
 /// Two columns of equal tiles; an odd last tile spans the row. Row height is
 /// the taller of its pair. One container for every count, so a tile keeps its
 /// identity (and springs to its new frame) as the stack grows or shrinks.
+/// `trailingRow`: the last view gets a row of its own (the open drawer's
+/// "Show less"), the rest pair up as usual.
 struct BentoPairs: Layout {
   var spacing: CGFloat = 8
+  var trailingRow = false
 
   private func rows(_ n: Int) -> [Range<Int>] {
-    stride(from: 0, to: n, by: 2).map { $0..<min($0 + 2, n) }
+    let paired = trailingRow ? max(0, n - 1) : n
+    var r = stride(from: 0, to: paired, by: 2).map { $0..<min($0 + 2, paired) }
+    if paired < n { r.append(paired..<n) }
+    return r
   }
 
   private func columnWidth(_ total: CGFloat, _ row: Range<Int>) -> CGFloat {
@@ -344,7 +372,7 @@ struct BentoPairs: Layout {
 
 // MARK: - The small tiles
 
-/// Everything playing besides the hero's entry: small tiles, then "+N".
+/// Everything playing besides the hero's entry: small tiles, then the drawer.
 struct NowPlayingTiles: View {
   @ObservedObject var model: NowPlaying
   @ObservedObject var stack: NowStack = .shared
@@ -358,25 +386,27 @@ struct NowPlayingTiles: View {
   var body: some View {
     let rest = on && stack.lead != nil ? stack.rest : []
     // Rows of two under the hero; an odd last cell spans its row (BentoPairs).
-    // At most two rows: past four, the fourth cell is "+N" (N is at least 2).
-    let overflow = rest.count > NowStack.maxCells
-    let shown = overflow ? Array(rest.prefix(NowStack.maxCells - 1)) : rest
-    let extra = overflow ? Array(rest.dropFirst(NowStack.maxCells - 1)) : []
-    let cells = shown.count + (overflow ? 1 : 0)
+    // Up to three rows; past six, the sixth cell is the drawer of the rest
+    // (N is at least 2). Open, every tile shows and the drawer becomes a slim
+    // "Show less" row at the end, in the same view so its glass morphs.
+    let split = NowStack.split(rest, open: stack.drawerOpen)
+    let drawer = !split.hidden.isEmpty
+    let open = drawer && stack.drawerOpen
+    let cells = split.shown.count + (drawer && !open ? 1 : 0)
     // A Group, not a stack: with nothing here, no extra 8 pt gap in the Bento column.
     Group {
-      if !shown.isEmpty {
-        BentoPairs(spacing: 8) {
-          ForEach(Array(shown.enumerated()), id: \.element.id) { i, e in
+      if !split.shown.isEmpty {
+        BentoPairs(spacing: 8, trailingRow: open) {
+          ForEach(Array(split.shown.enumerated()), id: \.element.id) { i, e in
             // The last tile of an odd count spans the row and has room for mute.
             NowStackTile(model: model, entry: e, active: active, compact: compact,
                          wide: i == cells - 1 && cells % 2 == 1, loading: stack.isLoading(e),
                          promote: { stack.promote(e) })
               .transition(.nowTile(reduceMotion: reduceMotion))
           }
-          if overflow {
-            NowMoreTile(model: model, entries: extra, active: active, compact: compact,
-                        promote: { stack.promote($0) })
+          if drawer {
+            NowDrawerTile(model: model, entries: split.hidden, open: open, active: active, compact: compact,
+                          toggle: { stack.setDrawer(!open) })
               .transition(.nowTile(reduceMotion: reduceMotion))
           }
         }
@@ -530,68 +560,91 @@ struct NowEntryArtButton: View {
   }
 }
 
-/// More than fit: a count and a menu of the rest (picking one brings it forward).
-struct NowMoreTile: View {
+/// More than fit: the drawer. Closed, the hidden entries' covers stacked
+/// with "+N more"; a click opens them inline as tiles (each cover flies to
+/// its tile, NowMorph) and the drawer turns into a slim "Show less" row at the
+/// end, which reverses it. A button, so keyboard and VoiceOver open it too.
+struct NowDrawerTile: View {
   @ObservedObject var model: NowPlaying
+  /// The entries behind the drawer (also on screen while it's open).
   let entries: [NowEntry]
+  let open: Bool
   let active: Bool
   var compact = false
-  /// Puts the picked entry in the hero.
-  var promote: (NowEntry) -> Void = { _ in }
+  var toggle: () -> Void = {}
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     let art: CGFloat = compact ? 24 : 32
-    let names = entries.map { model.describe($0).title }
-    BentoTile(tint: active ? .frost : .graphite, interactive: true, glassID: "now.more") {
-      Menu {
-        ForEach(entries) { e in
-          Button(model.describe(e).title) { promote(e) }
+    Button(action: toggle) {
+      BentoTile(tint: active ? .frost : .graphite, interactive: true, glassID: "now.more") {
+        Group {
+          if open { showLess } else { closed(art: art) }
         }
-      } label: {
-        HStack(alignment: .center, spacing: 8) {
-          // The first few icons, overlapped.
-          ZStack(alignment: .leading) {
-            ForEach(Array(entries.prefix(3).enumerated()), id: \.element.id) { i, e in
-              Image(nsImage: model.icon(e.app))
-                .resizable()
-                .interpolation(.high)
-                .frame(width: art * 0.75, height: art * 0.75)
-                .offset(x: CGFloat(i) * art * 0.4)
-            }
-          }
-          .frame(width: art * 0.75 + CGFloat(min(entries.count, 3) - 1) * art * 0.4, height: art, alignment: .leading)
-          VStack(alignment: .leading, spacing: compact ? 0 : 1) {
-            Text("+\(entries.count)")
-              .font(.system(size: compact ? 11 : 12, weight: .heavy, design: .rounded))
-              .foregroundStyle(Color.primary)
-            Text("more playing")
-              .font(.system(size: compact ? 9 : 10, weight: .medium, design: .rounded))
-              .foregroundStyle(.secondary)
-          }
-          .lineLimit(1)
-          Spacer(minLength: 0)
-          Image(systemName: "chevron.down")
-            .font(.system(size: 8, weight: .bold))
-            .foregroundStyle(.secondary)
-        }
-        .frame(height: art)
+        .frame(height: open ? (compact ? 12 : 14) : art)
+        .frame(maxWidth: .infinity, alignment: open ? .center : .leading)
         .contentShape(Rectangle())
       }
-      .menuStyle(.button)
-      .buttonStyle(.plain)
-      .menuIndicator(.hidden)
+      .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
     }
+    .buttonStyle(BentoPressStyle())
     .frame(maxWidth: .infinity)
     .pointerHintTint(scheme == .dark ? BentoTint.frost.pastel : BentoTint.frost.ink)
-    .accessibilityLabel("\(entries.count) more playing")
-    .accessibilityValue(names.joined(separator: ", "))
-    .pointerHint(Caption.morePlaying)
+    .accessibilityLabel(open ? "Show less" : "Show \(entries.count) more playing")
+    .accessibilityValue(open ? "" : entries.map { model.describe($0, state: false).title }.joined(separator: ", "))
+    // Open: "Show less" says it all (an empty hint shows nothing).
+    .pointerHint(open ? PointerHint("") : Caption.morePlaying)
+  }
+
+  /// Up to three covers, overlapped (the front one first), then "+N more".
+  private func closed(art: CGFloat) -> some View {
+    let mini = (art * 0.75).rounded()
+    let step = (art * 0.42).rounded()
+    let covers = Array(entries.prefix(3))
+    return HStack(alignment: .center, spacing: 8) {
+      ZStack(alignment: .leading) {
+        ForEach(Array(covers.enumerated().reversed()), id: \.element.id) { i, e in
+          let t = model.describe(e)
+          NowArt(artwork: t.artwork, favicon: t.favicon, icon: model.icon(e.app), size: mini)
+            .modifier(NowMorph(id: e.id))
+            .scaleEffect(1 - CGFloat(i) * 0.08)
+            .opacity(1 - Double(i) * 0.12)
+            .offset(x: CGFloat(i) * step)
+        }
+      }
+      .frame(width: mini + CGFloat(max(covers.count - 1, 0)) * step, height: art, alignment: .leading)
+      VStack(alignment: .leading, spacing: compact ? 0 : 1) {
+        Text("+\(entries.count)")
+          .font(.system(size: compact ? 11 : 12, weight: .heavy, design: .rounded))
+          .foregroundStyle(Color.primary)
+        Text("more playing")
+          .font(.system(size: compact ? 9 : 10, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
+      }
+      .lineLimit(1)
+      .modifier(StillWhileMorphing())
+      Spacer(minLength: 0)
+      Image(systemName: "chevron.down")
+        .font(.system(size: 8, weight: .bold))
+        .foregroundStyle(.secondary)
+    }
+  }
+
+  private var showLess: some View {
+    HStack(spacing: 5) {
+      Image(systemName: "chevron.up")
+        .font(.system(size: 8, weight: .bold))
+      Text("Show less")
+        .font(.system(size: compact ? 10 : 11, weight: .semibold, design: .rounded))
+        .lineLimit(1)
+    }
+    .foregroundStyle(.secondary)
+    .modifier(StillWhileMorphing())
   }
 }
 
 extension Caption {
-  static let morePlaying = PointerHint("More playing", does: "Only three fit here; pick one to put it on top.")
+  static let morePlaying = PointerHint("More playing", does: "Opens the rest here as tiles; stays open until everything fits.")
 }
 
 // MARK: - Loading

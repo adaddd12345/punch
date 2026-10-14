@@ -28,6 +28,9 @@ struct BentoView: View {
   let size: ViewSize
   /// The window tools chip (labels, view size, pin), from PopoverView.
   var heroIcons: AnyView = AnyView(EmptyView())
+  /// heroIcons without words, for the sound chip's row when the words leave
+  /// the preset's name no room (nil: heroIcons has no words to drop).
+  var heroIconsTight: AnyView? = nil
   /// Classic: the same blocks, stripped back. No plates or glass (a faint
   /// grouped surface at most), the original EQ, sliders, preset pills and
   /// power switch. Full and Compact only (Classic Mini is PopoverView's).
@@ -751,15 +754,46 @@ struct BentoView: View {
       VStack(alignment: .leading, spacing: 6) {
         // Without an output chip the tools join the sound row (no near-empty bar).
         let merged = !flat && s.showMacVolume
-        HStack(alignment: .center, spacing: 8) {
-          soundChip(t)
-          if live { abChip(compact: false) }
-          if merged { heroIcons }
-          powerButton(size: 24)
+        Group {
+          if merged, let tight = heroIconsTight {
+            // The tools keep their words only while the preset's name (and the
+            // edited dot) fits whole beside them; else they go icon-only.
+            ViewThatFits(in: .horizontal) {
+              soundRow(t, tools: heroIcons, probe: true)
+              soundRow(t, tools: tight, probe: false)
+            }
+          } else {
+            soundRow(t, tools: merged ? heroIcons : nil, probe: false)
+          }
         }
         .frame(height: 24)
         if !merged { utilityBar() }
       }
+    }
+  }
+
+  /// The sound chip's row. `probe`: the chip asks only for its name's width
+  /// (plus the edited dot) when the row is measured, so ViewThatFits keeps
+  /// this row while the name fits whole, even if "· edited" or modes don't.
+  private func soundRow(_ t: BentoTint, tools: AnyView?, probe: Bool) -> some View {
+    HStack(alignment: .center, spacing: 8) {
+      if probe {
+        IdealFromProbe {
+          soundChip(t)
+          HStack(spacing: 6) {
+            chipName.lineLimit(1).fixedSize()
+            if editedBase != nil { Color.clear.frame(width: 5, height: 1) }
+            if live { Color.clear.frame(width: 8, height: 1) }
+          }
+          .padding(.horizontal, 8)
+          .hidden()
+        }
+      } else {
+        soundChip(t)
+      }
+      if live { abChip(compact: false) }
+      if let tools { tools }
+      powerButton(size: 24)
     }
   }
 
@@ -850,28 +884,7 @@ struct BentoView: View {
   private func soundChip(_ t: BentoTint) -> some View {
     presetMenu {
       HStack(alignment: .center, spacing: 6) {
-        Image(nsImage: MenuBarIcon.image)
-          .renderingMode(.template)
-          .resizable()
-          .interpolation(.high)
-          .aspectRatio(contentMode: .fit)
-          .frame(width: 12, height: 12)
-          .foregroundStyle(live ? ink(t) : Color.secondary)
-          .accessibilityHidden(true)
-        Text(heroWord)
-          .font(.system(size: 12, weight: .heavy, design: .rounded))
-          .lineLimit(1)
-          .truncationMode(.tail)
-          .foregroundStyle(Color.primary)
-          .layoutPriority(2)
-        if editedBase != nil {
-          Text("· edited")
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .fixedSize()
-        }
-        if live && !modesLine.isEmpty { modesText(droppable: true).transition(.opacity) }
+        chipWords(t)
         Spacer(minLength: 0)
         if live {
           Image(systemName: "chevron.down")
@@ -884,6 +897,73 @@ struct BentoView: View {
       .background(chipShape.fill(Color.primary.opacity(0.08)))
     }
     .frame(maxWidth: .infinity)
+  }
+
+  /// The chip's glyph and words, the name first: it shows whole while
+  /// anything fits. As room runs out "· edited" shrinks to a dot, the modes
+  /// to "+ N modes" then nothing, then the glyph goes, then the dot. Only
+  /// when the name alone is too wide does it truncate (never to "…" for a
+  /// suffix's sake).
+  private func chipWords(_ t: BentoTint) -> some View {
+    let edited = editedBase != nil
+    let modes = live && !modesLine.isEmpty
+    let dot: ChipEdited = edited ? .dot : .none
+    return ViewThatFits(in: .horizontal) {
+      chipLine(t, edited: edited ? .word : .none, modes: modes ? .full : .none)
+      if modes { chipLine(t, edited: edited ? .word : .none, modes: .count) }
+      if edited { chipLine(t, edited: .dot, modes: modes ? .count : .none) }
+      if modes { chipLine(t, edited: dot, modes: .none) }
+      chipLine(t, glyph: false, edited: dot, modes: .none)
+      if edited { chipLine(t, glyph: false, edited: .none, modes: .none) }
+      chipName.lineLimit(1).truncationMode(.tail)
+    }
+    // Ahead of the Spacer beside it: the words get the room first.
+    .layoutPriority(2)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(edited ? "\(heroWord), edited" : heroWord)
+  }
+
+  private enum ChipEdited { case word, dot, none }
+  private enum ChipModes { case full, count, none }
+
+  private var chipName: Text {
+    Text(heroWord).font(.system(size: 12, weight: .heavy, design: .rounded)).foregroundColor(.primary)
+  }
+
+  private func chipLine(_ t: BentoTint, glyph: Bool = true, edited: ChipEdited, modes: ChipModes) -> some View {
+    HStack(alignment: .center, spacing: 6) {
+      if glyph {
+        Image(nsImage: MenuBarIcon.image)
+          .renderingMode(.template)
+          .resizable()
+          .interpolation(.high)
+          .aspectRatio(contentMode: .fit)
+          .frame(width: 12, height: 12)
+          .foregroundStyle(live ? ink(t) : Color.secondary)
+          .accessibilityHidden(true)
+      }
+      chipName.lineLimit(1).fixedSize()
+      switch edited {
+      case .word:
+        Text("· edited")
+          .font(.system(size: 11, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .fixedSize()
+      case .dot:
+        // Edited, where the word doesn't fit: a small dot after the name.
+        Circle().fill(Color.primary.opacity(0.45)).frame(width: 5, height: 5)
+      case .none:
+        EmptyView()
+      }
+      switch modes {
+      case .full: Text(modesLine).modifier(ChipModeStyle(dark: scheme == .dark)).transition(.opacity)
+      case .count:
+        Text(modeCount == 1 ? "+ 1 mode" : "+ \(modeCount) modes").modifier(ChipModeStyle(dark: scheme == .dark))
+          .transition(.opacity)
+      case .none: EmptyView()
+      }
+    }
   }
 
   /// The preset picker behind the big word and the sound chip. While off: the label alone.
@@ -1823,6 +1903,39 @@ struct BentoPressStyle: ButtonStyle {
     configuration.label
       .scaleEffect(configuration.isPressed ? 0.96 : 1)
       .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+  }
+}
+
+/// Lays out its first view; asked for its ideal width, answers with the
+/// second's (a hidden probe, never shown). For ViewThatFits: "fits" means the
+/// probe's content fits, though the real view would like more.
+private struct IdealFromProbe: Layout {
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let real = subviews.first else { return .zero }
+    let s = real.sizeThatFits(proposal)
+    guard proposal.width == nil, subviews.count > 1 else { return s }
+    return CGSize(width: subviews[1].sizeThatFits(.unspecified).width, height: s.height)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard let real = subviews.first else { return }
+    real.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
+    if subviews.count > 1 {
+      subviews[1].place(at: bounds.origin, anchor: .topLeading, proposal: .zero)
+    }
+  }
+}
+
+/// The sound chip's modes ("+ Study · Night Guard"), styled like modesText.
+private struct ChipModeStyle: ViewModifier {
+  let dark: Bool
+  func body(content: Content) -> some View {
+    content
+      .font(.system(size: 11, weight: .medium, design: .rounded))
+      .lineLimit(1)
+      .fixedSize()
+      // Dark: full primary; .secondary went to 2:1 on the gold hero.
+      .foregroundStyle(dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
   }
 }
 

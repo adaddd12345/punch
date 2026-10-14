@@ -308,8 +308,10 @@ final class MutedApps: ObservableObject {
       .removeDuplicates()
       .assign(to: &$present)
     stack.$lead.map { $0?.app.id }.removeDuplicates().assign(to: &$hero)
-    // The "+N" tile has no mute: only the tiles that fit count.
-    stack.$rest.map { Set($0.prefix(NowStack.maxCells - 1).map(\.app.id)) }.removeDuplicates().assign(to: &$tiles)
+    // The closed drawer has no mute: only the tiles on screen count.
+    stack.$rest.combineLatest(stack.$drawerOpen)
+      .map { rest, open in Set(NowStack.split(rest, open: open).shown.map(\.app.id)) }
+      .removeDuplicates().assign(to: &$tiles)
   }
 }
 

@@ -147,6 +147,8 @@ struct PopoverView: View {
                     heroIcons: AnyView(size == .mini
                       ? windowTools(words: false, mini: true, height: 32, capsule: true)
                       : windowTools(words: size == .full && labels == .full)),
+                    // Where words would squeeze the preset's name to "…" (BentoView.playingFull).
+                    heroIconsTight: size == .full && labels == .full ? AnyView(windowTools(words: false)) : nil,
                     flat: !controller.settings.bento,
                     macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
                     reshuffle: reshuffle)
