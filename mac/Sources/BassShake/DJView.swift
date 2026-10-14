@@ -56,14 +56,20 @@ struct DJView: View {
       pageControl
       Spacer(minLength: 0)
       // Always laid out (fixed height); shown only while something is on.
-      Button("Reset") { controller.dj = DJState(listening: controller.dj.listening) }
-        .buttonStyle(.plain)
-        .font(.system(size: 11, weight: .regular))
-        .foregroundStyle(.secondary)
-        .opacity(dj.anyActive ? 1 : 0)
-        .disabled(!dj.anyActive)
-        .accessibilityHidden(!dj.anyActive)
-        .help("Turn every pad and the filter off")
+      Button { controller.dj = DJState(listening: controller.dj.listening) } label: {
+        Text("Reset")
+          .font(.system(size: 11, weight: .regular))
+          .padding(.horizontal, 6)
+          .frame(minWidth: 24, minHeight: 24)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.secondary)
+      .padding(.trailing, -6)   // text stays on the edge; the hit area overhangs
+      .opacity(dj.anyActive ? 1 : 0)
+      .disabled(!dj.anyActive)
+      .accessibilityHidden(!dj.anyActive)
+      .help("Turn every pad and the filter off")
     }
     .frame(height: 24)
   }
@@ -73,7 +79,7 @@ struct DJView: View {
     HStack(spacing: 0) {
       ForEach(DJVibe.allCases) { v in pageSegment(v) }
     }
-    .padding(2)
+    .padding(.horizontal, 2)
     .background(RoundedRectangle(cornerRadius: DJLayout.segmentRadius, style: .continuous)
       .fill(Color.primary.opacity(0.06)))
     .overlay(RoundedRectangle(cornerRadius: DJLayout.segmentRadius, style: .continuous)
@@ -104,6 +110,8 @@ struct DJView: View {
             .shadow(color: .black.opacity(0.08), radius: 1, y: 0.5)
         }
       }
+      // Slim 20 pt look, 24 pt hit area (the control's own inset).
+      .padding(.vertical, 2)
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -196,7 +204,8 @@ enum DJStyle {
   static let ink = Color.primary.opacity(0.9)
   static let faint = Color.primary.opacity(0.5)
   /// A killed isolator band.
-  static let kill = Color(red: 0.89, green: 0.22, blue: 0.21)
+  static let killRGB = (0.77, 0.19, 0.18)
+  static let kill = Color(red: killRGB.0, green: killRGB.1, blue: killRGB.2)
   static let filterAccent = Color(red: 0.05, green: 0.55, blue: 0.68)
 }
 
@@ -252,19 +261,28 @@ extension DJState.Pad {
     }
   }
 
-  /// The pad's one accent: a mid-depth hue that carries white text.
-  var accent: Color {
+  /// The pad's one accent: a deep hue that carries white text (title and
+  /// detail at least 4.5:1).
+  var accent: Color { Color(red: rgb.0, green: rgb.1, blue: rgb.2) }
+
+  /// The "on" fill: the accent, or a darker one with Increase Contrast.
+  func fill(_ contrast: ColorSchemeContrast) -> Color {
+    guard contrast == .increased else { return accent }
+    return Color(red: rgb.0 * 0.8, green: rgb.1 * 0.8, blue: rgb.2 * 0.8)
+  }
+
+  private var rgb: (Double, Double, Double) {
     switch self {
-    case .roll: return Color(red: 0.85, green: 0.22, blue: 0.47)
-    case .tapeStop: return Color(red: 0.88, green: 0.44, blue: 0.10)
-    case .drive: return Color(red: 0.55, green: 0.32, blue: 0.86)
-    case .lofi: return Color(red: 0.74, green: 0.50, blue: 0.26)
-    case .screw: return Color(red: 0.35, green: 0.36, blue: 0.86)
-    case .crush: return Color(red: 0.22, green: 0.60, blue: 0.33)
-    case .echo: return Color(red: 0.05, green: 0.55, blue: 0.68)
-    case .pump: return Color(red: 0.12, green: 0.46, blue: 0.90)
-    case .chipmunk: return Color(red: 0.86, green: 0.52, blue: 0.04)
-    case .low, .mid, .high: return DJStyle.kill
+    case .roll: return (0.76, 0.20, 0.42)
+    case .tapeStop: return (0.66, 0.33, 0.07)
+    case .drive: return (0.52, 0.30, 0.81)
+    case .lofi: return (0.56, 0.38, 0.20)
+    case .screw: return (0.35, 0.36, 0.86)
+    case .crush: return (0.17, 0.47, 0.26)
+    case .echo: return (0.04, 0.46, 0.56)
+    case .pump: return (0.11, 0.41, 0.80)
+    case .chipmunk: return (0.60, 0.36, 0.03)
+    case .low, .mid, .high: return DJStyle.killRGB
     }
   }
 }
@@ -324,6 +342,12 @@ final class DJDeck: ObservableObject {
   func setPage(_ v: DJVibe, animated: Bool) {
     guard v != page else { return }
     Self.lastPage = v
+    // The old page's tiles go away mid-press without a release event: let go
+    // of their mouse holds (a held key still releases its own pad on key-up).
+    if let c = controller {
+      let held = c.dj.held.subtracting(Set(page.pads).subtracting(keyPads))
+      if held != c.dj.held { c.dj.held = held }
+    }
     if animated { withAnimation(.easeOut(duration: 0.15)) { page = v } } else { page = v }
   }
 
@@ -379,6 +403,7 @@ final class DJDeck: ObservableObject {
       DJActions.togglePin(pad, c)
     } else {
       keyHeld[e.keyCode] = pad
+      DJActions.claim(pad)
       if !c.dj.held.contains(pad) { c.dj.held.insert(pad) }
     }
     return nil
@@ -391,11 +416,23 @@ enum DJActions {
     if c.dj.pinned.contains(pad) { c.dj.pinned.remove(pad) } else { c.dj.pinned.insert(pad) }
   }
 
+  /// Pending VoiceOver hits, one token per pad (the latest hit wins).
+  private static var hits: [DJState.Pad: UUID] = [:]
+
   /// VoiceOver's "Hit": one second on, then off (unless held another way).
   static func hit(_ pad: DJState.Pad, _ c: AudioController) {
+    let token = UUID()
+    hits[pad] = token
     c.dj.held.insert(pad)
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak c] in c?.dj.held.remove(pad) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak c] in
+      guard hits[pad] == token else { return }
+      hits[pad] = nil
+      c?.dj.held.remove(pad)
+    }
   }
+
+  /// A mouse or key hold began: its release, not a pending hit, ends the pad.
+  static func claim(_ pad: DJState.Pad) { hits[pad] = nil }
 
   /// Tutorial Mode: one short sentence each, only what the name doesn't say.
   static func hint(_ p: DJState.Pad) -> String {
@@ -529,6 +566,7 @@ private struct IsolatorBar: View {
         let b = seg(g.location.x)
         var held = controller.dj.held.subtracting(Self.bands).union(deck.keyPads.intersection(Self.bands))
         held.formUnion(Self.bands[min(a, b)...max(a, b)])
+        Self.bands[min(a, b)...max(a, b)].forEach(DJActions.claim)
         if held != controller.dj.held { controller.dj.held = held }
       }
       .onEnded { _ in
@@ -552,6 +590,7 @@ private struct DJPadTile: View {
   let hero: Bool
   @State private var pressing = false
   @State private var optionPress = false
+  @Environment(\.colorSchemeContrast) private var contrast
 
   var body: some View {
     let dj = controller.dj
@@ -562,7 +601,7 @@ private struct DJPadTile: View {
       content(on: on)
         .padding(hero ? 14 : 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background { if on { pad.accent } }
+        .background { if on { pad.fill(contrast) } }
     }
     .frame(maxHeight: .infinity)
     .contentShape(shape)
@@ -573,8 +612,9 @@ private struct DJPadTile: View {
         if DJActions.optionDown {
           optionPress = true
           DJActions.togglePin(pad, controller)
-        } else if !controller.dj.held.contains(pad) {
-          controller.dj.held.insert(pad)
+        } else {
+          DJActions.claim(pad)
+          if !controller.dj.held.contains(pad) { controller.dj.held.insert(pad) }
         }
       }
       .onEnded { _ in
@@ -622,7 +662,7 @@ private struct DJPadTile: View {
         .padding(.trailing, hero ? 0 : 20)   // clear of the pin
       Text(pad.detail)
         .font(.system(size: hero ? 12 : 11, weight: .regular))
-        .foregroundStyle(on ? Color.white.opacity(0.8) : DJStyle.faint)
+        .foregroundStyle(on ? Color.white.opacity(contrast == .increased ? 1 : 0.9) : DJStyle.faint)
         .lineLimit(1)
         .minimumScaleFactor(0.85)
     }

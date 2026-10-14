@@ -977,10 +977,16 @@ private struct UpdatedNote: View {
         .lineLimit(1)
         .truncationMode(.middle)
       Spacer(minLength: 4)
-      Button("What's New") { Links.open(.help); dismiss() }
-        .buttonStyle(.plain)
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(Color.accentColor)
+      Button { Links.open(.help); dismiss() } label: {
+        Text("What's New")
+          .font(.system(size: 11, weight: .semibold))
+          .padding(.horizontal, 4)
+          .frame(minWidth: 24, minHeight: 24)   // the line's full height to hit
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(Color.accentColor)
+      .padding(.trailing, -4)
     }
     .padding(.horizontal, 10)
     .frame(height: 24)

@@ -37,6 +37,8 @@ struct BentoView: View {
   @State private var lastDetail: Detail? = BentoView.remembered
   /// lastDetail survives this view being rebuilt (process memory only).
   private static var remembered: Detail?
+  /// Classic's power switch, measured: its slot in each hero layout.
+  @State private var flatPowerSize: CGSize = .zero
   private func showDetail(_ d: Detail) { lastDetail = d; Self.remembered = d }
   private static let defaultAllow = Settings().nightGuardDb
 
@@ -271,6 +273,19 @@ struct BentoView: View {
       if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    // One switch for both layouts, over their empty slots: the idle/playing
+    // swap (mid popup resize) never tears down its NSSwitch.
+    .overlay(alignment: .topTrailing) {
+      FlatPowerSlot(on: s.showNowPlaying,
+                    idle: (0, compact ? 24 : 32), playing: (compact ? 52 : 64, 24)) {
+        flatPower
+          .background(GeometryReader { g in
+            Color.clear
+              .onAppear { flatPowerSize = g.size }
+              .onChange(of: g.size) { _, n in flatPowerSize = n }
+          })
+      }
+    }
     .pointerHintTint(ink(t))
     .animation(.easeOut(duration: 0.2), value: modesLine)
     .animation(.easeOut(duration: 0.2), value: editedBase)
@@ -297,16 +312,16 @@ struct BentoView: View {
         } else {
           Spacer(minLength: 0)
         }
-        flatOutput
+        heroOutput
         heroIcons
       }
       .frame(height: 24)
     }
   }
 
-  /// Classic's output icon, only while Mac Volume (and the output row under
+  /// The hero's output icon, only while Mac Volume (and the output row under
   /// it) is hidden: otherwise the picker would show twice.
-  @ViewBuilder private var flatOutput: some View {
+  @ViewBuilder private var heroOutput: some View {
     if !s.showMacVolume { outputChip(iconOnly: true) }
   }
 
@@ -316,7 +331,7 @@ struct BentoView: View {
       appLogo(22)
       bigWord(t, dark: dark, font: 15, chevron: 8, scale: 0.7)
       if live { abChip(compact: true) }
-      flatOutput
+      heroOutput
       heroIcons
       powerButton(size: 24)
     }
@@ -383,12 +398,14 @@ struct BentoView: View {
         powerButton(size: 40)
       }
       .frame(height: 48)
-      if live && (editedBase != nil || !modesLine.isEmpty) {
+      // With Mac Volume shown the output lives in its row, so the note
+      // shares the tools' row instead (as in Classic).
+      if hasNote && !s.showMacVolume {
         noteLine
           .frame(height: 16)
           .transition(.opacity)
       }
-      utilityBar
+      utilityBar(note: hasNote && s.showMacVolume)
         .padding(.top, 8)
     }
   }
@@ -398,7 +415,7 @@ struct BentoView: View {
     HStack(alignment: .center, spacing: 8) {
       bigWord(t, dark: dark, font: 22, chevron: 10, scale: 0.6)
       if live { abChip(compact: true) }
-      outputChip(iconOnly: true)
+      heroOutput
       heroIcons
       powerButton(size: 32)
     }
@@ -526,13 +543,16 @@ struct BentoView: View {
       }
       .frame(height: 48)
       VStack(alignment: .leading, spacing: 6) {
+        // Without an output chip the tools join the sound row (no near-empty bar).
+        let merged = !flat && s.showMacVolume
         HStack(alignment: .center, spacing: 8) {
           soundChip(t)
           if live { abChip(compact: false) }
+          if merged { heroIcons }
           powerButton(size: 24)
         }
         .frame(height: 24)
-        utilityBar
+        if !merged { utilityBar() }
       }
     }
   }
@@ -548,7 +568,7 @@ struct BentoView: View {
       HStack(alignment: .center, spacing: 8) {
         soundChip(t)
         if live { abChip(compact: true) }
-        if flat { flatOutput } else { outputChip(iconOnly: true) }
+        heroOutput
         heroIcons
         powerButton(size: 24)
       }
@@ -558,14 +578,17 @@ struct BentoView: View {
 
   private func transportTint(_ t: BentoTint, dark: Bool) -> Color? { live ? (dark ? t.pastel : t.ink) : nil }
 
-  /// Output (flexible) then the window tools.
-  private var utilityBar: some View {
+  private var hasNote: Bool { live && (editedBase != nil || !modesLine.isEmpty) }
+
+  /// Output (flexible) then the window tools. While Mac Volume shows the
+  /// output, the tools take the row (with the note line, when asked).
+  private func utilityBar(note: Bool = false) -> some View {
     HStack(alignment: .center, spacing: 8) {
-      if flat {
-        Spacer(minLength: 0)
-        flatOutput
-      } else {
+      if !flat && !s.showMacVolume {
         outputChip(iconOnly: false)
+      } else {
+        if note { noteLine.transition(.opacity) } else { Spacer(minLength: 0) }
+        heroOutput
       }
       heroIcons
     }
@@ -591,13 +614,19 @@ struct BentoView: View {
     ZStack(alignment: .leading) {
       presetMenu {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-          Text(heroWord)
-            .font(.system(size: font, weight: flat ? .bold : .heavy, design: .rounded))
-            .tracking(font >= 30 ? -0.8 : (flat ? -0.2 : -0.4))
-            .lineLimit(1)
-            .minimumScaleFactor(scale)
-            .foregroundStyle(Color.primary)
-            .modifier(SoftShadow(on: !powerSaver && !flat, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
+          // The word changes identity, not the menu (rebuilding its AppKit
+          // control on every preset change churns the popup).
+          ZStack(alignment: .leading) {
+            Text(heroWord)
+              .font(.system(size: font, weight: flat ? .bold : .heavy, design: .rounded))
+              .tracking(font >= 30 ? -0.8 : (flat ? -0.2 : -0.4))
+              .lineLimit(1)
+              .minimumScaleFactor(scale)
+              .foregroundStyle(Color.primary)
+              .modifier(SoftShadow(on: !powerSaver && !flat, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
+              .id(heroWord)
+              .transition(heroWordTransition)
+          }
           if live {
             Image(systemName: "chevron.down")
               .font(.system(size: chevron, weight: .heavy))
@@ -605,8 +634,6 @@ struct BentoView: View {
           }
         }
       }
-      .id(heroWord)
-      .transition(heroWordTransition)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .animation(.easeOut(duration: 0.25), value: heroWord)
@@ -777,16 +804,24 @@ struct BentoView: View {
   /// circle in the sound bar while something does. Classic: the original switch.
   @ViewBuilder private func powerButton(size d: CGFloat) -> some View {
     if flat {
-      Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled },
-                                              set: { controller.settings.enabled = $0 }))
-        .toggleStyle(.switch)
-        .controlSize(.small)
-        .labelsHidden()
-        .fixedSize()
-        .pointerHint(Caption.power(on: live))
+      // Its slot: the switch itself is flatHero's overlay.
+      Color.clear
+        .frame(width: flatPowerSize.width, height: flatPowerSize.height)
+        .accessibilityHidden(true)
     } else {
       bentoPower(size: d)
     }
+  }
+
+  /// Classic's power switch.
+  private var flatPower: some View {
+    Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled },
+                                            set: { controller.settings.enabled = $0 }))
+      .toggleStyle(.switch)
+      .controlSize(.small)
+      .labelsHidden()
+      .fixedSize()
+      .pointerHint(Caption.power(on: live))
   }
 
   private func bentoPower(size d: CGFloat) -> some View {
@@ -1882,4 +1917,21 @@ enum BentoRadius {
   static let hero: CGFloat = 22
   /// Classic's faint surfaces: the original EQ backing's radius.
   static let flat: CGFloat = 12
+}
+
+/// Classic's power switch at its row in the hero, idle or playing (the hero
+/// follows the stack's lead, as NowPlayingSwitch does). Rows are (top, height).
+private struct FlatPowerSlot<C: View>: View {
+  @ObservedObject var stack: NowStack = .shared
+  let on: Bool
+  let idle: (top: CGFloat, height: CGFloat)
+  let playing: (top: CGFloat, height: CGFloat)
+  @ViewBuilder let content: () -> C
+
+  var body: some View {
+    let row = on && stack.lead != nil ? playing : idle
+    content()
+      .frame(height: row.height)
+      .padding(.top, row.top)
+  }
 }

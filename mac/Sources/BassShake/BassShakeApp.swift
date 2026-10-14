@@ -227,7 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     Publishers.CombineLatest(controller.macVolume.$state.map(VolumeGlyph.init), controller.$settings.map(\.menuBarVolume))
       .map { glyph, on in on ? glyph : nil }
       .removeDuplicates()
-      .receive(on: RunLoop.main)
+      .receive(on: DispatchQueue.main)
       .sink { [weak self] glyph in self?.statusItem?.button?.image = glyph.map(MenuBarIcon.image(for:)) ?? MenuBarIcon.image }
       .store(in: &cancellables)
     controller.$settings.map(\.menuBarIconShown).removeDuplicates()

@@ -17,8 +17,10 @@ final class LiveDrawer {
       hostObservers = []
       if let host {
         for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+          // A move (maybe to another screen) re-decides under vs beside; a resize keeps it.
+          let moved = name == NSWindow.didMoveNotification
           hostObservers.append(NotificationCenter.default.addObserver(forName: name, object: host, queue: .main) {
-            [weak self] _ in if self?.isShown == true { self?.reposition() }
+            [weak self] _ in if self?.isShown == true { self?.reposition(decide: moved) }
           })
         }
       }
@@ -53,6 +55,9 @@ final class LiveDrawer {
   /// Set while the popup hangs from the Dock: the tray goes beside it
   /// instead of under it (where the Dock is).
   var preferSide = false
+  /// No room under the popup, decided once per show (and when the popup
+  /// moves), so the drawer doesn't jump under/beside as its rows arrive.
+  private var noRoomBelow = false
 
   func show(model: LiveChannels) {
     show(LiveChannelsPanel(model: model))
@@ -90,7 +95,7 @@ final class LiveDrawer {
     panel.contentViewController = hosting
     panel.level = host.level
     if panel.parent !== host { host.addChildWindow(panel, ordered: .above) }
-    reposition()
+    reposition(decide: true)
     panel.alphaValue = 0
     panel.orderFront(nil)
     NSAnimationContext.runAnimationGroup { ctx in
@@ -110,7 +115,7 @@ final class LiveDrawer {
     panel.orderOut(nil)
   }
 
-  private func reposition() {
+  private func reposition(decide: Bool = false) {
     guard let panel, let r = anchorRect else { return }
     // Origin only: the hosting controller owns the size (the list scrolls
     // past six rows, so it stays compact). Aligned to the popover content.
@@ -119,7 +124,7 @@ final class LiveDrawer {
     let below = r.minY - gap - h
     // Decided by geometry, not only the Dock flag (a late close event can clear
     // it): no room under the popup means it hangs near the Dock, so beside it.
-    let noRoomBelow = vis.map { below < $0.minY + 4 } ?? false
+    if decide { noRoomBelow = vis.map { below < $0.minY + 4 } ?? false }
     if side || noRoomBelow {
       // Right of the popup, or left when that runs off screen; never past either edge.
       var x = r.maxX + gap
