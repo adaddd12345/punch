@@ -317,12 +317,16 @@ final class LiveChannels: ObservableObject {
   /// App icon (AppKit only, no Core Audio). Cached.
   func icon(for app: LiveApp) -> NSImage { icon(id: app.id, pid: app.appPID, bundleID: app.bundleID) }
 
+  /// Cached by row and by bundle id, so a relaunched app (new pid, new row)
+  /// reuses its icon instead of loading it again on the main thread.
   func icon(id: String, pid: pid_t, bundleID: String?) -> NSImage {
     if let hit = iconCache[id] { return hit }
+    if let b = bundleID, let hit = iconCache[b] { iconCache[id] = hit; return hit }
     let img = NSRunningApplication(processIdentifier: pid)?.icon
       ?? bundleID.flatMap(Self.appIcon(bundleID:))
       ?? Self.genericIcon
     iconCache[id] = img
+    if let b = bundleID, img !== Self.genericIcon { iconCache[b] = img }
     return img
   }
 

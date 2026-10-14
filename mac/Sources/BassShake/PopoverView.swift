@@ -103,6 +103,15 @@ struct PopoverView: View {
       .animation(.easeOut(duration: 0.25), value: slowStart)
   }
 
+  /// Muted apps What's Playing doesn't already show (muted, with its unmute).
+  private var mutedNotice: some View {
+    let s = controller.settings
+    let mini = size == .mini
+    return MutedNotice(live: controller.live,
+                       heroShown: mini ? s.showPlayingChannel : (s.bento && s.showNowPlaying),
+                       tilesShown: !mini && s.bento && s.showNowPlaying && s.shows(.bentoNowPlaying))
+  }
+
   private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
       // The Mac's own volume, first in every layout and size (or, hidden, a
@@ -114,7 +123,8 @@ struct PopoverView: View {
       if !controller.settings.bento && size != .mini { header }
       // Banners sit above Mini's row 1, full width.
       statusBanner
-      MutedNotice(model: controller.live)
+      // Bento: under the stack, so a mute never pushes What's Playing down.
+      if !controller.settings.bento { mutedNotice }
       NowPlayingNote(controller: controller, mini: size == .mini)
       if controller.settings.bento {
         if size != .mini { driverSection }
@@ -123,6 +133,7 @@ struct PopoverView: View {
                   heroIcons: AnyView(size == .mini
                     ? windowTools(words: false, mini: true, height: 32, capsule: true)
                     : windowTools(words: size == .full && labels == .full)))
+        mutedNotice
       } else if size == .mini {
         classicMini
       } else {

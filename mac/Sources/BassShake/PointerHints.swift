@@ -88,8 +88,12 @@ final class PointerHintHub: ObservableObject {
   private var dwellID: UUID?
   private var lastHide = Date.distantPast
   private var monitor: Any?
+  /// The control last clicked: its caption stays away until the pointer leaves it.
+  private var quietID: UUID?
 
-  private static let dwellDelay = 0.15
+  /// A pointer passing by shows nothing; one that rests on a control does.
+  private static let dwellDelay = 0.7
+  /// After a caption leaves by the pointer (not a click), the next shows at once.
   private static let warmWindow = 0.6
 
   // MARK: Control side
@@ -107,6 +111,7 @@ final class PointerHintHub: ObservableObject {
     }
     lastPointer = location
     guard let top = topEntry(), top.id == id else { return }
+    if quietID == id && !hint.live { return }
     if NSEvent.pressedMouseButtons != 0 && !hint.live { hide(); return }
     if top.isEmpty { hide(); return }
     if shownID == id && visible {
@@ -121,6 +126,7 @@ final class PointerHintHub: ObservableObject {
   func ended(id: UUID) {
     guard let i = stack.firstIndex(where: { $0.id == id }) else { return }
     stack.remove(at: i)
+    if quietID == id { quietID = nil }
     if dwellID == id { cancelDwell() }
     if stack.isEmpty { hide(); return }
     if shownID == id { schedule() }
@@ -153,7 +159,11 @@ final class PointerHintHub: ObservableObject {
     guard topEntry()?.id == id else { return }
     if shownID == id && visible {
       if stack[i].isEmpty { hide() } else if stack[i].source == nil, shown != hint { shown = hint }
-    } else if !stack[i].isEmpty && (NSEvent.pressedMouseButtons == 0 || hint.live) {
+    } else if !stack[i].isEmpty && (NSEvent.pressedMouseButtons == 0 || hint.live),
+              quietID != id, enabled || !essential {
+      // New text never brings a caption back by itself after a click (quiet
+      // until the pointer leaves), and an essential one with Tutorial Mode off
+      // waits for the pointer to move and rest (hover), never pops up alone.
       schedule()
     }
   }
@@ -162,9 +172,14 @@ final class PointerHintHub: ObservableObject {
 
   func start() {
     guard monitor == nil else { return }
-    // A press hides a caption (unless it's a live one that follows the drag).
+    // A press hides a caption (unless it's a live one that follows the drag)
+    // and keeps the pressed control's quiet until the pointer leaves it. Not
+    // a warm hide: the next control still waits for the pointer to rest.
     monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] e in
-      if let self, self.visible, !(self.shown?.live ?? false) { self.hide() }
+      guard let self else { return e }
+      if let top = self.topEntry(), !top.hint.live,
+         top.anchor.insetBy(dx: -1, dy: -1).contains(self.lastPointer) { self.quietID = top.id }
+      if !(self.shown?.live ?? false) { self.hide(warm: false) }
       return e
     }
   }
@@ -179,8 +194,10 @@ final class PointerHintHub: ObservableObject {
 
   private func schedule() {
     guard let top = topEntry(), !top.isEmpty else { hide(); return }
-    // Warm swap: another caption is up, or one just went away.
-    if visible || Date().timeIntervalSince(lastHide) < Self.warmWindow {
+    if quietID == top.id && !top.hint.live { return }
+    // Warm swap: another caption is up, or one just went away. Not for an
+    // essential caption with Tutorial Mode off: it always waits for the dwell.
+    if (enabled || !top.essential), visible || Date().timeIntervalSince(lastHide) < Self.warmWindow {
       show(top)
       return
     }
@@ -191,7 +208,7 @@ final class PointerHintHub: ObservableObject {
       guard let self else { return }
       self.dwell = nil
       self.dwellID = nil
-      guard let e = self.topEntry(), e.id == id, !e.isEmpty else { return }
+      guard let e = self.topEntry(), e.id == id, !e.isEmpty, self.quietID != id else { return }
       if NSEvent.pressedMouseButtons != 0 && !e.hint.live { return }
       self.show(e)
     }
@@ -211,13 +228,15 @@ final class PointerHintHub: ObservableObject {
     if !visible { visible = true }
   }
 
-  private func hide() {
+  /// `warm: false` (a click): the next caption doesn't skip its dwell.
+  private func hide(warm: Bool = true) {
     cancelDwell()
     if visible {
       if let s = source { let h = s(); if shown != h { shown = h } }
       visible = false
-      lastHide = Date()
+      if warm { lastHide = Date() }
     }
+    if !warm { lastHide = .distantPast }
     shownID = nil
   }
 
@@ -230,6 +249,7 @@ final class PointerHintHub: ObservableObject {
 
   func clear() {
     stack.removeAll()
+    quietID = nil
     hide()
   }
 

@@ -68,7 +68,7 @@ final class AutomationGate: ObservableObject {
   private var settings: Settings? { controller?.settings }
 
   func isOn(_ id: String) -> Bool { !(settings?.automationOff.contains(id) ?? false) }
-  func wasAsked(_ id: String) -> Bool { settings?.automationAsked.contains(id) ?? false }
+  func wasAsked(_ id: String) -> Bool { pendingAsked.contains(id) || (settings?.automationAsked.contains(id) ?? false) }
   /// Known to need an answer (a click on its tile may ask).
   func isUndecided(_ id: String) -> Bool { isOn(id) && status[id] == Self.undecided }
 
@@ -81,15 +81,43 @@ final class AutomationGate: ObservableObject {
     }
   }
 
+  /// Called on every poll: Settings is written only when an app is new to the
+  /// list, once per main-loop turn (a Settings write re-renders the popover).
   func markSeen(_ ids: [String]) {
     guard let c = controller else { return }
-    let new = ids.filter { !c.settings.automationSeen.contains($0) }
-    if !new.isEmpty { c.settings.automationSeen += new }
+    let new = ids.filter { !c.settings.automationSeen.contains($0) && !pendingSeen.contains($0) }
+    guard !new.isEmpty else { return }
+    pendingSeen += new
+    flushSoon()
   }
 
   func markAsked(_ id: String) {
-    guard let c = controller, !c.settings.automationAsked.contains(id) else { return }
-    c.settings.automationAsked.append(id)
+    guard let c = controller, !c.settings.automationAsked.contains(id), !pendingAsked.contains(id) else { return }
+    pendingAsked.append(id)
+    flushSoon()
+  }
+
+  private var pendingSeen: [String] = []
+  private var pendingAsked: [String] = []
+  private var flushScheduled = false
+
+  private func flushSoon() {
+    guard !flushScheduled else { return }
+    flushScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.flushScheduled = false
+      guard let c = self.controller else { return }
+      let seen = self.pendingSeen.filter { !c.settings.automationSeen.contains($0) }
+      let asked = self.pendingAsked.filter { !c.settings.automationAsked.contains($0) }
+      self.pendingSeen = []
+      self.pendingAsked = []
+      guard !seen.isEmpty || !asked.isEmpty else { return }
+      var s = c.settings
+      s.automationSeen += seen
+      s.automationAsked += asked
+      c.settings = s
+    }
   }
 
   /// A status from a check or a script. A denial switches the app off (never asked again).

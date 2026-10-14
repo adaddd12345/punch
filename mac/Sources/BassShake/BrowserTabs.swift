@@ -26,13 +26,9 @@ enum NowBrowser: String, CaseIterable {
   /// Chromium's own tab strip names its tabs "<title> - Audio playing" (Accessibility).
   var hasTabStripAudio: Bool { kind == .chromium }
 
-  var isRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: rawValue).isEmpty }
-  var isLive: Bool {
-    NSRunningApplication.runningApplications(withBundleIdentifier: rawValue).contains { !$0.isTerminated }
-  }
-  var pid: pid_t? {
-    NSRunningApplication.runningApplications(withBundleIdentifier: rawValue).first { !$0.isTerminated }?.processIdentifier
-  }
+  var isRunning: Bool { RunningApps.isLive(rawValue) }
+  var isLive: Bool { RunningApps.isLive(rawValue) }
+  var pid: pid_t? { RunningApps.pid(rawValue) }
 }
 
 /// One tab as the browser's AppleScript reports it. Never logged, never saved.

@@ -46,7 +46,9 @@ extension NowPlaying {
   /// `state`: lead the second line with "Paused" / "Muted" (off for VoiceOver, which says it first).
   func describe(_ e: NowEntry, state: Bool = true) -> NowEntryText {
     let app = e.app
-    let muted = isMuted(app.id) || e.item?.muted == true
+    // An app's mute says "Muted" once (not on each of a muted browser's tabs);
+    // a tab the browser itself muted says it on that tab.
+    let muted = showsAppMuted(e) || e.item?.muted == true
     var title = app.name
     var detail: [String] = []
     let paused: Bool
@@ -73,6 +75,14 @@ extension NowPlaying {
     // Only the app's name is known: say what it's doing, so the line is never empty.
     if line.isEmpty { line = paused ? "Paused" : "Playing" }
     return NowEntryText(title: title, subtitle: line, paused: paused, artwork: art, song: song)
+  }
+
+  /// The app is muted and this entry is where that shows: the app's first
+  /// entry on screen (hero first), so a muted browser says it once, not per tab.
+  func showsAppMuted(_ e: NowEntry) -> Bool {
+    guard isMuted(e.app.id) else { return false }
+    guard e.item != nil, let first = NowStack.shared.firstEntryID(of: e.app.id) else { return true }
+    return first == e.id
   }
 
   /// The tile's play state: the app's, and the tab's own audio indicator for a tab.
@@ -154,7 +164,10 @@ final class NowStack: ObservableObject {
     // Only the ids / text changed shape the animation; a new thumbnail alone just swaps in.
     let shape = r.lead?.id != lead?.id || r.rest.map(\.id) != rest.map(\.id)
     if shape {
-      withAnimation(Self.morph) {
+      // Only frames and art ride the spring; words switch at once (StillWhileMorphing).
+      var t = Transaction(animation: Self.morph)
+      t[NowMorphing.self] = true
+      withTransaction(t) {
         lead = r.lead
         rest = r.rest
         pending = wait
@@ -223,6 +236,12 @@ final class NowStack: ObservableObject {
     return (lead, rest, newOrder, pin)
   }
 
+  /// This app's first entry on screen: the lead, else its first small tile.
+  func firstEntryID(of appID: String) -> String? {
+    if let l = lead, l.app.id == appID { return l.id }
+    return rest.first { $0.app.id == appID }?.id
+  }
+
   /// The lead when it belongs to this app (else the app on its own).
   func entry(for app: NowApp) -> NowEntry {
     if let l = lead, l.app.id == app.id { return l }
@@ -255,11 +274,26 @@ struct NowMorph: ViewModifier {
   }
 }
 
+/// Set on the transaction of a stack change (NowStack.rebuild).
+struct NowMorphing: TransactionKey {
+  static let defaultValue = false
+}
+
+/// Text that changes during a stack morph switches at once: a fading copy of
+/// the old words would ghost over the new ones while the tiles move.
+struct StillWhileMorphing: ViewModifier {
+  func body(content: Content) -> some View {
+    content.transaction { t in if t[NowMorphing.self] { t.animation = nil } }
+  }
+}
+
 extension AnyTransition {
-  /// A small tile growing out of (or folding back into) the tile above it.
-  /// Reduce Motion: a cross-fade.
+  /// A small tile growing out of the tile above it. Leaving, it goes at once
+  /// (its art flies on via NowMorph): a fading tile would show its title twice,
+  /// once in it and once where it went. Reduce Motion: fades in.
   static func nowTile(reduceMotion: Bool) -> AnyTransition {
-    reduceMotion ? .opacity : .scale(scale: 0.86, anchor: .top).combined(with: .opacity)
+    .asymmetric(insertion: reduceMotion ? .opacity : .scale(scale: 0.86, anchor: .top).combined(with: .opacity),
+                removal: .identity)
   }
 }
 
@@ -390,7 +424,7 @@ struct NowStackTile: View {
     .contextMenu {
       Button("Open \(app.name)") { NowStack.focus(entry, model: model) }
       if model.route(app) != .mute {
-        Button(model.isMuted(app.id) ? "Unmute \(app.name)" : "Mute \(app.name)") { model.toggleMute(app) }
+        Button(model.isMuted(app.id) ? "Unmute \(app.muteTarget)" : "Mute \(app.muteTarget)") { model.toggleMute(app) }
       }
     }
   }
@@ -401,22 +435,23 @@ struct NowStackTile: View {
           .modifier(NowMorph(id: entry.id))
         Button(action: promote) {
           VStack(alignment: .leading, spacing: compact ? 0 : 1) {
+            // In place, one Text each (never two titles at once).
             Text(text.title)
               .font(.system(size: compact ? 11 : 12, weight: .heavy, design: .rounded))
               .tracking(-0.2)
               .lineLimit(1)
               .truncationMode(.tail)
               .foregroundStyle(Color.primary)
+              .contentTransition(.opacity)
             Text(text.subtitle)
               .font(.system(size: compact ? 9 : 10, weight: .medium, design: .rounded))
               .lineLimit(1)
               .truncationMode(.tail)
               .foregroundStyle(.secondary)
+              .contentTransition(.opacity)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
-          .id(text.title + "\u{1}" + text.subtitle)
-          .transition(.opacity)
         }
         .buttonStyle(.plain)
         .pointerHint(Caption.alsoPlaying(app.name, song: text.song, paused: text.paused))
@@ -451,6 +486,8 @@ struct NowEntryArtButton: View {
     let app = entry.app
     let route = model.route(app)
     let muted = model.isMuted(app.id)
+    // A muted browser's other tabs don't each wear the orange "muted" plate.
+    let mutedHere = model.showsAppMuted(entry)
     let playing = model.isPlaying(entry)
     let fallback = model.showsUnmute(app)
     let locked = model.locked(app)
@@ -462,23 +499,24 @@ struct NowEntryArtButton: View {
       label = "Open \(app.name)"
     } else if muteGlyph {
       symbol = muted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-      label = muted ? "Unmute \(app.name)" : "Mute \(app.name)"
+      label = muted ? "Unmute \(app.muteTarget)" : "Mute \(app.muteTarget)"
     } else {
       symbol = playing ? "pause.fill" : "play.fill"
       label = playing ? "Pause \(app.name)" : "Play \(app.name)"
     }
-    let showGlyph = hover || muted || (!muteGlyph && !playing)
+    let showGlyph = hover || mutedHere || (!muteGlyph && !playing)
     let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
     let hint = locked
       ? PointerHint(app.name, does: "Pausing needs Accessibility; this opens \(app.name) instead.")
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
-                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback)
+                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
+                        browser: app.isBrowser)
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
       NowArt(artwork: artwork, icon: model.icon(app), size: size, badge: entry.item != nil)
         .overlay {
           if showGlyph {
             ZStack {
-              shape.fill(muted ? Color.orange.opacity(0.85) : Color.black.opacity(0.42))
+              shape.fill(muted && (mutedHere || muteGlyph) ? Color.orange.opacity(0.85) : Color.black.opacity(0.42))
               Image(systemName: symbol)
                 .font(.system(size: (size * 0.4).rounded(), weight: .heavy))
                 .foregroundStyle(Color.white)

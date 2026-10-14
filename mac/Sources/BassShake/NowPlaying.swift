@@ -25,6 +25,10 @@ struct NowApp: Equatable, Identifiable {
   }
 
   var player: NowPlayer? { bundleID.flatMap(NowPlayer.init(rawValue:)) }
+  /// A browser: one audio process for every tab, so its mute is all tabs at once.
+  var isBrowser: Bool { bundleID.flatMap(NowBrowser.init(rawValue:)) != nil }
+  /// What a mute here silences: "Google Chrome (all tabs)" for a browser.
+  var muteTarget: String { isBrowser ? "\(name) (all tabs)" : name }
 }
 
 /// The two apps What's Playing can ask for the song (Automation, one macOS
@@ -33,10 +37,48 @@ enum NowPlayer: String, CaseIterable {
   case spotify = "com.spotify.client"
   case music = "com.apple.Music"
 
-  var isRunning: Bool { !NSRunningApplication.runningApplications(withBundleIdentifier: rawValue).isEmpty }
+  var isRunning: Bool { RunningApps.isLive(rawValue) }
   /// Running and not on its way out. Checked on the script queue right before each script.
-  var isLive: Bool {
-    NSRunningApplication.runningApplications(withBundleIdentifier: rawValue).contains { !$0.isTerminated }
+  var isLive: Bool { RunningApps.isLive(rawValue) }
+}
+
+/// NSRunningApplication lookups, cached until NSWorkspace says an app launched
+/// or quit (they were made per tick and per poll). Any thread: a lock guards
+/// the cache; `isTerminated` on a cached app is still read live.
+enum RunningApps {
+  private static let lock = NSLock()
+  private static var byBundle: [String: [NSRunningApplication]] = [:]
+  private static var byPID: [pid_t: NSRunningApplication] = [:]
+  private static let observers: [NSObjectProtocol] = {
+    let nc = NSWorkspace.shared.notificationCenter
+    return [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification].map {
+      nc.addObserver(forName: $0, object: nil, queue: nil) { _ in
+        lock.lock(); byBundle.removeAll(); byPID.removeAll(); lock.unlock()
+      }
+    }
+  }()
+
+  static func apps(_ bundleID: String) -> [NSRunningApplication] {
+    _ = observers
+    lock.lock(); defer { lock.unlock() }
+    if let hit = byBundle[bundleID] { return hit }
+    let list = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+    byBundle[bundleID] = list
+    return list
+  }
+
+  static func isLive(_ bundleID: String) -> Bool { apps(bundleID).contains { !$0.isTerminated } }
+
+  static func pid(_ bundleID: String) -> pid_t? { apps(bundleID).first { !$0.isTerminated }?.processIdentifier }
+
+  /// Running (not terminated) by pid.
+  static func isLive(pid: pid_t) -> Bool {
+    _ = observers
+    lock.lock(); defer { lock.unlock() }
+    if let hit = byPID[pid] { return !hit.isTerminated }
+    guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
+    byPID[pid] = app
+    return !app.isTerminated
   }
 }
 
@@ -94,7 +136,9 @@ struct NowItem: Equatable, Identifiable {
 /// says which tabs are playing ("<title> - Audio playing"). Result: `items`, one
 /// per playing tab; YouTube stills come from i.ytimg.com (same ephemeral session).
 ///
-/// Main-thread state. AppleScript runs on `scriptQueue` (serial), never main;
+/// Main-thread state. AppleScript runs on `scriptQueue` (Spotify / Music) and
+/// `browserQueue` (browsers), both serial and never main, so a slow Music cover
+/// or click can't hold up the tabs (or the other way round);
 /// nothing here touches Core Audio (levels come from LiveChannels' atomics).
 final class NowPlaying: ObservableObject {
   static let shared = NowPlaying()
@@ -118,8 +162,8 @@ final class NowPlaying: ObservableObject {
   @Published private(set) var mutedByUs: Set<String> = []
   /// One line under the controls (a key that missed); clears after 4 s.
   @Published private(set) var notice: (id: String, text: String, settings: Bool)?
-  /// The Mac lets us post the media key (Accessibility). Checked on every
-  /// open and, while a locked button is on screen, once a second.
+  /// The Mac lets us post the media key (Accessibility). Checked off main on
+  /// every open and whenever The Bass Shaker becomes active (back from System Settings).
   @Published private(set) var keysAllowed = false
   /// A pause missed while the trust check was off: the post-event preflight
   /// may be stale-true, so only the trust check counts from then on.
@@ -200,7 +244,8 @@ final class NowPlaying: ObservableObject {
   /// Apps the key missed this session (memory only): they get mute.
   private var keyless: Set<String> = []
   private var noticeAt: TimeInterval = 0
-  private var lastAccessCheck: TimeInterval = 0
+  /// An access check is on `checkQueue`.
+  private var accessChecking = false
   /// `audible` is fresh from the meter since the last open / meter rebuild.
   private var measured = false
   /// A click on the key route before `measured`, sent once it is.
@@ -225,6 +270,7 @@ final class NowPlaying: ObservableObject {
   /// YouTube stills by video id.
   private var stillCache: [String: NSImage] = [:]
   private var stillLoading: Set<String> = []
+  /// A browser poll is on `browserQueue` (reset in applyBrowsers, its only exit).
   private var browserBusy = false
   /// The last tabs / songs of apps that left the screen (memory only, never
   /// saved), so an app coming back (or a reopened popup) shows them at once;
@@ -236,11 +282,16 @@ final class NowPlaying: ObservableObject {
   private var waitSince: [String: TimeInterval] = [:]
   private var answered: Set<String> = []
   private let scriptQueue = DispatchQueue(label: "bassshake.nowplaying", qos: .utility)
+  /// Browser tabs only, with their own bridge (a bridge is one queue's alone).
+  private let browserQueue = DispatchQueue(label: "bassshake.nowplaying.browsers", qos: .utility)
+  /// Automation status checks at open (App Details), off both script queues.
+  private let checkQueue = DispatchQueue(label: "bassshake.nowplaying.check", qos: .utility)
   /// Automation permission for every scripted app (Spotify, Music, browsers).
   private let gate = AutomationGate.shared
   /// Apps with a click-raised prompt still on the script queue.
   private var asking: Set<String> = []
   private let bridge = NowPlayingScripts()   // scriptQueue only
+  private let browserBridge = NowPlayingScripts()   // browserQueue only
   private lazy var artSession = URLSession(configuration: .ephemeral, delegate: ArtRedirectGuard(), delegateQueue: nil)
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "nowplaying")
 
@@ -266,6 +317,13 @@ final class NowPlaying: ObservableObject {
           let ours = self.mutedByUs.intersection(m)
           if ours != self.mutedByUs { self.mutedByUs = ours }
         }
+      }
+      .store(in: &cancellables)
+    // Back from System Settings (or any return to us): the lock may be gone.
+    NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+      .sink { [weak self] _ in
+        guard let self, self.active, !self.keysAllowed else { return }
+        self.refreshAccess()
       }
       .store(in: &cancellables)
     c.$settings
@@ -358,7 +416,7 @@ final class NowPlaying: ObservableObject {
       denied.removeAll()
       waitSince = [:]
       answered = []
-      refreshAccess(now: activeSince)
+      refreshAccess()
       refreshAutomation()
       let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
       RunLoop.main.add(t, forMode: .common)
@@ -404,11 +462,6 @@ final class NowPlaying: ObservableObject {
       return
     }
     if notice != nil, now - noticeAt >= Self.noticeSeconds { notice = nil }
-    // A lock on screen: notice the grant in System Settings without a reopen.
-    if !keysAllowed, now - lastAccessCheck >= 1.0, now - lastVisible < 1.0,
-       ([hero].compactMap { $0 } + others).contains(where: { route($0) == .key }) {
-      refreshAccess(now: now)
-    }
     // Meter only while the window was really on screen lately (2 s, so a brief
     // occlusion flicker doesn't rebuild the HAL meter).
     let seen = now - lastVisible < 2.0
@@ -516,7 +569,7 @@ final class NowPlaying: ObservableObject {
     refreshPending(now: now)
     // Layer B, only while the popup is really visible.
     // Not before the one-time note is acknowledged: the Automation prompt would hide it.
-    if now - lastPoll >= Self.pollEvery, now - lastVisible < 1.0, !polling, mayAsk {
+    if now - lastPoll >= Self.pollEvery, now - lastVisible < 1.0, mayAsk {
       lastPoll = now
       pollPlayers()
       pollBrowsers()
@@ -674,15 +727,27 @@ final class NowPlaying: ObservableObject {
   /// pane. One screen per click. No key is sent.
   private func unlock() {
     MediaKeys.requestOrOpenSettings()
-    refreshAccess(now: ProcessInfo.processInfo.systemUptime)
+    refreshAccess()
   }
 
-  private func refreshAccess(now: TimeInterval) {
-    lastAccessCheck = now
-    // A post-event preflight that stayed true after access was turned off is
-    // ignored once a pause missed; the trust check follows the switch live.
-    let ok = MediaKeys.trusted || (!preflightStale && MediaKeys.postGranted)
-    if ok != keysAllowed { keysAllowed = ok }
+  /// The trust checks are TCC calls: off main, at most one at a time.
+  private func refreshAccess() {
+    guard !accessChecking else { return }
+    accessChecking = true
+    let stale = preflightStale
+    checkQueue.async {
+      let ok = Self.accessOK(stale: stale)
+      DispatchQueue.main.async {
+        self.accessChecking = false
+        if ok != self.keysAllowed { self.keysAllowed = ok }
+      }
+    }
+  }
+
+  /// A post-event preflight that stayed true after access was turned off is
+  /// ignored once a pause missed; the trust check follows the switch live.
+  private static func accessOK(stale: Bool) -> Bool {
+    MediaKeys.trusted || (!stale && MediaKeys.postGranted)
   }
 
   /// Posts play/pause, shows the result at once, and checks it in `tick()`.
@@ -722,8 +787,10 @@ final class NowPlaying: ObservableObject {
         mutedByUs.insert(p.id)
         controller?.live.setMuted(true, id: p.id)
       }
+      // A missed key (once per click): checked here, so the note below is right.
       if !MediaKeys.trusted { preflightStale = true }
-      refreshAccess(now: now)
+      let ok = Self.accessOK(stale: preflightStale)
+      if ok != keysAllowed { keysAllowed = ok }
       if !keysAllowed {
         show(p.id, "\(name) muted. Allow Accessibility to pause ›", settings: true, now: now)
       } else if !MediaKeys.postGranted {
@@ -775,8 +842,7 @@ final class NowPlaying: ObservableObject {
   }
 
   private func isRunning(_ app: NowApp) -> Bool {
-    guard let r = NSRunningApplication(processIdentifier: app.pid) else { return false }
-    return !r.isTerminated
+    RunningApps.isLive(pid: app.pid)
   }
 
   // MARK: - Layer B: Spotify / Music (AppleScript off main)
@@ -798,20 +864,22 @@ final class NowPlaying: ObservableObject {
       for (k, t) in tracks where !keep.contains(k) && detailsAllowed(k) { tracksMemo[k] = t }
       tracks = pruned
     }
-    guard !players.isEmpty else { return }
+    guard !players.isEmpty, !polling else { return }
     polling = true
     let serial = commandSerial
     let autoAsk = Set(players.map(\.rawValue).filter { !gate.wasAsked($0) })
+    let allowed = Set(players.map(\.rawValue).filter { gate.status[$0] == AutomationGate.allowed })
     scriptQueue.async { [bridge] in
       var results: [NowPlayer: NowPlayingScripts.State] = [:]
       var codes: [String: Int] = [:]
       for p in players {
         // Re-checked right before the script: an event to a quit app would relaunch it.
         guard p.isLive else { results[p] = .stopped; continue }
-        let r = Self.gated(p.rawValue, ask: autoAsk.contains(p.rawValue)) { bridge.state(p) }
-        codes[p.rawValue] = r.code
-        // Not allowed (yet): nothing read, as if stopped.
-        results[p] = r.value ?? (r.code == AutomationGate.denied ? .denied : .stopped)
+        let known = allowed.contains(p.rawValue)
+        let r = Self.gated(p.rawValue, ask: autoAsk.contains(p.rawValue), known: known) { bridge.state(p) }
+        if !known { codes[p.rawValue] = r.code }
+        // Not allowed (yet): nothing read; a failed poll (not a stop), unless denied.
+        results[p] = r.value ?? (r.code == AutomationGate.denied ? .denied : .unavailable)
       }
       DispatchQueue.main.async {
         for (id, code) in codes { self.gate.record(id, code) }
@@ -844,13 +912,14 @@ final class NowPlaying: ObservableObject {
     }
     for (p, r) in results {
       let id = p.rawValue
-      answered.insert(id)
       tracksMemo[id] = nil
       switch r {
       case .denied:
+        answered.insert(id)
         denied.insert(id)
         next[id] = nil
       case .stopped:
+        answered.insert(id)
         next[id] = nil
         failures[id] = nil
       case .unavailable:
@@ -860,6 +929,7 @@ final class NowPlaying: ObservableObject {
           failed(id)   // often mid-skip: keep the last song for now
           continue
         }
+        answered.insert(id)
         failures[id] = nil
         var t = NowTrack(title: title, artist: artist, playing: isPlaying, artKey: artKey, artwork: nil)
         if stale, let old = tracks[id] { t.playing = old.playing }
@@ -959,15 +1029,21 @@ final class NowPlaying: ObservableObject {
     guard !browsers.isEmpty, !browserBusy else { return }
     browserBusy = true
     let autoAsk = Set(browsers.map(\.0.rawValue).filter { !gate.wasAsked($0) })
-    scriptQueue.async { [bridge] in
+    // Allowed already: no TCC round trip per poll (a later denial still comes back as -1743).
+    let allowed = Set(browsers.map(\.0.rawValue).filter { gate.status[$0] == AutomationGate.allowed })
+    browserQueue.async { [browserBridge] in
       var results: [(NowBrowser, String, NowPlayingScripts.TabsState, (names: [String], windows: Int)?)] = []
       var codes: [String: Int] = [:]
       for (b, appID) in browsers {
+        // Quit: the one `.stopped` that clears its tabs at once.
         guard b.isLive else { results.append((b, appID, .stopped, nil)); continue }
-        let r = Self.gated(b.rawValue, ask: autoAsk.contains(b.rawValue)) { bridge.tabs(b) }
-        codes[b.rawValue] = r.code
-        // Not allowed (yet): no tabs and no Accessibility read, just the app tile.
-        let state = r.value ?? (r.code == AutomationGate.denied ? .denied : .stopped)
+        let known = allowed.contains(b.rawValue)
+        let r = Self.gated(b.rawValue, ask: autoAsk.contains(b.rawValue), known: known) { browserBridge.tabs(b) }
+        if !known { codes[b.rawValue] = r.code }
+        // Not allowed (yet) while it runs: nothing read, a failed poll (tabs kept for now).
+        var state = r.value ?? (r.code == AutomationGate.denied ? .denied : .unavailable)
+        // "stopped" from the script while the app is still live: a failed poll too.
+        if case .stopped = state, b.isLive { state = .unavailable }
         // Only after the tabs were read: an Automation denial reads nothing more.
         var ax: (names: [String], windows: Int)? = nil
         if case .tabs = state, b.hasTabStripAudio, let pid = b.pid { ax = BrowserAX.tabNames(pid: pid) }
@@ -995,17 +1071,25 @@ final class NowPlaying: ObservableObject {
     let now = ProcessInfo.processInfo.systemUptime
     var next = items
     for (b, appID, r, ax) in results {
-      answered.insert(b.rawValue)
       itemsMemo[appID] = nil
-      switch r {
-      case .denied, .stopped:
-        next[appID] = nil
-        failures[b.rawValue] = nil
-      case .unavailable:
+      // One rule for every failed poll: the last tabs stay until three in a row.
+      func failed() {
         let n = (failures[b.rawValue] ?? 0) + 1
         failures[b.rawValue] = n
         if n >= 3 { next[appID] = nil }
+      }
+      switch r {
+      case .denied, .stopped:
+        answered.insert(b.rawValue)
+        next[appID] = nil
+        failures[b.rawValue] = nil
+      case .unavailable:
+        failed()
+      case .tabs(let tabs) where tabs.isEmpty:
+        // No tabs from a browser that plays: a window mid-change or a script hiccup.
+        failed()
       case .tabs(let tabs):
+        answered.insert(b.rawValue)
         failures[b.rawValue] = nil
         var list = BrowserTabs.items(appID: appID, tabs: tabs, axNames: ax?.names,
                                      axWindows: ax?.windows ?? 0)
@@ -1071,8 +1155,8 @@ final class NowPlaying: ObservableObject {
     }
     let window = parts[parts.count - 2], tab = parts[parts.count - 1]
     let index = Int(tab) ?? 1
-    scriptQueue.async { [bridge] in
-      let code: Int? = b.isLive ? bridge.focus(b, window: window, tab: tab, index: index) : 0
+    browserQueue.async { [browserBridge] in
+      let code: Int? = b.isLive ? browserBridge.focus(b, window: window, tab: tab, index: index) : 0
       DispatchQueue.main.async {
         if code == NowPlayingScripts.notPermitted {
           self.gate.record(b.rawValue, AutomationGate.denied)
@@ -1093,7 +1177,9 @@ final class NowPlaying: ObservableObject {
   /// undecided and `ask` (the read raises macOS's prompt). nil when it didn't
   /// run; `code` is the status afterwards. A dismissed or unanswered prompt
   /// stays undecided.
-  private static func gated<T>(_ id: String, ask: Bool, _ read: () -> T) -> (value: T?, code: Int) {
+  /// `known`: allowed already this session, so the status check is skipped.
+  private static func gated<T>(_ id: String, ask: Bool, known: Bool = false, _ read: () -> T) -> (value: T?, code: Int) {
+    if known { return (read(), AutomationGate.allowed) }
     let code = AutomationGate.check(id, ask: false)
     if code == AutomationGate.allowed { return (read(), code) }
     guard code == AutomationGate.undecided, ask else { return (nil, code) }
@@ -1122,11 +1208,12 @@ final class NowPlaying: ObservableObject {
   }
 
   /// Statuses for App Details on each open (no prompt; a quit app keeps its last).
+  /// Only apps not known to be allowed, on their own queue (never ahead of a poll).
   private func refreshAutomation() {
     guard let seen = controller?.settings.automationSeen, !seen.isEmpty else { return }
-    let running = seen.filter { !NSRunningApplication.runningApplications(withBundleIdentifier: $0).isEmpty }
+    let running = seen.filter { gate.status[$0] != AutomationGate.allowed && RunningApps.isLive($0) }
     guard !running.isEmpty else { return }
-    scriptQueue.async {
+    checkQueue.async {
       let codes = running.map { ($0, AutomationGate.check($0, ask: false)) }
       DispatchQueue.main.async { for (id, code) in codes { self.gate.record(id, code) } }
     }

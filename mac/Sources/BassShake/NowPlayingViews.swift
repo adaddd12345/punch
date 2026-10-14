@@ -23,10 +23,10 @@ struct NowPlayingSwitch<Standard: View, Playing: View>: View {
   var body: some View {
     let hero = on ? stack.lead?.app : nil
     ZStack(alignment: .topLeading) {
+      // One headline that updates in place (no per-app identity): a new app
+      // never cross-fades two titles over each other.
       if let h = hero {
-        playing(h)
-          .id("np." + h.id)
-          .transition(.opacity)
+        playing(h).transition(.opacity)
       } else {
         standard().transition(.opacity)
       }
@@ -114,6 +114,8 @@ struct NowPlayingHeadline: View {
             }
           } else {
             // Always two lines: the title, then artist / site / app (or what it's doing).
+            // A new song or tab fades its words in place (one Text each, so
+            // never two titles at once); a stack swap changes them at once.
             VStack(alignment: .leading, spacing: 2) {
               Text(text.title)
                 .font(.system(size: title, weight: .heavy, design: .rounded))
@@ -121,15 +123,15 @@ struct NowPlayingHeadline: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
                 .foregroundStyle(Color.primary)
+                .contentTransition(.opacity)
               Text(text.subtitle)
                 .font(.system(size: 11, weight: .medium, design: .rounded))
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
             }
-            // A new song or tab cross-fades its words.
-            .id(entry.id + "\u{1}" + text.title)
-            .transition(.opacity)
+            .modifier(StillWhileMorphing())
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -216,7 +218,7 @@ private struct PrimaryButton: View {
     let locked = model.locked(app)
     if route == .mute || fallback {
       symbol = muted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-      label = muted ? "Unmute \(app.name)" : "Mute \(app.name)"
+      label = muted ? "Unmute \(app.muteTarget)" : "Mute \(app.muteTarget)"
       if muted { disc = Color.orange; ink = Color.white }
     } else {
       symbol = playing ? "pause.fill" : "play.fill"
@@ -225,7 +227,8 @@ private struct PrimaryButton: View {
     let hint = locked
       ? Caption.locked(app.name, playing: playing)
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
-                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback)
+                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
+                        browser: app.isBrowser)
     return Button { model.primary(app) } label: {
       Image(systemName: symbol)
         .font(.system(size: glyph, weight: .heavy))
@@ -352,8 +355,8 @@ struct MuteButton: View {
     }
     .buttonStyle(BentoPressStyle())
     .fixedSize()
-    .accessibilityLabel(muted ? "Unmute \(app.name)" : "Mute \(app.name)")
-    .pointerHint(Caption.tileMute(app.name, muted: muted))
+    .accessibilityLabel(muted ? "Unmute \(app.muteTarget)" : "Mute \(app.muteTarget)")
+    .pointerHint(Caption.tileMute(app.name, muted: muted, browser: app.isBrowser))
   }
 }
 
@@ -443,17 +446,25 @@ extension Caption {
                        gestures: ["Right-click › Open \(name)"])
   }
 
-  static func tileMute(_ name: String, muted: Bool) -> PointerHint {
-    muted ? PointerHint("Unmute \(name)", does: "Muted until you unmute it or quit The Bass Shaker.")
-          : PointerHint("Mute \(name)", does: "Silences only \(name); everything else keeps playing.")
+  /// `browser`: a browser plays every tab through one audio process, so its
+  /// mute can only be all tabs at once.
+  static func tileMute(_ name: String, muted: Bool, browser: Bool = false) -> PointerHint {
+    if browser {
+      return muted ? PointerHint("Unmute \(name) (all tabs)", does: "Muted until you unmute it or quit The Bass Shaker.")
+                   : PointerHint("Mute \(name) (all tabs)", does: "A single tab can't be muted; this silences every \(name) tab.")
+    }
+    return muted ? PointerHint("Unmute \(name)", does: "Muted until you unmute it or quit The Bass Shaker.")
+                 : PointerHint("Mute \(name)", does: "Silences only \(name); everything else keeps playing.")
   }
 
 
   /// The big button. Script route: none (play/pause is obvious there).
   static func primary(_ name: String, route: NowPlaying.Route, playing: Bool, muted: Bool,
-                      chosen: Bool, ignored: Bool, fallback: Bool) -> PointerHint {
+                      chosen: Bool, ignored: Bool, fallback: Bool, browser: Bool = false) -> PointerHint {
+    // A browser's mute is every tab (one audio process for all of them).
+    let word = (muted ? "Unmute" : "Mute") + (browser ? " \(name) (all tabs)" : "")
     if fallback {
-      return PointerHint("Unmute", does: "Muted because the pause key didn't reach \(name).")
+      return PointerHint(word, does: "Muted because the pause key didn't reach \(name).")
     }
     switch route {
     case .script:
@@ -463,12 +474,12 @@ extension Caption {
                          does: "Uses your Mac's play/pause key; mutes instead if \(name) ignores it.")
     case .mute:
       if chosen {
-        return PointerHint(muted ? "Unmute" : "Mute", does: "Pausing is off; turn it on in ⋯ › Presets & Settings.")
+        return PointerHint(word, does: "Pausing is off; turn it on in ⋯ › Presets & Settings.")
       }
       if ignored {
-        return PointerHint(muted ? "Unmute" : "Mute", does: "\(name) didn't pause with the key, so this mutes it.")
+        return PointerHint(word, does: "\(name) didn't pause with the key, so this mutes it.")
       }
-      return PointerHint(muted ? "Unmute" : "Mute", does: "\(name) has no pause key, so this mutes it.")
+      return PointerHint(word, does: "\(name) has no pause key, so this mutes it.")
     }
   }
 

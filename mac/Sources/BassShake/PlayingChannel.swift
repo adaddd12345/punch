@@ -92,7 +92,7 @@ struct PlayingChannelMini<Chip: View>: View {
       label = "Open \(app.name)"
     } else if muteGlyph {
       symbol = muted ? "speaker.slash.fill" : "speaker.wave.2.fill"
-      label = muted ? "Unmute \(app.name)" : "Mute \(app.name)"
+      label = muted ? "Unmute \(app.muteTarget)" : "Mute \(app.muteTarget)"
     } else {
       symbol = playing ? "pause.fill" : "play.fill"
       label = playing ? "Pause \(app.name)" : "Play \(app.name)"
@@ -103,7 +103,8 @@ struct PlayingChannelMini<Chip: View>: View {
     let hint = locked
       ? PointerHint(app.name, does: "Pausing needs Accessibility; this opens \(app.name) instead.")
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
-                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback)
+                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
+                        browser: app.isBrowser)
     // A locked key route opens the app: never a permission prompt from Mini.
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
       NowArt(artwork: artwork, icon: model.icon(app), size: art)

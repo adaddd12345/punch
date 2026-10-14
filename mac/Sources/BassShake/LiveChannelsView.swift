@@ -292,13 +292,49 @@ struct LiveLevelMeter: View {
 }
 
 
+/// The muted apps present, and which apps What's Playing shows with their own
+/// mute, published only when they change (LiveChannels also publishes the
+/// 30 Hz levels, which the notice must not observe).
+final class MutedApps: ObservableObject {
+  struct Entry: Equatable { let id: String; let name: String }
+  @Published private(set) var present: [Entry] = []
+  /// Apps on What's Playing's hero, and its small tiles (NowStack).
+  @Published private(set) var hero: String?
+  @Published private(set) var tiles: Set<String> = []
+
+  init(live: LiveChannels, stack: NowStack = .shared) {
+    live.$apps.combineLatest(live.$muted)
+      .map { apps, muted in apps.filter { muted.contains($0.id) }.map { Entry(id: $0.id, name: $0.name) } }
+      .removeDuplicates()
+      .assign(to: &$present)
+    stack.$lead.map { $0?.app.id }.removeDuplicates().assign(to: &$hero)
+    // The "+N" tile has no mute: only the tiles that fit count.
+    stack.$rest.map { Set($0.prefix(NowStack.maxCells - 1).map(\.app.id)) }.removeDuplicates().assign(to: &$tiles)
+  }
+}
+
 /// Always-visible line in the popover while any present app is muted, so a
 /// mute can never quietly kill someone's music. One click unmutes all.
+/// An app What's Playing shows (muted, with its unmute) isn't listed again.
 struct MutedNotice: View {
-  @ObservedObject var model: LiveChannels
+  @StateObject private var model: MutedApps
+  private let live: LiveChannels
+  /// What's Playing's hero / small tiles are on screen.
+  private let heroShown: Bool
+  private let tilesShown: Bool
+
+  init(live: LiveChannels, heroShown: Bool = false, tilesShown: Bool = false) {
+    _model = StateObject(wrappedValue: MutedApps(live: live))
+    self.live = live
+    self.heroShown = heroShown
+    self.tilesShown = tilesShown
+  }
 
   var body: some View {
-    let names = model.apps.filter { model.muted.contains($0.id) }.map(\.name)
+    let listed = model.present.filter { e in
+      !(heroShown && model.hero == e.id) && !(tilesShown && model.tiles.contains(e.id))
+    }
+    let names = listed.map(\.name)
     if !names.isEmpty {
       HStack(spacing: 6) {
         Image(systemName: "speaker.slash.fill").font(.system(size: 9, weight: .bold))
@@ -308,7 +344,7 @@ struct MutedNotice: View {
           .truncationMode(.tail)
         Spacer(minLength: 4)
         Button("Unmute") {
-          for id in model.muted { model.setMuted(false, id: id) }
+          for e in listed { live.setMuted(false, id: e.id) }
         }
         .buttonStyle(.plain)
         .font(.system(size: 10, weight: .bold, design: .rounded))
