@@ -6,6 +6,7 @@
 #include <atomic>
 #include <vector>
 
+#include "punch/analysis.hpp"  // TempoTracker
 #include "punch/dsp_util.hpp"
 #include "punch/parametric_eq.hpp"  // kMaxChannels
 #include "punch/svf.hpp"
@@ -100,8 +101,108 @@ struct DjParams {
   bool echo = false;      // 3/8 s echo with feedback (tail rings out when released)
   bool crush = false;     // bit-crusher / sample-rate reducer
   bool drive = false;     // hard tanh distortion
+  // Performance pads (DjPerform below).
+  bool tapeStop = false;  // varispeed slow-down to a halt; release snaps back
+  bool chipmunk = false;  // pitch +7 semitones (wins over screw if both on)
+  bool screw = false;     // pitch -5 semitones
+  bool roll = false;      // loop the last 1/8 note, halving every beat held
+  bool lofi = false;      // cassette: wow & flutter, saturation, 3.5 kHz, narrow, hiss
+  bool pump = false;      // sidechain-style duck on every beat
+  // Run the tempo tracker even with nothing on (e.g. while the DJ panel is
+  // showing), so Roll and Pump already know the BPM on the first press.
+  bool trackTempo = false;
 
   friend bool operator==(const DjParams&, const DjParams&) = default;
+};
+
+// The six performance pads. Chain inside the DJ stage:
+//   roll -> pitch -> tape stop -> lofi -> (isolator, filter, drive, crush,
+//   echo) -> pump.
+// Every effect crossfades in and out; with all of them off and settled the
+// stage only records its input history (needed so Roll can grab the past)
+// and the audio is bit-exact.
+class DjPerform {
+ public:
+  void prepare(double sampleRate, int numChannels);
+  void reset();
+  void setParams(const DjParams& p);
+  // Latest tempo (0 = unknown). Audio thread.
+  void setBpm(double bpm) { bpm_ = bpm; }
+  bool idle() const;
+  // Before the classic DJ chain / after it.
+  void processPre(float* const* ch, int numChannels, int numFrames);
+  void processPost(float* const* ch, int numChannels, int numFrames);
+
+ private:
+  struct Ring {
+    std::vector<float> d;
+    int mask = 0;
+    void alloc(int minSize);
+    inline float& at(int i) { return d[size_t(i & mask)]; }
+    // 4-point Hermite read at fractional absolute position pos.
+    float read(double pos) const;
+  };
+  void recordHistory(float* const* ch, int numChannels, int numFrames);
+  void captureRoll();
+
+  double sampleRate_ = 48000.0;
+  int numChannels_ = 2;
+  DjParams p_;
+  double bpm_ = 0.0;
+
+  // Input history (always written) and its write index.
+  std::array<Ring, kMaxChannels> hist_;
+  int histW_ = 0;
+
+  // Roll.
+  std::array<std::vector<float>, kMaxChannels> loop_;
+  Smoothed rollMix_;
+  bool rollLatched_ = false;  // a press has been captured for the current hold
+  int rollLen_ = 1, rollMinLen_ = 1, rollPos_ = 0, rollFade_ = 1;
+  int rollBeat_ = 1, rollElapsed_ = 0, rollNextHalve_ = 0;
+
+  // Pitch (two-head delay-line shifter, Hann crossfade).
+  std::array<Ring, kMaxChannels> pitchBuf_;
+  int pitchW_ = 0;
+  Smoothed pitchMix_, semis_;
+  double pitchPhase_ = 0.0;
+  double grain_ = 1920.0;  // samples
+  bool pitchRunning_ = false;
+  float ratioFor_ = 0.f;
+  double ratio_ = 1.0;
+
+  // Tape stop.
+  std::array<Ring, kMaxChannels> tapeBuf_;
+  int tapeW_ = 0;
+  Smoothed tapeMix_;
+  bool tapeRunning_ = false, tapeHeld_ = false;
+  double tapeT_ = 0.0, tapeLag_ = 0.0, tapeStopSamples_ = 48000.0;
+
+  // Lofi.
+  std::array<Ring, kMaxChannels> lofiBuf_;
+  int lofiW_ = 0;
+  Smoothed lofiMix_;
+  bool lofiRunning_ = false;
+  double wowPh_ = 0.0, flutPh_ = 0.0, wowInc_ = 0.0, flutInc_ = 0.0;
+  float lofiBase_ = 0.f, wowDepth_ = 0.f, flutDepth_ = 0.f;
+  SvfCoeffs lofiLp1_, lofiLp2_;
+  std::array<SvfState, kMaxChannels> lofiS1_{}, lofiS2_{};
+  std::array<uint32_t, kMaxChannels> noise_{};
+
+  // Pump.
+  Smoothed pumpMix_;
+  SvfCoeffs kickLp_;
+  SvfState kickS_{};
+  float kickFast_ = 0.f, kickSlow_ = 0.f;
+  bool kickAbove_ = false, pumpRunning_ = false;
+  int sinceSync_ = 1 << 30;
+  float kickAtt_ = 0.f, kickRel_ = 0.f, kickSlowC_ = 0.f;
+  int sinceOnset_ = 1 << 30, refractory_ = 1, lastIoi_ = 0;
+  double beatPhase_ = 0.0;  // 0..1 within the beat
+  bool locked_ = false;
+  int sinceTrigger_ = 1 << 30;
+  float duckStart_ = 0.f, duck_ = 0.f;
+  int duckAttack_ = 1, duckRelease_ = 1;
 };
 
 class DjFx {
@@ -110,9 +211,18 @@ class DjFx {
   void reset();
   void setParams(const DjParams& p);
   void process(float* const* ch, int numChannels, int numFrames);
+  // Detected tempo (BPM, 0 when unknown or unsure). Any thread.
+  float bpm() const { return bpm_.load(std::memory_order_relaxed); }
 
  private:
   void updateFilter(float v);
+  void processClassic(float* const* ch, int numChannels, int numFrames);
+  void trackTempo(float* const* ch, int numChannels, int numFrames);
+
+  DjPerform perform_;
+  TempoTracker tempo_;
+  bool tracking_ = false;
+  std::atomic<float> bpm_{0.f};
 
   double sampleRate_ = 48000.0;
   int numChannels_ = 2;

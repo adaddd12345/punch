@@ -34,11 +34,13 @@ struct DJView: View {
     .background(HostWindowReader { w in deck.window = w })
     .onAppear {
       deck.controller = controller
+      controller.dj.listening = true
       deck.start()
     }
     // The drawer can close mid-press (no release event): let go of held pads.
     .onDisappear {
       deck.stop()
+      controller.dj.listening = false
       controller.dj.held = []
     }
   }
@@ -55,7 +57,7 @@ struct DJView: View {
       ForEach(DJVibe.allCases) { v in vibeChip(v) }
       Spacer(minLength: 0)
       // Always laid out (fixed height); shown only while something is on.
-      Button("Reset") { controller.dj = DJState() }
+      Button("Reset") { controller.dj = DJState(listening: controller.dj.listening) }
         .buttonStyle(.plain)
         .font(.system(size: 9, weight: .semibold, design: .rounded))
         .foregroundStyle(.secondary)
