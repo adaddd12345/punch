@@ -281,6 +281,11 @@ void Ambience::process(float* const* ch, int numChannels, int numFrames) {
     for (auto& a : ap_[1]) wr = a.tick(wr);
     wl = dampState_[0].tick(damp_, wl);
     wr = dampState_[1].tick(damp_, wr);
+    if (p_.returnWidth != 1.f) {
+      const float mid = 0.5f * (wl + wr), side = 0.5f * (wl - wr) * p_.returnWidth;
+      wl = mid + side;
+      wr = mid - side;
+    }
     delay_[0][size_t(delayPos_)] = L[i];
     delay_[1][size_t(delayPos_)] = R[i];
     delayPos_ = delayPos_ + 1 == delayLen_ ? 0 : delayPos_ + 1;

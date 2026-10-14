@@ -226,7 +226,7 @@ struct BentoView: View {
   private var heroTint: BentoTint {
     switch s.mode {
     case .study: return .lime
-    case .sleep: return .lilac
+    case .sleep, .lateNight: return .lilac
     case .off: return userPreset.map { BentoTint.forUserPreset($0.id) } ?? BentoTint.forPreset(presetSource.name)
     }
   }

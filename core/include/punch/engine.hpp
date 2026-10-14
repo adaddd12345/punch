@@ -1,8 +1,8 @@
 // The complete processing chain run inside the Core Audio IOProc.
 //
 //   in -> device correction EQ (AutoEq / Studio Ears) -> user EQ (with preamp)
-//      -> saturator -> compressor -> bass enhancer -> stereo width
-//      -> ambience -> crossfeed -> output gain ("boost") -> noise bed
+//      -> bass character (Distort / Punch) -> saturator -> compressor
+//      -> bass enhancer -> stereo width -> Late Night -> ambience -> crossfeed -> output gain ("boost") -> noise bed
 //      -> look-ahead limiter -> out
 //
 // Correction and user EQ are separate stages so a per-headphone AutoEq
@@ -21,6 +21,7 @@
 
 #include "punch/character.hpp"
 #include "punch/enhancers.hpp"
+#include "punch/flavor.hpp"
 #include "punch/fx.hpp"
 #include "punch/hearing.hpp"
 #include "punch/limiter.hpp"
@@ -35,6 +36,8 @@ struct EngineParams {
   EqParams eq;          // user preset / graphic EQ
   bool autoPreamp = true;  // preamp = min(user preamps, -combined EQ peak boost)
   BassEnhancerParams bass;
+  BassCharacterParams bassCharacter;  // Distort / Punch (after the user EQ)
+  LateNightParams lateNight;          // Late Night mode's mellow master tone
   StereoParams stereo;
   CrossfeedParams crossfeed;
   CompressorParams compressor;
@@ -113,7 +116,9 @@ class Engine {
   ParametricEq correction_;
   HearingFit hearing_;
   ParametricEq eq_;
+  BassCharacter bassChar_;
   BassEnhancer bass_;
+  LateNight lateNight_;
   StereoWidener stereo_;
   Crossfeed crossfeed_;
   Compressor compressor_;

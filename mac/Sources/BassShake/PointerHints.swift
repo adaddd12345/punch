@@ -740,10 +740,7 @@ enum Caption {
 
   /// Study / Sleep. `state`: "12 min left"…; nil when the lit tile says it all.
   static func mode(_ m: ListeningMode, state: String?, click: String) -> PointerHint {
-    let does = m == .sleep
-      ? "Soft, dark sound that fades out on a timer; replaces your preset."
-      : "Calm sound for focus; swaps out your preset until turned off."
-    return PointerHint(m.title, value: state, does: does, gestures: [click])
+    PointerHint(m.title, value: state, does: m.description, gestures: [click])
   }
 
   static func ab(bypassed: Bool, hotkey: String?) -> PointerHint {

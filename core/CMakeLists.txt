@@ -15,6 +15,7 @@ add_library(punch_core STATIC
   src/limiter.cpp
   src/enhancers.cpp
   src/character.cpp
+  src/flavor.cpp
   src/fx.cpp
   src/dj_perform.cpp
   src/engine.cpp

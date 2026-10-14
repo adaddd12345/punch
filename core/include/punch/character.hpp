@@ -136,6 +136,7 @@ struct AmbienceParams {
   float size = 0.5f;      // 0..1 (≈ small room .. large hall reflections)
   float dampingHz = 7000.f;
   bool enabled = false;
+  float returnWidth = 1.f;  // M/S width of the reverb return only (1 = as built)
 
   friend bool operator==(const AmbienceParams&, const AmbienceParams&) = default;
 };
