@@ -10,8 +10,9 @@ import SwiftUI
 ///   ├──────────────────────── EQ curve ──────────────────────────┤
 ///   ├──── Strength 55% (drag) ───┬──── Boost +3 dB (drag) ───────┤
 ///   ├──────────────────────── Presets ───────────────────────────┤
-///   ├─ Studio Ears ─┬─ Loudness ──┬─ Night Guard ────────────────┤
-///   ├─ Study ───────┬─ Sleep ─────┬─ Check & Fix ────────────────┤
+///   ├─ Bass: Off · Distort · Punch ─┬─ Studio Ears ─┬─ Loudness ─┤
+///   ├─ Night Guard ─┬─ Study ───────┬─ Sleep ───────┬─ Late Night ┤
+///      (4 columns of squares: 78 pt Full, 56 pt Compact)
 ///   └─ (mode details, when a mode with settings is on) ──────────┘
 ///
 /// Colour has one meaning each: the hero wears the active preset's pastel
@@ -41,6 +42,7 @@ struct BentoView: View {
   @State private var flatPowerSize: CGSize = .zero
   private func showDetail(_ d: Detail) { lastDetail = d; Self.remembered = d }
   private static let defaultAllow = Settings().nightGuardDb
+  private static let defaultHaze = Settings().lateNightHaze
 
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
@@ -883,28 +885,46 @@ struct BentoView: View {
 
   // MARK: - Modes
 
+  /// Four columns of square tiles (Full 78 pt, Compact 56 pt; 8 pt gaps):
+  /// Bass spans two. Check & Fix is a one-shot action, not a mode, so it
+  /// lives in the footer (and the menu-bar menu), not here.
   private var modeGrid: some View {
-    VStack(spacing: 8) {
+    let compact = size == .compact
+    let side: CGFloat = compact ? 56 : 78
+    return VStack(spacing: 8) {
       HStack(spacing: 8) {
-        ModeTile(title: "Studio Ears", symbol: "ear.badge.waveform", tint: tint(.pink), on: s.studioEars,
-                 hint: { [controller] in Caption.studioEars(on: controller.settings.studioEars) }) {
-          controller.settings.studioEars.toggle()
-        } fact: { EmptyView() }
-        ModeTile(title: "Loudness", symbol: "speaker.wave.2.bubble", tint: tint(.peach), on: s.autoLoudness,
-                 hint: { [controller] in Caption.loudness(on: controller.settings.autoLoudness) }) {
-          controller.settings.autoLoudness.toggle()
-        } fact: { EmptyView() }
-        ModeTile(title: "Night Guard", symbol: "moon.haze", tint: tint(.indigo), on: s.nightGuard,
-                 hint: { nightGuardHint }) {
+        BassTile(character: s.bassCharacter, amount: s.bassAmount, tint: tint(.bass), compact: compact,
+                 setCharacter: { c in
+                   withAnimation(.easeOut(duration: 0.15)) { controller.settings.bassCharacter = c }
+                 },
+                 setAmount: { v in if v != controller.settings.bassAmount { controller.settings.bassAmount = v } })
+          .frame(maxWidth: .infinity)
+          .pointerHint(Caption.bass(s.bassCharacter, amount: s.bassAmount), live: true)
+          .pointerHintTint(ink(tint(.bass)))
+        HStack(spacing: 8) {
+          ModeTile(title: "Studio Ears", symbol: "ear.badge.waveform", tint: tint(.pink), on: s.studioEars,
+                   compact: compact,
+                   hint: { [controller] in Caption.studioEars(on: controller.settings.studioEars) }) {
+            controller.settings.studioEars.toggle()
+          } fact: { EmptyView() }
+          ModeTile(title: "Loudness", symbol: "speaker.wave.2.bubble", tint: tint(.peach), on: s.autoLoudness,
+                   compact: compact,
+                   hint: { [controller] in Caption.loudness(on: controller.settings.autoLoudness) }) {
+            controller.settings.autoLoudness.toggle()
+          } fact: { EmptyView() }
+        }
+        .frame(maxWidth: .infinity)
+      }
+      .frame(height: side)
+      HStack(spacing: 8) {
+        ModeTile(title: "Night Guard", symbol: "shield", tint: tint(.indigo), on: s.nightGuard,
+                 compact: compact, hint: { nightGuardHint }) {
           // Lit but its strip hidden: the first click brings the strip forward.
           if s.nightGuard && shownDetail != .nightGuard { showDetail(.nightGuard) } else { controller.settings.nightGuard.toggle() }
         } fact: { NightGuardFact(model: controller.nightGuard, allowDb: s.nightGuardDb) }
-      }
-      .fixedSize(horizontal: false, vertical: true)
-      HStack(spacing: 8) {
-        ForEach([ListeningMode.study, .sleep]) { m in
+        ForEach([ListeningMode.study, .sleep, .lateNight]) { m in
           ModeTile(title: m.title, symbol: m.symbol, tint: tint(m == .study ? .lime : .lilac), on: s.mode == m,
-                   hint: { modeHint(m) }) {
+                   compact: compact, hint: { modeHint(m) }) {
             if s.mode == m && shownDetail != .mode {
               showDetail(.mode)
             } else {
@@ -913,24 +933,15 @@ struct BentoView: View {
               }
             }
           } fact: {
-            if m == .study {
-              StudyFact(endsAt: controller.pomodoroEndsAt, onBreak: controller.pomodoroOnBreak)
-            } else {
-              SleepFact(endsAt: controller.sleepEndsAt, finished: controller.sleepFinished)
+            switch m {
+            case .study: StudyFact(endsAt: controller.pomodoroEndsAt, onBreak: controller.pomodoroOnBreak)
+            case .sleep: SleepFact(endsAt: controller.sleepEndsAt, finished: controller.sleepFinished)
+            default: BentoFactText(text: "Haze \(Int((s.lateNightHaze * 100).rounded()))%")
             }
           }
         }
-        ModeTile(title: "Check & Fix", symbol: controller.doctorRunning ? "hourglass" : "stethoscope",
-                 tint: .graphite, on: controller.doctorRunning, outline: true, reserveFact: true,
-                 hint: { Caption.checkAndFix(menu: true) }) {
-          controller.checkAndFix()
-        } fact: { BentoFactText(text: "Checking…") }
-        .contextMenu {
-          Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
-                                                                 set: { controller.settings.autoFixAfterSleep = $0 }))
-        }
       }
-      .fixedSize(horizontal: false, vertical: true)
+      .frame(height: side)
     }
   }
 
@@ -947,7 +958,12 @@ struct BentoView: View {
     guard st.mode == m else { return Caption.mode(m, state: nil, click: "Click to turn on") }
     let click = shownDetail != .mode ? "Click for settings" : "Click to turn off"
     var state: String? = nil
-    if m == .sleep {
+    if m == .lateNight {
+      state = "Haze \(Int((st.lateNightHaze * 100).rounded()))%"
+    } else if m == .study, let end = controller.pomodoroEndsAt {
+      let left = max(1, Int((end.timeIntervalSinceNow / 60).rounded(.up)))
+      state = (controller.pomodoroOnBreak ? "Break, " : "Focus, ") + "\(left) min left"
+    } else if m == .sleep {
       if controller.sleepFinished {
         state = "Faded out"
       } else if let end = controller.sleepEndsAt {
@@ -977,6 +993,7 @@ struct BentoView: View {
       ZStack(alignment: .top) {
         switch d {
         case .nightGuard: nightGuardRow.transition(.opacity)
+        case .mode where s.mode == .lateNight: hazeRow.transition(.opacity)
         case .mode: modeStrip.transition(.opacity)
         }
       }
@@ -997,12 +1014,34 @@ struct BentoView: View {
       : "Instrumental music works best for reading and writing; lyrics compete with words. Noise helps some people focus and distracts others, so try both.")
   }
 
+  /// Late Night's Haze: the same drag-the-number tile as Allow (Classic: a
+  /// slider row on the faint surface).
+  @ViewBuilder private var hazeRow: some View {
+    if flat {
+      BentoTile(tint: tint(.lilac), glassID: "detail.mode") {
+        LabeledSlider(title: "Haze", symbol: "moon.haze",
+                      value: Binding(get: { s.lateNightHaze }, set: { controller.settings.lateNightHaze = $0 }),
+                      range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+      }
+      .pointerHint(Caption.haze(s.lateNightHaze, scrub: false), live: true, track: false)
+    } else {
+      ScrubTile(title: "Haze", symbol: "moon.haze", tint: tint(.lilac),
+                value: s.lateNightHaze, range: 0...1, defaultValue: Self.defaultHaze,
+                detent: Self.defaultHaze, tickStep: 0.05, step: 0.01, glassID: "detail.mode",
+                format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
+        v in if v != controller.settings.lateNightHaze { controller.settings.lateNightHaze = v }
+      } accessory: { EmptyView() }
+      .pointerHint(Caption.haze(s.lateNightHaze, scrub: true), live: true)
+      .pointerHintTint(ink(tint(.lilac)))
+    }
+  }
+
   /// Night Guard's allowance: the same drag-the-number tile as Strength/Boost
   /// (Classic: the original slider row on the faint surface).
   @ViewBuilder private var nightGuardRow: some View {
     if flat {
       BentoTile(tint: tint(.indigo), glassID: "detail.nightGuard") {
-        LabeledSlider(title: "Allow", symbol: "moon.haze",
+        LabeledSlider(title: "Allow", symbol: "shield",
                       value: Binding(get: { s.nightGuardDb }, set: { v in
                         let r = v.rounded()
                         if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
@@ -1016,7 +1055,7 @@ struct BentoView: View {
   }
 
   private var bentoAllow: some View {
-    ScrubTile(title: "Allow", symbol: "moon.haze", tint: tint(.indigo),
+    ScrubTile(title: "Allow", symbol: "shield", tint: tint(.indigo),
               value: s.nightGuardDb, range: 3...15, defaultValue: Self.defaultAllow,
               detent: Self.defaultAllow, tickStep: 1, step: 1, glassID: "detail.nightGuard",
               format: { ("+", "\(Int($0.rounded()))", " dB") }) {
@@ -1734,16 +1773,17 @@ private struct ScrubTile<Accessory: View>: View {
   }
 }
 
-/// Small toggle tile: glyph in an 18 pt circle, name, and (when on) a live
-/// fact. Off shows its own hue faintly; on lights up with a soft inner glow.
+/// Square mode tile on the 4-column grid: glyph top-leading, name
+/// bottom-leading, and (when on, Full only) a live fact under the name.
+/// Neutral graphite at rest; the mode's hue only while on. Labels = icons:
+/// the glyph alone, centred.
 private struct ModeTile<Fact: View>: View {
   let title: String
   let symbol: String
   let tint: BentoTint
   let on: Bool
-  var outline = false
-  /// Keep the fact line's height while off, so the row never jumps.
-  var reserveFact = false
+  /// Compact: 56 pt squares, no fact line (the hint carries it).
+  var compact = false
   /// Pointer Hint (polled while it shows, so it stays current).
   let hint: () -> PointerHint
   let action: () -> Void
@@ -1752,72 +1792,233 @@ private struct ModeTile<Fact: View>: View {
   @Environment(\.colorScheme) private var scheme
   @Environment(\.bentoFlat) private var flat
 
+  /// At rest every tile is the same calm graphite; the hue is the "on" signal.
+  private var face: BentoTint { on ? tint : .graphite }
+
   var body: some View {
     let dark = scheme == .dark
     Button(action: action) {
-      BentoTile(tint: tint, look: outline ? .outline : (on ? .lit : .quiet), interactive: true) {
-        if flat {
-          // Classic: one slim row, glyph beside the words; a fixed 28 pt
-          // content height, so a fact appearing never moves the grid.
-          HStack(alignment: .center, spacing: 6) {
-            // A bare glyph (no disc), so the name fits a third of the width.
-            Image(systemName: symbol)
-              .symbolVariant(on ? .fill : .none)
-              .font(.system(size: 11, weight: .semibold))
-              .foregroundStyle(glyphInk(dark: dark))
-              .frame(width: 14)
-            if labels != .icons {
-              VStack(alignment: .leading, spacing: 0) {
-                titleText
-                if on { fact() }
-              }
+      BentoTile(tint: face, look: on ? .lit : .quiet, padding: compact ? 8 : 9, interactive: true) {
+        Group {
+          if labels == .icons {
+            ModeGlyph(symbol: symbol, tint: face, on: on, size: compact ? 20 : 24, bare: flat)
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+          } else {
+            VStack(alignment: .leading, spacing: 0) {
+              ModeGlyph(symbol: symbol, tint: face, on: on, size: compact ? 16 : 18, bare: flat)
+              Spacer(minLength: 0)
+              titleText
+              if on && !compact { fact().padding(.top, 1) }
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
           }
-          .frame(height: 28)
-        } else {
-          VStack(alignment: .leading, spacing: 4) {
-            glyph(dark: dark)
-            if labels != .icons { titleText }
-            if on { fact() } else if reserveFact { Text(" ").bentoFact().hidden() }
-          }
-          .frame(maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxHeight: .infinity)
       }
+      .frame(maxHeight: .infinity)
       .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
     }
     .buttonStyle(BentoPressStyle())
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .pointerHint(hint)
     .pointerHintTint(dark ? tint.pastel : tint.ink)
+    .help(labels == .icons ? title : "")
     .accessibilityLabel(title)
     .accessibilityAddTraits(on ? .isSelected : [])
     .animation(.easeOut(duration: 0.15), value: on)
   }
 
-  /// The glyph's hue. Graphite (Check & Fix, every tile while off) is a mid
-  /// grey in dark mode, about 2:1 on the tile, so it takes a lighter grey.
-  private func glyphInk(dark: Bool) -> Color {
-    guard dark else { return tint.ink }
+  private var titleText: some View {
+    Text(title)
+      .font(.system(size: 11, weight: .semibold, design: .rounded))
+      .lineLimit(1)
+      .minimumScaleFactor(0.9)
+  }
+}
+
+/// A mode glyph: a disc (solid in the hue when on), or a bare glyph in Classic.
+private struct ModeGlyph: View {
+  let symbol: String
+  let tint: BentoTint
+  let on: Bool
+  var size: CGFloat = 18
+  var bare = false
+  @Environment(\.colorScheme) private var scheme
+
+  /// Graphite in dark mode is a mid grey, about 2:1 on the tile: a lighter grey.
+  private var ink: Color {
+    guard scheme == .dark else { return tint.ink }
     return tint.name == BentoTint.graphite.name ? Color(white: 0.82) : tint.pastel
   }
 
-  private func glyph(dark: Bool) -> some View {
-    ZStack {
-      Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))
+  var body: some View {
+    if bare {
       Image(systemName: symbol)
         .symbolVariant(on ? .fill : .none)
-        .font(.system(size: 9, weight: .bold))
-        .foregroundStyle(on ? Color.white : glyphInk(dark: dark))
+        .font(.system(size: size * 0.62, weight: .semibold))
+        .foregroundStyle(ink)
+        .frame(width: size, height: size, alignment: .leading)
+    } else {
+      ZStack {
+        Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))
+        Image(systemName: symbol)
+          .symbolVariant(on ? .fill : .none)
+          .font(.system(size: size * 0.5, weight: .bold))
+          .foregroundStyle(on ? Color.white : ink)
+      }
+      .frame(width: size, height: size)
     }
-    .frame(width: 18, height: 18)
+  }
+}
+
+/// The flagship double-width tile: bass character Off · Distort · Punch (one
+/// segmented row, hairline dividers like the DJ isolator) and, while a
+/// character is on, its amount: drag anywhere across the tile (the tile is
+/// the fader, as Strength / Boost). Double-click resets the amount.
+private struct BassTile: View {
+  let character: BassCharacter
+  let amount: Double
+  let tint: BentoTint
+  var compact = false
+  let setCharacter: (BassCharacter) -> Void
+  let setAmount: (Double) -> Void
+
+  static let defaultAmount = Settings().bassAmount
+  private let travel: CGFloat = 160
+  @State private var start: Double?
+  @State private var last: Double?
+  @State private var hover = false
+  @State private var cursorPushed = false
+  @Environment(\.labelLevel) private var labels
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.bentoFlat) private var flat
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  private var on: Bool { character != .off }
+  private var face: BentoTint { on ? tint : .graphite }
+  private var percent: String { "\(Int((amount * 100).rounded()))%" }
+
+  var body: some View {
+    let dark = scheme == .dark
+    BentoTile(tint: face, look: on ? .fader(amount) : .quiet, padding: compact ? 8 : 9, interactive: true) {
+      VStack(alignment: .leading, spacing: compact ? 4 : 0) {
+        HStack(spacing: 6) {
+          ModeGlyph(symbol: "waveform.path", tint: face, on: on, size: compact ? 16 : 18, bare: flat)
+          if labels != .icons {
+            Text("Bass")
+              .font(.system(size: 11, weight: .semibold, design: .rounded))
+              .lineLimit(1)
+          }
+          Spacer(minLength: 0)
+          if on {
+            Image(systemName: "chevron.left.chevron.right")
+              .font(.system(size: 8, weight: .bold))
+              .foregroundStyle(.secondary)
+              .opacity(hover || start != nil ? 1 : 0)
+            Text(percent)
+              .font(.system(size: compact ? 11 : 13, weight: .bold, design: .rounded))
+              .monospacedDigit()
+              .contentTransition(.numericText())
+              .lineLimit(1)
+              .fixedSize()
+              .transition(.opacity)
+          }
+        }
+        .frame(height: compact ? 16 : 18)
+        // VoiceOver: the amount as an adjustable value.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Bass amount")
+        .accessibilityValue(on ? percent : "Off")
+        .accessibilityAdjustableAction { d in
+          guard on else { return }
+          switch d {
+          case .increment: setAmount(min(1, (amount * 20).rounded() / 20 + 0.05))
+          case .decrement: setAmount(max(0, (amount * 20).rounded() / 20 - 0.05))
+          @unknown default: break
+          }
+        }
+        .onHover { h in
+          hover = h
+          let want = h && on
+          if want && !cursorPushed { NSCursor.resizeLeftRight.push(); cursorPushed = true }
+          else if !want && cursorPushed { NSCursor.pop(); cursorPushed = false }
+        }
+        if !compact { Spacer(minLength: 0) }
+        segments(dark: dark)
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+    .frame(maxHeight: .infinity)
+    .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
+    .gesture(DragGesture(minimumDistance: 3)
+      .onChanged { g in
+        guard on else { return }
+        if start == nil { start = amount; last = amount }
+        let raw = (start ?? amount) + Double(g.translation.width / travel)
+        let v = (min(1, max(0, raw)) * 100).rounded() / 100
+        if let l = last, Int(l * 20 + 1e-6) != Int(v * 20 + 1e-6) {
+          NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+        last = v
+        setAmount(v)
+      }
+      .onEnded { _ in start = nil; last = nil })
+    .simultaneousGesture(TapGesture(count: 2).onEnded { if on { setAmount(Self.defaultAmount) } })
+    .onDisappear {
+      if cursorPushed { NSCursor.pop(); cursorPushed = false }
+      start = nil; last = nil
+    }
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: character)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Bass")
   }
 
-  private var titleText: some View {
-    Text(title)
-      .font(.system(size: 12, weight: .semibold, design: .rounded))
-      .lineLimit(1)
-      .minimumScaleFactor(0.85)
+  /// Off · Distort · Punch: the chosen one is the small dark chip (the Limit
+  /// family); hairlines between the others.
+  private func segments(dark: Bool) -> some View {
+    let all = BassCharacter.allCases
+    let hc = contrast == .increased
+    let inner = RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
+    return HStack(spacing: 0) {
+      ForEach(Array(all.enumerated()), id: \.element) { i, c in
+        if i > 0 {
+          Rectangle()
+            .fill(Color.primary.opacity(hc ? 0.4 : 0.14))
+            .frame(width: hc ? 1 : 0.5, height: 10)
+            .opacity(c == character || all[i - 1] == character ? 0 : 1)
+        }
+        let sel = c == character
+        Group {
+          if labels == .icons {
+            Image(systemName: c.symbol).font(.system(size: 10, weight: .semibold))
+          } else {
+            Text(c.title)
+              .font(.system(size: compact ? 10 : 11, weight: sel ? .bold : .medium, design: .rounded))
+              .lineLimit(1)
+              .minimumScaleFactor(0.8)
+          }
+        }
+        .foregroundStyle(sel && c != .off ? Color.white : Color.primary.opacity(sel ? 0.9 : (dark ? 0.75 : 0.65)))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+          if sel {
+            inner.fill(c == .off ? Color.primary.opacity(0.08) : BentoInk.miniFill)
+          }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if !sel { setCharacter(c) } }
+        .help(c.description)
+        .accessibilityElement()
+        .accessibilityLabel(c.title)
+        .accessibilityHint(c.description)
+        .accessibilityAddTraits(sel ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { setCharacter(c) }
+      }
+    }
+    .frame(height: compact ? 20 : 24)
+    .background(inner.fill(Color.primary.opacity(on ? 0.06 : 0.04)))
+    .accessibilityElement(children: .contain)
   }
 }
 
