@@ -729,8 +729,25 @@ enum Caption {
 
   /// `click`: what a click does now ("Click to turn on", "Click for settings"…).
   static func nightGuard(on: Bool, allowDb: Double, click: String) -> PointerHint {
-    PointerHint("Night Guard", does: "Turns down sudden loud parts, like explosions after quiet talking.",
+    // The value: what a small tile has no room to say (Compact drops its fact line).
+    PointerHint("Night Guard", value: on ? "Allows +\(Int(allowDb.rounded())) dB" : nil,
+                does: "Turns down sudden loud parts, like explosions after quiet talking.",
                 gestures: [click])
+  }
+
+  /// The Bass tile: Off · Distort · Punch, and the amount (drag the tile).
+  static func bass(_ c: BassCharacter, amount: Double) -> PointerHint {
+    guard c != .off else {
+      return PointerHint("Bass", does: "Reshapes only the low end: gritty 808s or snappier kicks.")
+    }
+    return PointerHint("Bass", value: "\(c.title) \(Int((amount * 100).rounded()))%", does: c.description,
+                       gestures: ["Drag ↔ for amount", resetTap])
+  }
+
+  /// Late Night's Haze.
+  static func haze(_ v: Double, scrub: Bool) -> PointerHint {
+    PointerHint("Haze", does: "More haze rolls off more treble, for a darker, softer sound.",
+                gestures: scrub ? [drag, resetTap] : [])
   }
 
   static func allow(_ db: Double, scrub: Bool) -> PointerHint {
