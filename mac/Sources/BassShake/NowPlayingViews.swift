@@ -68,9 +68,36 @@ struct NowPlayingHeadline: View {
     let entry = stack.entry(for: app)
     let text = model.describe(entry)
     let note = model.notice
+    // Its song / tab on the way: a skeleton, then the words and art fade in
+    // (never the app's name first).
+    let loading = stack.isLoading(entry) && note == nil
     Button {
       NowStack.focus(entry, model: model)
     } label: {
+      ZStack(alignment: .leading) {
+        if loading {
+          NowSkeleton(name: app.name, art: art, title: title, subtitle: 11).transition(.opacity)
+        } else {
+          content(entry, text, note).transition(.opacity)
+        }
+      }
+      .animation(.easeOut(duration: 0.25), value: loading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(BentoPressStyle())
+    .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: text.paused,
+                                    picked: stack.pinned != nil && stack.pinned == entry.id))
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(note.map { $0.text } ?? (loading ? "Loading \(app.name)" : accessibility(entry)))
+    .accessibilityActions {
+      if note?.settings == true {
+        Button("Open Accessibility Settings") { MediaKeys.openSettings() }
+      }
+    }
+  }
+
+  private func content(_ entry: NowEntry, _ text: NowEntryText,
+                       _ note: (id: String, text: String, settings: Bool)?) -> some View {
       HStack(alignment: .center, spacing: 8) {
         NowArt(artwork: text.artwork, icon: model.icon(app), size: art, badge: entry.item != nil ? true : nil)
           .modifier(NowMorph(id: entry.id))
@@ -109,17 +136,6 @@ struct NowPlayingHeadline: View {
         .animation(.easeOut(duration: 0.2), value: note?.text)
         .animation(.easeOut(duration: 0.2), value: text.title)
       }
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(BentoPressStyle())
-    .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: text.paused))
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(note.map { $0.text } ?? accessibility(entry))
-    .accessibilityActions {
-      if note?.settings == true {
-        Button("Open Accessibility Settings") { MediaKeys.openSettings() }
-      }
-    }
   }
 
   private func accessibility(_ e: NowEntry) -> String {
@@ -293,6 +309,7 @@ struct NowArt: View {
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
+          .transition(.opacity)
         if badge ?? (size >= 30) {
           Image(nsImage: icon)
             .resizable()
@@ -305,9 +322,12 @@ struct NowArt: View {
           .resizable()
           .interpolation(.high)
           .frame(width: size, height: size)
+          .transition(.opacity)
       }
     }
     .frame(width: size, height: size)
+    // A still or cover that arrives after the words fades in, never pops.
+    .animation(.easeOut(duration: 0.3), value: artwork.map(ObjectIdentifier.init))
     .accessibilityHidden(true)
   }
 }
@@ -399,22 +419,28 @@ struct NowPlayingNote: View {
 // MARK: - Tutorial Mode captions
 
 extension Caption {
-  static func nowPlaying(_ name: String, song: Bool, paused: Bool) -> PointerHint {
+  /// `picked`: a small tile was clicked into the hero (NowStack.pinned).
+  static func nowPlaying(_ name: String, song: Bool, paused: Bool, picked: Bool = false) -> PointerHint {
     if paused {
       return PointerHint("What's Playing", does: "Stays here up to three minutes so you can press play.",
+                         gestures: ["Click opens \(name)"])
+    }
+    if picked {
+      return PointerHint("What's Playing", does: "You picked this; the loudest returns when it stops.",
                          gestures: ["Click opens \(name)"])
     }
     return PointerHint("What's Playing", does: "The loudest app over the last few seconds.",
                        gestures: ["Click opens \(name)"])
   }
 
+  /// A small tile. Its click is unexpected (it moves, it doesn't open), so it gets a chip.
   static func alsoPlaying(_ name: String, song: Bool, paused: Bool) -> PointerHint {
     if paused {
       return PointerHint(name, does: "Stays here up to three minutes so you can press play.",
-                         gestures: ["Click opens \(name)"])
+                         gestures: ["Click puts it on top", "Right-click › Open \(name)"])
     }
-    return PointerHint(name, does: "The loudest app takes the top tile; the rest wait here.",
-                       gestures: ["Click opens \(name)"])
+    return PointerHint(name, does: "Click puts it in the top tile until it stops playing.",
+                       gestures: ["Right-click › Open \(name)"])
   }
 
   static func tileMute(_ name: String, muted: Bool) -> PointerHint {

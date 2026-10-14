@@ -129,6 +129,10 @@ final class NowPlaying: ObservableObject {
   @Published private(set) var pending: Pending?
   /// Mirrors Settings.pauseRoute (slow) so views here observe only NowPlaying.
   @Published private(set) var pauseRoute: PauseRoute = .ask
+  /// Apps (NowApp.id) on screen whose song / tabs may be read but haven't
+  /// arrived yet: their tile shows a quiet skeleton instead of the app's name.
+  /// Ends at the first poll result for it, or after `detailsWaitSeconds`.
+  @Published private(set) var detailsPending: Set<String> = []
 
   /// How the big button pauses this app (chosen on every click).
   enum Route { case script, key, mute }
@@ -159,6 +163,8 @@ final class NowPlaying: ObservableObject {
   static let pauseCheckSeconds = 1.4
   static let playCheckSeconds = 2.0
   static let noticeSeconds = 4.0
+  /// Longest a tile waits for its first song / tabs before showing the app's name.
+  static let detailsWaitSeconds = 2.5
 
   private weak var controller: AudioController?
   private var cancellables = Set<AnyCancellable>()
@@ -220,6 +226,15 @@ final class NowPlaying: ObservableObject {
   private var stillCache: [String: NSImage] = [:]
   private var stillLoading: Set<String> = []
   private var browserBusy = false
+  /// The last tabs / songs of apps that left the screen (memory only, never
+  /// saved), so an app coming back (or a reopened popup) shows them at once;
+  /// the next poll updates them in place.
+  private var itemsMemo: [String: [NowItem]] = [:]
+  private var tracksMemo: [String: NowTrack] = [:]
+  /// Since the popup opened: when each scriptable app first showed, and the
+  /// bundle IDs a poll has answered (details or not).
+  private var waitSince: [String: TimeInterval] = [:]
+  private var answered: Set<String> = []
   private let scriptQueue = DispatchQueue(label: "bassshake.nowplaying", qos: .utility)
   /// Automation permission for every scripted app (Spotify, Music, browsers).
   private let gate = AutomationGate.shared
@@ -306,6 +321,8 @@ final class NowPlaying: ObservableObject {
       others = []
       tracks = [:]
       items = [:]
+      itemsMemo = [:]
+      tracksMemo = [:]
       itemSeen = [:]
       stillCache.removeAll()
       stillLoading.removeAll()
@@ -339,6 +356,8 @@ final class NowPlaying: ObservableObject {
       deferredClick = nil
       // A grant in System Settings is picked up on the next open (a denial costs one fast event).
       denied.removeAll()
+      waitSince = [:]
+      answered = []
       refreshAccess(now: activeSince)
       refreshAutomation()
       let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
@@ -362,6 +381,7 @@ final class NowPlaying: ObservableObject {
     saverMeterUntil = 0
     pending = nil
     notice = nil
+    if !detailsPending.isEmpty { detailsPending = [] }
     lastLevel = [:]
     lastLoud = [:]
     if !audible.isEmpty { audible = [] }
@@ -479,6 +499,7 @@ final class NowPlaying: ObservableObject {
     let newOthers = rest.compactMap { known[$0] }
     if newHero != hero { hero = newHero }
     if newOthers != others { others = newOthers }
+    restoreMemo()
     publishAudible(now: now)
     // A click made while the meter was still building, now that the state is real.
     if let app = deferredClick {
@@ -491,6 +512,8 @@ final class NowPlaying: ObservableObject {
     // What's Playing turned off while Mini's channel runs on: no song or cover.
     if !mayAsk && !tracks.isEmpty { tracks = [:] }
     if !mayAsk && !items.isEmpty { items = [:] }
+    // Before the poll: an app new on screen moves the poll up to this tick.
+    refreshPending(now: now)
     // Layer B, only while the popup is really visible.
     // Not before the one-time note is acknowledged: the Automation prompt would hide it.
     if now - lastPoll >= Self.pollEvery, now - lastVisible < 1.0, !polling, mayAsk {
@@ -498,6 +521,50 @@ final class NowPlaying: ObservableObject {
       pollPlayers()
       pollBrowsers()
     }
+  }
+
+  // MARK: - Details: remembered, and pending
+
+  private func detailsAllowed(_ bundleID: String) -> Bool {
+    mayAsk && !denied.contains(bundleID) && gate.isOn(bundleID) && gate.status[bundleID] != AutomationGate.denied
+  }
+
+  /// An app back on screen with no tabs / song yet: its last ones, until the next poll.
+  private func restoreMemo() {
+    guard mayAsk, !itemsMemo.isEmpty || !tracksMemo.isEmpty else { return }
+    var nextItems = items, nextTracks = tracks
+    for app in [hero].compactMap({ $0 }) + others {
+      guard let bid = app.bundleID, detailsAllowed(bid) else { continue }
+      if nextItems[app.id] == nil, let m = itemsMemo.removeValue(forKey: app.id) { nextItems[app.id] = m }
+      if NowPlayer(rawValue: bid) != nil, nextTracks[bid] == nil, let m = tracksMemo.removeValue(forKey: bid) {
+        nextTracks[bid] = m
+      }
+    }
+    if nextItems != items { items = nextItems }
+    if nextTracks != tracks { tracks = nextTracks }
+  }
+
+  /// Which apps on screen are still waiting for their first song / tabs.
+  private func refreshPending(now: TimeInterval) {
+    var next = Set<String>()
+    var shown = Set<String>()
+    var fresh = false
+    if active && !closing && mayAsk {
+      for app in [hero].compactMap({ $0 }) + others {
+        guard let bid = app.bundleID else { continue }
+        let player = NowPlayer(rawValue: bid) != nil
+        guard player || NowBrowser(rawValue: bid) != nil else { continue }
+        shown.insert(app.id)
+        let has = player ? tracks[bid] != nil : items[app.id] != nil
+        guard !has, !answered.contains(bid), detailsAllowed(bid) else { continue }
+        if waitSince[app.id] == nil { waitSince[app.id] = now; fresh = true }
+        if now - (waitSince[app.id] ?? now) < Self.detailsWaitSeconds { next.insert(app.id) }
+      }
+    }
+    waitSince = waitSince.filter { shown.contains($0.key) }
+    // A new app to read: poll now (this tick) rather than at the next 2 s slot.
+    if fresh { lastPoll = 0 }
+    if next != detailsPending { detailsPending = next }
   }
 
   /// Power Saver: something on screen needs the per-app meter.
@@ -727,7 +794,10 @@ final class NowPlaying: ObservableObject {
     // Drop songs for players no longer shown.
     let keep = Set(players.map(\.rawValue))
     let pruned = tracks.filter { keep.contains($0.key) }
-    if pruned.count != tracks.count { tracks = pruned }
+    if pruned.count != tracks.count {
+      for (k, t) in tracks where !keep.contains(k) && detailsAllowed(k) { tracksMemo[k] = t }
+      tracks = pruned
+    }
     guard !players.isEmpty else { return }
     polling = true
     let serial = commandSerial
@@ -774,6 +844,8 @@ final class NowPlaying: ObservableObject {
     }
     for (p, r) in results {
       let id = p.rawValue
+      answered.insert(id)
+      tracksMemo[id] = nil
       switch r {
       case .denied:
         denied.insert(id)
@@ -804,6 +876,7 @@ final class NowPlaying: ObservableObject {
       }
     }
     if next != tracks { tracks = next }
+    refreshPending(now: ProcessInfo.processInfo.systemUptime)
   }
 
   private func loadArt(_ p: NowPlayer, key: String, url: String?) {
@@ -878,7 +951,11 @@ final class NowPlaying: ObservableObject {
     let browsers = shownBrowsers()
     let keep = Set(browsers.map(\.1))
     let pruned = items.filter { keep.contains($0.key) }
-    if pruned.count != items.count { items = pruned }
+    if pruned.count != items.count {
+      for (k, v) in items where !keep.contains(k) { itemsMemo[k] = v }
+      if itemsMemo.count > 8 { itemsMemo.removeAll() }
+      items = pruned
+    }
     guard !browsers.isEmpty, !browserBusy else { return }
     browserBusy = true
     let autoAsk = Set(browsers.map(\.0.rawValue).filter { !gate.wasAsked($0) })
@@ -918,6 +995,8 @@ final class NowPlaying: ObservableObject {
     let now = ProcessInfo.processInfo.systemUptime
     var next = items
     for (b, appID, r, ax) in results {
+      answered.insert(b.rawValue)
+      itemsMemo[appID] = nil
       switch r {
       case .denied, .stopped:
         next[appID] = nil
@@ -950,6 +1029,7 @@ final class NowPlaying: ObservableObject {
     let live = Set(next.values.flatMap { $0.map(\.id) })
     itemSeen = itemSeen.filter { live.contains($0.key) }
     if next != items { items = next }
+    refreshPending(now: now)
   }
 
   /// YouTube's still for a video (the only network use for browsers; ephemeral,
@@ -1058,9 +1138,12 @@ final class NowPlaying: ObservableObject {
     gate.setOff(id, !on)
     if !on {
       tracks[id] = nil
+      tracksMemo[id] = nil
       let ids = Set(([hero].compactMap { $0 } + others).filter { $0.bundleID == id }.map(\.id))
       let kept = items.filter { !ids.contains($0.key) }
       if kept.count != items.count { items = kept }
+      itemsMemo = itemsMemo.filter { !ids.contains($0.key) }
+      refreshPending(now: ProcessInfo.processInfo.systemUptime)
       return
     }
     denied.remove(id)

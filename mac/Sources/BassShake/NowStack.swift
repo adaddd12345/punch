@@ -7,6 +7,8 @@ import SwiftUI
 // app is one entry (with its song when Spotify / Music tell us). The hero tile
 // shows the loudest app's lead entry; the rest sit under it as small tiles in
 // a stable order (new arrivals append; level jitter never reshuffles them).
+// A click on a small tile puts it in the hero (a pin) until it stops playing,
+// goes away, or another is picked; then the loudest leads again.
 //
 // CPU: built from NowPlaying's slow published state only (hero, others,
 // items), coalesced to one rebuild per main-loop turn. No meters observed.
@@ -81,13 +83,18 @@ extension NowPlaying {
 final class NowStack: ObservableObject {
   static let shared = NowStack(model: .shared)
 
-  /// Small tiles under the hero; more become a "+N" tile.
-  static let maxShown = 3
+  /// Most cells under the hero (two rows of two). More: the first three, then "+N".
+  static let maxCells = 4
 
   /// The hero's entry (the loudest app's lead tab, or the app). nil: nothing playing.
   @Published private(set) var lead: NowEntry?
   /// Everything else playing, in arrival order.
   @Published private(set) var rest: [NowEntry] = []
+  /// The entry picked into the hero by a click (overrides loudest-first while it plays).
+  @Published private(set) var pinned: String?
+  /// Apps whose song / tabs are still on their way (NowPlaying.detailsPending),
+  /// published with the stack so a tile never shows the app's name for a frame in between.
+  @Published private(set) var pending: Set<String> = []
 
   private weak var model: NowPlaying?
   private var cancellables = Set<AnyCancellable>()
@@ -95,6 +102,8 @@ final class NowStack: ObservableObject {
   /// Every entry seen, in arrival order (the lead included), so a hero swap
   /// puts the old lead back where it was rather than last.
   private var order: [String] = []
+  /// The pinned entry has been heard since it was picked.
+  private var pinHeard = false
 
   init(model: NowPlaying) {
     self.model = model
@@ -103,13 +112,18 @@ final class NowStack: ObservableObject {
     model.$hero.sink { [weak self] _ in self?.schedule() }.store(in: &cancellables)
     model.$others.sink { [weak self] _ in self?.schedule() }.store(in: &cancellables)
     model.$items.sink { [weak self] _ in self?.schedule() }.store(in: &cancellables)
+    model.$detailsPending.sink { [weak self] _ in self?.schedule() }.store(in: &cancellables)
+    // A pinned song / tab that pauses gives the hero back.
+    model.$tracks.sink { [weak self] _ in if self?.pinned != nil { self?.schedule() } }.store(in: &cancellables)
+    model.$pausedByUs.sink { [weak self] _ in if self?.pinned != nil { self?.schedule() } }.store(in: &cancellables)
   }
 
   #if DEBUG
   /// Previews / render checks only: a fixed stack, no model subscription.
-  init(preview lead: NowEntry?, rest: [NowEntry]) {
+  init(preview lead: NowEntry?, rest: [NowEntry], pending: Set<String> = []) {
     self.lead = lead
     self.rest = rest
+    self.pending = pending
   }
   #endif
 
@@ -132,27 +146,54 @@ final class NowStack: ObservableObject {
 
   private func rebuild() {
     guard let model else { return }
+    let playingNow: (NowEntry) -> Bool = { !model.describe($0, state: false).paused }
+    // A pick that was paused when picked holds until it has played and stopped.
+    let heard = pinHeard
     let r = Self.build(hero: model.hero, others: model.others, items: model.items,
-                       previousLead: lead?.id, order: order)
+                       previousLead: lead?.id, order: order, pinned: pinned,
+                       playing: { playingNow($0) || !heard })
     order = r.order
-    guard r.lead != lead || r.rest != rest else { return }
+    if let p = r.pinned, let l = r.lead, l.id == p { pinHeard = heard || playingNow(l) } else { pinHeard = false }
+    let wait = model.detailsPending
+    guard r.lead != lead || r.rest != rest || r.pinned != pinned || wait != pending else { return }
     // Only the ids / text changed shape the animation; a new thumbnail alone just swaps in.
     let shape = r.lead?.id != lead?.id || r.rest.map(\.id) != rest.map(\.id)
     if shape {
       withAnimation(Self.morph) {
         lead = r.lead
         rest = r.rest
+        pending = wait
       }
     } else {
       lead = r.lead
       rest = r.rest
+      pending = wait
     }
+    if r.pinned != pinned { pinned = r.pinned }
   }
 
+  /// A click on a small tile: it takes the hero, and the hero takes its place.
+  func promote(_ e: NowEntry) {
+    guard e.id != lead?.id else { return }
+    if let a = order.firstIndex(of: e.id), let l = lead, let b = order.firstIndex(of: l.id) {
+      order.swapAt(a, b)
+    }
+    pinned = e.id
+    pinHeard = false
+    rebuild()
+  }
+
+  /// Still waiting for this entry's song / tab (a skeleton, not the app's name).
+  func isLoading(_ e: NowEntry) -> Bool { e.item == nil && pending.contains(e.app.id) }
+
   /// Pure: the stack for this state. `order` keeps arrival order across calls.
+  /// `pinned`: an entry picked into the hero, kept while `playing` says so;
+  /// the returned `pinned` is nil once it stopped or went away.
   static func build(hero: NowApp?, others: [NowApp], items: [String: [NowItem]],
-                    previousLead: String?, order: [String]) -> (lead: NowEntry?, rest: [NowEntry], order: [String]) {
-    guard let hero else { return (nil, [], []) }
+                    previousLead: String?, order: [String], pinned: String? = nil,
+                    playing isPlaying: (NowEntry) -> Bool = { _ in true })
+    -> (lead: NowEntry?, rest: [NowEntry], order: [String], pinned: String?) {
+    guard let hero else { return (nil, [], [], nil) }
     func entries(_ app: NowApp) -> [NowEntry] {
       let tabs = items[app.id] ?? []
       return tabs.isEmpty ? [NowEntry(app: app)] : tabs.map { NowEntry(app: app, item: $0) }
@@ -160,7 +201,7 @@ final class NowStack: ObservableObject {
     let heroEntries = entries(hero)
     let playing = heroEntries.filter { $0.item?.mayPlay ?? true }
     // The lead sticks while it plays (or nothing else of this app does): no tab flip-flop.
-    let lead = heroEntries.first { $0.id == previousLead && ($0.item?.mayPlay ?? true || playing.isEmpty) }
+    var lead = heroEntries.first { $0.id == previousLead && ($0.item?.mayPlay ?? true || playing.isEmpty) }
       ?? playing.first ?? heroEntries[0]
     var all = heroEntries
     var seen = Set(all.map(\.id))
@@ -175,8 +216,17 @@ final class NowStack: ObservableObject {
     // New arrivals append in NowPlaying's own order (loudest first).
     newOrder += all.map(\.id).filter { !known.contains($0) }
     let byID = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    var pin: String?
+    if let p = pinned {
+      // A picked app whose tabs just arrived: its first playing tab keeps the pick.
+      let e = byID[p] ?? (p.hasPrefix("app.") ? all.first { "app." + $0.app.id == p && isPlaying($0) } : nil)
+      if let e, isPlaying(e) {
+        lead = e
+        pin = e.id
+      }
+    }
     let rest = newOrder.compactMap { $0 == lead.id ? nil : byID[$0] }
-    return (lead, rest, newOrder)
+    return (lead, rest, newOrder, pin)
   }
 
   /// The lead when it belongs to this app (else the app on its own).
@@ -277,9 +327,11 @@ struct NowPlayingTiles: View {
 
   var body: some View {
     let rest = on && stack.lead != nil ? stack.rest : []
-    let overflow = rest.count > NowStack.maxShown
-    let shown = overflow ? Array(rest.prefix(NowStack.maxShown)) : rest
-    let extra = overflow ? Array(rest.dropFirst(NowStack.maxShown)) : []
+    // Rows of two under the hero; an odd last cell spans its row (BentoPairs).
+    // At most two rows: past four, the fourth cell is "+N" (N is at least 2).
+    let overflow = rest.count > NowStack.maxCells
+    let shown = overflow ? Array(rest.prefix(NowStack.maxCells - 1)) : rest
+    let extra = overflow ? Array(rest.dropFirst(NowStack.maxCells - 1)) : []
     let cells = shown.count + (overflow ? 1 : 0)
     // A Group, not a stack: with nothing here, no extra 8 pt gap in the Bento column.
     Group {
@@ -288,11 +340,13 @@ struct NowPlayingTiles: View {
           ForEach(Array(shown.enumerated()), id: \.element.id) { i, e in
             // The last tile of an odd count spans the row and has room for mute.
             NowStackTile(model: model, entry: e, active: active, compact: compact,
-                         wide: i == cells - 1 && cells % 2 == 1)
+                         wide: i == cells - 1 && cells % 2 == 1, loading: stack.isLoading(e),
+                         promote: { stack.promote(e) })
               .transition(.nowTile(reduceMotion: reduceMotion))
           }
           if overflow {
-            NowMoreTile(model: model, entries: extra, active: active, compact: compact)
+            NowMoreTile(model: model, entries: extra, active: active, compact: compact,
+                        promote: { stack.promote($0) })
               .transition(.nowTile(reduceMotion: reduceMotion))
           }
         }
@@ -302,7 +356,8 @@ struct NowPlayingTiles: View {
   }
 }
 
-/// One entry: its art is play/pause, its words bring it forward.
+/// One entry: its art is play/pause; a click anywhere else puts it in the
+/// hero (right-click › Open brings its tab or app forward).
 struct NowStackTile: View {
   @ObservedObject var model: NowPlaying
   let entry: NowEntry
@@ -310,6 +365,10 @@ struct NowStackTile: View {
   var compact = false
   /// Spans the row: room for the mute button.
   var wide = false
+  /// Its song / tab is still on its way: a skeleton, not the app's name.
+  var loading = false
+  /// Puts this entry in the hero (NowStack.promote).
+  var promote: () -> Void = {}
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
@@ -318,10 +377,35 @@ struct NowStackTile: View {
     let tint: BentoTint = active ? .frost : .graphite
     let art: CGFloat = compact ? 24 : 32
     BentoTile(tint: tint, interactive: true, glassID: "now." + entry.id) {
+      ZStack(alignment: .leading) {
+        if loading {
+          NowSkeleton(name: app.name, art: art, title: compact ? 11 : 12, subtitle: compact ? 9 : 10)
+            .transition(.opacity)
+        } else {
+          content(app, text, art: art).transition(.opacity)
+        }
+      }
+      .animation(.easeOut(duration: 0.25), value: loading)
+      .frame(height: art)
+    }
+    .frame(maxWidth: .infinity)
+    // The tile's padding too (the art and mute buttons keep their own clicks).
+    .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
+    .onTapGesture(perform: promote)
+    .pointerHintTint(scheme == .dark ? BentoTint.frost.pastel : BentoTint.frost.ink)
+    .contextMenu {
+      Button("Open \(app.name)") { NowStack.focus(entry, model: model) }
+      if model.route(app) != .mute {
+        Button(model.isMuted(app.id) ? "Unmute \(app.name)" : "Mute \(app.name)") { model.toggleMute(app) }
+      }
+    }
+  }
+
+  private func content(_ app: NowApp, _ text: NowEntryText, art: CGFloat) -> some View {
       HStack(alignment: .center, spacing: 8) {
         NowEntryArtButton(model: model, entry: entry, artwork: text.artwork, size: art)
           .modifier(NowMorph(id: entry.id))
-        Button { NowStack.focus(entry, model: model) } label: {
+        Button(action: promote) {
           VStack(alignment: .leading, spacing: compact ? 0 : 1) {
             Text(text.title)
               .font(.system(size: compact ? 11 : 12, weight: .heavy, design: .rounded))
@@ -343,21 +427,13 @@ struct NowStackTile: View {
         .buttonStyle(.plain)
         .pointerHint(Caption.alsoPlaying(app.name, song: text.song, paused: text.paused))
         .accessibilityLabel(accessibility)
+        .accessibilityHint("Shows it in the top tile")
+        .accessibilityAction(named: "Open \(app.name)") { NowStack.focus(entry, model: model) }
         if wide && model.route(app) != .mute {
           MuteButton(model: model, app: app, compact: compact)
             .transition(.opacity)
         }
       }
-      .frame(height: art)
-    }
-    .frame(maxWidth: .infinity)
-    .pointerHintTint(scheme == .dark ? BentoTint.frost.pastel : BentoTint.frost.ink)
-    .contextMenu {
-      Button("Open \(app.name)") { NowStack.focus(entry, model: model) }
-      if model.route(app) != .mute {
-        Button(model.isMuted(app.id) ? "Unmute \(app.name)" : "Mute \(app.name)") { model.toggleMute(app) }
-      }
-    }
   }
 
   private var accessibility: String {
@@ -432,6 +508,8 @@ struct NowMoreTile: View {
   let entries: [NowEntry]
   let active: Bool
   var compact = false
+  /// Puts the picked entry in the hero.
+  var promote: (NowEntry) -> Void = { _ in }
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
@@ -440,7 +518,7 @@ struct NowMoreTile: View {
     BentoTile(tint: active ? .frost : .graphite, interactive: true, glassID: "now.more") {
       Menu {
         ForEach(entries) { e in
-          Button(model.describe(e).title) { NowStack.focus(e, model: model) }
+          Button(model.describe(e).title) { promote(e) }
         }
       } label: {
         HStack(alignment: .center, spacing: 8) {
@@ -485,5 +563,59 @@ struct NowMoreTile: View {
 }
 
 extension Caption {
-  static let morePlaying = PointerHint("More playing", does: "Only three fit here; pick one to bring it forward.")
+  static let morePlaying = PointerHint("More playing", does: "Only three fit here; pick one to put it on top.")
+}
+
+// MARK: - Loading
+
+/// A tile's song / tab on its way: soft bones where the art and two lines go,
+/// with a slow shimmer. Static (dimmed) under Reduce Motion and Power Saver.
+/// Shown at most `NowPlaying.detailsWaitSeconds`, only while on screen.
+struct NowSkeleton: View {
+  /// The app it's loading for (VoiceOver).
+  let name: String
+  let art: CGFloat
+  /// The title and second line's font sizes (the bones match their heights).
+  var title: CGFloat = 15
+  var subtitle: CGFloat = 11
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+  @State private var phase: CGFloat = 0
+
+  private var bones: some View {
+    HStack(alignment: .center, spacing: 8) {
+      RoundedRectangle(cornerRadius: art * 0.22, style: .continuous)
+        .frame(width: art, height: art)
+      VStack(alignment: .leading, spacing: max(3, subtitle * 0.4)) {
+        Capsule().frame(maxWidth: 160).frame(height: (title * 0.8).rounded())
+        Capsule().frame(maxWidth: 96).frame(height: (subtitle * 0.8).rounded())
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  var body: some View {
+    let still = reduceMotion || powerSaver
+    bones
+      .foregroundStyle(Color.primary.opacity(still ? 0.07 : 0.09))
+      .overlay {
+        if !still {
+          GeometryReader { g in
+            LinearGradient(colors: [.clear, Color.primary.opacity(0.10), .clear],
+                           startPoint: .leading, endPoint: .trailing)
+              .frame(width: g.size.width * 0.45)
+              .offset(x: -g.size.width * 0.45 + phase * g.size.width * 1.45)
+          }
+          .mask(bones)
+          .allowsHitTesting(false)
+        }
+      }
+      .onAppear {
+        guard !still else { return }
+        phase = 0
+        withAnimation(.linear(duration: 1.3).repeatForever(autoreverses: false)) { phase = 1 }
+      }
+      .accessibilityElement()
+      .accessibilityLabel("Loading \(name)")
+  }
 }
