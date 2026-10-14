@@ -10,8 +10,8 @@ import SwiftUI
 ///   ├──────────────────────── EQ curve ──────────────────────────┤
 ///   ├──── Strength 55% (drag) ───┬──── Boost +3 dB (drag) ───────┤
 ///   ├──────────────────────── Presets ───────────────────────────┤
-///   ├─ Bass: Off · Distort · Punch ─┬─ Studio Ears ─┬─ Loudness ─┤
-///   ├─ Night Guard ─┬─ Study ───────┬─ Sleep ───────┬─ Late Night ┤
+///   ├─ Bass: Off · Distort · Punch ─┬─ Loudness ─┬─ Night Guard ┤
+///   ├─ Study ─┬─ Sleep ─┬─ Late Night (Haze %) ──────────────────┤
 ///      (4 columns of squares: 78 pt Full, 56 pt Compact)
 ///   └─ (mode details, when a mode with settings is on) ──────────┘
 ///
@@ -32,6 +32,11 @@ struct BentoView: View {
   /// grouped surface at most), the original EQ, sliders, preset pills and
   /// power switch. Full and Compact only (Classic Mini is PopoverView's).
   var flat = false
+  /// Mac Volume and the output row (PopoverView's), placed by the layout order.
+  var macBlock: AnyView? = nil
+  /// Hold-to-rearrange (Reshuffle.swift).
+  @ObservedObject var reshuffle: Reshuffle
+  @State private var drag: BlockDrag?
 
   /// Which mode's settings strip shows: the one turned on most recently.
   private enum Detail { case nightGuard, mode }
@@ -86,8 +91,67 @@ struct BentoView: View {
   }
 
   private var stack: some View {
+    VStack(spacing: 8) {
+      // One ForEach keyed by section at every size, so ⌘1/2/3 resizes each
+      // block in place and a reorder moves blocks rather than rebuilding them.
+      ForEach(drag?.order ?? blockKeys, id: \.self) { key in
+        if blockShown(key) {
+          VStack(spacing: 8) { block(key) }
+            .modifier(ReshuffleBlock(key: key, name: sectionName(key), model: reshuffle,
+                                     lifted: drag?.key == key, offset: dragOffset(key),
+                                     onDrag: { dragBlock(key, by: $0) }, onDrop: dropBlock,
+                                     move: { moveBlock(key, by: $0) }))
+            .transition(key.hasSuffix(".modeSettings") ? .opacity.combined(with: .move(edge: .top)) : .opacity)
+        }
+      }
+    }
+    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
+    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
+    .animation(.easeOut(duration: 0.2), value: live)
+    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: lastDetail)
+    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
+    .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
+    .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
+    .onChange(of: reshuffle.on) { _, on in if !on { drag = nil } }
+  }
+
+  // MARK: - Blocks
+
+  /// The sections in the user's order (Mini: Mac Volume, the slim hero, the dials).
+  private var blockKeys: [String] {
+    if size == .mini { return [LayoutSection.macVolume.key, LayoutSection.bentoHero.key, LayoutSection.bentoDials.key] }
+    return s.layoutOrder(bento: !flat).filter { !$0.fixed }.map(\.key)
+  }
+
+  private func sectionName(_ key: String) -> String {
+    (flat ? LayoutSection.classic : LayoutSection.bento).first { $0.key == key }?.name ?? key
+  }
+
+  /// Whether a block draws anything here (Edit Layout, size, settings).
+  private func blockShown(_ key: String) -> Bool {
     let mini = size == .mini
-    return VStack(spacing: 8) {
+    switch key {
+    case LayoutSection.macVolume.key: return macBlock != nil
+    case LayoutSection.bentoHero.key, LayoutSection.classicHeader.key: return true
+    case LayoutSection.bentoDials.key: return mini || (!flat && s.shows(.bentoDials))
+    case LayoutSection.classicSliders.key: return flat && s.shows(.classicSliders)
+    case LayoutSection.classicMeters.key: return flat && size == .full && s.shows(.classicMeters)
+    default:
+      guard !mini, let sec = (flat ? LayoutSection.classic : LayoutSection.bento).first(where: { $0.key == key })
+      else { return false }
+      if key.hasSuffix(".nowPlaying") { return s.shows(sec) }
+      if key.hasSuffix(".modeSettings") { return s.shows(sec) && shownDetail != nil }
+      return s.shows(sec)
+    }
+  }
+
+  /// One block's content, top to bottom.
+  @ViewBuilder private func block(_ key: String) -> some View {
+    let mini = size == .mini
+    switch key {
+    case LayoutSection.macVolume.key:
+      if let macBlock { macBlock }
+    case LayoutSection.bentoHero.key, LayoutSection.classicHeader.key:
       if mini {
         // Mini: the slim hero and the two dials, nothing else.
         miniHero
@@ -100,49 +164,128 @@ struct BentoView: View {
         // The editor opens right under the hero when the presets tile is hidden,
         // so "Save Current Sound as Preset…" from the hero menu is seen.
         if !shows(.bentoPresets, .classicPresets), let mode = editor { editorView(mode) }
-        // What's Playing: everything else playing, one small tile per tab or app (NowStack.swift).
-        if shows(.bentoNowPlaying, .classicNowPlaying) {
-          NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
-        }
-        if flat {
-          // The original EQ: grid, labels and its own faint backing.
-          if s.shows(.classicEQ) {
-            EQView(controller: controller)
-              .frame(height: size == .full ? 150 : 112)
-              .opacity(live ? 1 : 0.45)
-          }
-          if size == .full && s.shows(.classicMeters) { MeterView(model: meters) }
-        } else if s.shows(.bentoEQ) {
-          BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
-            EQView(controller: controller, chrome: false,
-                   filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
-              .frame(height: size == .full ? 132 : 100)
-          }
-          .pointerHintTint(live ? ink(.bass) : nil)
-        }
       }
-      // One identity at every size, so ⌘3 resizes the dials in place.
-      if flat {
-        if s.shows(.classicSliders) { flatSliders }
-      } else if mini || s.shows(.bentoDials) {
-        dials
+    case LayoutSection.bentoNowPlaying.key, LayoutSection.classicNowPlaying.key:
+      // What's Playing: everything else playing, one small tile per tab or app (NowStack.swift).
+      NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
+    case LayoutSection.classicEQ.key:
+      // The original EQ: grid, labels and its own faint backing.
+      EQView(controller: controller)
+        .frame(height: size == .full ? 150 : 112)
+        .opacity(live ? 1 : 0.45)
+    case LayoutSection.classicMeters.key:
+      MeterView(model: meters)
+    case LayoutSection.bentoEQ.key:
+      BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
+        EQView(controller: controller, chrome: false,
+               filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
+          .frame(height: size == .full ? 132 : 100)
       }
-      if !mini {
-        if shows(.bentoPresets, .classicPresets) {
-          if flat { PresetStrip(controller: controller, editor: $editor) } else { presets }
-          if let mode = editor { editorView(mode) }
-        }
-        if shows(.bentoModes, .classicModes) { modeGrid }
-        if shows(.bentoModeSettings, .classicModeSettings) { modeDetails }
-      }
+      .pointerHintTint(live ? ink(.bass) : nil)
+    case LayoutSection.bentoDials.key:
+      dials
+    case LayoutSection.classicSliders.key:
+      flatSliders
+    case LayoutSection.bentoPresets.key, LayoutSection.classicPresets.key:
+      if flat { PresetStrip(controller: controller, editor: $editor) } else { presets }
+      if let mode = editor { editorView(mode) }
+    case LayoutSection.bentoModes.key, LayoutSection.classicModes.key:
+      modeGrid
+    case LayoutSection.bentoModeSettings.key, LayoutSection.classicModeSettings.key:
+      modeDetails
+    default:
+      EmptyView()
     }
-    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
-    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
-    .animation(.easeOut(duration: 0.2), value: live)
-    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: lastDetail)
-    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
-    .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
-    .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
+  }
+
+  // MARK: - Reorder
+
+  /// A block being dragged in reshuffle mode.
+  private struct BlockDrag {
+    let key: String
+    /// The shown blocks, top to bottom, as they stood when the drag began.
+    let start: [String]
+    /// The same, live: the dragged block at the slot it would drop into.
+    var order: [String]
+    /// Heights when the drag began (layout doesn't change mid-drag).
+    let heights: [String: CGFloat]
+    var dy: CGFloat = 0
+  }
+
+  private func top(of key: String, in order: [String], heights: [String: CGFloat]) -> CGFloat {
+    var y: CGFloat = 0
+    for k in order {
+      if k == key { return y }
+      y += (heights[k] ?? 0) + 8
+    }
+    return y
+  }
+
+  /// The dragged block sits under the pointer; its slot is where it would land.
+  private func dragOffset(_ key: String) -> CGFloat {
+    guard let d = drag, d.key == key else { return 0 }
+    return top(of: key, in: d.start, heights: d.heights) + d.dy - top(of: key, in: d.order, heights: d.heights)
+  }
+
+  private var reflow: Animation? { reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82) }
+
+  private func dragBlock(_ key: String, by dy: CGFloat) {
+    guard reshuffle.on else { return }
+    var d: BlockDrag
+    if let cur = drag, cur.key == key {
+      d = cur
+    } else {
+      let shown = blockKeys.filter { blockShown($0) }
+      d = BlockDrag(key: key, start: shown, order: shown, heights: reshuffle.heights)
+      Reshuffle.tick()
+    }
+    d.dy = dy
+    // The slot: after every other block whose middle the dragged block's middle has passed.
+    let h = d.heights[key] ?? 0
+    let center = top(of: key, in: d.start, heights: d.heights) + dy + h / 2
+    let others = d.start.filter { $0 != key }
+    var y: CGFloat = 0
+    var slot = 0
+    for o in others {
+      let ho = d.heights[o] ?? 0
+      if center > y + ho / 2 { slot += 1 }
+      y += ho + 8
+    }
+    var order = others
+    order.insert(key, at: slot)
+    if order != d.order {
+      d.order = order
+      NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+      // One state change per step: the others spring to their new places.
+      withAnimation(reflow) { drag = d }
+    } else {
+      drag = d
+    }
+  }
+
+  private func dropBlock() {
+    guard let d = drag else { return }
+    if d.order != d.start { save(shown: d.order) }
+    Reshuffle.tick()
+    withAnimation(reflow) { drag = nil }
+  }
+
+  /// VoiceOver: one step up or down among the shown blocks.
+  private func moveBlock(_ key: String, by step: Int) {
+    var shown = blockKeys.filter { blockShown($0) }
+    guard let i = shown.firstIndex(of: key), shown.indices.contains(i + step) else { return }
+    shown.swapAt(i, i + step)
+    withAnimation(reflow) { save(shown: shown) }
+  }
+
+  /// Saves the shown blocks' new order; hidden ones keep their slots.
+  private func save(shown: [String]) {
+    var all = blockKeys
+    var next = shown.makeIterator()
+    for i in all.indices where shown.contains(all[i]) {
+      if let k = next.next() { all[i] = k }
+    }
+    controller.settings.setLayoutOrder(all, bento: !flat)
   }
 
   /// The preset editor (create or edit), sliding in under whatever opened it.
@@ -901,47 +1044,52 @@ struct BentoView: View {
           .frame(maxWidth: .infinity)
           .pointerHint(Caption.bass(s.bassCharacter, amount: s.bassAmount), live: true)
           .pointerHintTint(ink(tint(.bass)))
+        // Two flagships, one per row: Bass here, Late Night below.
         HStack(spacing: 8) {
-          ModeTile(title: "Studio Ears", symbol: "ear.badge.waveform", tint: tint(.pink), on: s.studioEars,
-                   compact: compact,
-                   hint: { [controller] in Caption.studioEars(on: controller.settings.studioEars) }) {
-            controller.settings.studioEars.toggle()
-          } fact: { EmptyView() }
           ModeTile(title: "Loudness", symbol: "speaker.wave.2.bubble", tint: tint(.peach), on: s.autoLoudness,
                    compact: compact,
                    hint: { [controller] in Caption.loudness(on: controller.settings.autoLoudness) }) {
             controller.settings.autoLoudness.toggle()
           } fact: { EmptyView() }
+          ModeTile(title: "Night Guard", symbol: "shield", tint: tint(.indigo), on: s.nightGuard,
+                   compact: compact, hint: { nightGuardHint }) {
+            // Lit but its strip hidden: the first click brings the strip forward.
+            if s.nightGuard && shownDetail != .nightGuard { showDetail(.nightGuard) } else { controller.settings.nightGuard.toggle() }
+          } fact: { NightGuardFact(model: controller.nightGuard, allowDb: s.nightGuardDb) }
         }
         .frame(maxWidth: .infinity)
       }
       .frame(height: side)
       HStack(spacing: 8) {
-        ModeTile(title: "Night Guard", symbol: "shield", tint: tint(.indigo), on: s.nightGuard,
-                 compact: compact, hint: { nightGuardHint }) {
-          // Lit but its strip hidden: the first click brings the strip forward.
-          if s.nightGuard && shownDetail != .nightGuard { showDetail(.nightGuard) } else { controller.settings.nightGuard.toggle() }
-        } fact: { NightGuardFact(model: controller.nightGuard, allowDb: s.nightGuardDb) }
-        ForEach([ListeningMode.study, .sleep, .lateNight]) { m in
-          ModeTile(title: m.title, symbol: m.symbol, tint: tint(m == .study ? .lime : .lilac), on: s.mode == m,
-                   compact: compact, hint: { modeHint(m) }) {
-            if s.mode == m && shownDetail != .mode {
-              showDetail(.mode)
-            } else {
-              withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                controller.setMode(s.mode == m ? .off : m)
-              }
-            }
-          } fact: {
-            switch m {
-            case .study: StudyFact(endsAt: controller.pomodoroEndsAt, onBreak: controller.pomodoroOnBreak)
-            case .sleep: SleepFact(endsAt: controller.sleepEndsAt, finished: controller.sleepFinished)
-            default: BentoFactText(text: "Haze \(Int((s.lateNightHaze * 100).rounded()))%")
-            }
-          }
+        HStack(spacing: 8) {
+          ForEach([ListeningMode.study, .sleep]) { m in modeTile(m, compact: compact) }
         }
+        .frame(maxWidth: .infinity)
+        // Double wide: its Haze % beside the name, Compact too.
+        modeTile(.lateNight, compact: compact)
+          .frame(maxWidth: .infinity)
       }
       .frame(height: side)
+    }
+  }
+
+  /// Study, Sleep or Late Night: on/off, or (lit, strip hidden) bring its strip forward.
+  private func modeTile(_ m: ListeningMode, compact: Bool) -> some View {
+    ModeTile(title: m.title, symbol: m.symbol, tint: tint(m == .study ? .lime : .lilac), on: s.mode == m,
+             compact: compact, wide: m == .lateNight, hint: { modeHint(m) }) {
+      if s.mode == m && shownDetail != .mode {
+        showDetail(.mode)
+      } else {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+          controller.setMode(s.mode == m ? .off : m)
+        }
+      }
+    } fact: {
+      switch m {
+      case .study: StudyFact(endsAt: controller.pomodoroEndsAt, onBreak: controller.pomodoroOnBreak)
+      case .sleep: SleepFact(endsAt: controller.sleepEndsAt, finished: controller.sleepFinished)
+      default: BentoFactText(text: "Haze \(Int((s.lateNightHaze * 100).rounded()))%")
+      }
     }
   }
 
@@ -1784,6 +1932,8 @@ private struct ModeTile<Fact: View>: View {
   let on: Bool
   /// Compact: 56 pt squares, no fact line (the hint carries it).
   var compact = false
+  /// Double wide (Late Night): the fact sits beside the name, Compact too.
+  var wide = false
   /// Pointer Hint (polled while it shows, so it stays current).
   let hint: () -> PointerHint
   let action: () -> Void
@@ -1807,8 +1957,15 @@ private struct ModeTile<Fact: View>: View {
             VStack(alignment: .leading, spacing: 0) {
               ModeGlyph(symbol: symbol, tint: face, on: on, size: compact ? 16 : 18, bare: flat)
               Spacer(minLength: 0)
-              titleText
-              if on && !compact { fact().padding(.top, 1) }
+              if wide {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                  titleText
+                  if on { fact() }
+                }
+              } else {
+                titleText
+                if on && !compact { fact().padding(.top, 1) }
+              }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
           }

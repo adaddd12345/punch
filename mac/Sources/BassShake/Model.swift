@@ -603,6 +603,10 @@ struct Settings: Codable, Equatable {
   var hearing: HearingProfile?
   /// Sections hidden with ⋯ › Presets & Settings › Edit Layout ("bento.eq", "classic.meters"…; see LayoutSection).
   var hiddenSections: [String] = []
+  /// Block order, top to bottom, per layout (hold any block, or Edit Layout); footer excluded.
+  /// Empty = the default order (LayoutSection.ordered), so default changes still reach it.
+  var bentoOrder: [String] = []
+  var classicOrder: [String] = []
   /// Power Saver (⋯ › Presets & Settings): simpler visuals and slower meters to save CPU. Never changes the sound.
   var powerSaver = false
   /// Liquid Glass Bento tiles (⋯ › Look, macOS 26+ only). Power Saver and Reduce
@@ -721,6 +725,8 @@ struct Settings: Codable, Equatable {
     soundLike = (try? c.decodeIfPresent(SoundLikeChoice.self, forKey: .soundLike)) ?? nil
     hearing = (try? c.decodeIfPresent(HearingProfile.self, forKey: .hearing)) ?? nil
     hiddenSections = (try? c.decodeIfPresent([String].self, forKey: .hiddenSections)) ?? d.hiddenSections
+    bentoOrder = ((try? c.decodeIfPresent([String].self, forKey: .bentoOrder)) ?? nil) ?? d.bentoOrder
+    classicOrder = ((try? c.decodeIfPresent([String].self, forKey: .classicOrder)) ?? nil) ?? d.classicOrder
     powerSaver = (try? c.decodeIfPresent(Bool.self, forKey: .powerSaver)) ?? d.powerSaver
     liquidGlass = (try? c.decodeIfPresent(Bool.self, forKey: .liquidGlass)) ?? d.liquidGlass
     showInDock = (try? c.decodeIfPresent(Bool.self, forKey: .showInDock)) ?? d.showInDock

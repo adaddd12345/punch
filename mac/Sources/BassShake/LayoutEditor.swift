@@ -4,6 +4,8 @@ import SwiftUI
 // current layout as a small floating card. The round button in the middle
 // hides a section (X) or brings it back (+). Each layout keeps its own list,
 // stored in Settings.hiddenSections; Mini size always shows its few controls.
+// Order: Settings.bentoOrder / classicOrder, changed by holding a block in
+// the popup (Reshuffle.swift); the cards here follow it.
 // Mac Volume is the exception: one switch (Settings.showMacVolume) for both
 // layouts and every size, Mini included.
 
@@ -57,14 +59,58 @@ struct LayoutSection: Identifiable, Equatable {
   static let classicFooter = LayoutSection(key: "classic.footer", name: "Bottom Bar", symbol: "ellipsis.circle", tint: .graphite,
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
-  static let bento: [LayoutSection] = [macVolume, bentoHero, bentoNowPlaying, bentoEQ, bentoDials, bentoPresets, bentoModes,
-                                       bentoModeSettings, bentoFooter]
+  /// Default orders, top to bottom: Mac Volume sits right under the EQ.
+  static let bento: [LayoutSection] = [bentoHero, bentoNowPlaying, bentoEQ, macVolume, bentoDials, bentoPresets,
+                                       bentoModes, bentoModeSettings, bentoFooter]
   /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
-  static let classic: [LayoutSection] = [macVolume, classicHeader, classicNowPlaying, classicEQ, classicMeters, classicSliders,
-                                         classicPresets, classicModes, classicModeSettings, classicFooter]
+  static let classic: [LayoutSection] = [classicHeader, classicNowPlaying, classicEQ, macVolume, classicMeters,
+                                         classicSliders, classicPresets, classicModes, classicModeSettings, classicFooter]
+
+  /// The defaults before Mac Volume moved under the EQ (it was first). A saved
+  /// order equal to these was never really customised: it gets the new default.
+  private static let legacyBento = ["mac.volume", "bento.hero", "bento.nowPlaying", "bento.eq", "bento.dials",
+                                    "bento.presets", "bento.modes", "bento.modeSettings"]
+  private static let legacyClassic = ["mac.volume", "classic.header", "classic.nowPlaying", "classic.eq", "classic.meters",
+                                      "classic.sliders", "classic.presets", "classic.modes", "classic.modeSettings"]
+
+  /// The footer: always last, never moves.
+  var fixed: Bool { key.hasSuffix(".footer") }
+
+  /// A saved order (movable keys, top to bottom) as sections, footer last.
+  /// Unknown keys drop out; a section missing from it (new in an update) goes
+  /// back in after its default neighbour above.
+  static func ordered(_ saved: [String], bento: Bool) -> [LayoutSection] {
+    let defaults = bento ? Self.bento : Self.classic
+    let movable = defaults.filter { !$0.fixed }
+    let fixed = defaults.filter(\.fixed)
+    if saved.isEmpty || saved == (bento ? legacyBento : legacyClassic) { return defaults }
+    var out: [LayoutSection] = []
+    for k in saved {
+      if let s = movable.first(where: { $0.key == k }), !out.contains(s) { out.append(s) }
+    }
+    for (i, s) in movable.enumerated() where !out.contains(s) {
+      let above = movable[..<i].reversed().first { out.contains($0) }
+      let at = above.flatMap { a in out.firstIndex(of: a).map { $0 + 1 } } ?? 0
+      out.insert(s, at: at)
+    }
+    return out + fixed
+  }
 }
 
 extension Settings {
+  /// This layout's sections in the user's order (footer last).
+  func layoutOrder(bento: Bool) -> [LayoutSection] {
+    LayoutSection.ordered(bento ? bentoOrder : classicOrder, bento: bento)
+  }
+
+  /// Saves a new order (movable keys, top to bottom). The default order is
+  /// stored as empty, so it keeps following future defaults.
+  mutating func setLayoutOrder(_ keys: [String], bento: Bool) {
+    let defaults = (bento ? LayoutSection.bento : LayoutSection.classic).filter { !$0.fixed }.map(\.key)
+    let k = keys == defaults ? [] : keys
+    if bento { if bentoOrder != k { bentoOrder = k } } else if classicOrder != k { classicOrder = k }
+  }
+
   /// The layout editor hasn't hidden this section.
   func shows(_ section: LayoutSection) -> Bool {
     if section.key == LayoutSection.macVolume.key { return showMacVolume }
@@ -86,7 +132,7 @@ struct LayoutEditorView: View {
   /// Power Saver and Reduce Motion keep the cards still.
   private var still: Bool { reduceMotion || powerSaver }
 
-  private var sections: [LayoutSection] { controller.settings.bento ? LayoutSection.bento : LayoutSection.classic }
+  private var sections: [LayoutSection] { controller.settings.layoutOrder(bento: controller.settings.bento) }
 
   private var anyHidden: Bool { sections.contains { !controller.settings.shows($0) } }
 
@@ -122,6 +168,7 @@ struct LayoutEditorView: View {
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
+      .pointerHint("Edit Layout", does: "To reorder, hold any block in the popup.")
       Spacer(minLength: 8)
       Button("Show All") {
         controller.settings.hiddenSections.removeAll { k in sections.contains { $0.key == k } }

@@ -719,10 +719,6 @@ enum Caption {
                 gestures: menu ? ["Right-click: auto-check after sleep"] : [])
   }
 
-  static func studioEars(on: Bool) -> PointerHint {
-    PointerHint("Studio Ears", does: "Adds deep bass and crisp highs on top of any preset.")
-  }
-
   static func loudness(on: Bool) -> PointerHint {
     PointerHint("Loudness", does: "Adds more bass and treble the lower your volume goes.")
   }

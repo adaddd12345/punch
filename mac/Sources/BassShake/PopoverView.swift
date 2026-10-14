@@ -31,6 +31,8 @@ struct PopoverView: View {
   @State private var showHearingFit = false
   @State private var showMicTest = false
   @State private var showLayoutEditor = false
+  /// Hold any block to rearrange (Reshuffle.swift).
+  @StateObject private var reshuffle: Reshuffle
 
   /// Where this copy of the controls lives.
   enum Role { case menuBar, launchWindow, pinned }
@@ -41,8 +43,10 @@ struct PopoverView: View {
   private var ownsDrawer: Bool { role != .launchWindow }
   @State private var window = WindowRef()
 
-  init(controller: AudioController, ownsDrawer: Bool = true, role: Role? = nil) {
+  /// `reshuffling`: open with the blocks already lifted (previews).
+  init(controller: AudioController, ownsDrawer: Bool = true, role: Role? = nil, reshuffling: Bool = false) {
     self.controller = controller
+    _reshuffle = StateObject(wrappedValue: Reshuffle(on: reshuffling))
     self.meters = controller.meters
     self.role = role ?? (ownsDrawer ? .menuBar : .launchWindow)
   }
@@ -72,6 +76,9 @@ struct PopoverView: View {
   private var labels: LabelLevel { controller.settings.labelLevel }
 
   private var size: ViewSize { role == .launchWindow ? .full : controller.settings.viewSize }
+
+  /// Rearranging works at Full and Compact (Mini's few controls keep their order).
+  private var canReshuffle: Bool { size != .mini }
 
   private var controls: some View {
     controlStack
@@ -110,15 +117,18 @@ struct PopoverView: View {
 
   private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
-      // The Mac's own volume, first in every layout and size (or, hidden, a
-      // red notice while the Mac is muted or at 0).
-      macSlot
-      // In your ears: the output, and every playing app behind a chevron.
-      earsSlot
-      // Banners sit above the hero (and Mini's row 1), full width.
+      let isClassicMini = !controller.settings.bento && size == .mini
+      // Classic Mini: the Mac's own volume first. Everywhere else it's a block
+      // in BentoView, placed by the layout order (default: under the EQ).
+      if isClassicMini {
+        macSlot
+        // In your ears: the output, and every playing app behind a chevron.
+        earsSlot
+      }
+      // Banners sit above every block, full width.
       statusBanner
       NowPlayingNote(controller: controller, mini: size == .mini)
-      if !controller.settings.bento && size == .mini {
+      if isClassicMini {
         classicMini
       } else {
         if size != .mini { driverSection }
@@ -128,7 +138,9 @@ struct PopoverView: View {
                   heroIcons: AnyView(size == .mini
                     ? windowTools(words: false, mini: true, height: 32, capsule: true)
                     : windowTools(words: size == .full && labels == .full)),
-                  flat: !controller.settings.bento)
+                  flat: !controller.settings.bento,
+                  macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
+                  reshuffle: reshuffle)
       }
       // Under the stack, so a mute never pushes What's Playing down.
       mutedNotice
@@ -146,8 +158,8 @@ struct PopoverView: View {
     }
     .background(sizeShortcuts)
     .onChange(of: controller.settings.viewSize) { _, new in
-      // Mini has no footer, so no Live/DJ tray either.
-      if new == .mini { showLive = false; showDJ = false; showBeats = false }
+      // Mini has no footer, so no Live/DJ tray either (and no rearranging).
+      if new == .mini { showLive = false; showDJ = false; showBeats = false; reshuffle.set(false) }
     }
     .padding(12)
     .environment(\.labelLevel, controller.settings.labelLevel)
@@ -163,6 +175,20 @@ struct PopoverView: View {
                       ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
       }
     }
+    // Rearranging: a small Done at the top (Return / Esc too).
+    .overlay(alignment: .top) {
+      if reshuffle.on {
+        ReshuffleDone(model: reshuffle) {
+          withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { reshuffle.set(false) }
+        }
+        .padding(.top, 4)
+        .transition(.opacity)
+      }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityAction(named: "Rearrange blocks") {
+      if canReshuffle { withAnimation { reshuffle.set(true) } }
+    }
     .overlay {
       if splash {
         LaunchSplash().transition(.opacity)
@@ -171,6 +197,7 @@ struct PopoverView: View {
     .background(HostWindowReader { w in
       guard let w, window.window !== w else { return }  // only real changes (runs every frame)
       window.window = w
+      reshuffle.attach(w)
       if ownsDrawer, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
     })
     .onChange(of: controller.settings.powerSaver) { _, on in ticker.setSlow(on) }
@@ -215,6 +242,11 @@ struct PopoverView: View {
     }
     .onAppear {
       visible = true
+      reshuffle.canStart = { [weak controller] in
+        guard let c = controller else { return false }
+        return c.settings.viewSize != .mini || role == .launchWindow
+      }
+      if let w = window.window { reshuffle.attach(w) }
       if !Self.splashShown {
         Self.splashShown = true
         UserDefaults.standard.set(true, forKey: "trophyShown")
@@ -246,6 +278,7 @@ struct PopoverView: View {
     }
     .onDisappear {
       visible = false
+      reshuffle.detach()
       ticker.stop()
       meters.reset()
       showLive = false
@@ -795,7 +828,7 @@ struct PopoverView: View {
           if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
         }
         Menu("Presets & Settings") {
-          Button("Edit Layout…") { withAnimation { showLayoutEditor = true } }
+          Button("Edit Layout…") { reshuffle.set(false); withAnimation { showLayoutEditor = true } }
           Toggle("Show Mac Volume", isOn: Binding(get: { controller.settings.showMacVolume },
                                                   set: { controller.settings.showMacVolume = $0 }))
           // Stored as `pointerHints` so saved settings keep loading.
@@ -814,6 +847,10 @@ struct PopoverView: View {
           // Mini: the app you hear most leads (its icon plays and pauses).
           Toggle("Show Playing App in Mini", isOn: Binding(get: { controller.settings.showPlayingChannel },
                                                            set: { controller.settings.showPlayingChannel = $0 }))
+          // Was a mode tile; too subtle to earn a square. Same setting and sound.
+          Toggle("Studio Ears", isOn: Binding(get: { controller.settings.studioEars },
+                                              set: { controller.settings.studioEars = $0 }))
+            .help("Adds deep bass and crisp highs on top of any preset.")
           // Drawing only: the sound, Fair Level and every meter's reading stay the same.
           Toggle("Power Saver", isOn: Binding(get: { controller.settings.powerSaver },
                                               set: { controller.settings.powerSaver = $0 }))

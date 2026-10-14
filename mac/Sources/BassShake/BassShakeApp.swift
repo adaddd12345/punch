@@ -515,6 +515,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     if let k = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
       guard let self, self.popover.isShown else { return event }
       let cmd = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
+      // Esc while rearranging blocks ends that (Reshuffle's Done), not the popover.
+      if event.keyCode == 53, Reshuffle.anyOn { return event }
       if event.keyCode == 53, !self.controller.pinned { self.closePopover(yieldFocus: true); return nil }
       if cmd, event.charactersIgnoringModifiers == "w" { self.closePopover(yieldFocus: true); return nil }
       if cmd, event.charactersIgnoringModifiers == "z" { self.controller.undo(); return nil }
