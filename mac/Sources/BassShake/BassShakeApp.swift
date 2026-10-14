@@ -763,14 +763,18 @@ enum MenuBarIcon {
 }
 
 extension MenuBarIcon {
-  /// The shaker at SF Symbol size (16 pt, template) for the ⋯ menu's button.
+  /// The shaker for the footer's ⋯ menu: 13 pt like its 11 pt semibold
+  /// neighbours, in the secondary label colour (redrawn per appearance) so it
+  /// carries the same weight as the stethoscope and power glyphs beside it.
   static let menuGlyph: NSImage = {
     let base = image
-    let img = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { r in
+    let img = NSImage(size: NSSize(width: 13, height: 13), flipped: false) { r in
       base.draw(in: r)
+      NSColor.secondaryLabelColor.set()
+      r.fill(using: .sourceAtop)
       return true
     }
-    img.isTemplate = true
+    img.isTemplate = false
     return img
   }()
 }

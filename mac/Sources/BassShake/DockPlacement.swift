@@ -65,8 +65,14 @@ enum DockGeometry {
 
   /// A point just above (or beside) the clicked tile, and the edge of the
   /// anchor the popover's arrow should come from.
-  static func anchor(forClick p: NSPoint, on s: NSScreen) -> (point: NSPoint, edge: NSRectEdge) {
+  static func anchor(forClick click: NSPoint, on s: NSScreen) -> (point: NSPoint, edge: NSRectEdge) {
     let f = s.frame, vf = s.visibleFrame
+    // The arrow points at the middle of our tile when we can see it (Dock's
+    // accessibility tree, only if already trusted), else at the click.
+    var p = click
+    if let c = ownTileCenter(), s.frame.insetBy(dx: -2, dy: -2).contains(c) {
+      if edge == .bottom { p.x = c.x } else { p.y = c.y }
+    }
     let t = max(thickness(on: s), distance(p, on: s) + 10)
     let inset = t + 2
     func clampX(_ x: CGFloat) -> CGFloat { min(max(x, vf.minX + 20), max(vf.minX + 20, vf.maxX - 20)) }
@@ -76,6 +82,39 @@ enum DockGeometry {
     case .left: return (NSPoint(x: f.minX + inset, y: clampY(p.y)), .maxX)
     case .right: return (NSPoint(x: f.maxX - inset, y: clampY(p.y)), .minX)
     }
+  }
+
+  /// Our Dock tile's centre in Cocoa screen coordinates, from the Dock's
+  /// accessibility tree. nil without Accessibility (never prompts) or if not found.
+  static func ownTileCenter() -> NSPoint? {
+    guard AXIsProcessTrusted(),
+          let dockApp = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
+    else { return nil }
+    let ax = AXUIElementCreateApplication(dockApp.processIdentifier)
+    AXUIElementSetMessagingTimeout(ax, 0.2)
+    func children(_ e: AXUIElement) -> [AXUIElement] {
+      var v: CFTypeRef?
+      guard AXUIElementCopyAttributeValue(e, kAXChildrenAttribute as CFString, &v) == .success else { return [] }
+      return (v as? [AXUIElement]) ?? []
+    }
+    let me = Bundle.main.bundleURL.standardizedFileURL
+    for list in children(ax) {
+      for item in children(list) {
+        var u: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(item, kAXURLAttribute as CFString, &u) == .success,
+              let url = u as? URL, url.standardizedFileURL == me else { continue }
+        var pv: CFTypeRef?, sv: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(item, kAXPositionAttribute as CFString, &pv) == .success,
+              AXUIElementCopyAttributeValue(item, kAXSizeAttribute as CFString, &sv) == .success else { return nil }
+        var pos = CGPoint.zero, size = CGSize.zero
+        AXValueGetValue(pv as! AXValue, .cgPoint, &pos)
+        AXValueGetValue(sv as! AXValue, .cgSize, &size)
+        // AX is top-left based on the primary display; Cocoa is bottom-left.
+        let top = NSScreen.screens.first?.frame.maxY ?? 0
+        return NSPoint(x: pos.x + size.width / 2, y: top - (pos.y + size.height / 2))
+      }
+    }
+    return nil
   }
 
   /// The middle of the Dock's edge (no click to go by).
