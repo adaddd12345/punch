@@ -762,6 +762,19 @@ enum MenuBarIcon {
   }()
 }
 
+extension MenuBarIcon {
+  /// The shaker at SF Symbol size (16 pt, template) for the ⋯ menu's button.
+  static let menuGlyph: NSImage = {
+    let base = image
+    let img = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { r in
+      base.draw(in: r)
+      return true
+    }
+    img.isTemplate = true
+    return img
+  }()
+}
+
 /// What the menu-bar icon says about the Mac's volume.
 enum VolumeGlyph: Hashable {
   /// 0–10 lit pills (0 also when the level can't be read, e.g. HDMI with no software volume).

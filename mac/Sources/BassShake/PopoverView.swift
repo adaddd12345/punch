@@ -672,7 +672,7 @@ struct PopoverView: View {
     case .unsupported:
       Banner(symbol: "xmark.octagon", tint: .red, text: "Requires macOS 14.4 or later.", action: nil, secondary: nil)
     case _ where updates.justUpdatedTo != nil:
-      Banner(symbol: "sparkles", tint: .accentColor,
+      Banner(symbol: TourSpeakerGlyph.symbol, tint: .accentColor,
              text: "Updated to \(updates.justUpdatedTo ?? ""). Enjoy the new build.",
              action: ("OK", { updates.justUpdatedTo = nil }),
              secondary: ("What's New", { Links.open(.help); updates.justUpdatedTo = nil }))
@@ -1024,12 +1024,13 @@ struct PopoverView: View {
         Divider()
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       } label: {
-        Image(systemName: "ellipsis.circle")
+        Image(nsImage: MenuBarIcon.menuGlyph)
       }
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
       .fixedSize()
       .help("Updates, version and Quit")
+      .accessibilityLabel("More")
       Button { NSApp.terminate(nil) } label: {
         if labels == .full { Text("Quit").fixedSize() } else { Image(systemName: "power") }
       }
@@ -1148,7 +1149,10 @@ private struct Banner: View {
       Label {
         Text(text).foregroundStyle(Color.primary)
       } icon: {
-        Image(systemName: symbol).foregroundStyle(contrast == .increased ? Color.primary : tint)
+        Group {
+          if symbol == TourSpeakerGlyph.symbol { TourSpeakerGlyph(size: 13) } else { Image(systemName: symbol) }
+        }
+        .foregroundStyle(contrast == .increased ? Color.primary : tint)
       }
         .font(.system(size: 11, weight: .medium))
         .fixedSize(horizontal: false, vertical: true)
