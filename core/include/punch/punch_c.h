@@ -71,6 +71,14 @@ void punch_set_compressor(PunchEngine* e, bool enabled, float threshold_db, floa
 void punch_set_saturator(PunchEngine* e, bool enabled, float drive_db, float mix, float tone_hz, float asymmetry,
                          float crossover_hz);
 void punch_set_ambience(PunchEngine* e, bool enabled, float mix, float size, float damping_hz);
+/* Bass character, after the user EQ: kind 0 off, 1 Distort (driven, distorted
+ * 808), 2 Punch (boom-bap transient snap + warmth). amount 0..1 (glides).
+ * Only the low band changes and the lows end up mono. Off = bit-exact. */
+void punch_set_bass_character(PunchEngine* e, int kind, float amount);
+/* Late Night: mellow, underwater master tone (low-pass 5 -> 2.5 kHz with
+ * haze 0..1, warm shelf, tape drive, glue compression, short room). Fades in
+ * and out over ~300 ms; caps Distort's drive while on. Off = bit-exact. */
+void punch_set_late_night(PunchEngine* e, bool on, float haze);
 /* color: 0 white, 1 pink, 2 brown. level_db is RMS dBFS. */
 void punch_set_noise(PunchEngine* e, bool enabled, int color, float level_db);
 /* Night Guard: turns down anything more than over_db louder than the running

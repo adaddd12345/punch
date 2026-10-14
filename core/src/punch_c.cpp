@@ -94,7 +94,19 @@ void punch_set_saturator(PunchEngine* e, bool enabled, float drive_db, float mix
 }
 
 void punch_set_ambience(PunchEngine* e, bool enabled, float mix, float size, float damping_hz) {
-  e->engine.edit().ambience = {mix, size, damping_hz, enabled};
+  e->engine.edit().ambience = {mix, size, damping_hz, enabled, 1.f};
+}
+
+void punch_set_bass_character(PunchEngine* e, int kind, float amount) {
+  auto& b = e->engine.edit().bassCharacter;
+  b.kind = static_cast<punch::BassCharacterKind>(std::clamp(kind, 0, 2));
+  b.amount = amount;
+}
+
+void punch_set_late_night(PunchEngine* e, bool on, float haze) {
+  auto& l = e->engine.edit().lateNight;
+  l.enabled = on;
+  l.haze = haze;
 }
 
 void punch_set_noise(PunchEngine* e, bool enabled, int color, float level_db) {

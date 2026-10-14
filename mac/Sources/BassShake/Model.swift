@@ -196,6 +196,9 @@ extension EQBand {
 /// masking, not at "deeper sleep" or "better focus" claims.
 enum ListeningMode: String, Codable, CaseIterable, Identifiable {
   case off, study, sleep
+  /// Late Night: a mellow, underwater master tone (engine stage, see
+  /// punch_set_late_night) layered on the current sound, not a preset swap.
+  case lateNight
   var id: String { rawValue }
 
   var title: String {
@@ -203,6 +206,7 @@ enum ListeningMode: String, Codable, CaseIterable, Identifiable {
     case .off: return "Off"
     case .study: return "Study"
     case .sleep: return "Sleep"
+    case .lateNight: return "Late Night"
     }
   }
 
@@ -211,8 +215,23 @@ enum ListeningMode: String, Codable, CaseIterable, Identifiable {
     case .off: return "circle.slash"
     case .study: return "book"
     case .sleep: return "moon.zzz"
+    case .lateNight: return "moon.haze"
     }
   }
+
+  /// One plain line on what the mode does (true to the engine).
+  var description: String {
+    switch self {
+    case .off: return "No listening mode."
+    case .study: return "Calm sound for focus; swaps out your preset until turned off."
+    case .sleep: return "Soft, dark sound that fades out on a timer; replaces your preset."
+    case .lateNight: return "Mellow, underwater warmth for late hours; layers on your sound."
+    }
+  }
+
+  /// Modes that add an engine stage on top of the current sound instead of
+  /// swapping in their own preset.
+  var isLayered: Bool { self == .lateNight }
 
   /// Study: warm lo-fi tilt, rolled-off hiss band, gentle tape drive and
   /// slow compression so nothing jumps out and grabs attention.
@@ -221,7 +240,7 @@ enum ListeningMode: String, Codable, CaseIterable, Identifiable {
   /// peaks held 6 dB lower, no bass enhancement.
   var preset: Preset? {
     switch self {
-    case .off: return nil
+    case .off, .lateNight: return nil
     case .study:
       return Preset(name: "Study", nodes: [(110, 1.5, 0.71), (35, -4, 0.7), (300, 2, 0.8), (2_800, -2.5, 1), (6_000, -2, 1.4), (10_000, -6, 0.71)],
                     bass: 0.25, symbol: symbol,
@@ -238,6 +257,41 @@ enum ListeningMode: String, Codable, CaseIterable, Identifiable {
 
   /// Default masking-noise bed level (RMS dBFS) when the noise is on.
   var defaultNoiseDb: Double { self == .sleep ? -36 : -42 }
+}
+
+/// Bass character: reshapes only the low band (after the EQ, before Strength).
+enum BassCharacter: String, Codable, CaseIterable, Identifiable {
+  case off, distort, punch
+  var id: String { rawValue }
+  /// Engine kind for punch_set_bass_character.
+  var kind: Int32 {
+    switch self {
+    case .off: return 0
+    case .distort: return 1
+    case .punch: return 2
+    }
+  }
+  var title: String {
+    switch self {
+    case .off: return "Off"
+    case .distort: return "Distort"
+    case .punch: return "Punch"
+    }
+  }
+  var symbol: String {
+    switch self {
+    case .off: return "circle.slash"
+    case .distort: return "flame"
+    case .punch: return "bolt"
+    }
+  }
+  var description: String {
+    switch self {
+    case .off: return "Bass as the music has it."
+    case .distort: return "Drives the 808 into gritty distortion, level-matched."
+    case .punch: return "Snappier kick attack, shorter boom, a touch of warmth."
+    }
+  }
 }
 
 /// "Studio Ears": an additive layer in the correction stage that leans into
@@ -575,6 +629,11 @@ struct Settings: Codable, Equatable {
   /// The menu-bar icon carries the Mac's volume: a stack of 10 pills beside the
   /// shaker, a slash while muted or at 0 (⋯ › Look).
   var menuBarVolume = true
+  /// Bass character (Distort / Punch) and its amount (0...1).
+  var bassCharacter: BassCharacter = .off
+  var bassAmount: Double = 0.6
+  /// Late Night mode's haze (0...1): darker, warmer, more room.
+  var lateNightHaze: Double = 0.5
 
   /// Whether the menu-bar icon is shown: never hidden unless the Dock icon is on.
   var menuBarIconShown: Bool { showInMenuBar || !showInDock }
@@ -670,6 +729,9 @@ struct Settings: Codable, Equatable {
     showPlayingChannel = (try? c.decodeIfPresent(Bool.self, forKey: .showPlayingChannel)) ?? d.showPlayingChannel
     playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
+    bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
+    bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount
+    lateNightHaze = (try? c.decodeIfPresent(Double.self, forKey: .lateNightHaze)) ?? d.lateNightHaze
   }
 
   static func load() -> Settings {

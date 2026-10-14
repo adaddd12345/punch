@@ -692,7 +692,8 @@ final class AudioController: ObservableObject {
       s.noiseDb = mode.defaultNoiseDb
       target = p.bands()
     } else {
-      // Back to what this device had: the snapshot if the mode started on
+      // Off, or a layered mode (Late Night) that plays on top of the user's
+      // own sound: back to what this device had: the snapshot if the mode started on
       // this output, else the device's own remembered sound, else Bass Shake.
       let uid = currentDevice?.uid
       if let b = s.beforeMode, b.deviceUID == nil || b.deviceUID == uid || !s.perDevice {
@@ -711,7 +712,7 @@ final class AudioController: ObservableObject {
         target = p.bands()
       }
       target = EQBand.normalized(target)
-      s.beforeMode = nil
+      if !mode.isLayered { s.beforeMode = nil }  // a layered mode still restores it when it ends
       s.noiseOn = false
     }
     stopSleepTimer()
@@ -1075,6 +1076,10 @@ final class AudioController: ObservableObject {
   static let autoLimitAboveDb = 6.0
   /// Rough peak lift (dB) of the Bass slider at full amount, for the above.
   static let bassPeakDb = 4.0
+  /// Punch's transient lift at full amount (engine: +6 dB on kick attacks).
+  static let punchPeakDb = 6.0
+  /// Strength cap while Distort is on (its harmonics would stack on the drive).
+  static let distortMaxStrength = 0.45
 
   private func configureEQOffMain(_ e: OpaquePointer, _ s: Settings, _ live: LiveState = LiveState()) {
     let fade = live.fade, headphones = live.headphones
@@ -1103,8 +1108,12 @@ final class AudioController: ObservableObject {
     let unlimited = !s.limit && s.mode != .sleep
     punch_set_auto_preamp(e, !unlimited)
     punch_set_preamp_db(e, 0)
-    let bass = s.studioEars && s.mode != .sleep ? min(StudioEars.maxBass, s.bass + StudioEars.extraBass) : s.bass
+    var bass = s.studioEars && s.mode != .sleep ? min(StudioEars.maxBass, s.bass + StudioEars.extraBass) : s.bass
+    // Distort already makes the 808's harmonics; cap Strength's extra lift on top.
+    if s.bassCharacter == .distort { bass = min(bass, Self.distortMaxStrength) }
     punch_set_bass(e, bass > 0.001, Float(bass), 110)
+    punch_set_bass_character(e, s.bassCharacter.kind, Float(max(0, min(1, s.bassAmount))))
+    punch_set_late_night(e, s.mode == .lateNight, Float(max(0, min(1, s.lateNightHaze))))
 
     let c = s.character
     if let k = c.compressor, !unlimited {
@@ -1141,7 +1150,8 @@ final class AudioController: ObservableObject {
     // the output gain and the limiter's on/off both glide in the engine.
     // The peak is the real response of correction + EQ (preamps included),
     // plus a rough allowance for the Bass slider's harmonics.
-    let eqPeak = max(0, punch_eq_peak_boost_db(e) + bass * Self.bassPeakDb)
+    let punchPeak = s.bassCharacter == .punch ? Self.punchPeakDb * max(0, min(1, s.bassAmount)) : 0
+    let eqPeak = max(0, punch_eq_peak_boost_db(e) + bass * Self.bassPeakDb + punchPeak)
     var auto = loudnessMakeup + fair
     if auto > 0 { auto = min(auto, max(0, Self.maxLiftDb - eqPeak - max(0, boost))) }
     let lift = boost + auto

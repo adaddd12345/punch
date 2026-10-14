@@ -38,7 +38,9 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   correction_.prepare(sampleRate, numChannels_);
   hearing_.prepare(sampleRate);
   eq_.prepare(sampleRate, numChannels_);
+  bassChar_.prepare(sampleRate, numChannels_);
   bass_.prepare(sampleRate, numChannels_);
+  lateNight_.prepare(sampleRate, numChannels_);
   stereo_.prepare(sampleRate);
   crossfeed_.prepare(sampleRate);
   compressor_.prepare(sampleRate);
@@ -117,7 +119,9 @@ void Engine::applySnapshot(const EngineParams& p) {
     correction_.setParams(flat);
     hearing_.setParams({});
     eq_.setParams(flat);
+    bassChar_.setParams({});
     bass_.setParams({});
+    lateNight_.setParams({});
     stereo_.setParams({});
     crossfeed_.setParams({});
     compressor_.setParams({});
@@ -140,7 +144,11 @@ void Engine::applySnapshot(const EngineParams& p) {
   correction_.setParams(p.correction);
   hearing_.setParams(p.hearing);
   eq_.setParams(p.eq);
+  BassCharacterParams bc = p.bassCharacter;
+  if (p.lateNight.enabled) bc.driveScale = std::min(bc.driveScale, 0.6f);  // mellow: cap Distort's drive
+  bassChar_.setParams(bc);
   bass_.setParams(p.bass);
+  lateNight_.setParams(p.lateNight);
   stereo_.setParams(p.stereo);
   crossfeed_.setParams(p.crossfeed);
   compressor_.setParams(p.compressor);
@@ -171,12 +179,15 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   correction_.process(ch, numChannels, numFrames);
   hearing_.process(ch, numChannels, numFrames);
   eq_.process(ch, numChannels, numFrames);
+  // Bass character reshapes the (EQ'd) low band before anything adds to it.
+  bassChar_.process(ch, numChannels, numFrames);
   // Saturate after EQ (mud already cut), compress after saturation, add
   // psychoacoustic bass after both so its harmonics don't pump or re-distort.
   saturator_.process(ch, numChannels, numFrames);
   compressor_.process(ch, numChannels, numFrames);
   bass_.process(ch, numChannels, numFrames);
   stereo_.process(ch, numChannels, numFrames);
+  lateNight_.process(ch, numChannels, numFrames);
   ambience_.process(ch, numChannels, numFrames);
   crossfeed_.process(ch, numChannels, numFrames);
   // DJ effects, then Night Guard (so a guarded level isn't undone by them).
@@ -217,7 +228,9 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     correction_.reset();
     hearing_.reset();
     eq_.reset();
+    bassChar_.reset();
     bass_.reset();
+    lateNight_.reset();
     stereo_.reset();
     crossfeed_.reset();
     compressor_.reset();

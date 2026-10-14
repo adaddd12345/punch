@@ -16,6 +16,7 @@
 #include "punch/autoeq.hpp"
 #include "punch/character.hpp"
 #include "punch/engine.hpp"
+#include "punch/flavor.hpp"
 #include "punch/fx.hpp"
 #include "punch/lockfree.hpp"
 #include "punch/punch_c.h"
@@ -413,6 +414,8 @@ TEST(engine_process_is_allocation_free) {
   e.edit().noise = {NoiseColor::Pink, -40.f, true};
   e.edit().dj = {true, false, false, -0.5f, true, true, true};
   e.edit().guard = {8.f, 20.f, true};
+  e.edit().bassCharacter = {BassCharacterKind::Distort, 0.7f, 1.f};
+  e.edit().lateNight = {true, 0.5f};
   e.prepare(48000, 2, 1024);
   std::vector<float> buf(2048 * 2, 0.1f);
   e.edit().eq.bands[3].gainDb = -4;
@@ -1253,6 +1256,179 @@ TEST(engine_hearing_c_api) {
   punch_engine_publish(e);
   punch_engine_destroy(e);
   CHECK(true);
+}
+
+// ---------------------------------------------------------------------------
+// Bass character (Distort / Punch) and Late Night.
+
+// Stereo pink-ish noise (Kellet), decorrelated, scaled to `rmsDb` dBFS.
+static std::vector<float> pinkStereo(int n, float rmsDb, unsigned seed) {
+  std::vector<float> out(size_t(n) * 2);
+  std::mt19937 rng(seed);
+  std::uniform_real_distribution<float> ud(-1.f, 1.f);
+  for (int c = 0; c < 2; ++c) {
+    float b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (int i = 0; i < n; ++i) {
+      const float w = ud(rng);
+      b0 = 0.99886f * b0 + w * 0.0555179f; b1 = 0.99332f * b1 + w * 0.0750759f;
+      b2 = 0.96900f * b2 + w * 0.1538520f; b3 = 0.86650f * b3 + w * 0.3104856f;
+      b4 = 0.55000f * b4 + w * 0.5329522f; b5 = -0.7616f * b5 - w * 0.0168980f;
+      out[size_t(i) * 2 + size_t(c)] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362f;
+      b6 = w * 0.115926f;
+    }
+  }
+  double s = 0;
+  for (float v : out) s += double(v) * v;
+  const float g = dbToGain(rmsDb) / float(std::sqrt(s / double(out.size())));
+  for (float& v : out) v *= g;
+  return out;
+}
+
+// Runs an interleaved stereo buffer through a planar processor in blocks.
+template <typename P>
+static void runStereo(P& proc, std::vector<float>& buf, int block = 256) {
+  const int n = int(buf.size() / 2);
+  std::vector<float> l(static_cast<size_t>(block)), r(static_cast<size_t>(block));
+  for (int s = 0; s < n; s += block) {
+    const int m = std::min(block, n - s);
+    for (int i = 0; i < m; ++i) { l[size_t(i)] = buf[size_t(s + i) * 2]; r[size_t(i)] = buf[size_t(s + i) * 2 + 1]; }
+    float* ch[2] = {l.data(), r.data()};
+    proc.process(ch, 2, m);
+    for (int i = 0; i < m; ++i) { buf[size_t(s + i) * 2] = l[size_t(i)]; buf[size_t(s + i) * 2 + 1] = r[size_t(i)]; }
+  }
+}
+
+static double rmsDb(const std::vector<float>& v, size_t from) {
+  double s = 0;
+  for (size_t i = from; i < v.size(); ++i) s += double(v[i]) * v[i];
+  return 10.0 * std::log10(s / double(v.size() - from) + 1e-30);
+}
+
+TEST(flavor_off_is_bit_exact) {
+  const auto in = pinkStereo(48000 * 3, -18.f, 3);
+  BassCharacter bc;
+  bc.prepare(48000, 2);
+  LateNight ln;
+  ln.prepare(48000, 2);
+  auto a = in, b = in;
+  runStereo(bc, a);
+  runStereo(ln, b);
+  CHECK(a == in);
+  CHECK(b == in);
+  // On, then off again: once the ramps finish, bit-exact again.
+  for (int kind = 1; kind <= 2; ++kind) {
+    BassCharacter c2;
+    c2.prepare(48000, 2);
+    c2.setParams({BassCharacterKind(kind), 0.8f, 1.f});
+    auto x = in;
+    runStereo(c2, x);
+    CHECK(x != in);
+    c2.setParams({});
+    auto y = in;
+    runStereo(c2, y);  // ramps out during the first 25 ms
+    auto z = in;
+    runStereo(c2, z);
+    CHECK(z == in);
+  }
+  LateNight l2;
+  l2.prepare(48000, 2);
+  l2.setParams({true, 0.5f});
+  auto x = in;
+  runStereo(l2, x);
+  CHECK(x != in);
+  l2.setParams({});
+  auto y = in;
+  runStereo(l2, y);
+  auto z = in;
+  runStereo(l2, z);
+  CHECK(z == in);
+}
+
+TEST(flavor_finite_no_denormals_44k_192k) {
+  for (double fs : {44100.0, 192000.0}) {
+    Engine e;
+    e.edit().bassCharacter = {BassCharacterKind::Distort, 1.f, 1.f};
+    e.edit().lateNight = {true, 1.f};
+    e.prepare(fs, 2, 512);
+    const int n = int(fs) * 2;
+    // Hot 808 + noise, then silence; switch kind and haze mid-way.
+    std::vector<float> buf(size_t(n) * 2);
+    auto noise = pinkStereo(n, -10.f, 9);
+    for (int i = 0; i < n; ++i)
+      for (int c = 0; c < 2; ++c)
+        buf[size_t(i) * 2 + size_t(c)] = i < n / 2 ? 1.5f * float(std::sin(2 * std::numbers::pi * 45 * i / fs)) +
+                                                         noise[size_t(i) * 2 + size_t(c)]
+                                                   : 0.f;
+    bool finite = true, subnormal = false;
+    float peak = 0.f;
+    for (int s = 0; s < n; s += 512) {
+      if (s == n / 4) {
+        e.edit().bassCharacter = {BassCharacterKind::Punch, 0.3f, 1.f};
+        e.edit().lateNight.haze = 0.f;
+        e.publish();
+      }
+      const int m = std::min(512, n - s);
+      e.processInterleaved(&buf[size_t(s) * 2], &buf[size_t(s) * 2], 2, m);
+    }
+    for (float v : buf) {
+      finite &= std::isfinite(v);
+      subnormal |= std::fpclassify(v) == FP_SUBNORMAL;
+      peak = std::max(peak, std::fabs(v));
+    }
+    CHECK(finite);
+    CHECK(!subnormal);
+    CHECK(peak < 2.f);
+  }
+}
+
+TEST(flavor_loudness_roughly_matched) {
+  const auto in = pinkStereo(48000 * 5, -18.f, 5);
+  const double ref = rmsDb(in, in.size() / 2);
+  for (int kind = 1; kind <= 2; ++kind) {
+    BassCharacter bc;
+    bc.prepare(48000, 2);
+    bc.setParams({BassCharacterKind(kind), 0.6f, 1.f});
+    auto x = in;
+    runStereo(bc, x);
+    const double d = rmsDb(x, x.size() / 2) - ref;
+    std::printf("    bass character %d: %+.2f dB\n", kind, d);
+    CHECK(std::fabs(d) <= 1.5);
+  }
+  LateNight ln;
+  ln.prepare(48000, 2);
+  ln.setParams({true, 0.5f});
+  auto x = in;
+  runStereo(ln, x);
+  const double d = rmsDb(x, x.size() / 2) - ref;
+  std::printf("    late night: %+.2f dB\n", d);
+  CHECK(std::fabs(d) <= 1.5);
+}
+
+TEST(late_night_darkens_8k) {
+  LateNight ln;
+  ln.prepare(48000, 2);
+  ln.setParams({true, 0.5f});
+  const int n = 48000;
+  std::vector<float> buf(size_t(n) * 2);
+  for (int i = 0; i < n; ++i)
+    buf[size_t(i) * 2] = buf[size_t(i) * 2 + 1] = 0.1f * float(std::sin(2 * std::numbers::pi * 8000.0 * i / 48000.0));
+  const double ref = rmsDb(buf, buf.size() / 2);
+  runStereo(ln, buf);
+  const double d = rmsDb(buf, buf.size() / 2) - ref;
+  std::printf("    late night 8 kHz: %+.1f dB\n", d);
+  CHECK(d <= -10.0);
+}
+
+TEST(bass_character_c_api) {
+  PunchEngine* e = punch_engine_create();
+  punch_engine_prepare(e, 48000, 2, 512);
+  punch_set_bass_character(e, 1, 0.6f);
+  punch_set_late_night(e, true, 0.5f);
+  punch_engine_publish(e);
+  std::vector<float> buf(512 * 2, 0.2f);
+  punch_process_interleaved(e, buf.data(), buf.data(), 2, 512);
+  for (float v : buf) CHECK(std::isfinite(v));
+  punch_engine_destroy(e);
 }
 
 int main() {
