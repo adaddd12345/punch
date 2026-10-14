@@ -38,6 +38,8 @@ struct NowEntryText {
   var subtitle: String
   var paused: Bool
   var artwork: NSImage?
+  /// A browser tab's site icon, when there's no still.
+  var favicon: NSImage? = nil
   /// Spotify / Music gave us the song.
   var song: Bool
 }
@@ -53,12 +55,14 @@ extension NowPlaying {
     var detail: [String] = []
     let paused: Bool
     var art: NSImage?
+    var icon: NSImage?
     var song = false
     if let item = e.item {
       paused = !item.mayPlay
       if !item.title.isEmpty { title = item.title }
       if !item.subtitle.isEmpty { detail.append(item.subtitle) }
       art = item.artwork
+      icon = item.artwork == nil ? item.favicon : nil
     } else if route(app) == .script, let t = app.bundleID.flatMap({ tracks[$0] }) {
       paused = !t.playing
       if !t.title.isEmpty { title = t.title }
@@ -74,7 +78,7 @@ extension NowPlaying {
     var line = (lead + detail).joined(separator: " · ")
     // Only the app's name is known: say what it's doing, so the line is never empty.
     if line.isEmpty { line = paused ? "Paused" : "Playing" }
-    return NowEntryText(title: title, subtitle: line, paused: paused, artwork: art, song: song)
+    return NowEntryText(title: title, subtitle: line, paused: paused, artwork: art, favicon: icon, song: song)
   }
 
   /// The app is muted and this entry is where that shows: the app's first
@@ -422,7 +426,7 @@ struct NowStackTile: View {
 
   private func content(_ app: NowApp, _ text: NowEntryText, art: CGFloat) -> some View {
       HStack(alignment: .center, spacing: 8) {
-        NowEntryArtButton(model: model, entry: entry, artwork: text.artwork, size: art)
+        NowEntryArtButton(model: model, entry: entry, artwork: text.artwork, favicon: text.favicon, size: art)
           .loadingArt(loading, size: art)
           .modifier(NowMorph(id: entry.id))
         Button(action: promote) {
@@ -436,7 +440,7 @@ struct NowStackTile: View {
               .foregroundStyle(Color.primary)
               .contentTransition(.opacity)
               .loadingLine(loading, fraction: NowLoading.titleWidth(entry.id), font: compact ? 11 : 12)
-            NowSubtitle(text: text.subtitle, icon: text.artwork != nil ? model.icon(app) : nil,
+            NowSubtitle(text: text.subtitle, icon: text.hasArt ? model.icon(app) : nil,
                         font: compact ? 9 : 10)
               .loadingLine(loading, fraction: NowLoading.subtitleWidth(entry.id), font: compact ? 9 : 10)
           }
@@ -469,6 +473,7 @@ struct NowEntryArtButton: View {
   @ObservedObject var model: NowPlaying
   let entry: NowEntry
   let artwork: NSImage?
+  var favicon: NSImage? = nil
   let size: CGFloat
   @State private var hover = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -503,7 +508,7 @@ struct NowEntryArtButton: View {
                         chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
                         browser: app.isBrowser)
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
-      NowArt(artwork: artwork, icon: model.icon(app), size: size)
+      NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: size)
         .overlay {
           if showGlyph {
             ZStack {
@@ -690,4 +695,9 @@ extension View {
   func loadingArt(_ loading: Bool, size: CGFloat) -> some View {
     modifier(LoadingArt(loading: loading, size: size))
   }
+}
+
+extension NowEntryText {
+  /// A cover, still or site icon fills the art slot (the app's icon then leads the words).
+  var hasArt: Bool { artwork != nil || favicon != nil }
 }

@@ -93,7 +93,7 @@ struct NowPlayingHeadline: View {
                        _ note: (id: String, text: String, settings: Bool)?,
                        loading: Bool) -> some View {
       HStack(alignment: .center, spacing: 8) {
-        NowArt(artwork: text.artwork, icon: model.icon(app), size: art)
+        NowArt(artwork: text.artwork, favicon: text.favicon, icon: model.icon(app), size: art)
           .loadingArt(loading, size: art)
           .modifier(NowMorph(id: entry.id))
         VStack(alignment: .leading, spacing: 2) {
@@ -120,7 +120,7 @@ struct NowPlayingHeadline: View {
                 .foregroundStyle(Color.primary)
                 .contentTransition(.opacity)
                 .loadingLine(loading, fraction: NowLoading.titleWidth(entry.id), font: title)
-              NowSubtitle(text: text.subtitle, icon: text.artwork != nil ? model.icon(app) : nil, font: 11)
+              NowSubtitle(text: text.subtitle, icon: text.hasArt ? model.icon(app) : nil, font: 11)
                 .loadingLine(loading, fraction: NowLoading.subtitleWidth(entry.id), font: 11)
             }
             .modifier(StillWhileMorphing())
@@ -282,10 +282,12 @@ private struct NextButton: View {
 
 // The small tiles under the hero (NowPlayingTiles) live in NowStack.swift.
 
-/// Cover art (or a tab's still), or just the app's icon. Never a badge: with
-/// art, the app's icon leads the words instead (NowSubtitle).
+/// Cover art (or a tab's still), else the tab's site icon on a neutral tile,
+/// else just the app's icon. Never a badge: with art or a site icon, the app's
+/// icon leads the words instead (NowSubtitle).
 struct NowArt: View {
   let artwork: NSImage?
+  var favicon: NSImage? = nil
   let icon: NSImage
   let size: CGFloat
   @Environment(\.powerSaver) private var powerSaver
@@ -303,6 +305,21 @@ struct NowArt: View {
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
           .transition(.opacity)
+      } else if let favicon {
+        // Centred at ~60% on a quiet tile, so a small or low-res icon looks meant.
+        let side = (size * 0.6).rounded()
+        shape.fill(Color.primary.opacity(0.07))
+          .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+          .overlay(
+            Image(nsImage: favicon)
+              .resizable()
+              .interpolation(.high)
+              .aspectRatio(contentMode: .fit)
+              .frame(width: side, height: side)
+              .clipShape(RoundedRectangle(cornerRadius: side * 0.18, style: .continuous))
+          )
+          .frame(width: size, height: size)
+          .transition(.opacity)
       } else {
         Image(nsImage: icon)
           .resizable()
@@ -314,6 +331,7 @@ struct NowArt: View {
     .frame(width: size, height: size)
     // A still or cover that arrives after the words fades in, never pops.
     .animation(.easeOut(duration: 0.3), value: artwork.map(ObjectIdentifier.init))
+    .animation(.easeOut(duration: 0.3), value: favicon.map(ObjectIdentifier.init))
     .accessibilityHidden(true)
   }
 }

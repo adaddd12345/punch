@@ -107,6 +107,8 @@ struct NowItem: Equatable, Identifiable {
   var url: URL?
   /// A still for the item (YouTube's video thumbnail); nil until fetched or unknown.
   var artwork: NSImage?
+  /// The site's own icon (from its host), shown when there's no still; nil until fetched.
+  var favicon: NSImage? = nil
   /// Heard right now (the tab's own audio indicator), not just open.
   var playing: Bool
   /// `playing` comes from the browser's own tab audio indicator (Chromium tab
@@ -134,7 +136,9 @@ struct NowItem: Equatable, Identifiable {
 /// tabs' titles and URLs by AppleScript (no JavaScript), and, when the app is
 /// already trusted for Accessibility (never prompted here), Chromium's tab strip
 /// says which tabs are playing ("<title> - Audio playing"). Result: `items`, one
-/// per playing tab; YouTube stills come from i.ytimg.com (same ephemeral session).
+/// per playing tab; YouTube stills come from i.ytimg.com (same ephemeral session),
+/// and a tab without one shows its site's icon, asked of that site's own host
+/// only (SiteIcon; never a favicon service, never a private or local host).
 ///
 /// Main-thread state. AppleScript runs on `scriptQueue` (Spotify / Music) and
 /// `browserQueue` (browsers), both serial and never main. Polls of one kind never
@@ -273,6 +277,11 @@ final class NowPlaying: ObservableObject {
   /// YouTube stills by video id.
   private var stillCache: [String: NSImage] = [:]
   private var stillLoading: Set<String> = []
+  /// Site icons by host (bounded), hosts that had none (kept for the session), and in flight.
+  private var iconCache: [String: NSImage] = [:]
+  private var iconFailed: Set<String> = []
+  private var iconLoading: Set<String> = []
+  private lazy var iconLoader = SiteIconLoader()
   /// A browser poll is on `browserQueue` (reset in applyBrowsers, its only exit).
   private var browserBusy = false
   /// The last tabs / songs of apps that left the screen (memory only, never
@@ -387,6 +396,8 @@ final class NowPlaying: ObservableObject {
       itemSeen = [:]
       stillCache.removeAll()
       stillLoading.removeAll()
+      iconCache.removeAll()
+      iconLoading.removeAll()
       lastHeard = [:]
       known = [:]
       firstSeen = [:]
@@ -1117,6 +1128,10 @@ final class NowPlaying: ObservableObject {
           if let vid = list[i].url.flatMap({ BrowserTabs.youTubeID($0.absoluteString) }) {
             if let hit = stillCache[vid] { list[i].artwork = hit } else { loadStill(vid) }
           }
+          // No still (yet): the site's own icon. Items are never from private windows.
+          if list[i].artwork == nil, let host = SiteIcon.host(list[i].url) {
+            if let hit = iconCache[host] { list[i].favicon = hit } else { loadIcon(host) }
+          }
         }
         // Heard tabs first, then a stable order (first seen), so tiles don't shuffle.
         list = list.enumerated().sorted { x, y in
@@ -1157,6 +1172,33 @@ final class NowPlaying: ObservableObject {
       next[k] = list.map { it in
         var it = it
         if it.artwork == nil, it.url.flatMap({ BrowserTabs.youTubeID($0.absoluteString) }) == vid { it.artwork = img }
+        return it
+      }
+    }
+    if next != items { items = next }
+  }
+
+  /// A site's icon from its own host only (SiteIcon: https, ephemeral, 3 s,
+  /// 512 KB, same-domain redirects). Failures aren't retried this session.
+  private func loadIcon(_ host: String) {
+    guard !iconLoading.contains(host), !iconFailed.contains(host) else { return }
+    iconLoading.insert(host)
+    iconLoader.load(host: host) { [weak self] img in
+      DispatchQueue.main.async { self?.iconLoaded(img, host: host) }
+    }
+  }
+
+  private func iconLoaded(_ img: NSImage?, host: String) {
+    guard iconLoading.remove(host) != nil else { return }   // turned off while loading
+    guard wanted else { return }
+    guard let img else { iconFailed.insert(host); return }
+    if iconCache.count >= 64 { iconCache.removeAll() }
+    iconCache[host] = img
+    var next = items
+    for (k, list) in next {
+      next[k] = list.map { it in
+        var it = it
+        if it.favicon == nil, SiteIcon.host(it.url) == host { it.favicon = img }
         return it
       }
     }
@@ -1303,13 +1345,15 @@ final class NowPlaying: ObservableObject {
 }
 
 /// Holds a cover download's redirects to the hosts it started on: Spotify's
-/// own image hosts, or i.ytimg.com for YouTube stills.
-final class ArtRedirectGuard: NSObject, URLSessionTaskDelegate {
+/// own image hosts, i.ytimg.com for YouTube stills, or a site icon's own
+/// registrable domain (https only, never a private host).
+class ArtRedirectGuard: NSObject, URLSessionTaskDelegate {
   func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                   newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
     guard let to = request.url, let from = task.originalRequest?.url else { completionHandler(nil); return }
     let ok = (NowPlaying.isSpotifyArt(from) && NowPlaying.isSpotifyArt(to))
       || (BrowserTabs.isYouTubeStill(from) && BrowserTabs.isYouTubeStill(to))
+      || SiteIcon.allowsRedirect(from: from, to: to)
     completionHandler(ok ? request : nil)
   }
 }

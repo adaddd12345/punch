@@ -57,12 +57,12 @@ struct PlayingChannelMini<Chip: View>: View {
     let text = model.describe(stack.entry(for: app))
     let paused = text.paused
     HStack(alignment: .center, spacing: 8) {
-      disc(text.artwork)
+      disc(text.artwork, favicon: text.favicon)
       VStack(alignment: .leading, spacing: 1) {
         Button { model.open(app) } label: {
           // Mini has no second line: with a cover, the app's icon leads the title.
           HStack(alignment: .center, spacing: 4) {
-            if text.artwork != nil { NowInlineIcon(icon: model.icon(app), font: nameSize - 1).transition(.opacity) }
+            if text.hasArt { NowInlineIcon(icon: model.icon(app), font: nameSize - 1).transition(.opacity) }
             Text(text.title)
               .font(.system(size: nameSize, weight: .heavy, design: .rounded))
               .tracking(-0.2)
@@ -82,7 +82,7 @@ struct PlayingChannelMini<Chip: View>: View {
   }
 
   /// The art, with the action's glyph over it while hovered, paused or muted.
-  private func disc(_ artwork: NSImage?) -> some View {
+  private func disc(_ artwork: NSImage?, favicon: NSImage?) -> some View {
     let route = model.route(app)
     let muted = model.isMuted(app.id)
     let playing = model.isPlaying(app)
@@ -112,7 +112,7 @@ struct PlayingChannelMini<Chip: View>: View {
     // A locked key route opens the app, never the Accessibility screen from Mini
     // (an app with undecided Automation may still get macOS's Automation prompt).
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
-      NowArt(artwork: artwork, icon: model.icon(app), size: art)
+      NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: art)
         .overlay {
           if showGlyph {
             ZStack {
