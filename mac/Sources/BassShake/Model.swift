@@ -479,20 +479,26 @@ enum Pomodoro {
   static let choices: [(focus: Int, rest: Int)] = [(25, 5), (50, 10), (90, 20)]
 }
 
-/// A preset the user saved: their EQ curve, Shake and Boost, a name and an icon.
+/// A preset the user saved ("My Sounds"): their EQ curve, Shake and Boost,
+/// a name and a colour.
 struct UserPreset: Codable, Equatable, Identifiable {
   var id = UUID()
   var name: String
-  var icon: String       // PresetIcon id
+  var icon: String       // PresetIcon id (kept for old saves; chips show the colour)
   var bands: [EQBand]
   var bass: Double
   var boostDb: Double
   var character: SoundCharacter = .neutral
+  /// A BentoTint name from BentoTint.mySounds; nil = one picked from the id.
+  var color: String? = nil
+  /// Hidden from the preset strip and menus; still listed in My Sounds.
+  var hidden = false
 
   init(id: UUID = UUID(), name: String, icon: String, bands: [EQBand], bass: Double, boostDb: Double,
-       character: SoundCharacter = .neutral) {
+       character: SoundCharacter = .neutral, color: String? = nil, hidden: Bool = false) {
     self.id = id; self.name = name; self.icon = icon; self.bands = bands
     self.bass = bass; self.boostDb = boostDb; self.character = character
+    self.color = color; self.hidden = hidden
   }
 
   init(from decoder: Decoder) throws {
@@ -504,7 +510,14 @@ struct UserPreset: Codable, Equatable, Identifiable {
     bass = (try? c.decodeIfPresent(Double.self, forKey: .bass)) ?? 0
     boostDb = (try? c.decodeIfPresent(Double.self, forKey: .boostDb)) ?? 0
     character = (try? c.decodeIfPresent(SoundCharacter.self, forKey: .character)) ?? .neutral
+    color = (try? c.decodeIfPresent(String.self, forKey: .color)) ?? nil
+    hidden = (try? c.decodeIfPresent(Bool.self, forKey: .hidden)) ?? false
   }
+}
+
+extension Settings {
+  /// Saved sounds shown in the preset strip and menus (first, before built-ins).
+  var visibleUserPresets: [UserPreset] { userPresets.filter { !$0.hidden } }
 }
 
 /// Icons offered for user presets. Each id renders a bundled image from

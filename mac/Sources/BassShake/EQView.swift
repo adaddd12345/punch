@@ -5,6 +5,9 @@ import SwiftUI
 ///   drag        frequency + gain (Shift = fine)
 ///   scroll      Q (bandwidth) of the hovered / grabbed node
 ///   double-click  reset that node to 0 dB;  ⌥-click: reset it fully
+///   drag the line (between nodes)  raises/lowers everything = Boost;
+///               ⌥-drag tilts bass against treble (the two shelves);
+///               double-click the line: Boost to 0
 ///   keyboard    ←/→ pick a node, ↑/↓ gain (⇧ fine), ⌥←/→ frequency,
 ///               Space/Delete reset
 /// Gain snaps to 0 dB with a trackpad haptic tick.
@@ -30,6 +33,17 @@ struct EQView: View {
   /// Filament only: the arrow keys were used last (not the pointer), so the
   /// keyboard-picked node is marked.
   @State private var kbActive = false
+  /// The pointer is on the line (within `lineReach`), not on a node.
+  @State private var onLine = false
+  @State private var lineDrag: LineDrag?
+  /// Boost drag: how far (pt) the lit line is lifted off the EQ shape; it
+  /// springs back to 0 on release (the Boost tile already shows the level).
+  @State private var lift: CGFloat = 0
+  /// The lifted copy of the line is on screen (dragging or settling back).
+  @State private var sliding = false
+  /// The value chip by the pointer while the line is held.
+  @State private var lineChip: (text: String, at: CGPoint)?
+  @State private var cursorPushed = false
   @FocusState private var focused: Bool
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.colorScheme) private var scheme
@@ -38,6 +52,7 @@ struct EQView: View {
   @Environment(\.powerSaver) private var powerSaver
   /// Inside a Liquid Glass tile (the readout skips its own blur there).
   @Environment(\.bentoGlass) private var bentoGlass
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   private static let colors: [Color] = [
     Color(red: 1.00, green: 0.36, blue: 0.36),
@@ -48,6 +63,17 @@ struct EQView: View {
     Color(red: 0.68, green: 0.50, blue: 1.00),
   ]
   private let hitRadius: CGFloat = 22
+  private let lineReach: CGFloat = 8
+
+  /// One grab of the line: Boost (plain) or tilt (⌥).
+  private struct LineDrag {
+    var startY: CGFloat          // global
+    var startBoost: Double
+    var tilt: Bool
+    var startBands: [EQBand]
+    var low: Int, high: Int      // shelf indices (tilt)
+    var lastStep: Int            // whole dB, for the haptic tick
+  }
   private let gainSpan = 12.0
 
   var body: some View {
@@ -63,8 +89,14 @@ struct EQView: View {
             .allowsHitTesting(false)
             .transition(.opacity)
         }
-        Canvas { ctx, size in draw(ctx, size: size, bands: bands, showNodes: showNodes, kbDot: kbDot) }
+        Canvas { ctx, size in draw(ctx, size: size, bands: bands, showNodes: showNodes && !sliding, kbDot: kbDot) }
           .id(powerSaver)  // redraw without the glow when Power Saver flips
+        // Boost by the line: the lit line slides, the EQ shape stays as a ghost.
+        if sliding {
+          Canvas { ctx, size in drawLineOnly(ctx, size: size, bands: bands) }
+            .offset(y: lift)
+            .allowsHitTesting(false)
+        }
         if controller.settings.limit && controller.settings.enabled {
           LimitOverlay(meters: controller.meters, size: size, bassEdgeX: x(150, size.width),
                        yFor: { y($0, size.height) })
@@ -73,13 +105,18 @@ struct EQView: View {
         // With Tutorial Mode on, the hint is the pointer's readout; the
         // in-graph readout stays for the keyboard.
         if let i = hintsOn ? (focused && kbActive && grabbed == nil ? kbBand : nil) : (grabbed ?? hovered ?? (focused ? kbBand : nil)),
-           i < bands.count {
+           i < bands.count, lineDrag == nil, !sliding {
           let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
           let ny: CGFloat = nodeY(bands[i], response(bands), size.height)
           readout(bands[i], color: Self.colors[i])
             .position(x: nx, y: ny < 30 ? ny + 24 : ny - 22)
             .allowsHitTesting(false)
             .transition(.opacity)
+        }
+        if let chip = lineChip {
+          lineChipView(chip.text)
+            .position(x: min(max(chip.at.x, 56), size.width - 56), y: max(chip.at.y - 24, 12))
+            .allowsHitTesting(false)
         }
       }
       .contentShape(Rectangle())
@@ -104,20 +141,29 @@ struct EQView: View {
       .simultaneousGesture(TapGesture(count: 2).onEnded { resetHovered() })
       // Outside the drag: as an inner gesture, the hint's own drag would win
       // and the EQ's drag would never fire.
-      .pointerHint(Caption.eqNode((grabbed ?? hovered).flatMap { bands.indices.contains($0) ? bands[$0] : nil }), live: true)
+      .pointerHint((onLine || lineDrag != nil) && grabbed == nil
+                   ? Caption.eqLine(boostDb: controller.settings.boostDb)
+                   : Caption.eqNode((grabbed ?? hovered).flatMap { bands.indices.contains($0) ? bands[$0] : nil }), live: true)
       .onContinuousHover { phase in
         switch phase {
         case .active(let p):
           if filament != nil && !pointerIn { pointerIn = true }
           if kbActive { kbActive = false }
-          if grabbed == nil { hovered = nearest(p, size: size) }
+          if grabbed == nil && lineDrag == nil {
+            hovered = nearest(p, size: size)
+            let on = hovered == nil && lineHit(p, size: size)
+            if on != onLine { onLine = on }
+            setLineCursor(on)
+          }
         case .ended:
           if filament != nil { pointerIn = false }
           if grabbed == nil { hovered = nil }
+          if onLine { onLine = false }
+          if lineDrag == nil { setLineCursor(false) }
         }
       }
       .onAppear { installScrollMonitor() }
-      .onDisappear { removeScrollMonitor() }
+      .onDisappear { removeScrollMonitor(); setLineCursor(false) }
     }
     .background(
       RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -201,7 +247,11 @@ struct EQView: View {
                at: CGPoint(x: x(f, w) + 3, y: h - 7), anchor: .leading)
     }
 
+    drawGhost(ctx, size: size)
     let resp = response(bands)
+    // While the line is lifted, the EQ shape here is its ghost.
+    var ctx = ctx
+    if sliding { ctx.opacity = 0.28 }
     // Per-node soft "influence" glow so you can see what each node does.
     for (i, b) in bands.enumerated() where abs(b.gain) > 0.05 {
       let cx = x(b.freq, w)
@@ -261,6 +311,9 @@ struct EQView: View {
                             showNodes: Bool, kbDot: Int?) {
     let w = size.width, h = size.height
     let dark = scheme == .dark
+    drawGhost(ctx, size: size)
+    var ctx = ctx
+    if sliding { ctx.opacity = 0.28 }
     let curve = curvePath(bands, size: size)
     var fill = curve
     fill.addLine(to: CGPoint(x: w, y: h))
@@ -292,6 +345,51 @@ struct EQView: View {
                  with: .color(picked ? Self.colors[i] : color.opacity(0.9)))
       }
     }
+  }
+
+  /// ⌥-drag (tilt): where the line was when it was grabbed.
+  private func drawGhost(_ ctx: GraphicsContext, size: CGSize) {
+    guard let d = lineDrag, d.tilt else { return }
+    ctx.stroke(curvePath(d.startBands, size: size), with: .color(.primary.opacity(0.28)),
+               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [3, 3]))
+  }
+
+  /// The lit line alone (Boost drag), in the look of the view it's in.
+  private func drawLineOnly(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand]) {
+    let h = size.height
+    let curve = curvePath(bands, size: size)
+    if let filament {
+      let dark = scheme == .dark
+      if !powerSaver {
+        ctx.drawLayer { glow in
+          glow.addFilter(.blur(radius: 5))
+          glow.stroke(curve, with: .color(filament.opacity(dark ? 0.75 : 0.28)),
+                      style: StrokeStyle(lineWidth: dark ? 6 : 5, lineCap: .round, lineJoin: .round))
+        }
+      }
+      ctx.stroke(curve, with: .color(filament), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+    } else {
+      let stroke = Gradient(stops: [
+        .init(color: Color(red: 1.0, green: 0.32, blue: 0.32), location: 0.0),
+        .init(color: Color(red: 1.0, green: 0.70, blue: 0.25), location: 0.32),
+        .init(color: .primary.opacity(0.85), location: 0.5),
+        .init(color: Color(red: 0.35, green: 0.70, blue: 1.0), location: 0.68),
+        .init(color: Color(red: 0.55, green: 0.45, blue: 1.0), location: 1.0),
+      ])
+      ctx.stroke(curve, with: .linearGradient(stroke, startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
+                                              endPoint: CGPoint(x: 0, y: y(-gainSpan, h))),
+                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+    }
+  }
+
+  private func lineChipView(_ text: String) -> some View {
+    Text(text)
+      .font(.system(size: 10, weight: .semibold, design: .rounded))
+      .monospacedDigit()
+      .padding(.horizontal, 8)
+      .padding(.vertical, 3)
+      .background(bentoGlass != nil ? AnyShapeStyle(Color(nsColor: .windowBackgroundColor).opacity(0.85))
+                                    : AnyShapeStyle(.regularMaterial), in: Capsule())
   }
 
   private func drawNodes(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], resp: [Double]) {
@@ -334,9 +432,13 @@ struct EQView: View {
     DragGesture(minimumDistance: 0, coordinateSpace: .global)
       .onChanged { v in
         if kbActive { kbActive = false }
+        if lineDrag != nil { dragLine(v, size: size, frameOrigin: frameOrigin); return }
         if grabbed == nil {
           let start = CGPoint(x: v.startLocation.x - frameOrigin.x, y: v.startLocation.y - frameOrigin.y)
-          guard let i = nearest(start, size: size) else { return }
+          guard let i = nearest(start, size: size) else {
+            if lineHit(start, size: size) { beginLine(v); dragLine(v, size: size, frameOrigin: frameOrigin) }
+            return
+          }
           grabbed = i
           controller.pushUndo()
           if NSEvent.modifierFlags.contains(.option), EQBand.defaults.indices.contains(i) {
@@ -380,7 +482,83 @@ struct EQView: View {
         grabbed = nil
         dragOrigin = nil
         othersCurve = []
+        if lineDrag != nil { endLine() }
       }
+  }
+
+  // MARK: - The line as one piece
+
+  /// Within `lineReach` of the drawn line (and not on a node).
+  private func lineHit(_ p: CGPoint, size: CGSize) -> Bool {
+    guard p.x >= 0, p.x <= size.width, nearest(p, size: size) == nil else { return false }
+    let db = sample(response(controller.settings.bands), at: freq(p.x, size.width))
+    return abs(y(max(-gainSpan * 1.1, min(gainSpan * 1.1, db)), size.height) - p.y) <= lineReach
+  }
+
+  private func setLineCursor(_ on: Bool) {
+    if on && !cursorPushed { NSCursor.resizeUpDown.push(); cursorPushed = true }
+    else if !on && cursorPushed { NSCursor.pop(); cursorPushed = false }
+  }
+
+  private func beginLine(_ v: DragGesture.Value) {
+    let bands = controller.settings.bands
+    let low = bands.firstIndex { $0.kind == .lowShelf }, high = bands.lastIndex { $0.kind == .highShelf }
+    let tilt = NSEvent.modifierFlags.contains(.option) && low != nil && high != nil
+    controller.pushUndo()
+    lineDrag = LineDrag(startY: v.startLocation.y, startBoost: controller.settings.boostDb, tilt: tilt,
+                        startBands: bands, low: low ?? 0, high: high ?? 0,
+                        lastStep: tilt ? 0 : Int(controller.settings.boostDb.rounded(.down)))
+    if !tilt { lift = 0; sliding = true }
+    setLineCursor(true)
+  }
+
+  /// Up = louder (Boost, same 0–12 dB as its tile) or, with ⌥, more bass and
+  /// less treble (each shelf ±6 dB from where it was).
+  private func dragLine(_ v: DragGesture.Value, size: CGSize, frameOrigin: CGPoint) {
+    guard var d = lineDrag else { return }
+    let h = size.height
+    let fine: CGFloat = NSEvent.modifierFlags.contains(.shift) ? 0.2 : 1.0
+    let db = Double(-(v.location.y - d.startY) * fine / (h / 2 - 12)) * gainSpan
+    let at = CGPoint(x: v.location.x - frameOrigin.x, y: v.location.y - frameOrigin.y)
+    let step: Int
+    if d.tilt {
+      let t = (min(6, max(-6, db)) * 10).rounded() / 10
+      var lo = d.startBands[d.low], hi = d.startBands[d.high]
+      lo.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, lo.gain + t))
+      hi.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, hi.gain - t))
+      if controller.settings.bands[d.low] != lo { controller.update(band: d.low, to: lo) }
+      if controller.settings.bands[d.high] != hi { controller.update(band: d.high, to: hi) }
+      step = Int(t.rounded(.towardZero))
+      lineChip = ("Bass \(Self.signed(t)) · Treble \(Self.signed(-t)) dB", at)
+    } else {
+      let b = (min(12, max(0, d.startBoost + db)) * 10).rounded() / 10
+      if b != controller.settings.boostDb { controller.settings.boostDb = b }
+      lift = -CGFloat((b - d.startBoost) / gainSpan) * (h / 2 - 12)
+      step = Int(b.rounded(.down))
+      lineChip = ("Boost +\(Int(b.rounded())) dB", at)
+    }
+    if step != d.lastStep {
+      NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+      d.lastStep = step
+      lineDrag = d
+    }
+  }
+
+  /// Let go: the lifted line springs back onto the EQ shape.
+  private func endLine() {
+    lineDrag = nil
+    lineChip = nil
+    if !onLine { setLineCursor(false) }
+    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.38, dampingFraction: 0.82)) {
+      lift = 0
+    } completion: {
+      if lineDrag == nil { sliding = false }
+    }
+  }
+
+  private static func signed(_ v: Double) -> String {
+    let r = Int(v.rounded())
+    return r > 0 ? "+\(r)" : (r < 0 ? "\u{2212}\(-r)" : "0")
   }
 
   private func handleKey(_ press: KeyPress) -> KeyPress.Result {
@@ -408,7 +586,15 @@ struct EQView: View {
   }
 
   private func resetHovered() {
-    guard let i = hovered ?? grabbed else { return }
+    guard let i = hovered ?? grabbed else {
+      // Double-click on the line: Boost back to 0.
+      if onLine, controller.settings.boostDb != 0 {
+        controller.pushUndo()
+        controller.settings.boostDb = 0
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+      }
+      return
+    }
     var b = controller.settings.bands[i]
     b.gain = 0
     controller.update(band: i, to: b, animated: true)

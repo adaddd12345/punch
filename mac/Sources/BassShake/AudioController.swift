@@ -314,19 +314,21 @@ final class AudioController: ObservableObject {
 
   /// Saves the current sound as a new preset and selects it.
   @discardableResult
-  func saveCurrentAsPreset(name: String, icon: String) -> UserPreset {
+  /// New sounds go first in the list (and so first in the strip).
+  func saveCurrentAsPreset(name: String, icon: String = PresetIcon.choices[0], color: String? = nil) -> UserPreset {
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let p = UserPreset(name: trimmed.isEmpty ? "My Preset" : String(trimmed.prefix(24)), icon: icon,
+    let p = UserPreset(name: trimmed.isEmpty ? "My Sound" : String(trimmed.prefix(24)), icon: icon,
                        bands: settings.bands, bass: settings.bass, boostDb: settings.boostDb,
-                       character: settings.character)
-    settings.userPresets.append(p)
+                       character: settings.character, color: color)
+    settings.userPresets.insert(p, at: 0)
     settings.presetName = nil
     settings.userPresetID = p.id
     settings.editedFrom = nil
     return p
   }
 
-  func updateUserPreset(_ id: UUID, name: String? = nil, icon: String? = nil, captureCurrentSound: Bool = false) {
+  func updateUserPreset(_ id: UUID, name: String? = nil, icon: String? = nil, color: String? = nil,
+                        hidden: Bool? = nil, captureCurrentSound: Bool = false) {
     guard let i = settings.userPresets.firstIndex(where: { $0.id == id }) else { return }
     var p = settings.userPresets[i]
     if let name {
@@ -334,6 +336,8 @@ final class AudioController: ObservableObject {
       if !t.isEmpty { p.name = String(t.prefix(24)) }
     }
     if let icon { p.icon = icon }
+    if let color { p.color = color }
+    if let hidden { p.hidden = hidden }
     if captureCurrentSound {
       p.bands = settings.bands
       p.bass = settings.bass

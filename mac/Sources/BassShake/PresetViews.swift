@@ -30,7 +30,8 @@ struct PresetIconView: View {
   }
 }
 
-/// Built-in and user presets in one horizontally scrolling strip, plus "+".
+/// Saved sounds (first, in their colours) and built-in presets in one
+/// horizontally scrolling strip, plus "+". Hidden saved sounds stay out.
 /// Mouse users scroll it by grabbing and dragging or with the wheel
 /// (DragScroll.swift); trackpads scroll it natively. Soft fades on the sides
 /// that have more chips.
@@ -44,6 +45,23 @@ struct PresetStrip: View {
     ScrollViewReader { proxy in
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 6) {
+          ForEach(controller.settings.visibleUserPresets) { p in
+            let tint = BentoTint.forUserPreset(p)
+            Chip(title: p.name, selected: controller.settings.userPresetID == p.id, tint: tint) {
+              ColorDot(tint: tint, selected: controller.settings.userPresetID == p.id)
+            } action: {
+              controller.apply(userPreset: p)
+            }
+            .pointerHint(Caption.userPreset(p.name))
+            .id(p.id)
+            .contextMenu {
+              Button("Edit Name & Color…") { editor = .edit(p.id) }
+              Button("Update with Current Sound") { controller.updateUserPreset(p.id, captureCurrentSound: true) }
+              Button("Hide") { controller.updateUserPreset(p.id, hidden: true) }
+              Divider()
+              Button("Delete", role: .destructive) { controller.deleteUserPreset(p.id) }
+            }
+          }
           ForEach(Preset.all) { p in
             Chip(title: p.name, selected: controller.settings.presetName == p.name) {
               Image(systemName: p.symbol).font(.system(size: 9, weight: .semibold))
@@ -51,21 +69,6 @@ struct PresetStrip: View {
               controller.apply(preset: p)
             }
             .pointerHint(Caption.preset(p))
-          }
-          ForEach(controller.settings.userPresets) { p in
-            Chip(title: p.name, selected: controller.settings.userPresetID == p.id) {
-              PresetIconView(id: p.icon, size: 12)
-            } action: {
-              controller.apply(userPreset: p)
-            }
-            .pointerHint(Caption.userPreset(p.name))
-            .id(p.id)
-            .contextMenu {
-              Button("Edit Name & Icon…") { editor = .edit(p.id) }
-              Button("Update with Current Sound") { controller.updateUserPreset(p.id, captureCurrentSound: true) }
-              Divider()
-              Button("Delete", role: .destructive) { controller.deleteUserPreset(p.id) }
-            }
           }
           Button { if !DragScrollGate.suppressTap { editor = .create } } label: {
             Image(systemName: "plus")
@@ -81,9 +84,50 @@ struct PresetStrip: View {
       }
       .mask { ScrollEdgeFadeMask(edges: edges) }
       .onChange(of: controller.settings.userPresets.count) { _, _ in
-        withAnimation { proxy.scrollTo(controller.settings.userPresetID ?? UUID(), anchor: .trailing) }
+        withAnimation { proxy.scrollTo(controller.settings.userPresetID ?? UUID(), anchor: .leading) }
       }
     }
+  }
+}
+
+/// A saved sound's colour as a small dot (its chip's icon, My Sounds' rows).
+struct ColorDot: View {
+  let tint: BentoTint
+  var selected = false
+  var size: CGFloat = 9
+  @Environment(\.colorScheme) private var scheme
+
+  var body: some View {
+    Circle()
+      .fill(selected ? tint.ink : tint.pastel)
+      .overlay(Circle().strokeBorder(Color.black.opacity(selected || scheme == .dark ? 0 : 0.12), lineWidth: 0.5))
+      .frame(width: size, height: size)
+  }
+}
+
+/// The eight colours a saved sound can wear, as a row of swatches.
+struct ColorSwatches: View {
+  @Binding var selection: String
+  var size: CGFloat = 20
+
+  var body: some View {
+    HStack(spacing: 6) {
+      ForEach(BentoTint.mySounds, id: \.name) { t in
+        Button { selection = t.name } label: {
+          Circle()
+            .fill(t.pastel)
+            .frame(width: size, height: size)
+            .overlay(Circle().strokeBorder(Color.primary.opacity(selection == t.name ? 0.75 : 0.10),
+                                           lineWidth: selection == t.name ? 2 : 0.5)
+                       .padding(selection == t.name ? -3 : 0))
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(t.name.capitalized)
+        .accessibilityAddTraits(selection == t.name ? .isSelected : [])
+      }
+    }
+    .padding(3)
   }
 }
 
@@ -120,6 +164,8 @@ struct Chip<Icon: View>: View {
   let selected: Bool
   /// Secondary chips show only their icon below All labels.
   var compact = false
+  /// A saved sound's colour: a pastel wash, solid when selected.
+  var tint: BentoTint? = nil
   @ViewBuilder let icon: () -> Icon
   let action: () -> Void
   @Environment(\.labelLevel) private var labels
@@ -129,11 +175,20 @@ struct Chip<Icon: View>: View {
 
   /// Classic: accent blue. Bento: dark ink (white in dark mode).
   private var selectedFill: Color {
+    if let tint { return tint.pastel }
     guard bento else { return Color.accentColor }
     return scheme == .dark ? Color.white.opacity(0.85) : BentoInk.miniFill
   }
 
-  private var selectedText: Color { bento && scheme == .dark ? Color.black : Color.white }
+  private var selectedText: Color {
+    if tint != nil { return Color.black.opacity(0.85) }
+    return bento && scheme == .dark ? Color.black : Color.white
+  }
+
+  private var restingFill: Color {
+    if let tint { return tint.pastel.opacity(scheme == .dark ? 0.20 : 0.30) }
+    return Color.primary.opacity(0.07)
+  }
 
   var body: some View {
     // A drag-scroll that ends over this chip doesn't select it.
@@ -147,7 +202,7 @@ struct Chip<Icon: View>: View {
       .padding(.horizontal, 9)
       .padding(.vertical, 5)
       .foregroundStyle(selected ? selectedText : Color.primary)
-      .background(Capsule().fill(selected ? selectedFill : Color.primary.opacity(0.07)))
+      .background(Capsule().fill(selected ? selectedFill : restingFill))
     })
     .help(labels == .full ? "" : title)
     .accessibilityLabel(title)
@@ -172,8 +227,8 @@ extension EnvironmentValues {
   }
 }
 
-/// Inline card for naming a preset and picking its icon. Inline rather than
-/// a sheet so it behaves inside the menu-bar panel.
+/// Inline card for naming a saved sound and picking its colour. Inline
+/// rather than a sheet so it behaves inside the menu-bar panel.
 struct PresetEditor: View {
   enum Mode: Equatable {
     case create
@@ -185,15 +240,13 @@ struct PresetEditor: View {
   let onDone: () -> Void
 
   @State private var name = ""
-  @State private var icon = PresetIcon.choices[0]
+  @State private var color = BentoTint.mySounds[0].name
   @FocusState private var nameFocused: Bool
-
-  private let columns = Array(repeating: GridItem(.fixed(28), spacing: 6), count: 10)
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       HStack {
-        Text(mode == .create ? "Save as Preset" : "Edit Preset")
+        Text(mode == .create ? "Save Sound" : "Edit Sound")
           .font(.system(size: 12, weight: .semibold))
         Spacer()
         Button(action: onDone) {
@@ -203,28 +256,15 @@ struct PresetEditor: View {
         .keyboardShortcut(.cancelAction)
       }
       HStack(spacing: 8) {
-        PresetIconView(id: icon, size: 18)
-          .foregroundStyle(Color.accentColor)
-          .frame(width: 28, height: 28)
-          .background(RoundedRectangle(cornerRadius: 7).fill(Color.accentColor.opacity(0.12)))
-        TextField("Preset name", text: $name)
+        ColorDot(tint: BentoTint.mySounds.first { $0.name == color } ?? BentoTint.mySounds[0], size: 14)
+          .frame(width: 22, height: 22)
+        TextField("Name", text: $name)
           .textFieldStyle(.roundedBorder)
           .focused($nameFocused)
           .onSubmit(save)
       }
-      LazyVGrid(columns: columns, spacing: 6) {
-        ForEach(PresetIcon.choices, id: \.self) { id in
-          Button { icon = id } label: {
-            PresetIconView(id: id, size: 15)
-              .frame(width: 28, height: 28)
-              .foregroundStyle(icon == id ? Color.white : Color.primary)
-              .background(RoundedRectangle(cornerRadius: 7)
-                .fill(icon == id ? Color.accentColor : Color.primary.opacity(0.06)))
-          }
-          .buttonStyle(.plain)
-        }
-      }
       HStack {
+        ColorSwatches(selection: $color)
         Spacer()
         Button(mode == .create ? "Save" : "Done", action: save)
           .buttonStyle(.borderedProminent)
@@ -237,9 +277,10 @@ struct PresetEditor: View {
     .onAppear {
       if case .edit(let id) = mode, let p = controller.settings.userPresets.first(where: { $0.id == id }) {
         name = p.name
-        icon = p.icon
+        color = BentoTint.forUserPreset(p).name
       } else {
-        name = "My Preset \(controller.settings.userPresets.count + 1)"
+        name = MySounds.nextName(controller.settings)
+        color = MySounds.nextColor(controller.settings)
       }
       DispatchQueue.main.async { nameFocused = true }
     }
@@ -247,8 +288,8 @@ struct PresetEditor: View {
 
   private func save() {
     switch mode {
-    case .create: controller.saveCurrentAsPreset(name: name, icon: icon)
-    case .edit(let id): controller.updateUserPreset(id, name: name, icon: icon)
+    case .create: controller.saveCurrentAsPreset(name: name, color: color)
+    case .edit(let id): controller.updateUserPreset(id, name: name, color: color)
     }
     onDone()
   }
@@ -327,6 +368,19 @@ struct PresetMenu<Label: View>: View {
     let p = PresetSummary(s)
     if p.live {
       Menu {
+        if !s.visibleUserPresets.isEmpty {
+          Section("My Sounds") {
+            ForEach(s.visibleUserPresets) { up in
+              Button { controller.apply(userPreset: up) } label: {
+                if s.mode == .off && s.userPresetID == up.id {
+                  SwiftUI.Label(up.name, systemImage: "checkmark")
+                } else {
+                  Text(up.name)
+                }
+              }
+            }
+          }
+        }
         Section {
           ForEach(Preset.all) { preset in
             Button { controller.apply(preset: preset) } label: {
@@ -338,25 +392,12 @@ struct PresetMenu<Label: View>: View {
             }
           }
         }
-        if !s.userPresets.isEmpty {
-          Section("Your Presets") {
-            ForEach(s.userPresets) { up in
-              Button { controller.apply(userPreset: up) } label: {
-                if s.mode == .off && s.userPresetID == up.id {
-                  SwiftUI.Label(up.name, systemImage: "checkmark")
-                } else {
-                  Text(up.name)
-                }
-              }
-            }
-          }
-        }
         Divider()
         Button("Save Current Sound as Preset…") {
           withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.85)) { editor = .create }
         }
         if s.mode == .off, let up = p.userPreset {
-          Button("Edit Name & Icon…") {
+          Button("Edit Name & Color…") {
             withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.3, dampingFraction: 0.85)) { editor = .edit(up.id) }
           }
         }

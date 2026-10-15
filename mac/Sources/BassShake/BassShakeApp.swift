@@ -600,6 +600,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     if controller.settings.enabled { add("Original Sound (A/B)", #selector(menuBypass), on: controller.bypassed) }
     let presets = NSMenuItem(title: "Preset", action: nil, keyEquivalent: "")
     let sub = NSMenu()
+    // My Sounds first (the visible ones), then the built-ins.
+    for p in controller.settings.visibleUserPresets {
+      let it = sub.addItem(withTitle: p.name, action: #selector(menuUserPreset(_:)), keyEquivalent: "")
+      it.target = self
+      it.representedObject = p.id.uuidString
+      it.state = controller.settings.userPresetID == p.id ? .on : .off
+    }
+    if !controller.settings.visibleUserPresets.isEmpty { sub.addItem(.separator()) }
     for p in Preset.all {
       let it = sub.addItem(withTitle: p.name, action: #selector(menuPreset(_:)), keyEquivalent: "")
       it.target = self
@@ -659,6 +667,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   @objc private func menuBypass() { controller.bypassed.toggle() }
   @objc private func menuPreset(_ sender: NSMenuItem) {
     if let p = Preset.all.first(where: { $0.name == sender.title }) { controller.apply(preset: p) }
+  }
+  @objc private func menuUserPreset(_ sender: NSMenuItem) {
+    guard let id = (sender.representedObject as? String).flatMap(UUID.init(uuidString:)),
+          let p = controller.settings.userPresets.first(where: { $0.id == id }) else { return }
+    controller.apply(userPreset: p)
   }
   @objc private func menuLogin() { LoginItem.set(!LoginItem.isOn) }
   @objc private func menuUpdates() { updates.checkNow() }

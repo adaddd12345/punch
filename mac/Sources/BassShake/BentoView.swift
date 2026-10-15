@@ -436,7 +436,7 @@ struct BentoView: View {
     switch s.mode {
     case .study: return .lime
     case .sleep, .lateNight: return .lilac
-    case .off: return userPreset.map { BentoTint.forUserPreset($0.id) } ?? BentoTint.forPreset(presetSource.name)
+    case .off: return userPreset.map { BentoTint.forUserPreset($0) } ?? BentoTint.forPreset(presetSource.name)
     }
   }
 
@@ -1504,6 +1504,14 @@ struct BentoTint: Equatable {
   }
 
   static func forUserPreset(_ id: UUID) -> BentoTint { presetPalette[stableIndex(id.uuidString)] }
+
+  /// The colours a saved sound can wear (My Sounds).
+  static let mySounds: [BentoTint] = [.pink, .peach, .butter, .lime, .mint, .aqua, .bass, .lilac]
+
+  /// A saved sound's own colour, or (none picked) one from its id.
+  static func forUserPreset(_ p: UserPreset) -> BentoTint {
+    p.color.flatMap { c in mySounds.first { $0.name == c } } ?? forUserPreset(p.id)
+  }
 
   /// djb2: unlike `hashValue`, stable across launches.
   private static func stableIndex(_ s: String) -> Int {

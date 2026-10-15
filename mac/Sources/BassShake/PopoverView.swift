@@ -33,6 +33,7 @@ struct PopoverView: View {
   @State private var showHearingFit = false
   @State private var showMicTest = false
   @State private var showLayoutEditor = false
+  @State private var showMySounds = false
   /// Hold any block to rearrange (Reshuffle.swift).
   @StateObject private var reshuffle: Reshuffle
   /// How tall the menu-bar popup may be where it hangs.
@@ -59,6 +60,8 @@ struct PopoverView: View {
     Group {
       if controller.needsOnboarding {
         OnboardingView(controller: controller)
+      } else if showMySounds {
+        MySoundsView(controller: controller) { withAnimation { showMySounds = false } }
       } else if showLayoutEditor {
         LayoutEditorView(controller: controller, mini: size == .mini) { withAnimation { showLayoutEditor = false } }
       } else if showMicTest {
@@ -860,6 +863,7 @@ struct PopoverView: View {
           if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
         }
         Menu("Presets & Settings") {
+          Button("My Sounds…") { reshuffle.set(false); withAnimation { showMySounds = true } }
           Button("Edit Layout…") { reshuffle.set(false); withAnimation { showLayoutEditor = true } }
           Toggle("Show Mac Volume", isOn: Binding(get: { controller.settings.showMacVolume },
                                                   set: { controller.settings.showMacVolume = $0 }))

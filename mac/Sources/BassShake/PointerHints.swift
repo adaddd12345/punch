@@ -767,7 +767,7 @@ enum Caption {
 
   static func userPreset(_ name: String) -> PointerHint {
     PointerHint(name, does: "Your saved sound; unlike built-in presets, it sets Boost too.",
-                gestures: ["Right-click: rename, update, delete"])
+                gestures: ["Right-click: rename, recolor, hide, delete"])
   }
 
   static let savePreset = PointerHint("Save Preset", does: "Keeps EQ, Strength and Boost; not Studio Ears, Loudness or Limit.")
@@ -814,6 +814,13 @@ enum Caption {
   }
 
   /// One EQ node (empty when none is under the pointer).
+  /// The EQ line itself (between nodes): dragging it is Boost.
+  static func eqLine(boostDb: Double) -> PointerHint {
+    PointerHint("Boost", value: String(format: "+%.0f dB", boostDb.rounded()),
+                does: "Raising the whole line is Boost; the EQ's shape stays put.",
+                gestures: ["Drag ↕", "Double-click: 0 dB", "⌥-drag: bass vs treble", "Hold ⇧: fine"])
+  }
+
   static func eqNode(_ b: EQBand?) -> PointerHint {
     guard let b else { return PointerHint("") }
     let range = b.freq < 250 ? "Bass" : (b.freq < 2_000 ? "Mids" : "Treble")
