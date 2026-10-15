@@ -894,9 +894,8 @@ struct PopoverView: View {
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
         HStack(spacing: 4) {
-          // A knob: hover turns it a notch.
-          Image(systemName: "dial.medium").font(.system(size: 12, weight: .semibold))
-            .footerGesture(degrees: 30)
+          // A knob: hover turns the knob a notch; its tick marks stay put.
+          FooterKnob()
           if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip(iconOnly: labels == .icons)

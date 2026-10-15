@@ -13,8 +13,8 @@ import SwiftUI
 // carries the glyph. Pause while playing, play while paused; the two morph.
 // Apps with no pause show a speaker, and a coral slash when muted.
 //
-// At rest it leans a little, its face turned up and to the right. Hover
-// straightens it to dead centre: a perfect flat circle. A press sinks it.
+// At rest it faces straight on: a flat circle. Hover leans it a little, its
+// face turned up and to the right. A press sinks it.
 // While heard, the ring swells with the app's level.
 //
 // CPU: only the tiny art view observes the app's `AppLevel` (≤ 10 Hz, only when
@@ -99,7 +99,7 @@ private struct IsoPlayArt: View {
     let loud: CGFloat = !lit ? 0 : (still ? 0.45 : (level.bars.max() ?? 0))
     let dark = scheme == .dark
     if motion {
-      IsoPlayArtwork(play: play ? 1 : 0, mute: muted ? 1 : 0, level: loud, turn: hover ? 1 : 0,
+      IsoPlayArtwork(play: play ? 1 : 0, mute: muted ? 1 : 0, level: loud, turn: hover ? 0.5 : 1,
                      glyph: glyph, lit: lit, dark: dark, hue: hue)
         .animation(.spring(response: 0.28, dampingFraction: 0.9), value: play)
         .animation(.easeInOut(duration: 0.25), value: muted)
@@ -110,7 +110,7 @@ private struct IsoPlayArt: View {
       ZStack {
         ForEach(0..<4) { i in
           let p = i & 1 == 1, m = i & 2 == 2
-          IsoPlayArtwork(play: p ? 1 : 0, mute: m ? 1 : 0, level: loud, turn: 0,
+          IsoPlayArtwork(play: p ? 1 : 0, mute: m ? 1 : 0, level: loud, turn: 1,
                          glyph: glyph, lit: lit, dark: dark, hue: hue)
             .opacity(p == play && m == muted ? 1 : 0)
         }

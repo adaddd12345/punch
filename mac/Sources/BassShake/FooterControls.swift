@@ -178,6 +178,7 @@ struct FooterTurningGlyph: View {
 
   var body: some View {
     FooterGlyph(kind: kind, angle: hover ? FooterMotion.turn : 0)
+      .modifier(FooterInk(lit: hover))
       .frame(width: FooterBlank.size, height: FooterBlank.size)
       .animation(FooterMotion.spring, value: hover)
   }
@@ -212,7 +213,7 @@ struct FooterShakerMenu<Content: View>: View {
     .overlay {
       ShakerGlyph(angle: motion && hovered && !open ? FooterMotion.turn : 0)
         .frame(width: Self.size, height: Self.size)
-        .foregroundStyle(lit ? .primary : .secondary)
+        .modifier(FooterInk(lit: lit))
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)
@@ -233,6 +234,35 @@ struct FooterShakerMenu<Content: View>: View {
     .accessibilityLabel("More")
   }
 
+}
+
+/// The DJ knob: fixed tick marks around a knob whose pointer turns a notch on hover.
+struct FooterKnob: View {
+  var body: some View {
+    ZStack {
+      ForEach([-60.0, 0, 60], id: \.self) { a in
+        Capsule().frame(width: 1.6, height: 2.6)
+          .offset(y: -6.2)
+          .rotationEffect(.degrees(a))
+      }
+      ZStack {
+        Circle().strokeBorder(lineWidth: 1.6).frame(width: 8.6, height: 8.6)
+        Capsule().frame(width: 1.6, height: 3.2).offset(y: -1.9)
+      }
+      .footerGesture(degrees: 30)
+    }
+    .frame(width: 14, height: 14)
+  }
+}
+
+/// The drawn glyphs' ink as a plain colour: a Canvas filling with `.foreground` draws
+/// nothing inside Liquid Glass (its vibrant label style doesn't resolve there).
+struct FooterInk: ViewModifier {
+  let lit: Bool
+  @Environment(\.colorScheme) private var scheme
+  func body(content: Content) -> some View {
+    content.foregroundStyle(Color(white: scheme == .dark ? 1 : 0).opacity(lit ? 0.88 : 0.6))
+  }
 }
 
 /// The drawn glyphs' size, and the ⋯ Menu's clear label (a borderless menu button shows
