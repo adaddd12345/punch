@@ -84,15 +84,23 @@ final class LiveDrawer {
                                                               queue: .main) { [weak self] _ in self?.reposition() }
     }
     guard let panel else { return }
-    // The hosting controller sizes the window to the content (rows come
-    // and go); the resize observer keeps its top edge under the popover.
+    // One hosting view for the panel's whole life: only its content swaps.
+    // (A new NSHostingController per show tore down the whole old tree while
+    // AppKit animated the window to the new content size, and that pile of
+    // pending constraint removals overflowed the main thread's stack: the
+    // beta.130 / beta.145 crashes.) The panel is sized by hand, after layout,
+    // never by the hosting view's animated window sizing.
     hints.shown = true
-    let root = DrawerHintRoot(flags: hints, content: content.frame(width: width ?? anchorRect?.width ?? host.frame.width))
-      .background(VisualEffectBackground())
-      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    let hosting = NSHostingController(rootView: AnyView(root))
-    hosting.sizingOptions = [.preferredContentSize]
-    panel.contentViewController = hosting
+    let w = width ?? anchorRect?.width ?? host.frame.width
+    drawerContent.width = w
+    drawerContent.view = AnyView(content.frame(width: w))
+    if hostingView == nil {
+      let root = DrawerRoot(model: drawerContent, flags: hints) { [weak self] size in self?.fit(size) }
+      let hv = NSHostingView(rootView: root)
+      hv.sizingOptions = []
+      panel.contentView = hv
+      hostingView = hv
+    }
     panel.level = host.level
     if panel.parent !== host { host.addChildWindow(panel, ordered: .above) }
     reposition(decide: true)
@@ -101,6 +109,26 @@ final class LiveDrawer {
     NSAnimationContext.runAnimationGroup { ctx in
       ctx.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
       panel.animator().alphaValue = 1
+    }
+  }
+
+  private let drawerContent = DrawerContent()
+  private var hostingView: NSHostingView<DrawerRoot>?
+  private var pendingSize: CGSize?
+
+  /// The content's measured size: resize the panel on the next turn, without
+  /// animation, so no resize happens inside a layout or render pass.
+  private func fit(_ size: CGSize) {
+    guard size.width > 1, size.height > 1 else { return }
+    let first = pendingSize == nil
+    pendingSize = size
+    guard first else { return }
+    DispatchQueue.main.async { [weak self] in
+      guard let self, let panel = self.panel, let s = self.pendingSize else { return }
+      self.pendingSize = nil
+      let cur = panel.frame.size
+      guard abs(cur.width - s.width) > 0.5 || abs(cur.height - s.height) > 0.5 else { return }
+      panel.setContentSize(NSSize(width: ceil(s.width), height: ceil(s.height)))
     }
   }
 
@@ -175,6 +203,28 @@ struct HostWindowReader: NSViewRepresentable {
 final class DrawerHints: ObservableObject {
   @Published var on = true
   @Published var shown = false
+}
+
+/// The drawer's current content (Live Channels, DJ, Beats), swapped in place.
+final class DrawerContent: ObservableObject {
+  @Published var view = AnyView(EmptyView())
+  var width: CGFloat = 360
+}
+
+/// The panel's one root: the swapped content, hints, background, and a size
+/// report the drawer uses to fit the panel (asynchronously, never animated).
+struct DrawerRoot: View {
+  @ObservedObject var model: DrawerContent
+  @ObservedObject var flags: DrawerHints
+  let onSize: (CGSize) -> Void
+  var body: some View {
+    model.view
+      .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
+      .background(VisualEffectBackground())
+      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+      .fixedSize()
+      .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
+  }
 }
 
 private struct DrawerHintRoot<C: View>: View {
