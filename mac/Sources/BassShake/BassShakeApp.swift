@@ -252,7 +252,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     host.sizingOptions = [.preferredContentSize]
     popover.contentViewController = host
     LiveDrawer.shared.anchorView = host.view
+    LiveDrawer.shared.liftPopup = { [weak self] v in self?.glideLift(to: v) }
+    LiveDrawer.shared.popupLift = { [weak self] in self?.lift ?? 0 }
+    // The popup's height changes (the "Updated to" band collapsing, ⌘1/2/3,
+    // Mac Volume): keep a Dock popup's arrow on its anchor.
+    sizeObserver = host.observe(\.preferredContentSize, options: [.new]) { [weak self] _, _ in
+      DispatchQueue.main.async { self?.popupResized() }
+    }
     applyPopoverBehavior()
+  }
+
+  // MARK: - Dock popup: staying on the anchor, lifting for the tray
+
+  private var sizeObserver: NSKeyValueObservation?
+  private var popupWindowObserver: NSObjectProtocol?
+  private var settleCheck: DispatchWorkItem?
+  /// The Dock point the popup hangs from, before any lift for the tray.
+  private var dockPoint: NSPoint?
+  /// How far the popup is lifted above its Dock point (the tray sits in between).
+  private var lift: CGFloat = 0
+  private var liftGlide: Timer?
+
+  /// A Dock popup's arrow must stay on its anchor whatever its height does.
+  /// NSPopover re-aims when the size changes, but it has been seen keeping
+  /// its top instead (the body left hanging above the arrow until reopened),
+  /// so check on every resize and once the size has settled.
+  private func popupResized() {
+    keepOnAnchor()
+    settleCheck?.cancel()
+    let w = DispatchWorkItem { [weak self] in
+      guard let self, self.popover.isShown, case .dock? = self.anchoredAt,
+            let host = self.popover.contentViewController else { return }
+      // The window never caught up with the content's size: hand it over.
+      let want = host.preferredContentSize
+      if want.height > 1, abs(self.popover.contentSize.height - want.height) > 0.5 { self.popover.contentSize = want }
+      self.keepOnAnchor()
+    }
+    settleCheck = w
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: w)
+  }
+
+  /// Re-aims the popover when its arrow has come off the Dock anchor.
+  private func keepOnAnchor() {
+    guard popover.isShown, case .dock(_, let edge)? = anchoredAt, let v = dockAnchor.contentView,
+          let pw = popover.contentViewController?.view.window else { return }
+    let a = dockAnchor.frame, f = pw.frame
+    let off: CGFloat
+    switch edge {
+    case .maxY: off = f.minY - a.maxY
+    case .maxX: off = f.minX - a.maxX
+    default: off = a.minX - f.maxX
+    }
+    if abs(off) > 1 { popover.positioningRect = v.bounds }
+  }
+
+  private func watchPopupWindow() {
+    if let o = popupWindowObserver { NotificationCenter.default.removeObserver(o) }
+    popupWindowObserver = nil
+    guard let pw = popover.contentViewController?.view.window else { return }
+    popupWindowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: pw,
+                                                                 queue: .main) { [weak self] _ in
+      DispatchQueue.main.async { self?.popupResized() }
+    }
+  }
+
+  /// Glides a bottom-Dock popup up by `target` (the tray goes under it) or
+  /// back down (0): the invisible anchor moves and the popover follows it.
+  private func glideLift(to target: CGFloat) {
+    liftGlide?.invalidate()
+    liftGlide = nil
+    guard popover.isShown, case .dock(_, .maxY)? = anchoredAt, dockPoint != nil else { lift = 0; return }
+    let from = lift
+    guard abs(target - from) > 0.5, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+      applyLift(target); return
+    }
+    let start = CACurrentMediaTime(), duration = 0.25
+    let t = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] t in
+      guard let self else { t.invalidate(); return }
+      let k = min(1, (CACurrentMediaTime() - start) / duration)
+      let e = k < 0.5 ? 2 * k * k : 1 - pow(-2 * k + 2, 2) / 2   // ease in-out
+      self.applyLift(from + (target - from) * CGFloat(e))
+      if k >= 1 { t.invalidate(); self.liftGlide = nil }
+    }
+    liftGlide = t
+    RunLoop.main.add(t, forMode: .common)
+  }
+
+  private func applyLift(_ v: CGFloat) {
+    guard let p = dockPoint, let view = dockAnchor.contentView else { return }
+    lift = v
+    dockAnchor.setFrameOrigin(NSPoint(x: p.x - 1, y: p.y - 1 + v.rounded()))
+    popover.positioningRect = view.bounds
+  }
+
+  /// Forgets the lift (the popup is closing or moving to another anchor).
+  private func endLift() {
+    liftGlide?.invalidate()
+    liftGlide = nil
+    lift = 0
+    dockPoint = nil
   }
 
   func applyPopoverBehavior() {
@@ -359,9 +457,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   }
 
   private func clearDockAnchor() {
+    endLift()
     dockAnchor.orderOut(nil)
     anchoredAt = nil
     LiveDrawer.shared.preferSide = false
+    LiveDrawer.shared.liftable = false
   }
 
   @objc private func statusClicked(_ sender: Any?) {
@@ -401,23 +501,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   private func showPopover(_ anchor: PopoverAnchor) {
     closedByDockPress = nil
     applyPopoverBehavior()
+    endLift()
     switch anchor {
     case .statusItem:
       guard let button = statusItem?.button else { return }
       LiveDrawer.shared.preferSide = false
+      LiveDrawer.shared.liftable = false
       dockAnchor.orderOut(nil)
       PopupSpace.shared.set(PopupSpace.below(button))
       popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
       button.highlight(true)
     case .dock(let p, let edge):
       guard let v = dockAnchor.contentView else { return }
-      // A popup against the Dock puts its tray beside it, not over the Dock.
+      // A popup against the Dock never puts its tray over the Dock: on a
+      // bottom Dock it moves up to make room (if the screen is tall enough),
+      // else the tray goes beside it.
       LiveDrawer.shared.preferSide = true
+      LiveDrawer.shared.liftable = edge == .maxY
+      dockPoint = p
       dockAnchor.place(at: p)
       PopupSpace.shared.set(PopupSpace.from(dock: p, edge: edge))
       popover.show(relativeTo: v.bounds, of: v, preferredEdge: edge)
     }
     anchoredAt = anchor
+    watchPopupWindow()
     // A menu-bar-only app must activate for the popover to take keys.
     NSApp.activate(ignoringOtherApps: true)
     popover.contentViewController?.view.window?.makeKey()
@@ -430,6 +537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   private func closePopover(yieldFocus: Bool = false) {
     removeOutsideClickMonitors()
     statusItem?.button?.highlight(false)
+    endLift()   // closing: no glide back down
     // close(), not performClose(): with .applicationDefined behaviour
     // performClose can be refused, which left the popover stuck open.
     popover.close()
@@ -484,7 +592,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       target = DockGeometry.defaultAnchor(on: main)
     }
     if target.edge == oldEdge, let v = dockAnchor.contentView {
-      dockAnchor.place(at: target.point)
+      if dockPoint != nil { dockPoint = target.point }
+      dockAnchor.place(at: NSPoint(x: target.point.x, y: target.point.y + (target.edge == .maxY ? lift.rounded() : 0)))
       anchoredAt = .dock(target.point, target.edge)
       popover.positioningRect = v.bounds   // re-aim at the moved anchor
     } else {

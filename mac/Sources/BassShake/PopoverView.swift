@@ -330,8 +330,8 @@ struct PopoverView: View {
   }
 
   private func showBeatsDrawer() {
-    // Beside a Dock-anchored popup the tray always uses its side layout.
-    let side = controller.settings.beatsSide || LiveDrawer.shared.preferSide
+    // Beside a popup on a side Dock the tray always uses its side layout.
+    let side = controller.settings.beatsSide || LiveDrawer.shared.sideOnly
     LiveDrawer.shared.show(BeatsView(player: beats, side: side) { [controller] in controller.settings.beatsSide.toggle() },
                            side: side, width: side ? BeatsView.sideWidth : nil)
   }

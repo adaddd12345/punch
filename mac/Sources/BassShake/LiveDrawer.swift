@@ -17,10 +17,13 @@ final class LiveDrawer {
       hostObservers = []
       if let host {
         for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
-          // A move (maybe to another screen) re-decides under vs beside; a resize keeps it.
+          // A move to another screen re-decides under vs beside; a resize, or
+          // a move on the same screen (the popup gliding up for the tray), keeps it.
           let moved = name == NSWindow.didMoveNotification
           hostObservers.append(NotificationCenter.default.addObserver(forName: name, object: host, queue: .main) {
-            [weak self] _ in if self?.isShown == true { self?.reposition(decide: moved) }
+            [weak self, weak host] _ in
+            guard let self, self.isShown else { return }
+            self.reposition(decide: moved && host?.screen != self.decidedOn)
           })
         }
       }
@@ -39,6 +42,9 @@ final class LiveDrawer {
     return host?.frame
   }
   private let gap: CGFloat = 6
+  /// Between a lifted Dock popup and the tray under it: the popover's arrow
+  /// (still pointing at the Dock) just meets the tray's top edge.
+  private let liftGap: CGFloat = 13
 
   var isShown: Bool { panel?.isVisible ?? false }
   /// Tutorial Mode in the drawer (stored as `pointerHints`; mirrors the setting, set by the popup).
@@ -49,15 +55,34 @@ final class LiveDrawer {
   /// Observed only by the drawer's hint root: flips when the setting changes
   /// or the drawer shows/hides (hiding clears any caption and hover stack).
   private let hints = DrawerHints()
-  /// Beside the popup (a slim card to its right, or left if there's no
-  /// room) instead of hanging under it.
+  /// Asked for beside the popup (a slim card to its right, or left if
+  /// there's no room) instead of under it.
   private var side = false
-  /// Set while the popup hangs from the Dock: the tray goes beside it
-  /// instead of under it (where the Dock is).
+  /// Set while the popup hangs from the Dock: never under it (where the Dock
+  /// is). On a bottom Dock (`liftable`) the popup can move up instead.
   var preferSide = false
-  /// No room under the popup, decided once per show (and when the popup
-  /// moves), so the drawer doesn't jump under/beside as its rows arrive.
-  private var noRoomBelow = false
+  /// The popup hangs from a bottom Dock: with room above, it glides up by
+  /// the tray's height and the tray sits under it, between it and the Dock.
+  var liftable = false
+  /// Beside only (a side Dock): the tray content should use its side layout.
+  var sideOnly: Bool { preferSide && !liftable }
+  /// Moves the popup up by this much (animated), 0 puts it back. Set by the app.
+  var liftPopup: ((CGFloat) -> Void)?
+  /// How far the popup is lifted right now (mid-glide too).
+  var popupLift: () -> CGFloat = { 0 }
+  /// The lift asked for (where the popup is heading).
+  private var lifted: CGFloat = 0
+
+  /// Where the tray goes: under the popup (menu bar), under the lifted popup
+  /// (bottom Dock), or beside it. Decided once per show (and when the popup
+  /// moves to another screen); afterwards it only changes when the tray or
+  /// popup grows and would no longer fit, so it never flips back and forth
+  /// as rows arrive.
+  private enum Placement { case below, liftedBelow, beside }
+  private var placement = Placement.below
+  /// Beside because there was no room under (not asked for).
+  private var noRoom = false
+  private weak var decidedOn: NSScreen?
 
   func show(model: LiveChannels) {
     show(LiveChannelsPanel(model: model))
@@ -67,7 +92,7 @@ final class LiveDrawer {
   /// what was there.
   func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil) {
     guard let host else { return }
-    self.side = side || preferSide
+    self.side = side || sideOnly
     if panel == nil {
       let p = DrawerPanel(contentRect: NSRect(x: 0, y: 0, width: anchorRect?.width ?? host.frame.width, height: 120),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -141,32 +166,63 @@ final class LiveDrawer {
     hints.shown = false
     panel.parent?.removeChildWindow(panel)
     panel.orderOut(nil)
+    setLift(0)   // the popup glides back down to the Dock
+  }
+
+  private func setLift(_ v: CGFloat) {
+    guard abs(v - lifted) > 0.5 else { return }
+    lifted = v
+    liftPopup?(v)
   }
 
   private func reposition(decide: Bool = false) {
     guard let panel, let r = anchorRect else { return }
-    // Origin only: the hosting controller owns the size (the list scrolls
-    // past six rows, so it stays compact). Aligned to the popover content.
-    let vis = (panel.parent ?? panel).screen?.visibleFrame
+    // Origin only (the panel is sized by `fit`). Aligned to the popover content.
+    let host = panel.parent ?? self.host
+    let vis = (host ?? panel).screen?.visibleFrame
     let h = panel.frame.height, w = panel.frame.width
     let below = r.minY - gap - h
-    // Decided by geometry, not only the Dock flag (a late close event can clear
-    // it): no room under the popup means it hangs near the Dock, so beside it.
-    if decide { noRoomBelow = vis.map { below < $0.minY + 4 } ?? false }
-    if side || noRoomBelow {
+    // Under the menu-bar popup: room down to the Dock (or the screen's bottom).
+    let fitsBelow = vis.map { below >= $0.minY + 4 } ?? true
+    // Under a Dock popup: lifted by the tray, its top must stay on screen.
+    let liftBy = h + liftGap
+    let fitsLifted: Bool = {
+      guard liftable, let vis, let host else { return false }
+      return host.frame.maxY - popupLift() + liftBy <= vis.maxY - 4
+    }()
+    if decide {
+      decidedOn = host?.screen
+      if side { placement = .beside; noRoom = false }
+      // Decided by geometry, not only the Dock flag (a late close event can
+      // clear it): no room under the popup means it hangs near the Dock.
+      else if preferSide || !fitsBelow { placement = fitsLifted ? .liftedBelow : .beside; noRoom = placement == .beside }
+      else { placement = .below; noRoom = false }
+    } else {
+      // Grown past the room it had: beside from now on (this show).
+      switch placement {
+      case .below where !fitsBelow, .liftedBelow where !fitsLifted: placement = .beside; noRoom = true
+      default: break
+      }
+    }
+    setLift(placement == .liftedBelow ? liftBy : 0)
+    switch placement {
+    case .below:
+      panel.setFrameOrigin(NSPoint(x: r.minX, y: below))
+    case .liftedBelow:
+      // Rides with the popup as it glides (a child window moves with it).
+      panel.setFrameOrigin(NSPoint(x: r.minX, y: r.minY - liftGap - h))
+    case .beside:
       // Right of the popup, or left when that runs off screen; never past either edge.
       var x = r.maxX + gap
       if let vis, x + w > vis.maxX - 4 { x = r.minX - gap - w }
       if let vis { x = min(max(x, vis.minX + 4), vis.maxX - 4 - w) }
       // Near the Dock the pointer is down at the footer (the DJ / Live / Beats
       // buttons): bottom edges line up. From the menu bar, top edges line up.
-      let low = preferSide || noRoomBelow
-      var y = low ? r.minY : r.maxY - h
+      let low = preferSide || noRoom
+      var y = low ? r.minY - popupLift() : r.maxY - h
       if let vis { y = min(max(y, vis.minY + 4), vis.maxY - 4 - h) }
       panel.setFrameOrigin(NSPoint(x: x, y: y))
-      return
     }
-    panel.setFrameOrigin(NSPoint(x: r.minX, y: below))
   }
 }
 
