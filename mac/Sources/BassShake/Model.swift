@@ -472,6 +472,39 @@ enum ScopeColor: String, Codable, CaseIterable, Identifiable {
   case accent, yellow, green, cyan, magenta, white
   var id: String { rawValue }
   var title: String { self == .accent ? "System Accent" : rawValue.capitalized }
+  var color: Color {
+    switch self {
+    case .accent: return .accentColor   // follows System Settings › Appearance
+    case .yellow: return Color(red: 1.0, green: 0.90, blue: 0.0)
+    case .green: return Color(red: 0.25, green: 1.0, blue: 0.35)
+    case .cyan: return Color(red: 0.2, green: 0.9, blue: 1.0)
+    case .magenta: return Color(red: 1.0, green: 0.3, blue: 0.85)
+    case .white: return .white
+    }
+  }
+}
+
+extension Settings {
+  var eqVisual: EQVisual {
+    get { !waveform ? .off : (spectrum ? .spectrum : .scope) }
+    set {
+      waveform = newValue != .off
+      if newValue != .off { spectrum = newValue == .spectrum }
+    }
+  }
+}
+
+/// ⋯ › Look › EQ Visual (stored as `waveform` + `spectrum`).
+enum EQVisual: String, CaseIterable, Identifiable {
+  case scope, spectrum, off
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .scope: return "Scope"
+    case .spectrum: return "Spectrum"
+    case .off: return "Off"
+    }
+  }
 }
 
 /// Sleep timer presets in minutes; 0 = no timer.
@@ -583,8 +616,11 @@ struct Settings: Codable, Equatable {
   var centerLock: CenterLock = .off
   var earProtector = false                        // duck sudden blasts (opt-in)
   var hqGuard = true                              // keep Bluetooth headsets in stereo
-  /// Live oscilloscope trace behind the EQ curve.
+  /// A live trace behind the EQ curve (the scope, or Spectrum below).
   var waveform = true
+  /// EQ Visual: the analyser (Spectrum.swift) instead of the scope, while
+  /// `waveform` is on.
+  var spectrum = false
   var scopeColor: ScopeColor = .accent
   var backgroundStyle: BackgroundStyle = .system
   /// Popover size: everything, compact, or just the sliders.
@@ -739,6 +775,7 @@ struct Settings: Codable, Equatable {
     earProtector = (try? c.decodeIfPresent(Bool.self, forKey: .earProtector)) ?? d.earProtector
     hqGuard = (try? c.decodeIfPresent(Bool.self, forKey: .hqGuard)) ?? d.hqGuard
     waveform = (try? c.decodeIfPresent(Bool.self, forKey: .waveform)) ?? d.waveform
+    spectrum = (try? c.decodeIfPresent(Bool.self, forKey: .spectrum)) ?? d.spectrum
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize

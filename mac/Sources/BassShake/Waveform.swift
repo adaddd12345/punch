@@ -91,16 +91,7 @@ struct WaveformView: View {
   @ObservedObject var model: WaveformModel
   var color: ScopeColor = .accent
 
-  private var traceColor: Color {
-    switch color {
-    case .accent: return .accentColor   // follows System Settings › Appearance
-    case .yellow: return Color(red: 1.0, green: 0.90, blue: 0.0)
-    case .green: return Color(red: 0.25, green: 1.0, blue: 0.35)
-    case .cyan: return Color(red: 0.2, green: 0.9, blue: 1.0)
-    case .magenta: return Color(red: 1.0, green: 0.3, blue: 0.85)
-    case .white: return .white
-    }
-  }
+  private var traceColor: Color { color.color }
 
   var body: some View {
     trace
