@@ -867,14 +867,15 @@ struct PopoverView: View {
   }
 
   /// Opened from the Dock: the app's icon and name on the left, the footer's groups on
-  /// the right with ⋯ in the top-right corner. Its ✕ (on hover) brings the footer back.
+  /// the right (no Quit: it is in ⋯) with ⋯ in the top-right corner. Its ✕ (on hover) brings the footer back.
   private var dockHeader: some View {
     HStack(spacing: 0) {
       DockHeaderTitle(hovered: headerHovered) { controller.settings.dockHeader = false }
+        .layoutPriority(1)
       Spacer(minLength: FooterBento.groupGap)
+      // Quit lives in ⋯ here, so ⋯ (settings) holds the top-right corner.
       HStack(spacing: FooterBento.groupGap) {
         statusGroup
-        powerGroup
         toolsGroup
       }
     }
