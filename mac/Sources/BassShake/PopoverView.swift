@@ -34,6 +34,7 @@ struct PopoverView: View {
   @State private var showMicTest = false
   @State private var showLayoutEditor = false
   @State private var showMySounds = false
+  @State private var showRemote = false
   /// Hold any block to rearrange (Reshuffle.swift).
   @StateObject private var reshuffle: Reshuffle
   /// How tall the menu-bar popup may be where it hangs.
@@ -60,6 +61,8 @@ struct PopoverView: View {
     Group {
       if controller.needsOnboarding {
         OnboardingView(controller: controller)
+      } else if showRemote {
+        RemotePanelView(controller: controller, remote: RemoteControl.shared) { withAnimation { showRemote = false } }
       } else if showMySounds {
         MySoundsView(controller: controller) { withAnimation { showMySounds = false } }
       } else if showLayoutEditor {
@@ -154,6 +157,7 @@ struct PopoverView: View {
                     heroIconsTight: size == .full && labels == .full ? AnyView(windowTools(words: false)) : nil,
                     flat: !controller.settings.bento,
                     macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
+                    remoteBlock: AnyView(RemoteMacsBlock(directory: RemoteControl.shared.directory, size: size)),
                     reshuffle: reshuffle)
         }
       }
@@ -304,6 +308,7 @@ struct PopoverView: View {
       NowPlaying.shared.attach(controller)
       PlayingApps.shared.attach(controller.live)
       NowPlaying.shared.windowAppeared()
+      RemoteControl.shared.popupShown(true)
       latencyLab.startMonitoring()
       controller.macVolume.refresh()
       updates.checkInBackgroundIfStale()
@@ -321,6 +326,7 @@ struct PopoverView: View {
       controller.live.setMetering(false)
       controller.live.stopEarsMetering()
       NowPlaying.shared.windowDisappeared()
+      RemoteControl.shared.popupShown(false)
       // A pad held while the popover closed never gets its release event.
       controller.dj.held = []
     }
@@ -871,6 +877,8 @@ struct PopoverView: View {
         Menu("Presets & Settings") {
           Button("My Sounds…") { reshuffle.set(false); withAnimation { showMySounds = true } }
           Button("Edit Layout…") { reshuffle.set(false); withAnimation { showLayoutEditor = true } }
+          // Remote control between Macs: both switches and pairing live in this one panel.
+          Button("Other Macs…") { reshuffle.set(false); withAnimation { showRemote = true } }
           Toggle("Show Mac Volume", isOn: Binding(get: { controller.settings.showMacVolume },
                                                   set: { controller.settings.showMacVolume = $0 }))
           // Stored as `pointerHints` so saved settings keep loading.

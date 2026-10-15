@@ -9,7 +9,7 @@ C++20 DSP core, SwiftUI + AppKit UI, Sparkle auto-updates. Bundle id `app.basssh
 - `mac/Sources/BassShake/` Swift app. Key files: `AudioController.swift` (state, pipeline, watchdog),
   `TapPipeline.swift` (tap + aggregate), `BassShakeApp.swift` (status item, popover, menus),
   `PopoverView.swift` (UI), `Model.swift` (Settings, tolerant JSON decode).
-- `docs/research/` design + research notes (27 = basic-behaviours audit, 28 = Fair Level).
+- `docs/research/` design + research notes (27 = basic-behaviours audit, 28 = Fair Level, 30 = Other Macs remote: protocol + pairing).
 - CI: `.github/workflows/build.yml` builds a universal app with `mac/scripts/bundle.sh` and publishes a beta + Sparkle appcast on every push.
 
 ## Build & test

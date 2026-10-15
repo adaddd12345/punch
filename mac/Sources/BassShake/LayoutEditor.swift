@@ -29,6 +29,10 @@ struct LayoutSection: Identifiable, Equatable {
   static let macVolume = LayoutSection(key: "mac.volume", name: "Mac Volume", symbol: "speaker.wave.2.fill",
                                        tint: .steel, height: 32)
 
+  // Both layouts, Full and Compact: paired Macs nearby (Remote.swift).
+  static let remoteMacs = LayoutSection(key: "remote.macs", name: "Other Macs", symbol: "laptopcomputer",
+                                        tint: .steel, height: 56, when: "With Control Other Macs on and a paired Mac nearby")
+
   // Bento, top to bottom.
   static let bentoHero = LayoutSection(key: "bento.hero", name: "Top Tile", symbol: "power", tint: .butter,
                                        height: 64, locked: "Always shown: it has the power button.")
@@ -60,10 +64,10 @@ struct LayoutSection: Identifiable, Equatable {
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
   /// Default orders, top to bottom: Mac Volume sits right under the EQ.
-  static let bento: [LayoutSection] = [bentoHero, bentoNowPlaying, bentoEQ, macVolume, bentoDials, bentoPresets,
+  static let bento: [LayoutSection] = [bentoHero, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials, bentoPresets,
                                        bentoModes, bentoModeSettings, bentoFooter]
   /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
-  static let classic: [LayoutSection] = [classicHeader, classicNowPlaying, classicEQ, macVolume, classicMeters,
+  static let classic: [LayoutSection] = [classicHeader, classicNowPlaying, classicEQ, macVolume, remoteMacs, classicMeters,
                                          classicSliders, classicPresets, classicModes, classicModeSettings, classicFooter]
 
   /// The defaults before Mac Volume moved under the EQ (it was first). A saved

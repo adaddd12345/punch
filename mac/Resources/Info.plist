@@ -24,6 +24,10 @@
   <string>Latency Lab listens to the microphone only while you measure, to time short test chirps and work out your recording delay. Nothing is recorded, saved, or sent anywhere.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Shows the song and artwork from Spotify or Music, and which tab is playing in your browser, in The Bass Shaker, and lets you pause or skip from there.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Lets your other Macs running The Bass Shaker find and control this one.</string>
+  <key>NSBonjourServices</key>
+  <array><string>_bassshake._tcp</string></array>
   <key>SUFeedURL</key><string>https://github.com/adaddd12345/punch/releases/download/updates/appcast.xml</string>
   <key>SUPublicEDKey</key><string>cSo3MWPriyIcFg42hMuJHhk2nLwVCNqO62OHV4Enjig=</string>
   <key>SUEnableAutomaticChecks</key><true/>
