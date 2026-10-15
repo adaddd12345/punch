@@ -3,7 +3,7 @@ import SwiftUI
 
 // Reshuffle: hold any block of the popup still for half a second and every
 // block lifts slightly; drag one up or down to reorder (the others make room
-// with a spring), then Done, Return or a click outside the blocks. Esc
+// with a spring), then Done, Return, a click outside the blocks or a plain click on one. Esc
 // mid-drag puts the block back; otherwise Esc ends like Done. The order is
 // saved only on release; Reset Order (beside Done, and in Edit Layout)
 // returns to the default.
@@ -101,6 +101,9 @@ final class Reshuffle: ObservableObject {
     if on { on = false; Self.anyOn = false }
   }
 
+  /// Where a press on a block began while rearranging (a click there ends it).
+  private var clickAt: NSPoint?
+
   private func cancel() {
     pending?.cancel()
     pending = nil
@@ -119,6 +122,8 @@ final class Reshuffle: ObservableObject {
           swallowUp = true
           return nil
         }
+        // On a block: a plain click (no drag) also ends it, decided on release.
+        if hovered != nil && !overDone { clickAt = NSEvent.mouseLocation }
         return e
       }
       guard canStart(), hovered != nil, !overNativeControl(e, in: w) else { return e }
@@ -140,6 +145,10 @@ final class Reshuffle: ObservableObject {
       DispatchQueue.main.asyncAfter(deadline: .now() + Self.hold, execute: work)
       return e
     case .leftMouseDragged:
+      if let c = clickAt {
+        let p = NSEvent.mouseLocation
+        if hypot(p.x - c.x, p.y - c.y) > Self.slop { clickAt = nil }
+      }
       if let start = downAt {
         let p = NSEvent.mouseLocation
         if hypot(p.x - start.x, p.y - start.y) > Self.slop { cancel() }
@@ -148,6 +157,17 @@ final class Reshuffle: ObservableObject {
     case .leftMouseUp:
       cancel()
       if swallowUp { swallowUp = false; return nil }
+      if on, let c = clickAt {
+        clickAt = nil
+        let p = NSEvent.mouseLocation
+        if hypot(p.x - c.x, p.y - c.y) <= Self.slop {
+          // After the block has handled its own release (a zero-length drop).
+          DispatchQueue.main.async { [weak self] in
+            guard let self, self.on else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { self.set(false) }
+          }
+        }
+      }
       return e
     default:
       return e
