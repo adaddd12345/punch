@@ -272,7 +272,9 @@ final class RemoteHostServer {
 
   static let maxHandshakes = 4
   static let maxSessions = 8
-  static let idleSeconds: TimeInterval = 45
+  /// A controller pings every 3 s (older builds: 10 s); one silent this long is gone
+  /// (battery died, slept, left the network), and any live edit of its stops.
+  static let idleSeconds: TimeInterval = 20
   /// Wrong codes allowed in `failureWindow` before pairing pauses.
   static let maxFailures = 5
   static let failureWindow: TimeInterval = 600
@@ -342,7 +344,7 @@ final class RemoteHostServer {
     report(.starting)
     openListener()
     let t = DispatchSource.makeTimerSource(queue: RemoteNet.queue)
-    t.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(2))
+    t.schedule(deadline: .now() + 5, repeating: 5, leeway: .seconds(1))
     t.setEventHandler { [weak self] in self?.sweepIdle() }
     t.resume()
     sweep = t
@@ -764,7 +766,12 @@ final class RemoteClient {
   private var retryWork: DispatchWorkItem?
   private var pingTimer: DispatchSourceTimer?
   private var lastHeard: TimeInterval = 0
+  /// Main only (send is called from main): no queue.sync, so main never waits on the network queue.
   private var nextID = 1
+
+  /// Pings this often; a session silent for `silenceLimit` is dead (no goodbye: battery, sleep, Wi-Fi).
+  static let pingInterval: TimeInterval = 3
+  static let silenceLimit: TimeInterval = 9
 
   init(identity: RemoteIdentity, name: String, peerKey: Data) {
     self.identity = identity
@@ -821,11 +828,8 @@ final class RemoteClient {
 
   /// Sends a command; its ack arrives in `onAck` with the returned id.
   @discardableResult func send(_ cmd: RemoteCommand) -> Int {
-    var id = 0
-    RemoteNet.queue.sync {
-      id = nextID
-      nextID += 1
-    }
+    let id = nextID
+    nextID += 1
     RemoteNet.queue.async {
       guard self.connected, let c = self.conn else {
         RemoteNet.main { self.onAck?(id, false, "Not connected.") }
@@ -911,10 +915,11 @@ final class RemoteClient {
   private func startPings(_ c: RemoteConn) {
     pingTimer?.cancel()
     let t = DispatchSource.makeTimerSource(queue: RemoteNet.queue)
-    t.schedule(deadline: .now() + 10, repeating: 10, leeway: .seconds(1))
+    t.schedule(deadline: .now() + Self.pingInterval, repeating: Self.pingInterval, leeway: .milliseconds(500))
     t.setEventHandler { [weak self, weak c] in
       guard let self, let c, self.conn === c else { return }
-      if ProcessInfo.processInfo.systemUptime - self.lastHeard > 30 { c.close(.timeout); return }
+      // Uptime: this Mac's own sleep doesn't count, so waking never drops a live link at once.
+      if ProcessInfo.processInfo.systemUptime - self.lastHeard > Self.silenceLimit { c.close(.timeout); return }
       c.send(.ping)
     }
     t.resume()

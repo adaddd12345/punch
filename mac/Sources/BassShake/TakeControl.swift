@@ -22,8 +22,9 @@ import SwiftUI
 // This Mac's own sound keeps running untouched underneath. The choice is
 // saved (Settings.remoteTakeover): closing the popup, clicking off, relaunch
 // and sleep keep it. Only Switch Back, unpairing (here or there) or the Mac
-// being gone for 2 minutes end it. While the link is down the popup stays on
-// that Mac, dimmed, saying Reconnecting… (never quietly back on this one).
+// being gone (`lostAfter` of uptime with no link: battery died, it slept, left
+// the network) end it, with a notice. A short drop shows Reconnecting… dimmed.
+// Check & Fix and Quit always act on this Mac (the status menu, the footer).
 
 // MARK: - Sound fields
 
@@ -262,8 +263,10 @@ final class TakeoverSession: ObservableObject, MirrorLink {
   /// That commit also ends the preview there (a drag's end).
   private var commitEndsPreview = false
 
-  /// How long the Mac may be gone before the popup comes back here.
-  static let lostAfter: TimeInterval = 120
+  /// How long the Mac may be gone before the popup comes back here. A peer that
+  /// dies without a goodbye is noticed by the ping (RemoteClient.silenceLimit),
+  /// so this Mac is back in its own hands within ~20 s, not stuck on a dead Mac.
+  static let lostAfter: TimeInterval = 10
 
   fileprivate init(peer: RemotePeer, local: AudioController, onEnd: @escaping (String?) -> Void) {
     peerID = peer.id
@@ -334,14 +337,14 @@ final class TakeoverSession: ObservableObject, MirrorLink {
     }
   }
 
-  /// Gone for 2 minutes (uptime, so a sleeping Mac doesn't count the night): back here.
+  /// Gone for `lostAfter` (uptime, so this Mac's own sleep doesn't count): back here.
   private func markDown() {
     if downSince == nil { downSince = ProcessInfo.processInfo.systemUptime }
     guard downTimer == nil else { return }
-    let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+    let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
       guard let self, let since = self.downSince else { return }
       if ProcessInfo.processInfo.systemUptime - since > Self.lostAfter {
-        self.onEnd("Lost \(self.name) for 2 minutes, so this popup is back on this Mac.")
+        self.onEnd("Lost \(self.name), so this popup is back on this Mac.")
       }
     }
     RunLoop.main.add(t, forMode: .common)

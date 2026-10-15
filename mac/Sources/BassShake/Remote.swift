@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Network
 import SystemConfiguration
+import os
 
 // Other Macs: control The Bass Shaker on another Mac on the same network
 // (e.g. a Mac Studio driving a MacBook). Off by default; two switches in
@@ -211,6 +212,7 @@ final class RemotePeerModel: ObservableObject, Identifiable {
 
 final class RemoteControl: ObservableObject, RemoteHostDelegate {
   static let shared = RemoteControl()
+  private static let log = Logger(subsystem: "app.bassshake.BassShake", category: "remote")
 
   // The Other Macs panel (slow state only).
   @Published private(set) var hostStatus: RemoteNetStatus = .off
@@ -587,6 +589,13 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
     }
     #endif
     let here = localName
+    // Who changed this Mac's sound from elsewhere (a mode, a timer, power…) is
+    // in the log; drags (volume, live edits) would flood it.
+    if command.known != .setVolume && command.known != .soundPreview {
+      let arg = command.str ?? command.num.map { "\($0)" } ?? ""
+      let who = controllers[fingerprint] ?? fingerprint
+      Self.log.notice("remote \(command.name, privacy: .public) \(arg, privacy: .public) from \(who, privacy: .public)")
+    }
     switch command.known {
     case .setVolume?:
       guard let v = command.num, v.isFinite else { reply(false, nil); return }

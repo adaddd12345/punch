@@ -350,9 +350,27 @@ extension AudioController {
 
   // MARK: - Pause (routes already allowed only)
 
+  /// Scripts (3 s timeout each) plus the listening (~3 s) fit well inside this.
+  static let pauseDeadline: TimeInterval = 15
+
   /// Pauses what's playing using only what macOS already allows (no prompts),
   /// then checks the input went quiet. `done(true)`: quiet now. Main thread.
-  func pausePlayback(_ done: @escaping (Bool) -> Void) {
+  /// Always answers: a script that never returns (a wedged player or Apple
+  /// Events) counts as "couldn't pause" after `pauseDeadline`, so the run ends
+  /// held (released by quiet input, Power, Check & Fix) instead of sitting in
+  /// "stopping" with the output silent until quit (seen 2026-10-15).
+  func pausePlayback(_ finish: @escaping (Bool) -> Void) {
+    var answered = false
+    let done: (Bool) -> Void = { ok in
+      guard !answered else { return }
+      answered = true
+      finish(ok)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.pauseDeadline) { [weak self] in
+      guard !answered else { return }
+      self?.loLog.error("lights out: pause didn't answer in \(Int(Self.pauseDeadline), privacy: .public) s")
+      done(false)
+    }
     var keysOK = MediaKeys.allowed && settings.pauseRoute != .mute
     var players = NowPlayer.allCases.filter { $0.isRunning && AutomationGate.shared.isOn($0.rawValue) }
     #if DEBUG
@@ -586,7 +604,7 @@ extension AudioController {
   @discardableResult
   func releaseSilenceHolds(_ why: String) -> Bool {
     var any = false
-    if lightsOut.ending == .held || lightsOut.ending == .macMuted { wakeLightsOut(); any = true }
+    if lightsOut.ending == .held || lightsOut.ending == .macMuted || lightsOut.ending == .stopping { wakeLightsOut(); any = true }
     if lightsOut.notice?.held == true { playHereAfterGuard(); any = true }
     if any { loLog.notice("hold released: \(why, privacy: .public)") }
     return any

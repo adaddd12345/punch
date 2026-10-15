@@ -808,6 +808,11 @@ struct PopoverView: View {
         Button("My Sounds…") { withAnimation { showMySounds = true } }
         Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
         Divider()
+        // Never sent to the other Mac: this Mac's own sound, shown back here.
+        Button("Check & Fix This Mac's Sound") {
+          TakeControl.shared.switchBack()
+          TakeControl.shared.localController?.checkAndFix()
+        }
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       }
     }

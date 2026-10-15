@@ -1141,6 +1141,15 @@ final class AudioController: ObservableObject {
         if balanceOff { self.centerBalance(); notes.append("Left/right balance was off. Centered it.") }
         if self.bypassed { self.bypassed = false; notes.append("A/B was on Original. Switched back.") }
         if self.dj.anyActive { self.dj = DJState(listening: self.dj.listening); notes.append("Turned off DJ effects.") }
+        // Lights Out's finished fade or the headphone guard holding the output silent.
+        if self.lightsOut.ending == .held || self.lightsOut.ending == .stopping || self.lightsOut.ending == .macMuted {
+          self.wakeLightsOut()
+          notes.append("Lights Out was keeping the sound silent. Turned it back on.")
+        }
+        if self.lightsOut.notice?.held == true {
+          self.releaseGuard(fadeMs: 1000, notice: nil)
+          notes.append("The headphone guard was keeping the sound silent. Turned it back on.")
+        }
         if case .audioServiceStuck = self.status {
           notes.append("macOS's audio service isn't responding. Use Restart macOS Audio below.")
         }
