@@ -115,6 +115,8 @@ final class AudioController: ObservableObject {
   /// Output device volume (0...1) for Auto Loudness; not persisted. Not
   /// @Published: it changes on every volume step and no view reads it.
   private(set) var deviceVolume: Double?
+  /// The output `deviceVolume` was read from (main).
+  private var volumeDeviceID: AudioObjectID = 0
   /// Device UID to offer a Quiet Floor pad for (see QuietFloor.swift).
   @Published var quietFloorSuggestion: String?
   let quietFloorTracker = QuietFloorTracker()
@@ -138,7 +140,7 @@ final class AudioController: ObservableObject {
         // Fresh start each time: no stale A/B or finished sleep fade (which
         // would otherwise leave the output silent after off/on).
         bypassed = false
-        if lightsOut.ending == .held { wakeLightsOut() }
+        releaseSilenceHolds("power toggled")
         settings.enabled ? start(.toggle) : stop()
       }
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
@@ -930,7 +932,8 @@ final class AudioController: ObservableObject {
 
   private func modeTick() {
     let now = Date()
-    lightsOutTick(now)
+    // Asleep (or the wake not handled yet): lightsOutUserReturned looks at the clock first.
+    if !isSleeping { lightsOutTick(now) }
     if let end = pomodoroEndsAt, let plan = pomodoroPlan, now >= end {
       pomodoroOnBreak.toggle()
       pomodoroEndsAt = now.addingTimeInterval(Double(pomodoroOnBreak ? plan.rest : plan.focus) * 60)
@@ -1130,6 +1133,11 @@ final class AudioController: ObservableObject {
     DispatchQueue.main.async {
       var notes = notes
       if !auto {
+        notes += self.clearAppSilence()
+        let mutedApps = self.live.apps.filter { self.live.muted.contains($0.id) }.map(\.name)
+        if !mutedApps.isEmpty {
+          notes.append("Muted in Live Channels: \(ListFormatter.localizedString(byJoining: mutedApps)). Unmute there to hear \(mutedApps.count == 1 ? "it" : "them").")
+        }
         if balanceOff { self.centerBalance(); notes.append("Left/right balance was off. Centered it.") }
         if self.bypassed { self.bypassed = false; notes.append("A/B was on Original. Switched back.") }
         if self.dj.anyActive { self.dj = DJState(listening: self.dj.listening); notes.append("Turned off DJ effects.") }
@@ -1684,6 +1692,7 @@ final class AudioController: ObservableObject {
     observers.append(ws.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
       self?.isSleeping = false
       self?.hqGuardSessionActive.store(true)
+      self?.lightsOutUserReturned("session active")
       DispatchQueue.main.async { self?.scheduleRebuild(.userSwitch, delay: 1.5) }
     })
     // A mic picked in Latency Lab: HQ Guard leaves it, like our Microphone
@@ -1693,9 +1702,16 @@ final class AudioController: ObservableObject {
       guard let self, let uid = n.object as? String else { return }
       self.audioQueue.async { self.userChosenInputUID = uid }
     })
+    // Screens on: somebody is at the Mac; a Lights Out hold opens.
+    observers.append(ws.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+      guard let self, !self.isSleeping else { return }
+      self.lightsOutUserReturned("screens woke")
+    })
     observers.append(ws.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
       self?.isSleeping = false
       self?.hqGuardSessionActive.store(true)
+      // Before any tick: a timer that ran out during sleep ends with sound, not a jump to silence.
+      self?.lightsOutUserReturned("wake")
       DispatchQueue.main.async { self?.scheduleRebuild(.wake, delay: 1.5) }
       // Bluetooth reconnects a few seconds after wake, sometimes in call mode.
       DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
@@ -1738,7 +1754,7 @@ final class AudioController: ObservableObject {
     }
     let read: () -> Void = { [weak self] in
       guard let v = try? HAL.get(device.id, addr, default: Float32(1)) else { return }
-      DispatchQueue.main.async { self?.volumeChanged(Double(v)) }
+      DispatchQueue.main.async { self?.volumeChanged(Double(v), device: device.id) }
     }
     volumeListeners.add(device.id, addr) { read() }
     read()
@@ -1770,7 +1786,10 @@ final class AudioController: ObservableObject {
     read()
   }
 
-  private func volumeChanged(_ v: Double) {
+  private func volumeChanged(_ v: Double, device: AudioObjectID) {
+    // The same output's volume moved: someone wants sound, so a silence hold opens.
+    if let old = deviceVolume, device == volumeDeviceID, abs(old - v) > 0.001 { lightsOutVolumeMoved() }
+    volumeDeviceID = device
     if deviceVolume != v { deviceVolume = v }
     quietFloorVolumeChanged(v)
     guard settings.autoLoudness, !volumePushPending else { return }

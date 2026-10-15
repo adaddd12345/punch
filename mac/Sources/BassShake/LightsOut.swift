@@ -430,14 +430,17 @@ extension AudioController {
     let new = currentDevice
     let prev = lightsOutRun.lastOutput
     lightsOutRun.lastOutput = new
-    guard old != 0, let prev, prev.id == old else { return }
     // The headphones came back while the guard holds: sound returns in them.
+    // Checked before the old-device test: a wake can pass through "no output".
     if let new, Self.isPersonalOutput(new), lightsOut.notice?.held == true {
       loLog.notice("guard: \(new.name, privacy: .public) is back")
       releaseGuard(fadeMs: 1000, notice: nil)
       return
     }
     let picked = ProcessInfo.processInfo.systemUptime - lightsOutRun.userPickedAt < 3
+    // An output picked in our picker: the user wants sound there.
+    if picked { releaseSilenceHolds("output picked") }
+    guard old != 0, let prev, prev.id == old else { return }
     guard Self.guardShouldFire(old: prev, new: new, armed: lightsOutGuardArmed, userPicked: picked) else { return }
     triggerGuard(old: prev, new: new)
   }
@@ -558,6 +561,106 @@ extension AudioController {
   /// Quit: never leave the speakers muted behind us. audioQueue.
   func lightsOutShutdownOffMain(bridge: AudioObjectID) {
     if bridge != 0 { _ = DeviceMute.set(bridge, false) }
+  }
+
+  // MARK: - Never silent for good
+
+  // A hold is for the night. Once somebody is back (the Mac or its screens
+  // wake, the volume moves, an output is picked, Check & Fix), it opens:
+  // a hold that waited for 10 s of quiet input never opened while they played.
+
+  /// What we're holding silent, for the popup's banner (nil: nothing).
+  var silenceHeldText: String? {
+    switch lightsOut.ending {
+    case .held: return "Lights Out ended but couldn't pause what's playing, so The Bass Shaker is keeping your sound silent."
+    case .macMuted: return "Lights Out ended but couldn't pause what's playing, so it muted your Mac."
+    default: break
+    }
+    if lightsOut.notice?.held == true {
+      return "Your headphones disconnected, so The Bass Shaker is keeping your sound silent."
+    }
+    return nil
+  }
+
+  /// Unmute and Play Here in one. True if anything was held.
+  @discardableResult
+  func releaseSilenceHolds(_ why: String) -> Bool {
+    var any = false
+    if lightsOut.ending == .held || lightsOut.ending == .macMuted { wakeLightsOut(); any = true }
+    if lightsOut.notice?.held == true { playHereAfterGuard(); any = true }
+    if any { loLog.notice("hold released: \(why, privacy: .public)") }
+    return any
+  }
+
+  /// The Mac, its screens or this account came back: somebody is here.
+  func lightsOutUserReturned(_ why: String) {
+    guard !isMirror else { return }
+    releaseSilenceHolds(why)
+    if lightsOut.running, let end = lightsOut.endsAt, end <= Date() { finishAfterSystemSleep(ended: end) }
+  }
+
+  /// The output's volume moved (same device): the user is reaching for sound.
+  func lightsOutVolumeMoved() {
+    guard !isMirror else { return }
+    releaseSilenceHolds("volume changed")
+  }
+
+  /// Ran out while the Mac slept. Its sleep already stopped the sound, so no
+  /// fade: stay silent until the new pipeline is up and the pause is tried,
+  /// then open the output whatever the pause did (whoever woke it is here).
+  private func finishAfterSystemSleep(ended: Date) {
+    loLog.notice("lights out: ran out while the Mac slept")
+    var st = lightsOut
+    st.endsAt = nil
+    st.fading = false
+    st.ending = .stopping
+    st.endedAt = ended
+    lightsOut = st
+    lightsOutRun.generation += 1
+    lightsOutRun.fadeDoneAt = nil
+    // The new pipeline starts at its fade's target, so nothing plays early.
+    if settings.mode == .sleep { fade.musicDb = -120 } else { fade.timer = .init(db: LightsOutRun.silentDb, ms: 0) }
+    let gen = lightsOutRun.generation
+    waitForPipeline(seconds: 5) { [weak self] in
+      guard let self, self.lightsOutRun.generation == gen, self.lightsOut.ending == .stopping else { return }
+      self.pausePlayback { verified in
+        guard self.lightsOutRun.generation == gen, self.lightsOut.ending == .stopping else { return }
+        self.loLog.notice("lights out: after wake, \(verified ? "paused" : "couldn't pause", privacy: .public); sound open")
+        self.lightsOut.ending = verified ? .paused : nil
+        if !verified { self.lightsOut.endedAt = nil }
+        var f = self.fade
+        f.musicDb = 0
+        f.timer = .init(db: 0, ms: 1500)
+        self.fade = f
+        if self.settings.mode != .sleep || self.settings.noiseAllNight || !verified { self.endTicking() }
+      }
+    }
+  }
+
+  /// Check & Fix: anything of ours keeping the sound silent, opened again.
+  func clearAppSilence() -> [String] {
+    var notes: [String] = []
+    let ending = lightsOut.ending
+    if ending == .held || ending == .macMuted || ending == .stopping {
+      wakeLightsOut()
+      notes.append(ending == .macMuted ? "Lights Out had muted your Mac after its timer ended. Unmuted it."
+                                       : "Lights Out was keeping your sound silent after its timer ended. Turned it back on.")
+    }
+    if lightsOut.notice?.held == true || fade.guardRamp.db < 0 {
+      releaseGuard(fadeMs: 1000, notice: nil)
+      notes.append("Headphone Guard was keeping your sound silent. Turned it back on.")
+    }
+    if lightsOut.running && (lightsOut.fading || fade.timer.db < 0 || fade.musicDb < 0) {
+      stopLightsOut()
+      notes.append("Lights Out was fading your sound out. Cancelled it.")
+    } else if !lightsOut.running && (fade.timer.db < 0 || fade.musicDb < 0) {
+      var f = fade
+      f.musicDb = 0
+      f.timer = .init(db: 0, ms: 1000)
+      fade = f
+      notes.append("Your sound was faded out. Brought it back.")
+    }
+    return notes
   }
 }
 

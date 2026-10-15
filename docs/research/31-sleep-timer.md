@@ -76,14 +76,20 @@ apps could do it.
      so this is silent, and the next play in the morning isn't muted.
    - **Still loud:** *held*. Our output stays at exact silence. "Unmute"
      opens it. It also opens by itself once the input has been quiet for
-     10 s (the playlist ended, or someone paused it by hand), and on a
-     Power toggle or a new timer.
+     10 s (the playlist ended, or someone paused it by hand), on a
+     Power toggle or a new timer, and as soon as somebody is back: the Mac
+     or its screens wake, the output's volume moves, an output is picked in
+     our picker, or Check & Fix runs. While held, the popup shows a banner
+     above every block with Unmute (the block itself can be hidden).
    - **Bass Shaker off** (no pipeline to fade or hold): it pauses through
      the same routes. If it can't confirm that worked, it mutes the Mac
      (MacVolume), and "Unmute" undoes it. There's no fade in this case.
 4. A ProcessInfo activity (`userInitiatedAllowingIdleSystemSleep`) keeps the
-   1 Hz tick on time while armed. The system can still sleep. If the Mac
-   wakes past the end, it does a 3 s fade and then pauses.
+   1 Hz tick on time while armed. The system can still sleep (the tick
+   is skipped while asleep). If the Mac wakes past the end, the sleep
+   already stopped the sound: the output stays silent until the new
+   pipeline is up, the pause is tried, and then it opens whatever the
+   pause did (whoever woke the Mac is there). Never held after a wake.
 
 ## Headphone Guard
 
@@ -130,7 +136,7 @@ When it fires:
 ## Edge cases
 
 - **System sleep and wake.** The timer is wall-clock based, so waking past
-  the end gives a 3 s fade and then the pause. Devices that change during
+  the end tries the pause and opens the output (see Timer, step 4). Devices that change during
   sleep come in through the normal refresh after wake, and the guard
   applies if it's armed.
 - **Bypass / A/B / per-device No Processing.** The master fade still

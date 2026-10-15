@@ -721,6 +721,10 @@ struct PopoverView: View {
              text: "macOS's audio service isn't responding, so The Bass Shaker can't reach your speakers or headphones. This is a known macOS issue, often triggered by old audio drivers (like Boom 2's). Restarting it takes a second.",
              action: ("Restart macOS Audio", controller.restartAudioService),
              secondary: nil)
+    case _ where controller.silenceHeldText != nil:
+      // Above every block: the Lights Out block can be hidden or far down.
+      Banner(symbol: "speaker.slash.fill", tint: .orange, text: controller.silenceHeldText ?? "",
+             action: ("Unmute", { _ = controller.releaseSilenceHolds("banner") }), secondary: nil)
     case _ where controller.earAlertVisible:
       Banner(symbol: "ear.trianglebadge.exclamationmark", tint: .orange,
              text: "Ear Protector caught a sudden loud sound and turned it down for a few seconds.",
