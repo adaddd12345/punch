@@ -443,13 +443,21 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   // Seasonal (vector snow, embers, gold flecks, petals over a wash; Festive.swift).
   // An older build that doesn't know these raw values falls back to System Grey.
   case frost, pumpkin, lunar, sakura
+  // Themes: Wall Street (trading-floor wash, drifting currency marks and a ticker
+  // tape of the app's own state; Festive.swift + TickerTape.swift).
+  case wallStreet
   var id: String { rawValue }
+  /// Listed under Seasonal.
   var festive: Bool {
     switch self {
     case .frost, .pumpkin, .lunar, .sakura: return true
     default: return false
     }
   }
+  /// Listed under Themes.
+  var theme: Bool { self == .wallStreet }
+  /// Drawn by FestiveView (vector particles on the shared display link).
+  var scene: Bool { festive || theme }
   var title: String {
     switch self {
     case .system: return "System Grey"
@@ -464,6 +472,7 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
     case .pumpkin: return "Pumpkin Glow"
     case .lunar: return "Lunar"
     case .sakura: return "Sakura"
+    case .wallStreet: return "Wall Street"
     }
   }
 }
@@ -491,6 +500,32 @@ extension Settings {
       waveform = newValue != .off
       if newValue != .off { spectrum = newValue == .spectrum }
     }
+  }
+}
+
+extension Settings {
+  /// ⋯ › Look › Background. The first time Wall Street is picked, EQ Visual goes to
+  /// Spectrum (its ticker look); leaving it puts back what was there, unless EQ Visual
+  /// was changed by hand in between (see `setEQVisualByHand`).
+  mutating func setBackground(_ new: BackgroundStyle) {
+    let old = backgroundStyle
+    backgroundStyle = new
+    if new == .wallStreet, old != .wallStreet, !wallStreetSeen {
+      wallStreetSeen = true
+      if eqVisual != .spectrum {
+        eqVisualBeforeTheme = eqVisual.rawValue
+        eqVisual = .spectrum
+      }
+    } else if old == .wallStreet, new != .wallStreet, let raw = eqVisualBeforeTheme {
+      eqVisualBeforeTheme = nil
+      if let v = EQVisual(rawValue: raw) { eqVisual = v }
+    }
+  }
+
+  /// EQ Visual picked in the menu: the user's choice from now on, with any theme.
+  mutating func setEQVisualByHand(_ v: EQVisual) {
+    eqVisual = v
+    eqVisualBeforeTheme = nil
   }
 }
 
@@ -641,6 +676,11 @@ struct Settings: Codable, Equatable {
   var spectrum = false
   var scopeColor: ScopeColor = .accent
   var backgroundStyle: BackgroundStyle = .system
+  /// Wall Street turns EQ Visual to Spectrum the first time it's picked.
+  var wallStreetSeen = false
+  /// The EQ Visual from before that (EQVisual raw value), put back on leaving
+  /// Wall Street unless EQ Visual was changed by hand meanwhile.
+  var eqVisualBeforeTheme: String? = nil
   /// Popover size: everything, compact, or just the sliders.
   var viewSize: ViewSize = .full
   var labelLevel: LabelLevel = .full
@@ -844,6 +884,8 @@ struct Settings: Codable, Equatable {
     remotePeers = ((try? c.decodeIfPresent([Lossy<RemotePeer>].self, forKey: .remotePeers)) ?? nil)?.compactMap(\.value) ?? []
     remoteTakeover = (try? c.decodeIfPresent(String.self, forKey: .remoteTakeover)) ?? nil
     lightsOutGuard = (try? c.decodeIfPresent(OutputGuard.self, forKey: .lightsOutGuard)) ?? d.lightsOutGuard
+    wallStreetSeen = (try? c.decodeIfPresent(Bool.self, forKey: .wallStreetSeen)) ?? d.wallStreetSeen
+    eqVisualBeforeTheme = (try? c.decodeIfPresent(String.self, forKey: .eqVisualBeforeTheme)) ?? nil
   }
 
   static func load() -> Settings {
