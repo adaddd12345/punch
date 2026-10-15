@@ -312,9 +312,11 @@ private struct EarsRows: View {
     let ranked = sorted(playing)
     let list = VStack(spacing: 0) {
       ForEach(ranked) { app in
-        EarsRow(app: app, level: model.levels[app.id], muted: model.muted.contains(app.id),
-                icon: model.icon(for: app),
-                onOpen: { model.open(app) }, onMute: { model.toggleMute(app) })
+        LevelReader(levels: model.levelModel, id: app.id) { level in
+          EarsRow(app: app, level: level, muted: model.muted.contains(app.id),
+                  icon: model.icon(for: app),
+                  onOpen: { model.open(app) }, onMute: { model.toggleMute(app) })
+        }
           .frame(height: Self.rowHeight)
       }
     }

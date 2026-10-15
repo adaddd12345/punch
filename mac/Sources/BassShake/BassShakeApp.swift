@@ -188,7 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     popover.delegate = self
     UNUserNotificationCenter.current().delegate = self
 
-    Publishers.CombineLatest3(controller.$settings.map(\.enabled), controller.$bypassed, controller.$status)
+    Publishers.CombineLatest3(controller.$settings.map(\.enabled).removeDuplicates(), controller.$bypassed.removeDuplicates(),
+                              controller.$status.removeDuplicates())
       .receive(on: RunLoop.main)
       .sink { [weak self] enabled, bypassed, status in self?.updateStatusIcon(enabled: enabled, bypassed: bypassed, status: status) }
       .store(in: &cancellables)

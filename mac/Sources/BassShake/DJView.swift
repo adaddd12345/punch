@@ -148,23 +148,9 @@ struct DJView: View {
   // MARK: Filter
 
   private var filterRow: some View {
-    let active = abs(dj.filter) > 0.01 || dj.filterPinned
     return BentoTile(tint: .frost, padding: 0, radius: DJLayout.barRadius) {
       HStack(spacing: 8) {
-        Text("Filter")
-          .font(.system(size: 12, weight: .semibold))
-          .foregroundStyle(active ? DJStyle.filterAccent : DJStyle.ink)
-          .frame(width: 42, alignment: .leading)
-        Text("LP").font(.system(size: 10, weight: .medium)).foregroundStyle(DJStyle.faint)
-        Slider(value: Binding(get: { controller.dj.filter }, set: { controller.dj.filter = $0 }), in: -1...1,
-               onEditingChanged: { editing in
-                 // Springs back to off on release unless pinned.
-                 if !editing && !controller.dj.filterPinned { controller.dj.filter = 0 }
-               })
-          .controlSize(.small)
-          .tint(DJStyle.filterAccent)
-          .accessibilityLabel("Filter")
-          .pointerHint("Filter", does: "Left muffles, right thins; springs back unless pinned.", track: false)
+        DJFilterSlider(controller: controller, filter: dj.filter, pinned: dj.filterPinned)
         Text("HP").font(.system(size: 10, weight: .medium)).foregroundStyle(DJStyle.faint)
         Button {
           controller.dj.filterPinned.toggle()
@@ -182,6 +168,48 @@ struct DJView: View {
       .padding(.trailing, 4)
       .frame(height: 32)
     }
+  }
+}
+
+/// The filter's label and slider. A drag is heard per step
+/// (`previewDJFilter`) and written to `dj` once on release, so the drawer
+/// doesn't re-render per pointer event; only this redraws.
+private struct DJFilterSlider: View {
+  let controller: AudioController
+  let filter: Double
+  let pinned: Bool
+  @State private var live: Double?
+  @State private var editing = false
+
+  var body: some View {
+    let f = live ?? filter
+    let active = abs(f) > 0.01 || pinned
+    Text("Filter")
+      .font(.system(size: 12, weight: .semibold))
+      .foregroundStyle(active ? DJStyle.filterAccent : DJStyle.ink)
+      .frame(width: 42, alignment: .leading)
+    Text("LP").font(.system(size: 10, weight: .medium)).foregroundStyle(DJStyle.faint)
+    Slider(value: Binding(get: { f }, set: { v in
+             let q = (v * 100).rounded() / 100
+             if editing {
+               if q != f { live = q; controller.previewDJFilter(q) }
+             } else {
+               controller.dj.filter = q   // keyboard / accessibility
+             }
+           }), in: -1...1,
+           onEditingChanged: { e in
+             editing = e
+             guard !e else { return }
+             // Springs back to off on release unless pinned.
+             let final = controller.dj.filterPinned ? (live ?? controller.dj.filter) : 0
+             live = nil
+             controller.previewDJFilter(nil)
+             if controller.dj.filter != final { controller.dj.filter = final }
+           })
+      .controlSize(.small)
+      .tint(DJStyle.filterAccent)
+      .accessibilityLabel("Filter")
+      .pointerHint("Filter", does: "Left muffles, right thins; springs back unless pinned.", track: false)
   }
 }
 

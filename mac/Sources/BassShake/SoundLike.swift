@@ -58,6 +58,24 @@ enum SoundLike {
   /// unknown headphones, or ones already corrected by their own preset in
   /// the user EQ, count as Harman-neutral.
   static func bands(_ choice: SoundLikeChoice, deviceName: String?, presetName: String?) -> [Band] {
+    // The fit is costly and its inputs rarely change (every engine update asks).
+    let key = Cache.Key(choice: choice, deviceName: deviceName, presetName: presetName)
+    cache.lock.lock()
+    defer { cache.lock.unlock() }
+    if let hit = cache.last, hit.key == key { return hit.bands }
+    let out = computeBands(choice, deviceName: deviceName, presetName: presetName)
+    cache.last = (key, out)
+    return out
+  }
+
+  private final class Cache: @unchecked Sendable {
+    struct Key: Equatable { let choice: SoundLikeChoice; let deviceName: String?; let presetName: String? }
+    let lock = NSLock()
+    var last: (key: Key, bands: [Band])?
+  }
+  private static let cache = Cache()
+
+  private static func computeBands(_ choice: SoundLikeChoice, deviceName: String?, presetName: String?) -> [Band] {
     guard let t = target(choice.targetID), choice.blend > 0.001 else { return [] }
     let grid: [Double] = (0..<48).map { 20 * pow(1_000.0, Double($0) / 47) }   // 20 Hz–20 kHz
     var diff: [Double] = grid.map { interp(t.db, at: $0) }

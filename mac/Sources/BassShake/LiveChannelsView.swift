@@ -99,15 +99,17 @@ struct LiveChannelsPanel: View {
   private func rows(_ idle: [String]) -> some View {
     VStack(spacing: 2) {
       ForEach(model.apps) { app in
-        LiveChannelRow(app: app,
-                       level: model.levels[app.id],
-                       muted: model.muted.contains(app.id),
-                       shakerOn: !model.shakerOff.contains(app.id),
-                       icon: model.icon(for: app),
-                       defaultOutput: model.defaultOutputName,
-                       onToggle: { model.toggleMute(app) },
-                       onShaker: { model.toggleShaker(app) },
-                       onOpen: { model.open(app) })
+        LevelReader(levels: model.levelModel, id: app.id) { level in
+          LiveChannelRow(app: app,
+                         level: level,
+                         muted: model.muted.contains(app.id),
+                         shakerOn: !model.shakerOff.contains(app.id),
+                         icon: model.icon(for: app),
+                         defaultOutput: model.defaultOutputName,
+                         onToggle: { model.toggleMute(app) },
+                         onShaker: { model.toggleShaker(app) },
+                         onOpen: { model.open(app) })
+        }
         .frame(height: Self.rowHeight)
       }
       ForEach(idle, id: \.self) { bundleID in

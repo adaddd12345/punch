@@ -129,10 +129,23 @@ final class AudioController: ObservableObject {
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
       hqGuardOn.store(settings.hqGuard && settings.enabled)
       if settings.powerSaver != oldValue.powerSaver { PowerSaver.shared.sync(settings.powerSaver) }
+      if !previews.isEmpty { refreshLiveEdit() }
+      // Banking the device's sound (inside the save) changes nothing heard.
+      if rememberingDevice { return }
       pushParams()
       scheduleSave()
     }
   }
+  /// Edits in flight, applied over settings in order (LiveEdit.swift).
+  /// Main only; internal for that file's extension.
+  var previews: [(key: String, patch: (inout Settings) -> Void)] = []
+  /// Observed by the views that draw in-flight values (EQ curve, dials).
+  let liveEdit = LiveEdit()
+  private var rememberingDevice = false
+  /// Coalescing for pushParams (main only).
+  private var pushScheduled = false
+  private var djFilterLive: Double?
+  private var lastPushAt: TimeInterval = 0
   /// Fair Level's whole-mix gain, dB (FairLevel.swift). Not saved.
   var fairLevelDb: Double = 0 {
     didSet { if fairLevelDb != oldValue { pushParams() } }
@@ -274,7 +287,7 @@ final class AudioController: ObservableObject {
 
   func undo() {
     guard let u = undoStack.popLast() else { return }
-    morphTimer?.invalidate()
+    stopMorph(keepWhereItIs: false)
     settings.presetName = u.presetName
     settings.userPresetID = u.userPresetID
     settings.bass = u.bass
@@ -357,7 +370,9 @@ final class AudioController: ObservableObject {
 
   func update(band i: Int, to b: EQBand, animated: Bool = false) {
     guard settings.bands.indices.contains(i) else { return }
-    var bands = settings.bands
+    // Mid-glide, the other bands are where they are drawn, not the target.
+    if !animated { stopMorph() }
+    var bands = shownSettings.bands
     bands[i] = b
     // Remember what this was edited from, so the hero can say "Bass Shake · edited".
     if let id = settings.userPresetID, let p = settings.userPresets.first(where: { $0.id == id }) {
@@ -370,7 +385,6 @@ final class AudioController: ObservableObject {
     if animated {
       morph(to: bands)
     } else {
-      morphTimer?.invalidate()
       settings.bands = bands
     }
   }
@@ -496,7 +510,10 @@ final class AudioController: ObservableObject {
   private func rememberDeviceSound() {
     guard settings.perDevice, settings.mode == .off, let uid = currentDevice?.uid else { return }
     let sound = currentSound
-    if settings.deviceSounds[uid] != sound { settings.deviceSounds[uid] = sound }
+    guard settings.deviceSounds[uid] != sound else { return }
+    rememberingDevice = true
+    settings.deviceSounds[uid] = sound
+    rememberingDevice = false
   }
 
   /// The output changed: switch to the sound this device had last time.
@@ -843,26 +860,49 @@ final class AudioController: ObservableObject {
   /// Preset changes glide the curve (log-frequency, dB gain, log-Q) with an
   /// ease-out over ~350 ms; the engine follows every frame, so what you
   /// hear morphs exactly like what you see.
+  /// Settings take the target at once (one popup render); the glide itself
+  /// is an in-flight edit (LiveEdit.swift), so only the curve redraws per frame.
   private func morph(to target: [EQBand], duration: Double = 0.35) {
+    let start = shownSettings.bands   // mid-glide: from where it is now
     morphTimer?.invalidate()
+    morphTimer = nil
     let target = EQBand.normalized(target)
+    guard start.count == target.count else {
+      morphTarget = nil
+      endPreview(Self.morphKey) { settings.bands = target }
+      return
+    }
     morphTarget = target
-    let start = settings.bands
-    guard start.count == target.count else { morphTarget = nil; settings.bands = target; return }
+    settings.bands = target
     let t0 = ProcessInfo.processInfo.systemUptime
     let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
       guard let self else { t.invalidate(); return }
       let p = min(1, (ProcessInfo.processInfo.systemUptime - t0) / duration)
       let e = 1 - pow(1 - p, 3)
-      self.settings.bands = zip(start, target).map { $0.lerp(to: $1, e) }
       if p >= 1 {
         t.invalidate()
+        self.morphTimer = nil
         self.morphTarget = nil
-        self.settings.bands = target
+        self.endPreview(Self.morphKey)
+      } else {
+        let bands = zip(start, target).map { $0.lerp(to: $1, e) }
+        self.preview(Self.morphKey) { $0.bands = bands }
       }
     }
     RunLoop.main.add(timer, forMode: .common)
     morphTimer = timer
+  }
+  private static let morphKey = "morph"
+
+  /// An edit lands mid-glide: the glide stops where it is (as drawn), and
+  /// that becomes the sound the edit starts from.
+  private func stopMorph(keepWhereItIs: Bool = true) {
+    guard let t = morphTimer else { return }
+    t.invalidate()
+    morphTimer = nil
+    morphTarget = nil
+    let now = shownSettings.bands
+    endPreview(Self.morphKey) { if keepWhereItIs { settings.bands = now } }
   }
 
   func select(device: OutputDevice) {
@@ -1044,9 +1084,22 @@ final class AudioController: ObservableObject {
     }
   }
 
-  private func pushParams() {
+  /// Hands the current sound to the engine. Coalesced: however many writes
+  /// land, at most one engine update per display frame (~16 ms), and it
+  /// carries the latest settings (plus any edit in flight).
+  func pushParams() {
+    guard !pushScheduled else { return }
+    pushScheduled = true
+    let wait = max(0, lastPushAt + Self.pushInterval - ProcessInfo.processInfo.systemUptime)
+    DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in self?.flushParams() }
+  }
+  private static let pushInterval = 1.0 / 60
+
+  private func flushParams() {
+    pushScheduled = false
+    lastPushAt = ProcessInfo.processInfo.systemUptime
     silenceExpected.store((dj.isOn(.low) && dj.isOn(.mid) && dj.isOn(.high)) || dj.isOn(.tapeStop) || fade.musicDb < -20 || sleepFinished)
-    let s = settings
+    let s = shownSettings
     let e = engine
     let live = liveState
     audioQueue.async {
@@ -1066,8 +1119,17 @@ final class AudioController: ObservableObject {
     var deviceName: String?
   }
 
+  /// The DJ filter mid-drag (heard, not yet written to `dj`).
+  func previewDJFilter(_ v: Double?) {
+    guard djFilterLive != v else { return }
+    djFilterLive = v
+    pushParams()
+  }
+
   private var liveState: LiveState {
     let uid = currentDevice?.uid
+    var dj = self.dj
+    if let f = djFilterLive { dj.filter = f }
     return LiveState(dj: dj, fade: fade, headphones: isHeadphones,
                      bypass: bypassed || (uid.map { settings.bypassDevices.contains($0) } ?? false),
                      volume: deviceVolume, fairDb: settings.fairLevel ? fairLevelDb : 0,
@@ -1155,7 +1217,16 @@ final class AudioController: ObservableObject {
     // The peak is the real response of correction + EQ (preamps included),
     // plus a rough allowance for the Bass slider's harmonics.
     let punchPeak = s.bassCharacter == .punch ? Self.punchPeakDb * max(0, min(1, s.bassAmount)) : 0
-    let eqPeak = max(0, punch_eq_peak_boost_db(e) + bass * Self.bassPeakDb + punchPeak)
+    // The peak scan (1024 points × every band) only when the curve changed:
+    // a Boost or Strength drag leaves it alone.
+    var peakKey: [Double] = [unlimited ? 1 : 0]
+    for b in s.bands { peakKey += [Double(b.punchType.rawValue), b.freq, b.gain, b.q] }
+    for c in correction { peakKey += [Double(c.0.rawValue), c.1, c.2, c.3] }
+    if peakKey != audioPeakKey {
+      audioPeakKey = peakKey
+      audioPeakDb = punch_eq_peak_boost_db(e)
+    }
+    let eqPeak = max(0, audioPeakDb + bass * Self.bassPeakDb + punchPeak)
     var auto = loudnessMakeup + fair
     if auto > 0 { auto = min(auto, max(0, Self.maxLiftDb - eqPeak - max(0, boost))) }
     let lift = boost + auto
@@ -1251,7 +1322,7 @@ final class AudioController: ObservableObject {
     guard #available(macOS 14.2, *), settings.enabled else { return }
     // A skippable request only shows "starting" once it's sure to rebuild.
     if !reason.mayBeSkipped { status = .starting }
-    let s = settings
+    let s = shownSettings
     let e = engine
     let live = liveState
     // Muted apps stay out of the EQ tap, or we'd play them back.
@@ -1587,6 +1658,9 @@ final class AudioController: ObservableObject {
   // MARK: - Watchdog
 
   // audioQueue-confined state.
+  /// configureEQOffMain's last peak scan and what it was of.
+  private var audioPeakKey: [Double] = []
+  private var audioPeakDb = 0.0
   private var audioPipeline: AnyObject?  // TapPipeline (macOS 14.2+)
   private var audioWatchdog: DispatchSourceTimer?
   private var audioExcluded: Set<AudioObjectID> = []

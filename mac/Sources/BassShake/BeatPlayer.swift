@@ -250,11 +250,17 @@ final class BeatPlayer: ObservableObject {
     pushLevels()
   }
 
+  private var volumeSave: DispatchWorkItem?
+
   func setVolume(_ v: Double) {
     let x = min(max(v, 0), 1)
     guard x != volume else { return }
     volume = x
-    UserDefaults.standard.set(x, forKey: Self.volumeKey)
+    // Saved once the drag rests, not per pointer event.
+    volumeSave?.cancel()
+    let w = DispatchWorkItem { UserDefaults.standard.set(x, forKey: Self.volumeKey) }
+    volumeSave = w
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: w)
     let g = Float(x * x)
     queue.async { [weak self] in self?.session?.setVolume(g) }
   }

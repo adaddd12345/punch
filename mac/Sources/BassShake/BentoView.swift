@@ -365,21 +365,28 @@ struct BentoView: View {
   private var dials: some View {
     let mini = size == .mini
     return HStack(spacing: 8) {
-      ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
-                value: s.bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
-                glassID: "dial.strength", mini: mini,
-                format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
-        controller.settings.bass = $0
-      } accessory: { EmptyView() }
-      .pointerHint(Caption.strength(s.bass, scrub: true), live: true)
+      // LiveShown: the number (and its hint) follow a scrub as it's heard;
+      // settings, and so the rest of the popup, change once on release.
+      LiveShown(liveEdit: controller.liveEdit, path: \.bass, value: s.bass) { bass in
+        ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
+                  value: bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
+                  glassID: "dial.strength", mini: mini, param: controller.param("strength", \.bass, step: 0.01),
+                  format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
+          if $0 != controller.settings.bass { controller.settings.bass = $0 }
+        } accessory: { EmptyView() }
+        .pointerHint(Caption.strength(bass, scrub: true), live: true)
+      }
       .pointerHintTint(ink(tint(.bass)))
-      ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
-                value: s.boostDb, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
-                glassID: "dial.boost", mini: mini,
-                format: { ("+", "\(Int($0.rounded()))", " dB") }) {
-        if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
-      } accessory: { limitCard(mini: mini) }
-      .pointerHint(Caption.boost(s.boostDb, scrub: true), live: true)
+      // Also follows a drag of the EQ line (Boost).
+      LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
+        ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
+                  value: boost, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
+                  glassID: "dial.boost", mini: mini, param: controller.param("boost", \.boostDb, step: 0.5),
+                  format: { ("+", "\(Int($0.rounded()))", " dB") }) {
+          if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
+        } accessory: { limitCard(mini: mini) }
+        .pointerHint(Caption.boost(boost, scrub: true), live: true)
+      }
       .pointerHintTint(ink(tint(.bass)))
     }
   }
@@ -389,11 +396,16 @@ struct BentoView: View {
     VStack(spacing: 4) {
       LabeledSlider(title: "Strength", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
-                    range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+                    range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
+                    param: controller.param("strength", \.bass, step: 0.01))
         .pointerHint(Caption.strength(s.bass, scrub: false), live: true, track: false)
-      LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
-                    value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
-                    range: 0...12, format: { String(format: "+%.0f dB", $0) })
+      // Follows a drag of the EQ line (Boost) as it happens.
+      LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
+        LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
+                      value: Binding(get: { boost }, set: { controller.settings.boostDb = $0 }),
+                      range: 0...12, format: { String(format: "+%.0f dB", $0) },
+                      param: controller.param("boost", \.boostDb, step: 0.5))
+      }
         .pointerHint(Caption.boost(s.boostDb, scrub: false), live: true, track: false)
       HStack(spacing: 6) {
         Spacer()
@@ -1177,13 +1189,16 @@ struct BentoView: View {
     let side: CGFloat = compact ? 56 : 78
     return VStack(spacing: 8) {
       HStack(spacing: 8) {
-        BassTile(character: s.bassCharacter, amount: s.bassAmount, tint: tint(.bass), compact: compact,
-                 setCharacter: { c in
-                   withAnimation(.easeOut(duration: 0.15)) { controller.settings.bassCharacter = c }
-                 },
-                 setAmount: { v in if v != controller.settings.bassAmount { controller.settings.bassAmount = v } })
-          .frame(maxWidth: .infinity)
-          .pointerHint(Caption.bass(s.bassCharacter, amount: s.bassAmount), live: true)
+        LiveShown(liveEdit: controller.liveEdit, path: \.bassAmount, value: s.bassAmount) { amount in
+          BassTile(character: s.bassCharacter, amount: amount, tint: tint(.bass), compact: compact,
+                   setCharacter: { c in
+                     withAnimation(.easeOut(duration: 0.15)) { controller.settings.bassCharacter = c }
+                   },
+                   setAmount: { v in if v != controller.settings.bassAmount { controller.settings.bassAmount = v } },
+                   param: controller.param("bassAmount", \.bassAmount, step: 0.01))
+            .frame(maxWidth: .infinity)
+            .pointerHint(Caption.bass(s.bassCharacter, amount: amount), live: true)
+        }
           .pointerHintTint(ink(tint(.bass)))
         // Two flagships, one per row: Bass here, Late Night below.
         HStack(spacing: 8) {
@@ -1310,17 +1325,21 @@ struct BentoView: View {
       BentoTile(tint: tint(.lilac), glassID: "detail.mode") {
         LabeledSlider(title: "Haze", symbol: "moon.haze",
                       value: Binding(get: { s.lateNightHaze }, set: { controller.settings.lateNightHaze = $0 }),
-                      range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" })
+                      range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
+                      param: controller.param("haze", \.lateNightHaze, step: 0.01))
       }
       .pointerHint(Caption.haze(s.lateNightHaze, scrub: false), live: true, track: false)
     } else {
-      ScrubTile(title: "Haze", symbol: "moon.haze", tint: tint(.lilac),
-                value: s.lateNightHaze, range: 0...1, defaultValue: Self.defaultHaze,
-                detent: Self.defaultHaze, tickStep: 0.05, step: 0.01, glassID: "detail.mode",
-                format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
-        v in if v != controller.settings.lateNightHaze { controller.settings.lateNightHaze = v }
-      } accessory: { EmptyView() }
-      .pointerHint(Caption.haze(s.lateNightHaze, scrub: true), live: true)
+      LiveShown(liveEdit: controller.liveEdit, path: \.lateNightHaze, value: s.lateNightHaze) { haze in
+        ScrubTile(title: "Haze", symbol: "moon.haze", tint: tint(.lilac),
+                  value: haze, range: 0...1, defaultValue: Self.defaultHaze,
+                  detent: Self.defaultHaze, tickStep: 0.05, step: 0.01, glassID: "detail.mode",
+                  param: controller.param("haze", \.lateNightHaze, step: 0.01),
+                  format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
+          v in if v != controller.settings.lateNightHaze { controller.settings.lateNightHaze = v }
+        } accessory: { EmptyView() }
+        .pointerHint(Caption.haze(haze, scrub: true), live: true)
+      }
       .pointerHintTint(ink(tint(.lilac)))
     }
   }
@@ -1335,7 +1354,8 @@ struct BentoView: View {
                         let r = v.rounded()
                         if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
                       }),
-                      range: 3...15, format: { "+\(Int($0.rounded())) dB" })
+                      range: 3...15, format: { "+\(Int($0.rounded())) dB" },
+                      param: controller.param("allow", \.nightGuardDb, step: 1))
       }
       .pointerHint(Caption.allow(s.nightGuardDb, scrub: false), live: true, track: false)
     } else {
@@ -1344,13 +1364,16 @@ struct BentoView: View {
   }
 
   private var bentoAllow: some View {
-    ScrubTile(title: "Allow", symbol: "shield", tint: tint(.indigo),
-              value: s.nightGuardDb, range: 3...15, defaultValue: Self.defaultAllow,
-              detent: Self.defaultAllow, tickStep: 1, step: 1, glassID: "detail.nightGuard",
-              format: { ("+", "\(Int($0.rounded()))", " dB") }) {
-      v in let r = v.rounded(); if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
-    } accessory: { EmptyView() }
-    .pointerHint(Caption.allow(s.nightGuardDb, scrub: true), live: true)
+    LiveShown(liveEdit: controller.liveEdit, path: \.nightGuardDb, value: s.nightGuardDb) { allow in
+      ScrubTile(title: "Allow", symbol: "shield", tint: tint(.indigo),
+                value: allow, range: 3...15, defaultValue: Self.defaultAllow,
+                detent: Self.defaultAllow, tickStep: 1, step: 1, glassID: "detail.nightGuard",
+                param: controller.param("allow", \.nightGuardDb, step: 1),
+                format: { ("+", "\(Int($0.rounded()))", " dB") }) {
+        v in let r = v.rounded(); if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
+      } accessory: { EmptyView() }
+      .pointerHint(Caption.allow(allow, scrub: true), live: true)
+    }
     .pointerHintTint(ink(tint(.indigo)))
   }
 
@@ -1440,7 +1463,7 @@ struct BentoView: View {
       if s.noiseOn {
         HStack(spacing: 8) {
           Image(systemName: "speaker.wave.1").font(.system(size: 9)).foregroundStyle(.secondary)
-          Slider(value: Binding(get: { s.noiseDb }, set: { controller.settings.noiseDb = $0 }), in: -60 ... -24)
+          LiveSlider(value: s.noiseDb, range: -60 ... -24, param: controller.param("noise", \.noiseDb, step: 0.5))
             .controlSize(.mini)
           if s.mode == .sleep {
             Toggle("All night", isOn: Binding(get: { s.noiseAllNight }, set: { controller.settings.noiseAllNight = $0 }))
@@ -1992,8 +2015,12 @@ private struct ScrubTile<Accessory: View>: View {
   var glassID: String? = nil
   /// Mini metrics: 72 tall (label row 20, gap 4, number row 24), 24 pt digits, 14 pt glyph.
   var mini = false
+  /// The drag previews through this (heard, drawn here, nothing else
+  /// renders) and commits once on release; nil: every step calls `set`.
+  var param: LiveParam? = nil
   /// (sign, digits, unit): sign and unit are drawn small.
   let format: (Double) -> (String, String, String)
+  /// Taps, double-click and accessibility (and the drag without `param`).
   let set: (Double) -> Void
   @ViewBuilder let accessory: () -> Accessory
 
@@ -2005,7 +2032,9 @@ private struct ScrubTile<Accessory: View>: View {
   @State private var cursorPushed = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-  private var fraction: Double { (value - range.lowerBound) / (range.upperBound - range.lowerBound) }
+  /// While dragging with a `param`: the value being heard (settings still hold the old one).
+  private var shown: Double { param != nil ? (last ?? value) : value }
+  private var fraction: Double { (shown - range.lowerBound) / (range.upperBound - range.lowerBound) }
 
   private func tick(_ v: Double) -> Int { Int(((v - range.lowerBound) / tickStep + 1e-6).rounded(.down)) }
 
@@ -2024,7 +2053,7 @@ private struct ScrubTile<Accessory: View>: View {
   }
 
   var body: some View {
-    let f = format(value)
+    let f = format(shown)
     let dragging = start != nil
     let motion = !reduceMotion
     BentoTile(tint: tint, look: .fader(fraction), padding: 12, interactive: true, glassID: glassID) {
@@ -2075,12 +2104,20 @@ private struct ScrubTile<Accessory: View>: View {
         // Rubber band: past either end the number gives a few points.
         let over = raw - v
         band = CGFloat(max(-6, min(6, over / span * Double(travel) * 0.15)))
-        let q = step > 0 ? (v / step).rounded() * step : v
-        haptics(from: last ?? value, to: q)
+        let q = step > 0 ? (v / step).rounded() * step : (param?.quantize(v) ?? v)
+        let prev = last ?? value
+        haptics(from: prev, to: q)
         last = q
-        set(q)
+        if let param {
+          if q != prev { param.preview(q) }
+        } else {
+          set(q)
+        }
       }
-      .onEnded { _ in start = nil; last = nil; band = 0 })
+      .onEnded { _ in
+        if let param, let v = last { param.commit(v) }
+        start = nil; last = nil; band = 0
+      })
     .simultaneousGesture(TapGesture(count: 2).onEnded { set(defaultValue) })
     .onHover { h in
       hover = h
@@ -2096,6 +2133,7 @@ private struct ScrubTile<Accessory: View>: View {
     .overlay(alignment: .topTrailing) { accessory().padding([.top, .trailing], 12).modifier(BentoAboveGlass()) }
     .onDisappear {
       if cursorPushed { NSCursor.pop(); cursorPushed = false }
+      if let param, start != nil, let v = last { param.commit(v) }
       start = nil
       last = nil
       band = 0
@@ -2221,6 +2259,8 @@ private struct BassTile: View {
   var compact = false
   let setCharacter: (BassCharacter) -> Void
   let setAmount: (Double) -> Void
+  /// The amount drag previews and commits on release (LiveEdit.swift).
+  var param: LiveParam? = nil
 
   static let defaultAmount = Settings().bassAmount
   private let travel: CGFloat = 160
@@ -2236,11 +2276,13 @@ private struct BassTile: View {
 
   private var on: Bool { character != .off }
   private var face: BentoTint { on ? tint : .graphite }
-  private var percent: String { "\(Int((amount * 100).rounded()))%" }
+  /// Mid-drag (with `param`): the amount being heard.
+  private var shownAmount: Double { param != nil ? (last ?? amount) : amount }
+  private var percent: String { "\(Int((shownAmount * 100).rounded()))%" }
 
   var body: some View {
     let dark = scheme == .dark
-    BentoTile(tint: face, look: on ? .fader(amount) : .quiet, padding: compact ? 8 : 9, interactive: true) {
+    BentoTile(tint: face, look: on ? .fader(shownAmount) : .quiet, padding: compact ? 8 : 9, interactive: true) {
       VStack(alignment: .leading, spacing: compact ? 4 : 0) {
         HStack(spacing: 6) {
           ModeGlyph(symbol: "waveform.path", tint: face, on: on, size: compact ? 16 : 18, bare: flat)
@@ -2299,13 +2341,22 @@ private struct BassTile: View {
         if let l = last, Int(l * 20 + 1e-6) != Int(v * 20 + 1e-6) {
           NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
+        let prev = last
         last = v
-        setAmount(v)
+        if let param {
+          if v != prev { param.preview(v) }
+        } else {
+          setAmount(v)
+        }
       }
-      .onEnded { _ in start = nil; last = nil })
+      .onEnded { _ in
+        if let param, let v = last { param.commit(v) }
+        start = nil; last = nil
+      })
     .simultaneousGesture(TapGesture(count: 2).onEnded { if on { setAmount(Self.defaultAmount) } })
     .onDisappear {
       if cursorPushed { NSCursor.pop(); cursorPushed = false }
+      if let param, start != nil, let v = last { param.commit(v) }
       start = nil; last = nil
     }
     .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: character)

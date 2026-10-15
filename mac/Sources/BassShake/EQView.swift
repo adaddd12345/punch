@@ -12,13 +12,27 @@ import SwiftUI
 ///   keyboard    ←/→ pick a node, ↑/↓ gain (⇧ fine), ⌥←/→ frequency,
 ///               Space/Delete reset
 /// Gain snaps to 0 dB with a trackpad haptic tick.
+///
+/// Drags are in-flight edits (LiveEdit.swift): the curve and the engine
+/// follow every event, settings are written once when the drag ends (one
+/// popup render, one save, one undo step).
 struct EQView: View {
   @ObservedObject var controller: AudioController
+  /// In-flight edits (this view's drags, a preset glide, a Boost scrub):
+  /// the curve draws `controller.shownSettings`.
+  @ObservedObject private var liveEdit: LiveEdit
   /// The faint rounded backing; Bento turns it off (its tile is the backing).
   var chrome = true
   /// Bento only: no grid or labels, the curve drawn as one lit line in this
   /// colour with a glow and a fill fading to clear. nil = the classic look.
   var filament: Color? = nil
+
+  init(controller: AudioController, chrome: Bool = true, filament: Color? = nil) {
+    self.controller = controller
+    self.liveEdit = controller.liveEdit
+    self.chrome = chrome
+    self.filament = filament
+  }
 
   @State private var grabbed: Int?
   @State private var hovered: Int?
@@ -40,6 +54,10 @@ struct EQView: View {
   /// The value chip by the pointer while the line is held.
   @State private var lineChip: (text: String, at: CGPoint)?
   @State private var cursorPushed = false
+  /// Scroll-wheel Q: committed once the wheel rests.
+  @State private var qCommit: DispatchWorkItem?
+  /// Response curves of the bands as drawn, memoized per (bands, count).
+  @State private var curves = CurveCache()
   @FocusState private var focused: Bool
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.colorScheme) private var scheme
@@ -75,16 +93,21 @@ struct EQView: View {
   private let bottomDb = -12.0
   private let pad: CGFloat = 12
   /// The real total level: the line is drawn this far above the EQ shape.
-  private var boost: Double { controller.settings.boostDb }
+  private var boost: Double { shown.boostDb }
+  /// Settings as heard: with any drag or glide in flight.
+  private var shown: Settings { liveEdit.settings ?? controller.settings }
+  private static let dragKey = "eq.drag"
+  private static let qKey = "eq.q"
 
   var body: some View {
     GeometryReader { geo in
       let size = geo.size
-      let bands = controller.settings.bands
+      let shown = self.shown
+      let bands = shown.bands
       // Read here (not only in the Canvas) so changes redraw it.
       let showNodes = pointerIn || grabbed != nil
       let kbDot: Int? = focused && kbActive ? kbBand : nil
-      let boostDb = controller.settings.boostDb
+      let boostDb = shown.boostDb
       ZStack {
         if controller.settings.waveform && controller.settings.enabled && !powerSaver {
           WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
@@ -140,7 +163,7 @@ struct EQView: View {
       // Outside the drag: as an inner gesture, the hint's own drag would win
       // and the EQ's drag would never fire.
       .pointerHint((onLine || lineDrag != nil) && grabbed == nil
-                   ? Caption.eqLine(boostDb: controller.settings.boostDb)
+                   ? Caption.eqLine(boostDb: boostDb)
                    : Caption.eqNode((grabbed ?? hovered).flatMap { bands.indices.contains($0) ? bands[$0] : nil }), live: true)
       .onContinuousHover { phase in
         switch phase {
@@ -188,7 +211,7 @@ struct EQView: View {
   /// Samples of the summed response, 20 Hz–20 kHz on the same log axis as x().
   private static let curveSamples = 256
   private func response(_ bands: [EQBand]) -> [Double] {
-    controller.curve(for: bands, count: Self.curveSamples)
+    curves.curve(bands, count: Self.curveSamples, controller)
   }
   /// The summed response at `f`, interpolated from `resp`.
   private func sample(_ resp: [Double], at f: Double) -> Double {
@@ -208,7 +231,7 @@ struct EQView: View {
   private func selfShare(_ b: EQBand) -> Double { b.kind == .bell ? 1 : 0.5 }
 
   private func nearest(_ p: CGPoint, size: CGSize) -> Int? {
-    let bands = controller.settings.bands
+    let bands = shown.bands
     let resp = response(bands)
     var best: (Int, CGFloat)?
     for (i, b) in bands.enumerated() {
@@ -292,7 +315,7 @@ struct EQView: View {
   private func curvePath(_ bands: [EQBand], size: CGSize, boost: Double) -> Path {
     let w = size.width, h = size.height
     let n = max(64, Int(w / 2))
-    let resp = controller.curve(for: bands, count: n)
+    let resp = curves.curve(bands, count: n, controller)
     var curve = Path()
     for (k, db) in resp.enumerated() {
       let p = CGPoint(x: w * CGFloat(k) / CGFloat(n - 1), y: y(clampDb(db + boost), h))
@@ -412,17 +435,19 @@ struct EQView: View {
             return
           }
           grabbed = i
+          commitQ()
           controller.pushUndo()
           if NSEvent.modifierFlags.contains(.option), EQBand.defaults.indices.contains(i) {
             controller.update(band: i, to: EQBand.defaults[i], animated: true)   // ⌥-click: reset fully
             dragOrigin = nil
             return
           }
-          dragOrigin = (controller.settings.bands[i], v.startLocation)
-          var rest = controller.settings.bands
+          let bands = shown.bands
+          dragOrigin = (bands[i], v.startLocation)
+          var rest = bands
           rest[i].gain = 0
           othersCurve = response(rest)
-          snapped = abs(controller.settings.bands[i].gain) < 0.01
+          snapped = abs(bands[i].gain) < 0.01
         }
         guard let i = grabbed, let origin = dragOrigin else { return }
         let fine: CGFloat = NSEvent.modifierFlags.contains(.shift) ? 0.2 : 1.0
@@ -449,9 +474,18 @@ struct EQView: View {
           NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
         b.gain = g
-        controller.update(band: i, to: b)
+        // Heard and drawn now; written to settings when the drag ends.
+        if shown.bands.indices.contains(i), shown.bands[i] != b {
+          controller.preview(Self.dragKey) { s in if s.bands.indices.contains(i) { s.bands[i] = b } }
+        }
       }
       .onEnded { _ in
+        if let i = grabbed, controller.isPreviewing(Self.dragKey) {
+          let final = shown.bands
+          controller.endPreview(Self.dragKey) {
+            if final.indices.contains(i) { controller.update(band: i, to: final[i]) }
+          }
+        }
         grabbed = nil
         dragOrigin = nil
         othersCurve = []
@@ -464,7 +498,7 @@ struct EQView: View {
   /// Within `lineReach` of the drawn line (and not on a node).
   private func lineHit(_ p: CGPoint, size: CGSize) -> Bool {
     guard p.x >= 0, p.x <= size.width, nearest(p, size: size) == nil else { return false }
-    let db = sample(response(controller.settings.bands), at: freq(p.x, size.width)) + boost
+    let db = sample(response(shown.bands), at: freq(p.x, size.width)) + boost
     return abs(y(clampDb(db), size.height) - p.y) <= lineReach
   }
 
@@ -474,13 +508,15 @@ struct EQView: View {
   }
 
   private func beginLine(_ v: DragGesture.Value) {
-    let bands = controller.settings.bands
+    commitQ()
+    let s = shown
+    let bands = s.bands
     let low = bands.firstIndex { $0.kind == .lowShelf }, high = bands.lastIndex { $0.kind == .highShelf }
     let tilt = NSEvent.modifierFlags.contains(.option) && low != nil && high != nil
     controller.pushUndo()
-    lineDrag = LineDrag(startY: v.startLocation.y, startBoost: controller.settings.boostDb, tilt: tilt,
+    lineDrag = LineDrag(startY: v.startLocation.y, startBoost: s.boostDb, tilt: tilt,
                         startBands: bands, low: low ?? 0, high: high ?? 0,
-                        lastStep: tilt ? 0 : Int(controller.settings.boostDb.rounded(.down)))
+                        lastStep: tilt ? 0 : Int(s.boostDb.rounded(.down)))
     setLineCursor(true)
   }
 
@@ -498,13 +534,20 @@ struct EQView: View {
       var lo = d.startBands[d.low], hi = d.startBands[d.high]
       lo.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, lo.gain + t))
       hi.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, hi.gain - t))
-      if controller.settings.bands[d.low] != lo { controller.update(band: d.low, to: lo) }
-      if controller.settings.bands[d.high] != hi { controller.update(band: d.high, to: hi) }
+      let cur = shown.bands
+      if cur.indices.contains(d.high), cur[d.low] != lo || cur[d.high] != hi {
+        let low = d.low, high = d.high
+        controller.preview(Self.dragKey) { s in
+          guard s.bands.indices.contains(high) else { return }
+          s.bands[low] = lo
+          s.bands[high] = hi
+        }
+      }
       step = Int(t.rounded(.towardZero))
       lineChip = ("Bass \(Self.signed(t)) · Treble \(Self.signed(-t)) dB", at)
     } else {
       let b = (min(12, max(0, d.startBoost + db)) * 10).rounded() / 10
-      if b != controller.settings.boostDb { controller.settings.boostDb = b }
+      if b != shown.boostDb { controller.preview(Self.dragKey) { $0.boostDb = b } }
       step = Int(b.rounded(.down))
       lineChip = ("Boost +\(Int(b.rounded())) dB", at)
     }
@@ -517,6 +560,19 @@ struct EQView: View {
 
   /// Let go: the line stays where it was put (that is the Boost now).
   private func endLine() {
+    if let d = lineDrag, controller.isPreviewing(Self.dragKey) {
+      let final = shown
+      controller.endPreview(Self.dragKey) {
+        if d.tilt {
+          if final.bands.indices.contains(d.high) {
+            controller.update(band: d.low, to: final.bands[d.low])
+            controller.update(band: d.high, to: final.bands[d.high])
+          }
+        } else if controller.settings.boostDb != final.boostDb {
+          controller.settings.boostDb = final.boostDb
+        }
+      }
+    }
     lineDrag = nil
     lineChip = nil
     if !onLine { setLineCursor(false) }
@@ -528,7 +584,8 @@ struct EQView: View {
   }
 
   private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-    let bands = controller.settings.bands
+    commitQ()
+    let bands = shown.bands
     guard !bands.isEmpty else { return .ignored }
     kbActive = true
     kbBand = min(kbBand, bands.count - 1)
@@ -554,14 +611,16 @@ struct EQView: View {
   private func resetHovered() {
     guard let i = hovered ?? grabbed else {
       // Double-click on the line: Boost back to 0.
-      if onLine, controller.settings.boostDb != 0 {
+      if onLine, controller.settings.boostDb != 0, !controller.isPreviewing(Self.dragKey) {
         controller.pushUndo()
         controller.settings.boostDb = 0
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
       }
       return
     }
-    var b = controller.settings.bands[i]
+    commitQ()
+    guard shown.bands.indices.contains(i) else { return }
+    var b = shown.bands[i]
     b.gain = 0
     controller.update(band: i, to: b, animated: true)
     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -570,18 +629,40 @@ struct EQView: View {
   private func installScrollMonitor() {
     guard scrollMonitor == nil else { return }
     scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
-      guard let i = grabbed ?? hovered else { return event }
-      var b = controller.settings.bands[i]
+      guard let i = grabbed ?? hovered, shown.bands.indices.contains(i) else { return event }
+      let b = shown.bands[i]
       let delta = Double(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.01 : event.scrollingDeltaY * 0.08)
-      b.q = min(EQBand.qRange.upperBound, max(EQBand.qRange.lowerBound, b.q * exp(delta)))
-      controller.update(band: i, to: b)
+      let q = min(EQBand.qRange.upperBound, max(EQBand.qRange.lowerBound, b.q * exp(delta)))
+      guard q != b.q else { return nil }
+      // Heard and drawn per wheel event; written once the wheel rests.
+      controller.preview(Self.qKey) { s in if s.bands.indices.contains(i) { s.bands[i].q = q } }
+      qCommit?.cancel()
+      let w = DispatchWorkItem { [controller] in
+        let q = controller.shownSettings.bands.indices.contains(i) ? controller.shownSettings.bands[i].q : q
+        controller.endPreview(Self.qKey) {
+          guard controller.settings.bands.indices.contains(i) else { return }
+          var b = controller.settings.bands[i]
+          b.q = q
+          if b != controller.settings.bands[i] { controller.update(band: i, to: b) }
+        }
+      }
+      qCommit = w
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: w)
       return nil
     }
+  }
+
+  /// A pending wheel Q edit lands now (before another edit starts).
+  private func commitQ() {
+    guard let w = qCommit else { return }
+    qCommit = nil
+    if !w.isCancelled { w.cancel(); w.perform() }
   }
 
   private func removeScrollMonitor() {
     if let m = scrollMonitor { NSEvent.removeMonitor(m) }
     scrollMonitor = nil
+    commitQ()
   }
 }
 
@@ -637,5 +718,20 @@ private struct LimitOverlay: View {
     }
     .frame(width: size.width, height: size.height)
     .animation(.easeOut(duration: 0.12), value: gr)
+  }
+}
+
+/// The EQ's response curves, memoized: a frame asks for the same curve
+/// several times (line, nodes, readout, hit tests), and only the bands
+/// being dragged change between frames.
+final class CurveCache {
+  private var entries: [(bands: [EQBand], count: Int, curve: [Double])] = []
+
+  func curve(_ bands: [EQBand], count: Int, _ controller: AudioController) -> [Double] {
+    if let e = entries.first(where: { $0.count == count && $0.bands == bands }) { return e.curve }
+    let c = controller.curve(for: bands, count: count)
+    entries.insert((bands, count, c), at: 0)
+    if entries.count > 6 { entries.removeLast() }
+    return c
   }
 }

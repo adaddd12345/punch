@@ -4,6 +4,7 @@ import CoreAudio
 import Darwin
 import Foundation
 import os
+import SwiftUI
 
 /// One app that is using audio, with its helper processes merged in
 /// (Chrome Helper, WebKit GPU/WebContent, Electron helpers...).
@@ -58,8 +59,10 @@ final class LiveChannels: ObservableObject {
 
   @Published private(set) var apps: [LiveApp] = []
   /// Displayed level per app id, dBFS (meter ballistics applied). Only
-  /// filled while metering.
-  @Published private(set) var levels: [String: Double] = [:]
+  /// filled while metering. Changes at 30 Hz, so it lives in its own object:
+  /// only the meters observe `levelModel`, not every view of this model.
+  var levels: [String: Double] { levelModel.levels }
+  let levelModel = LiveLevels()
   /// Muted app ids (bundle IDs; "pid.<n>" for apps without one, not saved).
   @Published private(set) var muted: Set<String>
   /// Apps that skip The Bass Shaker (play unprocessed). Saved by bundle ID.
@@ -248,7 +251,7 @@ final class LiveChannels: ObservableObject {
     } else {
       pollTimer?.invalidate()
       pollTimer = nil
-      levels = [:]
+      levelModel.levels = [:]
       meterProblem = nil
     }
     halQueue.async {
@@ -387,7 +390,7 @@ final class LiveChannels: ObservableObject {
     let dt = lastPoll == 0 ? 1.0 / 30 : min(0.2, now - lastPoll)
     lastPoll = now
     guard let peaks = meterBox.take() else {
-      if !levels.isEmpty { levels = [:] }
+      if !levels.isEmpty { levelModel.levels = [:] }
       return
     }
     var next: [String: Double] = [:]
@@ -406,7 +409,7 @@ final class LiveChannels: ObservableObject {
       let shown = db >= prev ? db : max(db, prev - Self.releaseDbPerSec * dt)
       next[app.id] = min(6, max(Self.floorDb - 1, shown))
     }
-    if Self.differs(next, levels) { levels = next }
+    if Self.differs(next, levels) { levelModel.levels = next }
   }
 
   private static func differs(_ a: [String: Double], _ b: [String: Double]) -> Bool {
@@ -944,4 +947,18 @@ enum AppAttribution {
     guard proc_name(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
     return String(cString: buf)
   }
+}
+
+/// Live Channels' per-app levels (30 Hz while metering), apart from the
+/// model so a level tick redraws the meters, not the panel or the chip.
+final class LiveLevels: ObservableObject {
+  @Published fileprivate(set) var levels: [String: Double] = [:]
+}
+
+/// Reads one app's level; the only part of a row that redraws per tick.
+struct LevelReader<Content: View>: View {
+  @ObservedObject var levels: LiveLevels
+  let id: String
+  @ViewBuilder let content: (Double?) -> Content
+  var body: some View { content(levels.levels[id]) }
 }

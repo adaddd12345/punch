@@ -435,13 +435,15 @@ struct PopoverView: View {
         MiniDial(title: "Strength", symbol: "waveform.path",
                  value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                  range: 0...1, format: { ("", "\(Int(($0 * 100).rounded()))", "%") },
-                 dimmed: !controller.settings.enabled) { EmptyView() }
+                 dimmed: !controller.settings.enabled,
+                 param: controller.param("strength", \.bass, step: 0.01)) { EmptyView() }
           .frame(width: col)
           .pointerHint(Caption.strength(controller.settings.bass, scrub: false), live: true, track: false)
         MiniDial(title: "Boost", symbol: "speaker.wave.3",
                  value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
                  range: 0...12, format: { ("+", "\(Int($0.rounded()))", " dB") },
-                 dimmed: !controller.settings.enabled) { miniLimit }
+                 dimmed: !controller.settings.enabled,
+                 param: controller.param("boost", \.boostDb, step: 0.5)) { miniLimit }
           .frame(width: col)
           .pointerHint(Caption.boost(controller.settings.boostDb, scrub: false), live: true, track: false)
       }
@@ -957,17 +959,24 @@ struct LabeledSlider: View {
   @Binding var value: Double
   let range: ClosedRange<Double>
   let format: (Double) -> String
+  /// The drag previews and commits on release (LiveEdit.swift); nil: `value` is set per step.
+  var param: LiveParam? = nil
+  @State private var live: Double?
   @Environment(\.labelLevel) private var labels
 
   var body: some View {
+    let v = live ?? value
     HStack(spacing: 6) {
       IconText(title: title, symbol: symbol, size: 11)
         .frame(width: labels == .icons ? 16 : 74, alignment: .leading)
-      Slider(value: $value, in: range)
+      Group {
+        if let param { LiveSlider(value: value, range: range, param: param, live: $live) }
+        else { Slider(value: $value, in: range) }
+      }
         .controlSize(.small)
         .accessibilityLabel(title)
-        .accessibilityValue(format(value))
-      Text(format(value))
+        .accessibilityValue(format(v))
+      Text(format(v))
         .font(.system(size: 10, weight: .medium, design: .rounded))
         .monospacedDigit()
         .foregroundStyle(.secondary)
@@ -988,11 +997,14 @@ private struct MiniDial<Accessory: View>: View {
   let format: (Double) -> (String, String, String)
   /// The app is off: value and slider at 0.45 (still adjustable).
   let dimmed: Bool
+  /// The drag previews and commits on release (LiveEdit.swift).
+  var param: LiveParam? = nil
   @ViewBuilder let accessory: () -> Accessory
+  @State private var live: Double?
   @Environment(\.labelLevel) private var labels
 
   var body: some View {
-    let f = format(value)
+    let f = format(live ?? value)
     VStack(alignment: .leading, spacing: 0) {
       HStack(alignment: .center, spacing: 6) {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -1031,7 +1043,10 @@ private struct MiniDial<Accessory: View>: View {
         accessory()
       }
       .frame(height: 24)
-      Slider(value: $value, in: range)
+      Group {
+        if let param { LiveSlider(value: value, range: range, param: param, live: $live) }
+        else { Slider(value: $value, in: range) }
+      }
         .controlSize(.regular)
         .labelsHidden()
         .frame(maxWidth: .infinity)
@@ -1174,15 +1189,28 @@ final class PopupSpace: ObservableObject {
 
 /// The popup's blocks as they are when they fit; a scrolling column when the
 /// popup would be taller than the space it hangs in (the footer stays put).
+/// One ScrollView, as tall as its content up to the space; not ViewThatFits,
+/// which rebuilt the whole block column (~35 ms) whenever any text in it
+/// changed width, so a Strength scrub re-made every tile per pointer event.
 struct OverflowScroll<Content: View>: View {
   @ViewBuilder let content: () -> Content
+  @State private var contentHeight: CGFloat?
+  @State private var viewportHeight: CGFloat = 0
 
   var body: some View {
-    ViewThatFits(in: .vertical) {
+    let fits = contentHeight.map { $0 <= viewportHeight + 0.5 } ?? true
+    ScrollView(.vertical) {
       content()
-      ScrollView(.vertical) { content() }
-        .scrollIndicators(.automatic)
-        .scrollBounceBehavior(.basedOnSize)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
+          if h != contentHeight { contentHeight = h }
+        }
+    }
+    .scrollBounceBehavior(.basedOnSize)
+    // Fitting, it draws like a plain stack (glows and a dragged block aren't cut off).
+    .scrollClipDisabled(fits)
+    .frame(idealHeight: contentHeight, maxHeight: contentHeight)
+    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
+      if h != viewportHeight { viewportHeight = h }
     }
   }
 }
