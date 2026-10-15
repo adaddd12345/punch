@@ -37,10 +37,14 @@ struct BentoView: View {
   var flat = false
   /// Mac Volume and the output row (PopoverView's), placed by the layout order.
   var macBlock: AnyView? = nil
+  /// Other Macs (Remote.swift): a tile per paired Mac nearby, placed by the layout order.
+  var remoteBlock: AnyView? = nil
   /// Hold-to-rearrange (Reshuffle.swift).
   @ObservedObject var reshuffle: Reshuffle
   /// Membership only (which entries, not levels): hides the What's Playing block when it would be empty.
   @ObservedObject private var nowStack = NowStack.shared
+  /// Which paired Macs have a tile (membership only; each tile observes its own Mac).
+  @ObservedObject private var remoteMacs = RemoteControl.shared.directory
   @State private var drag: BlockDrag?
 
   /// Which mode's settings strip shows: the one turned on most recently.
@@ -152,6 +156,7 @@ struct BentoView: View {
     let mini = size == .mini
     switch key {
     case LayoutSection.macVolume.key: return macBlock != nil
+    case LayoutSection.remoteMacs.key: return !mini && remoteBlock != nil && !remoteMacs.shown.isEmpty && s.shows(.remoteMacs)
     case LayoutSection.bentoHero.key, LayoutSection.classicHeader.key: return true
     case LayoutSection.bentoDials.key: return mini || (!flat && s.shows(.bentoDials))
     case LayoutSection.classicSliders.key: return flat && s.shows(.classicSliders)
@@ -175,6 +180,8 @@ struct BentoView: View {
     switch key {
     case LayoutSection.macVolume.key:
       if let macBlock { macBlock }
+    case LayoutSection.remoteMacs.key:
+      if let remoteBlock { remoteBlock }
     case LayoutSection.bentoHero.key, LayoutSection.classicHeader.key:
       if mini {
         // Mini: the slim hero and the two dials, nothing else.

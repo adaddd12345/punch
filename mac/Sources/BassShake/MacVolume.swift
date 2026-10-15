@@ -368,7 +368,7 @@ private enum MacLook {
   }
 }
 
-private extension Color {
+extension Color {
   /// Red for text: darker in light mode so small type stays readable on the red washes.
   static func macRedText(_ scheme: ColorScheme, _ contrast: ColorSchemeContrast) -> Color {
     contrast == .increased ? .primary : (scheme == .dark ? .red : Color(red: 0.66, green: 0.08, blue: 0.08))

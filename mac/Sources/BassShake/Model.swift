@@ -666,6 +666,13 @@ struct Settings: Codable, Equatable {
   var bassAmount: Double = 0.6
   /// Late Night mode's haze (0...1): darker, warmer, more room.
   var lateNightHaze: Double = 0.5
+  /// Other Macs (⋯ › Presets & Settings › Other Macs…): paired Macs may control
+  /// this one. Only while on does the app listen and advertise on the network.
+  var remoteAllow = false
+  /// Other Macs: look for paired Macs nearby and show them in the popup.
+  var remoteControl = false
+  /// Macs paired either way (public identity keys only; see Remote.swift).
+  var remotePeers: [RemotePeer] = []
 
   /// Whether the menu-bar icon is shown: never hidden unless the Dock icon is on.
   var menuBarIconShown: Bool { showInMenuBar || !showInDock }
@@ -766,6 +773,9 @@ struct Settings: Codable, Equatable {
     bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
     bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount
     lateNightHaze = (try? c.decodeIfPresent(Double.self, forKey: .lateNightHaze)) ?? d.lateNightHaze
+    remoteAllow = (try? c.decodeIfPresent(Bool.self, forKey: .remoteAllow)) ?? d.remoteAllow
+    remoteControl = (try? c.decodeIfPresent(Bool.self, forKey: .remoteControl)) ?? d.remoteControl
+    remotePeers = ((try? c.decodeIfPresent([Lossy<RemotePeer>].self, forKey: .remotePeers)) ?? nil)?.compactMap(\.value) ?? []
   }
 
   static func load() -> Settings {

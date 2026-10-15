@@ -99,7 +99,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
                                            queue: .main) { [weak self] _ in self?.screensChanged() }
     NotificationCenter.default.addObserver(forName: NSApplication.didUnhideNotification, object: nil,
                                            queue: .main) { [weak self] _ in self?.unhiddenAt = Date() }
-    DispatchQueue.main.async { [controller] in controller.bootstrap() }
+    DispatchQueue.main.async { [controller] in
+      controller.bootstrap()
+      // Other Macs: starts nothing unless one of its switches is on.
+      RemoteControl.shared.attach(controller)
+    }
     // Start auto-updates only once the UI is up, and never block on it.
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }
   }

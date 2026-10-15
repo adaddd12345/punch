@@ -1335,6 +1335,16 @@ final class NowPlaying: ObservableObject {
   func playPause(_ app: NowApp) { send(app, .playPause) }
   func nextTrack(_ app: NowApp) { send(app, .next) }
 
+  /// Other Macs (Remote.swift): play/pause or next by script, only for Spotify /
+  /// Music that What's Playing may already script (allowed, never undecided:
+  /// a remote click must not raise macOS's prompt on a Mac nobody is looking at).
+  func remoteScript(_ app: NowApp, next: Bool) -> Bool {
+    guard mayAsk, let p = app.player, !denied.contains(p.rawValue), gate.isOn(p.rawValue),
+          gate.status[p.rawValue] == AutomationGate.allowed, p.isRunning else { return false }
+    send(app, next ? .next : .playPause)
+    return true
+  }
+
   private func send(_ app: NowApp, _ cmd: NowPlayingScripts.Command) {
     guard mayAsk, let p = app.player, !denied.contains(p.rawValue), gate.isOn(p.rawValue), p.isRunning else { return }
     // One command per player at a time: clicks behind a hung app must not pile up and run late.
