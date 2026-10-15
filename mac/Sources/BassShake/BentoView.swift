@@ -1836,7 +1836,7 @@ struct BentoGlassWash: View {
   }
 }
 
-private struct BentoFill: View {
+struct BentoFill: View {
   let tint: BentoTint
   let look: BentoLook
   var radius: CGFloat = BentoRadius.tile

@@ -517,7 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       LiveDrawer.shared.preferSide = false
       LiveDrawer.shared.liftable = false
       dockAnchor.orderOut(nil)
-      PopupSpace.shared.set(PopupSpace.below(button))
+      PopupSpace.shared.set(PopupSpace.below(button), fromDock: false)
       popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
       button.highlight(true)
     case .dock(let p, let edge):
@@ -529,7 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       LiveDrawer.shared.liftable = edge == .maxY
       dockPoint = p
       dockAnchor.place(at: p)
-      PopupSpace.shared.set(PopupSpace.from(dock: p, edge: edge))
+      PopupSpace.shared.set(PopupSpace.from(dock: p, edge: edge), fromDock: true)
       popover.show(relativeTo: v.bounds, of: v, preferredEdge: edge)
     }
     anchoredAt = anchor

@@ -297,9 +297,14 @@ struct PresetEditor: View {
 }
 
 extension View {
-  /// The footer's small capsule chips (Live, DJ, Beats, Latency): one size.
-  func footerChip() -> some View {
-    padding(.horizontal, 8).frame(height: 22)
+  /// The footer bento's chips (Live, DJ, Beats, Latency): one size, 24 tall (concentric in a 30 group).
+  /// `iconOnly`: a 24 pt circle, like the bare glyph buttons.
+  @ViewBuilder func footerChip(iconOnly: Bool = false) -> some View {
+    if iconOnly {
+      frame(width: FooterBento.button, height: FooterBento.button)
+    } else {
+      padding(.horizontal, 8).frame(height: FooterBento.button)
+    }
   }
 }
 

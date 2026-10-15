@@ -35,6 +35,9 @@ struct PopoverView: View {
   @State private var showLayoutEditor = false
   @State private var showMySounds = false
   @State private var showRemote = false
+  /// The Dock header is hovered (its ✕ shows).
+  @State private var headerHovered = false
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   /// Hold any block to rearrange (Reshuffle.swift).
   @StateObject private var reshuffle: Reshuffle
   /// How tall the menu-bar popup may be where it hangs.
@@ -143,6 +146,12 @@ struct PopoverView: View {
   private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
       let isClassicMini = !controller.settings.bento && size == .mini
+      // Opened from the Dock: the footer's controls in a header (icon, name, groups).
+      if dockHeaderShown {
+        dockHeader
+          .overlay(alignment: .bottom) { tickerTape.offset(y: (FooterBento.edgeGap + TickerTape.height) / 2) }
+          .padding(.bottom, FooterBento.edgeGap - 8)
+      }
       // Take Control: who this popup is driving, always on top (and Switch Back).
       if let t = takeover {
         TakeoverBanner(session: t)
@@ -191,19 +200,12 @@ struct PopoverView: View {
       }
       // Under the stack, so a mute never pushes What's Playing down.
       mutedNotice
-      if size != .mini {
-        Divider().opacity(0.5)
-          // Wall Street: a ticker tape in the gap above the footer (an overlay, so
-          // nothing moves), edge to edge across the popup.
-          .overlay {
-            if controller.settings.backgroundStyle == .wallStreet {
-              TickerTape(controller: controller)
-                .frame(width: 360, height: TickerTape.height)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-          }
+      // No hairline: the blocks' edge and a 10 pt gap set the footer apart.
+      // Wall Street's ticker tape runs in that gap (an overlay, so nothing moves).
+      if size != .mini && !dockHeaderShown {
         footer
+          .overlay(alignment: .top) { tickerTape.offset(y: -(FooterBento.edgeGap + TickerTape.height) / 2) }
+          .padding(.top, FooterBento.edgeGap - 8)
       }
     }
     .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.86), value: size)
@@ -822,22 +824,84 @@ struct PopoverView: View {
     }
   }
 
+  /// Wall Street: a ticker tape in the gap between the blocks and the footer (or the
+  /// Dock header), edge to edge across the popup; never takes a click.
+  @ViewBuilder private var tickerTape: some View {
+    if controller.settings.backgroundStyle == .wallStreet {
+      TickerTape(controller: controller)
+        .frame(width: 360, height: TickerTape.height)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+  }
+
+  /// How the footer's groups are drawn: glass like the tiles (macOS 26, Liquid Glass
+  /// on, not Power Saver / Reduce Transparency), else the tiles' fill or Classic's.
+  private var footerSurface: FooterSurface {
+    let s = controller.settings
+    guard s.bento else { return .flat }
+    guard #available(macOS 26, *), s.liquidGlass, !s.powerSaver, !reduceTransparency else { return .bento }
+    return .glass
+  }
+
+  /// Opened from the Dock (this opening, the menu-bar popover only) with the header on.
+  private var dockHeaderShown: Bool {
+    role == .menuBar && space.fromDock && controller.settings.dockHeader
+      && !controller.isMirror && size != .mini
+  }
+
   private var localFooter: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: FooterBento.groupGap) {
+      statusGroup
+      Spacer(minLength: 0)
+      if labels == .full, case .running(_, let sr) = controller.status {
+        Text(String(format: "%.1f kHz", sr / 1000))
+          .font(.system(size: 9, weight: .medium, design: .rounded))
+          .foregroundStyle(.tertiary)
+      }
+      toolsGroup
+      powerGroup
+    }
+    .modifier(FooterGlassRow())
+    .environment(\.footerSurface, footerSurface)
+  }
+
+  /// Opened from the Dock: the app's icon and name on the left, the footer's groups on
+  /// the right with ⋯ in the top-right corner. Its ✕ (on hover) brings the footer back.
+  private var dockHeader: some View {
+    HStack(spacing: 0) {
+      DockHeaderTitle(hovered: headerHovered) { controller.settings.dockHeader = false }
+      Spacer(minLength: FooterBento.groupGap)
+      HStack(spacing: FooterBento.groupGap) {
+        statusGroup
+        powerGroup
+        toolsGroup
+      }
+    }
+    .frame(height: FooterBento.height)
+    .contentShape(Rectangle())
+    .onHover { headerHovered = $0 }
+    .modifier(FooterGlassRow())
+    .environment(\.footerSurface, footerSurface)
+  }
+
+  /// Status and modes: what's playing (Live), DJ, Beats, and Latency when it's on.
+  private var statusGroup: some View {
+    FooterGroup {
       LiveChannelsButton(model: controller.live, expanded: $showLive)
       Button {
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
         HStack(spacing: 4) {
           // A knob: hover turns it a notch.
-          Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
+          Image(systemName: "dial.medium").font(.system(size: 12, weight: .semibold))
             .footerGesture(degrees: 30)
           if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
-        .footerChip()
+        .footerChip(iconOnly: labels == .icons)
         .foregroundStyle(controller.dj.anyActive ? Color.white : Color.primary)
         .background(Capsule().fill(controller.dj.anyActive ? Color.purple
-                                   : (showDJ ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08))))
+                                   : (showDJ ? Color.accentColor.opacity(0.2) : Color.clear)))
       }
       .buttonStyle(FooterButtonStyle(chip: true))
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
@@ -845,23 +909,23 @@ struct PopoverView: View {
         if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
       } label: {
         HStack(spacing: 4) {
-          Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 9, weight: .bold))
+          Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 12, weight: .semibold))
             .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible && !controller.settings.powerSaver && !reduceMotion)
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
-        .footerChip()
+        .footerChip(iconOnly: labels == .icons)
         .foregroundStyle(beats.playing ? Color.accentColor : Color.primary)
-        .background(Capsule().fill(showBeats ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
+        .background(Capsule().fill(showBeats ? Color.accentColor.opacity(0.2) : Color.clear))
       }
       .buttonStyle(FooterButtonStyle(chip: true))
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
       LatencyChip(lab: latencyLab) { withAnimation { showLatencyLab = true } }
-      Spacer(minLength: 4)
-      if labels == .full, case .running(_, let sr) = controller.status {
-        Text(String(format: "%.1f kHz", sr / 1000))
-          .font(.system(size: 9, weight: .medium, design: .rounded))
-          .foregroundStyle(.tertiary)
-      }
+    }
+  }
+
+  /// Tools: Check & Fix and the ⋯ shaker menu.
+  private var toolsGroup: some View {
+    FooterGroup {
       Button {
         controller.checkAndFix()
       } label: {
@@ -873,7 +937,6 @@ struct PopoverView: View {
             FooterTurningGlyph(kind: .check)
           }
         }
-        .foregroundStyle(.secondary)
       }
       .buttonStyle(FooterButtonStyle())
       .accessibilityLabel("Check and fix sound issues")
@@ -984,6 +1047,10 @@ struct PopoverView: View {
                                                  // The menu-bar icon may only be off while the Dock tile is on.
                                                  if !$0 { controller.settings.showInMenuBar = true }
                                                }))
+          // Opened from the Dock: the controls in a header at the top (its hover ✕ turns this off).
+          Toggle("Header When Opened from Dock", isOn: Binding(get: { controller.settings.dockHeader },
+                                                              set: { controller.settings.dockHeader = $0 }))
+            .disabled(!controller.settings.showInDock)
           // Only hideable while the Dock icon is on, so the app can't get lost.
           Toggle("Show in Menu Bar", isOn: Binding(get: { controller.settings.menuBarIconShown },
                                                    set: { controller.settings.showInMenuBar = $0 }))
@@ -1073,15 +1140,20 @@ struct PopoverView: View {
         Divider()
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       }
-      // Quit: the word with full labels; otherwise the speaker-driver power glyph, which
-      // turns on hover like the shaker beside it.
+    }
+  }
+
+  /// Quit, alone: it ends the whole app, so it never shares a group with menus.
+  private var powerGroup: some View {
+    FooterGroup {
+      // The word with full labels; otherwise the speaker-driver power glyph, which
+      // turns on hover like the shaker.
       Button { NSApp.terminate(nil) } label: {
-        if labels == .full { Text("Quit").fixedSize() } else { FooterTurningGlyph(kind: .quit) }
+        if labels == .full { Text("Quit").fixedSize().padding(.horizontal, 8) } else { FooterTurningGlyph(kind: .quit) }
       }
       .accessibilityLabel("Quit")
-        .buttonStyle(FooterButtonStyle())
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
+      .buttonStyle(FooterButtonStyle())
+      .font(.system(size: 11))
     }
   }
 }
@@ -1310,11 +1382,15 @@ final class PopupSpace: ObservableObject {
   static let shared = PopupSpace()
   /// The popup's largest height (points), or nil: no limit known.
   @Published private(set) var maxHeight: CGFloat?
+  /// This opening hangs from the Dock tile (not the menu-bar icon), so the Dock header
+  /// may stand in for the footer. Set before the popover shows: the first frame is right.
+  @Published private(set) var fromDock = false
 
   /// The popover's arrow plus a little air.
   static let chrome: CGFloat = 28
 
-  func set(_ h: CGFloat?) {
+  func set(_ h: CGFloat?, fromDock dock: Bool? = nil) {
+    if let dock, dock != fromDock { fromDock = dock }
     let v = h.map { max(320, $0.rounded(.down)) }
     if v != maxHeight { maxHeight = v }
   }

@@ -366,7 +366,7 @@ struct LatencyChip: View {
     if lab.onTheRoad {
       Button(action: onOpen) {
         HStack(spacing: 4) {
-          Image(systemName: "metronome").font(.system(size: 9, weight: .semibold))
+          Image(systemName: "metronome").font(.system(size: 12, weight: .semibold)).symbolRenderingMode(.hierarchical)
           if let saved = lab.savedForCurrentPair {
             Text(String(format: "%.0f ms", saved.extraMs))
               .font(.system(size: 10, weight: .semibold, design: .rounded))
@@ -380,7 +380,6 @@ struct LatencyChip: View {
         }
         .footerChip()
         .foregroundStyle(lab.savedForCurrentPair == nil ? Color.secondary : Color.primary)
-        .background(Capsule().fill(Color.primary.opacity(0.08)))
       }
       .buttonStyle(FooterButtonStyle(chip: true))
       .help(helpText)

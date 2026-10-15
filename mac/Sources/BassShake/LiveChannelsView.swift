@@ -29,13 +29,14 @@ struct LiveChannelsButton: View {
             .foregroundStyle(Color.orange)
         }
         Image(systemName: "chevron.down")
-          .font(.system(size: 7, weight: .bold))
-          .foregroundStyle(.secondary)
+          .font(.system(size: 8, weight: .bold))
+          .foregroundStyle(.tertiary)
           .rotationEffect(.degrees(expanded ? 180 : 0))
       }
       .footerChip()
       .foregroundStyle(Color.primary)
-      .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
+      // In its bento group: no plate at rest; open tints only its own plate.
+      .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.clear))
     }
     .buttonStyle(FooterButtonStyle(chip: true))
     .pointerHint(hint(n, mutedCount))
