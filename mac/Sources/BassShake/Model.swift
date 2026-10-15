@@ -798,8 +798,8 @@ struct Settings: Codable, Equatable {
   /// What's Playing art (⋯ › Look › Artwork Style): the plain cover, or Vinyl
   /// Peek (a sleeve with a record peeking out that turns while it plays).
   var artworkStyle: ArtworkStyle = .cover
-  /// What's Playing's mute as a small coloured isometric speaker (⋯ › Look ›
-  /// Isometric Mute Button). Off: the flat speaker disc.
+  /// What's Playing's play / pause as the isometric shield (⋯ › Look ›
+  /// Isometric Play Button; the key keeps its old name so saved prefs load). Off: the flat disc.
   var isoMuteButton = false
   /// Bass character (Distort / Punch) and its amount (0...1).
   var bassCharacter: BassCharacter = .off

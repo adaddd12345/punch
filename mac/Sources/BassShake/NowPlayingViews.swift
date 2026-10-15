@@ -151,19 +151,13 @@ struct NowPlayingControls: View {
   var primary: CGFloat = 40
   /// Mute and Next beside it.
   var extras: Bool = true
-  /// ⋯ › Look › Isometric Mute Button.
-  @Environment(\.isoMuteButton) private var isoMute
 
   var body: some View {
     let route = model.route(app)
     HStack(spacing: 8) {
       // Hidden while a note shows, to give it room; Play stays put (trailing).
       if extras && route != .mute && model.notice == nil {
-        if isoMute {
-          IsoMuteButton(model: model, app: app, tint: tint)
-        } else {
-          MuteButton(model: model, app: app, compact: false)
-        }
+        MuteButton(model: model, app: app, compact: false)
       }
       PrimaryButton(model: model, app: app, size: primary, glyph: (primary * CGFloat(0.4)).rounded(), fill: tint)
       if extras && route == .script {
@@ -193,6 +187,8 @@ private struct NoticeText: View {
 /// app with no pause. A filled tint disc, so it reads apart from Power.
 /// Locked (the key needs Accessibility): a small lock badge, an always-on
 /// hover card, and a click that opens Accessibility instead of sending a key.
+/// ⋯ › Look › Isometric Play Button draws the same button as the 3D shield
+/// (IsoPlayButton.swift), at the same size.
 private struct PrimaryButton: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
@@ -201,6 +197,7 @@ private struct PrimaryButton: View {
   /// The live tint; nil draws the quiet "off" disc.
   let fill: Color?
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.isoPlayButton) private var iso
 
   var body: some View {
     let route = model.route(app)
@@ -226,18 +223,27 @@ private struct PrimaryButton: View {
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
                         chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
                         browser: app.isBrowser)
-    return Button { model.primary(app) } label: {
-      Image(systemName: symbol)
-        .font(.system(size: glyph, weight: .heavy))
-        .foregroundStyle(ink)
-        .frame(width: size, height: size)
-        .background(Circle().fill(disc))
-        .overlay(alignment: .bottomTrailing) {
-          if locked { LockBadge(size: size).transition(.opacity) }
+    let button = Button { model.primary(app) } label: {
+      Group {
+        if iso {
+          IsoPlayFace(level: NowLevels.shared.meter(for: app.id), speaker: route == .mute || fallback,
+                      playing: playing, muted: muted, tint: fill, size: size)
+        } else {
+          Image(systemName: symbol)
+            .font(.system(size: glyph, weight: .heavy))
+            .foregroundStyle(ink)
+            .frame(width: size, height: size)
+            .background(Circle().fill(disc))
         }
-        .contentShape(Circle())
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if locked { LockBadge(size: size).transition(.opacity) }
+      }
+      .contentShape(Circle())
     }
-    .buttonStyle(BentoPressStyle())
+    return Group {
+      if iso { button.buttonStyle(IsoPlayStyle()) } else { button.buttonStyle(BentoPressStyle()) }
+    }
     .fixedSize()
     .animation(.easeOut(duration: 0.2), value: locked)
     .accessibilityLabel(locked ? "\(label), needs Accessibility" : label)
