@@ -1,10 +1,19 @@
 // Flavours: a bass character (Distort / Punch) and the Late Night mode.
 //
-// BassCharacter reshapes only the low band and adds the change back:
-//   out_c = x_c + mix * (lowMono - low_c + hp(processed - lowMono))
-// so with mix 0 nothing is touched (bit-exact skip), the LR4 split's phase
-// never reaches the highs, and the lows end up mono. Switching kind ramps
-// the mix down, swaps, and ramps back up (~25 ms each way).
+// BassCharacter reshapes only the bass, and the stereo image of the bass
+// stays exactly where the mix put it (side bass is never raised). With mix 0 nothing is touched (bit-exact skip). Switching kind
+// ramps the mix down, swaps, and ramps back up (~25 ms each way).
+//   * The low band comes from a low-delay split (three "1 - high-pass"
+//     sections at 100 Hz): 1.6-2.0 ms of group delay at 40-150 Hz instead
+//     of an LR4's 4.2-4.6 ms, so Distort's grit lands on the kick instead
+//     of after it. (Faster still lets the low mids into the shaper.)
+//   * Distort adds (distorted low - low): the dry bass is never delayed.
+//   * What is added is computed once from the mid and shared out by each
+//     channel's share of the bass level (50 ms), so a bass that leans to
+//     one side keeps its lean and phase, and a centred one stays centred.
+//   * Punch moves a low shelf (a minimum-phase EQ on each channel, same
+//     coefficients) instead of adding a gained LR4 band, so a boost can't
+//     cancel against the dry signal near the crossover (no 150 Hz notch).
 //
 // LateNight is a mellow, "underwater" master tone (OVO-style late-night
 // mixes): low shelf + 300 Hz dip, light tape saturation, 2:1 glue
@@ -44,9 +53,18 @@ class BassCharacter {
   void process(float* const* ch, int numChannels, int numFrames);
 
  private:
+  struct Chan {
+    std::array<SvfState, 3> split;  // three "1 - HP" sections
+    float ms = 0.f;      // low-band mean square (where the bass sits)
+    SvfState shelf, dip;
+  };
+
   void updateCoeffs(float amount);
-  float distort(float low);
-  float punch(float low);
+  float distort(float low, float drive, float bias);
+  float punchGainDb(float low);
+  void buildShelf(float db);
+  float splitLow(Chan& s, float x);
+  void updateWeights(int numChannels);
 
   double sampleRate_ = 48000.0;
   int numChannels_ = 2;
@@ -56,12 +74,16 @@ class BassCharacter {
   Smoothed amount_, driveScale_;
   float coeffAmount_ = -1.f;  // amount the filters were last built for
 
-  SvfCoeffs split_, diffHp_, post_, dip_;
-  struct Chan { SvfState lp1, lp2, dip; };
+  // Per channel: the low-delay split, the bass level (for the weights) and
+  // Punch's shelf and dip. The shaper runs once, on the mid's lows.
+  SvfCoeffs split_, post_, dip_, shelf_;
+  float dcCoeff_ = 0.f, dc_ = 0.f;        // 3 Hz DC blocker on the added part
+  float shelfW_ = 0.f;                    // tan(pi * shelf Hz / fs)
+  float shelfDb_ = 0.f, warmGain_ = 1.f;  // what the shelf was last built for
+  float msCoeff_ = 0.f;                   // 50 ms bass-level follower
+  std::array<float, kMaxChannels> weight_{};
   std::array<Chan, kMaxChannels> st_{};
-  SvfState diffHpState_, postState_;
-
-  // Distort
+  SvfState postState_;
   double prevU_ = 0.0;
   float envRaw_ = 0.f, envWet_ = 0.f, envCoeff_ = 0.f;
   // Punch

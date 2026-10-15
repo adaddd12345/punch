@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -1429,6 +1430,177 @@ TEST(bass_character_c_api) {
   punch_process_interleaved(e, buf.data(), buf.data(), 2, 512);
   for (float v : buf) CHECK(std::isfinite(v));
   punch_engine_destroy(e);
+}
+
+// ---- Bass character timing / image (owner: "Distort nudges my bass to the
+// right and brings it in a few ms late").
+namespace bctest {
+constexpr double kFs = 48000.0;
+// Zero-phase Butterworth analysis filter (forward + backward).
+static std::vector<float> zeroPhase(std::vector<float> y, FilterType t, double hz) {
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int k = 0; k < 2; ++k) {
+      const SvfCoeffs c = SvfCoeffs::make({t, hz, 0, 0.7071, true}, kFs);
+      SvfState s;
+      for (auto& v : y) v = s.tick(c, v);
+    }
+    std::reverse(y.begin(), y.end());
+  }
+  return y;
+}
+static std::vector<float> envelope(const std::vector<float>& x) {
+  std::vector<float> e(x.size());
+  const float a = float(1 - std::exp(-1.0 / (0.0003 * kFs)));
+  float z = 0;
+  for (size_t i = 0; i < x.size(); ++i) { z += a * (std::fabs(x[i]) - z); e[i] = z; }
+  z = 0;
+  for (size_t i = e.size(); i-- > 0;) { z += a * (e[i] - z); e[i] = z; }
+  return e;
+}
+static std::complex<double> toneAt(const std::vector<float>& x, double hz, size_t a, size_t b) {
+  std::complex<double> s = 0;
+  for (size_t i = a; i < b; ++i) s += double(x[i]) * std::polar(1.0, -2 * std::numbers::pi * hz * double(i) / kFs);
+  return s * (2.0 / double(b - a));
+}
+static void run(BassCharacter& bc, std::vector<float>& l, std::vector<float>& r) {
+  for (size_t i = 0; i < l.size(); i += 512) {
+    float* p[2] = {l.data() + i, r.data() + i};
+    bc.process(p, 2, int(std::min<size_t>(512, l.size() - i)));
+  }
+}
+// A kick: 158 -> 48 Hz chirp, 0.7 ms attack, 160 ms decay.
+static std::vector<float> kicks(std::vector<size_t>& onsets) {
+  std::vector<float> m(size_t(kFs * 3), 0.f);
+  for (double t = 0.5; t < 2.6; t += 0.5) {
+    const size_t o = size_t(t * kFs);
+    onsets.push_back(o);
+    double ph = 0;
+    for (size_t i = 0; i < size_t(0.45 * kFs); ++i) {
+      const double s = double(i) / kFs;
+      ph += 2 * std::numbers::pi * (48 + 110 * std::exp(-s / 0.025)) / kFs;
+      m[o + i] += float(0.7 * std::exp(-s / 0.16) * (1 - std::exp(-s / 0.0007)) * std::sin(ph));
+    }
+  }
+  return m;
+}
+}  // namespace bctest
+
+TEST(bass_character_keeps_the_bass_image) {
+  using namespace bctest;
+  for (int kind = 1; kind <= 2; ++kind) {
+    for (double lean : {0.0, 0.15}) {
+      const size_t n = size_t(kFs * 2);
+      std::vector<float> l(n), r(n);
+      for (size_t i = 0; i < n; ++i) {
+        const double t = double(i) / kFs;
+        const double b = 0.4 * std::sin(2 * std::numbers::pi * 55 * t) + 0.25 * std::sin(2 * std::numbers::pi * 90 * t + 1) +
+                         0.15 * std::sin(2 * std::numbers::pi * 140 * t + 2);
+        l[i] = float(b * (1 - lean));
+        r[i] = float(b * (1 + lean));
+      }
+      const auto l0 = l, r0 = r;
+      BassCharacter bc;
+      bc.prepare(kFs, 2);
+      bc.setParams({BassCharacterKind(kind), 0.8f, 1.f});
+      run(bc, l, r);
+      CHECK(l != l0);  // it did something
+      if (lean == 0.0) CHECK(l == r);  // a centred bass stays exactly centred
+      const size_t a = size_t(kFs), e = n;
+      for (double hz : {55.0, 90.0, 140.0}) {
+        const double balIn = 20 * std::log10(std::abs(toneAt(r0, hz, a, e)) / std::abs(toneAt(l0, hz, a, e)));
+        const auto ol = toneAt(l, hz, a, e), orr = toneAt(r, hz, a, e);
+        const double balOut = 20 * std::log10(std::abs(orr) / std::abs(ol));
+        const double phase = std::arg(orr / ol) * 180 / std::numbers::pi;
+        CHECK_NEAR(balOut, balIn, 0.1);
+        CHECK_NEAR(phase, 0.0, 1.0);
+      }
+    }
+  }
+}
+
+TEST(bass_character_onset_timing) {
+  using namespace bctest;
+  std::vector<size_t> on;
+  const auto dry = kicks(on);
+  const auto dl = zeroPhase(dry, FilterType::LowPass, 150);
+  const auto ed = envelope(dl);
+  for (int kind = 1; kind <= 2; ++kind) {
+    auto l = dry, r = dry;
+    BassCharacter bc;
+    bc.prepare(kFs, 2);
+    bc.setParams({BassCharacterKind(kind), 0.6f, 1.f});
+    run(bc, l, r);
+    // The summed low band lands with the dry one (cross-correlation lag).
+    const auto ol = zeroPhase(l, FilterType::LowPass, 150);
+    double best = -1e30;
+    int lag = 0;
+    for (int L = -48; L <= 48; ++L) {
+      double s = 0;
+      for (size_t i = size_t(0.9 * kFs); i < size_t(2.9 * kFs); ++i) s += double(dl[i]) * ol[size_t(long(i) + L)];
+      if (s > best) { best = s; lag = L; }
+    }
+    const double lagMs = lag / kFs * 1000;
+    // What Distort adds (its grit) arrives with the kick: envelope lag of
+    // (out - dry) against the dry lows over the first 60 ms of each hit.
+    std::vector<float> add(dry.size());
+    for (size_t i = 0; i < dry.size(); ++i) add[i] = l[i] - dry[i];
+    const auto ea = envelope(zeroPhase(add, FilterType::LowPass, 2000));
+    best = -1e30;
+    int glag = 0;
+    for (int L = -240; L <= 480; ++L) {
+      double s = 0;
+      for (size_t o : on)
+        if (o > size_t(0.9 * kFs))
+          for (size_t i = o; i < o + size_t(0.06 * kFs); ++i) s += double(ed[i]) * ea[size_t(long(i) + L)];
+      if (s > best) { best = s; glag = L; }
+    }
+    const double gritMs = glag / kFs * 1000;
+    std::printf("    %s: low band lag %+.2f ms, added part lag %+.2f ms\n", kind == 1 ? "distort" : "punch", lagMs, gritMs);
+    CHECK(std::fabs(lagMs) <= 0.5);
+    if (kind == 1) CHECK(gritMs <= 2.0);  // an LR4 split put it ~4 ms late
+  }
+}
+
+// Punch's boost used to be x + (g - 1) * LR4(x), which cancels against the
+// dry signal at the 150 Hz crossover: a quiet 150 Hz tone dipped on every hit.
+TEST(punch_does_not_notch_150hz) {
+  using namespace bctest;
+  const size_t n = size_t(kFs * 4);
+  std::vector<float> x(n, 0.f);
+  for (double t0 = 0.25; t0 < 3.6; t0 += 0.5) {
+    const size_t o = size_t(t0 * kFs);
+    for (size_t i = 0; i < size_t(0.4 * kFs) && o + i < n; ++i) {
+      const double t = double(i) / kFs;
+      x[o + i] += float(0.5 * std::exp(-t / 0.15) * (1 - std::exp(-t / 0.001)) * std::sin(2 * std::numbers::pi * 45 * t));
+    }
+  }
+  for (size_t i = 0; i < n; ++i) x[i] += float(0.03 * std::sin(2 * std::numbers::pi * 150 * double(i) / kFs));
+  for (float amt : {0.3f, 0.6f, 1.f}) {
+    auto l = x, r = x;
+    BassCharacter bc;
+    bc.prepare(kFs, 2);
+    bc.setParams({BassCharacterKind::Punch, amt, 1.f});
+    run(bc, l, r);
+    double pin = 0, pout = 0;
+    for (double t0 = 0.75; t0 < 3.6; t0 += 0.5) {
+      const size_t o = size_t((t0 + 0.005) * kFs), e = size_t((t0 + 0.060) * kFs);
+      auto lock = [&](const std::vector<float>& v) {
+        std::complex<double> s = 0;
+        double ws = 0;
+        for (size_t i = o; i < e; ++i) {
+          const double w = 0.5 - 0.5 * std::cos(2 * std::numbers::pi * double(i - o) / double(e - o));
+          s += w * double(v[i]) * std::polar(1.0, -2 * std::numbers::pi * 150 * double(i) / kFs);
+          ws += w;
+        }
+        return std::norm(s / ws);
+      };
+      pin += lock(x);
+      pout += lock(l);
+    }
+    const double d = 10 * std::log10(pout / pin);
+    std::printf("    punch %.1f: 150 Hz during hits %+.2f dB\n", double(amt), d);
+    CHECK(d >= -0.5);
+  }
 }
 
 // Lights Out's master fade: bit-exact at 0 dB, a smooth monotonic ramp to

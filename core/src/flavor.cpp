@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace punch {
 
@@ -27,6 +28,21 @@ SvfCoeffs make(FilterType t, double hz, double gainDb, double q, double fs) {
 
 // ================================================================ BassCharacter
 
+namespace {
+// Low-delay split (see flavor.hpp). Each section is 1 - HP2 = (ks + 1) /
+// (s^2 + ks + 1): flat through the bass with little phase lag there and a
+// first-order roll-off above. Three at 100 Hz, k 3: +1.9 dB at 55 Hz,
+// -0.3 dB at 150, -7 dB at 300, -32 dB at 1 kHz, -60 dB at 3 kHz, for
+// 1.6-2.0 ms of group delay at 40-150 Hz (an LR4 at 120 Hz: 4.2-4.6 ms).
+// Measured trade (Distort 0.6, 1 kHz tone over a 55/65 Hz bass): this
+// split -32 dBc of intermodulation, the LR4 -37 dBc; a 0.8 ms split (two
+// sections at 250 Hz + a 400 Hz pole) lets the low mids in: -23 dBc.
+constexpr double kSplitHz = 100.0, kSplitK = 3.0;
+constexpr double kShelfHz = 120.0;      // Punch's moving low shelf
+constexpr double kShelfK = 1.41421356;  // Q 0.71
+constexpr double kDcHz = 3.0;           // DC blocker on the added part
+}  // namespace
+
 void BassCharacter::prepare(double sampleRate, int numChannels) {
   sampleRate_ = sampleRate;
   numChannels_ = std::clamp(numChannels, 1, kMaxChannels);
@@ -39,7 +55,12 @@ void BassCharacter::prepare(double sampleRate, int numChannels) {
   rShort_ = coeffFor(40.0, sampleRate);
   rLong_ = coeffFor(300.0, sampleRate);
   gSmooth_ = coeffFor(1.0, sampleRate);
-  diffHp_ = make(FilterType::HighPass, 10.0, 0.0, 0.7071, sampleRate);
+  split_ = make(FilterType::LowPass, kSplitHz, 0.0, 1.0 / kSplitK, sampleRate);
+  split_.m1 = float(kSplitK);  // LP + k*BP = 1 - HP
+  split_.dm1 = kSplitK;
+  msCoeff_ = coeffFor(50.0, sampleRate);
+  dcCoeff_ = float(1.0 - std::exp(-2.0 * std::numbers::pi * kDcHz / sampleRate));
+  shelfW_ = float(std::tan(std::numbers::pi * kShelfHz / sampleRate));
   setParams(p_);
   amount_.snap(amount_.target());
   driveScale_.snap(driveScale_.target());
@@ -50,11 +71,13 @@ void BassCharacter::prepare(double sampleRate, int numChannels) {
 
 void BassCharacter::reset() {
   for (auto& c : st_) c = Chan{};
-  diffHpState_.reset();
+  weight_.fill(1.f);
   postState_.reset();
   prevU_ = 0.0;
   envRaw_ = envWet_ = 0.f;
+  dc_ = 0.f;
   eFast_ = eSlowAtt_ = eLong_ = gDb_ = 0.f;
+  buildShelf(0.f);
   coeffAmount_ = -1.f;
 }
 
@@ -68,17 +91,46 @@ void BassCharacter::setParams(const BassCharacterParams& p) {
 void BassCharacter::updateCoeffs(float a) {
   coeffAmount_ = a;
   const double fs = sampleRate_;
-  const bool distortKind = active_ == BassCharacterKind::Distort;
-  split_ = make(FilterType::LowPass, distortKind ? 120.0 : 150.0, 0.0, 0.7071, fs);  // x2 = LR4
   post_ = make(FilterType::LowPass, 3000.0 - 1500.0 * double(a), 0.0, 0.7071, fs);
   dip_ = make(FilterType::Bell, 250.0, -(1.0 + 2.0 * double(a)), 1.0, fs);
 }
 
-float BassCharacter::distort(float low) {
-  const float a = amount_.current();
-  const float driveDb = (6.f + 18.f * a) * driveScale_.next();
-  const float g = dbToGain(driveDb);
-  const float bias = 0.2f + 0.3f * a;  // asymmetry 0.2..0.5: even harmonics
+// Low shelf at kShelfHz with only the gain terms recomputed (tan precomputed).
+void BassCharacter::buildShelf(float db) {
+  shelfDb_ = db;
+  warmGain_ = dbToGain(db);
+  const double A = std::sqrt(double(warmGain_));  // 10^(dB/40)
+  const double g = double(shelfW_) / std::sqrt(A), k = kShelfK;
+  const double a1 = 1.0 / (1.0 + g * (g + k)), a2 = g * a1, a3 = g * a2;
+  shelf_.a1 = float(a1);
+  shelf_.a2 = float(a2);
+  shelf_.a3 = float(a3);
+  shelf_.m0 = 1.f;
+  shelf_.m1 = float(k * (A - 1.0));
+  shelf_.m2 = float(A * A - 1.0);
+}
+
+inline float BassCharacter::splitLow(Chan& s, float x) {
+  float v = x;
+  for (auto& f : s.split) v = f.tick(split_, v);
+  return v;
+}
+
+// How much of the (mono) added part each channel gets: its share of the bass
+// level, so a bass that leans to one side keeps its lean (a centred bass
+// gets exactly the same on every channel).
+void BassCharacter::updateWeights(int numChannels) {
+  float sum = 0.f;
+  for (int c = 0; c < numChannels; ++c) sum += std::sqrt(st_[size_t(c)].ms);
+  if (sum <= 1e-9f) {
+    weight_.fill(1.f);
+    return;
+  }
+  const float k = float(numChannels) / sum;
+  for (int c = 0; c < numChannels; ++c) weight_[size_t(c)] = std::sqrt(st_[size_t(c)].ms) * k;
+}
+
+float BassCharacter::distort(float low, float g, float bias) {
   const float tb = std::tanh(bias);
   const double u = double(g * low + bias);
   const double du = u - prevU_;
@@ -96,7 +148,8 @@ float BassCharacter::distort(float low) {
   return w * gain;
 }
 
-float BassCharacter::punch(float low) {
+// Punch's shelf gain (dB): up on attacks, down on long sustains.
+float BassCharacter::punchGainDb(float low) {
   const float a = amount_.current();
   const float e = std::fabs(low);
   eFast_ += (e - eFast_) * (e > eFast_ ? aFast_ : rShort_);
@@ -109,10 +162,7 @@ float BassCharacter::punch(float low) {
     target = 6.f * a * atk - 4.f * a * sus;
   }
   gDb_ += (target - gDb_) * gSmooth_;
-  const float v = low * dbToGain(gDb_);
-  // Light 2nd-harmonic warmth (up to ~3 dB drive, asymmetry 0.3).
-  const float gw = dbToGain(3.f * a), b = 0.15f, tb = 0.148885f;  // tanh(0.15)
-  return (std::tanh(gw * v + b) - tb) / (gw * (1.f - tb * tb));
+  return gDb_;
 }
 
 void BassCharacter::process(float* const* ch, int numChannels, int numFrames) {
@@ -128,6 +178,7 @@ void BassCharacter::process(float* const* ch, int numChannels, int numFrames) {
   }
   if (active_ != BassCharacterKind::Off && std::fabs(amount_.current() - coeffAmount_) > 1e-3f)
     updateCoeffs(amount_.current());
+  const float invCh = 1.f / float(numChannels);
   for (int i = 0; i < numFrames; ++i) {
     // Kind switch: ramp the mix to 0, swap, ramp back up.
     if (active_ != p_.kind) {
@@ -148,23 +199,45 @@ void BassCharacter::process(float* const* ch, int numChannels, int numFrames) {
     }
     if ((i & 31) == 31 && std::fabs(amount_.current() - coeffAmount_) > 1e-3f) updateCoeffs(amount_.current());
 
-    float lows[kMaxChannels];
     float mono = 0.f;
     for (int c = 0; c < numChannels; ++c) {
       Chan& s = st_[size_t(c)];
-      lows[c] = s.lp2.tick(split_, s.lp1.tick(split_, ch[c][i]));
-      mono += lows[c];
+      const float l = splitLow(s, ch[c][i]);
+      s.ms += msCoeff_ * (l * l - s.ms);
+      mono += l;
     }
-    mono /= float(numChannels);
-    const float proc = active_ == BassCharacterKind::Distort ? distort(mono) : punch(mono);
-    const float d = diffHpState_.tick(diffHp_, proc - mono);
-    const bool dip = active_ == BassCharacterKind::Punch;
+    mono *= invCh;
+    if ((i & 15) == 0) updateWeights(numChannels);
     const float m = mix_;
-    for (int c = 0; c < numChannels; ++c) {
-      const float x = ch[c][i];
-      float delta = mono - lows[c] + d;
-      if (dip) delta += st_[size_t(c)].dip.tick(dip_, x) - x;
-      ch[c][i] = x + m * delta;
+    const float a = amount_.current();
+    float add = 0.f;  // mono part, shared out by weight_
+    if (active_ == BassCharacterKind::Distort) {
+      // Only what the distortion changed is added: the dry signal (and so the
+      // kick's onset) passes untouched.
+      const float g = dbToGain((6.f + 18.f * a) * driveScale_.next());
+      const float bias = 0.2f + 0.3f * a;  // asymmetry 0.2..0.5: even harmonics
+      add = distort(mono, g, bias) - mono;
+    } else {
+      const float gdb = punchGainDb(mono);
+      if ((i & 15) == 0 && std::fabs(gdb - shelfDb_) > 0.01f) buildShelf(gdb);
+      // Light 2nd-harmonic warmth (up to ~3 dB drive, asymmetry 0.3) of the
+      // shelved lows: only the change is added (warm(v) - v).
+      const float gw = dbToGain(3.f * a), b = 0.15f, tb = 0.148885f;  // tanh(0.15)
+      const float v = mono * warmGain_;
+      add = (std::tanh(gw * v + b) - tb) / (gw * (1.f - tb * tb)) - v;
+    }
+    dc_ += dcCoeff_ * (add - dc_);
+    add -= dc_;
+    if (active_ == BassCharacterKind::Distort) {
+      for (int c = 0; c < numChannels; ++c) ch[c][i] += m * weight_[size_t(c)] * add;
+    } else {
+      // Punch: one moving shelf (same coefficients on every channel).
+      for (int c = 0; c < numChannels; ++c) {
+        Chan& s = st_[size_t(c)];
+        const float x = ch[c][i];
+        const float y = s.dip.tick(dip_, s.shelf.tick(shelf_, x)) + weight_[size_t(c)] * add;
+        ch[c][i] = x + m * (y - x);
+      }
     }
   }
 }
