@@ -20,6 +20,20 @@ struct PopupBackground: View {
       // Seasonal scenes (Festive.swift): a still frame under Power Saver and Reduce Motion.
       FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion, clock: clock)
         .allowsHitTesting(false)
+    } else if style.morph {
+      // Freezing / Ember (MorphBackground.swift): one still frame under Power Saver and
+      // Reduce Motion; otherwise it morphs only while the popup is open and uncovered.
+      Group {
+        if powerSaver || reduceMotion {
+          MorphGradient(style: style, t: MorphGradient.stillTime)
+        } else {
+          TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !active || drawPaused)) { tl in
+            MorphGradient(style: style, t: tl.date.timeIntervalSinceReferenceDate)
+          }
+        }
+      }
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
     } else if let palette = AmbientPalette.for(style) {
       Group {
         if powerSaver || reduceMotion {
@@ -81,7 +95,7 @@ struct AmbientPalette {
 
   static func `for`(_ style: BackgroundStyle) -> AmbientPalette? {
     switch style {
-    case .system, .frost, .pumpkin, .lunar, .sakura, .wallStreet: return nil
+    case .system, .frost, .pumpkin, .lunar, .sakura, .wallStreet, .freezing, .ember: return nil
     case .ambientBlue:
       return .init(dark: c(0.02, 0.05, 0.14), light: c(0.86, 0.91, 1.0),
                    plumes: [c(0.10, 0.42, 1.00), c(0.05, 0.70, 1.00), c(0.20, 0.30, 0.95), c(0.00, 0.55, 0.90), c(0.45, 0.65, 1.00)])
@@ -91,9 +105,6 @@ struct AmbientPalette {
     case .irishGreen:
       return .init(dark: c(0.01, 0.08, 0.04), light: c(0.88, 0.96, 0.90),
                    plumes: [c(0.00, 0.62, 0.32), c(0.20, 0.80, 0.40), c(0.05, 0.45, 0.25), c(0.55, 0.85, 0.35), c(0.00, 0.70, 0.55)])
-    case .ember:
-      return .init(dark: c(0.12, 0.03, 0.02), light: c(1.0, 0.91, 0.86),
-                   plumes: [c(1.00, 0.35, 0.10), c(0.95, 0.20, 0.15), c(1.00, 0.60, 0.15), c(0.75, 0.12, 0.10), c(1.00, 0.45, 0.30)])
     case .violet:
       return .init(dark: c(0.06, 0.03, 0.13), light: c(0.93, 0.89, 1.0),
                    plumes: [c(0.50, 0.25, 0.95), c(0.70, 0.35, 1.00), c(0.35, 0.20, 0.80), c(0.85, 0.45, 0.95), c(0.30, 0.35, 0.95)])
