@@ -247,7 +247,15 @@ struct ReshuffleBlock: ViewModifier {
       .transaction { if lifted && model.dragging { $0.animation = nil } }
       .zIndex(lifted ? 10 : 0)
       .contentShape(Rectangle())
-      .onHover { model.hover(key, $0) }
+      // Re-asserted on every move, not only on enter, so the block under the
+      // pointer stays known after it crosses an AppKit control (Classic's
+      // sliders and switches) and a hold on that block's labels or padding works.
+      .onContinuousHover { phase in
+        switch phase {
+        case .active: if model.hovered != key { model.hover(key, true) }
+        case .ended: model.hover(key, false)
+        }
+      }
       .gesture(
         DragGesture(minimumDistance: 1, coordinateSpace: .global)
           .onChanged { onDrag($0.translation.height) }

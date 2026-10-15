@@ -5,7 +5,7 @@ import SwiftUI
 // hides a section (X) or brings it back (+). Each layout keeps its own list,
 // stored in Settings.hiddenSections; Mini size always shows its few controls.
 // Order: Settings.bentoOrder / classicOrder, changed by holding a block in
-// the popup (Reshuffle.swift); the cards here follow it.
+// the popup (Reshuffle.swift) or with each card's up/down arrows here.
 // Mac Volume is the exception: one switch (Settings.showMacVolume) for both
 // layouts and every size, Mini included.
 
@@ -153,7 +153,9 @@ struct LayoutEditorView: View {
         let t = tl.date.timeIntervalSinceReferenceDate
         VStack(spacing: 8) {
           ForEach(Array(sections.enumerated()), id: \.element.id) { i, s in
-            LayoutCard(section: s, hidden: !controller.settings.shows(s)) { toggle(s) }
+            LayoutCard(section: s, hidden: !controller.settings.shows(s),
+                       canMove: mini || s.fixed ? nil : (up: canMove(s, by: -1), down: canMove(s, by: 1)),
+                       toggle: { toggle(s) }, move: { move(s, by: $0) })
               .offset(drift(t, index: i))
           }
         }
@@ -177,7 +179,7 @@ struct LayoutEditorView: View {
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
-      .pointerHint("Edit Layout", does: "To reorder, hold any block in the popup.")
+      .pointerHint("Edit Layout", does: "Reorder with the arrows, or hold a block in the popup.")
       Spacer(minLength: 8)
       Button("Show All") {
         controller.settings.hiddenSections.removeAll { k in sections.contains { $0.key == k } }
@@ -196,6 +198,25 @@ struct LayoutEditorView: View {
         .controlSize(.small)
         .buttonStyle(.borderedProminent)
         .keyboardShortcut(.defaultAction)
+    }
+  }
+
+  /// The movable sections (footer excluded), top to bottom.
+  private var movable: [String] { sections.filter { !$0.fixed }.map(\.key) }
+
+  private func canMove(_ s: LayoutSection, by step: Int) -> Bool {
+    guard let i = movable.firstIndex(of: s.key) else { return false }
+    return movable.indices.contains(i + step)
+  }
+
+  /// One step up (-1) or down (+1); saved like a hold-and-drag in the popup.
+  private func move(_ s: LayoutSection, by step: Int) {
+    var keys = movable
+    guard let i = keys.firstIndex(of: s.key), keys.indices.contains(i + step) else { return }
+    keys.swapAt(i, i + step)
+    let bento = controller.settings.bento
+    withAnimation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82)) {
+      controller.settings.setLayoutOrder(keys, bento: bento)
     }
   }
 
@@ -227,7 +248,11 @@ struct LayoutEditorView: View {
 private struct LayoutCard: View {
   let section: LayoutSection
   let hidden: Bool
+  /// Whether it can go up / down (nil: it never moves, e.g. the footer, or at Mini).
+  let canMove: (up: Bool, down: Bool)?
   let toggle: () -> Void
+  /// -1 up, +1 down.
+  let move: (Int) -> Void
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
@@ -255,6 +280,12 @@ private struct LayoutCard: View {
         }
         .frame(maxWidth: 116, alignment: .leading)
         Spacer(minLength: 0)
+        if let canMove {
+          HStack(spacing: 2) {
+            arrow("chevron.up", "Move \(section.name) Up", enabled: canMove.up) { move(-1) }
+            arrow("chevron.down", "Move \(section.name) Down", enabled: canMove.down) { move(1) }
+          }
+        }
       }
       .frame(maxWidth: .infinity, minHeight: section.height - 16, alignment: .leading)
     }
@@ -274,6 +305,20 @@ private struct LayoutCard: View {
       }
     }
     .accessibilityElement(children: .contain)
+  }
+
+  private func arrow(_ symbol: String, _ label: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Image(systemName: symbol)
+        .font(.system(size: 9, weight: .bold))
+        .frame(width: 20, height: 20)
+        .background(Circle().fill(Color.primary.opacity(0.08)))
+        .contentShape(Circle())
+    }
+    .buttonStyle(BentoPressStyle())
+    .disabled(!enabled)
+    .opacity(enabled ? 1 : 0.3)
+    .accessibilityLabel(label)
   }
 }
 
