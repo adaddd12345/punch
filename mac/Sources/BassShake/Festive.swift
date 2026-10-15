@@ -12,7 +12,10 @@ import SwiftUI
 /// each layer's position / transform / opacity from closed-form functions of time: no
 /// SwiftUI re-render (a TimelineView redraw of the popup cost ~4% of a core) and no
 /// display-rate Core Animation loops (WindowServer would composite them at 60–120 Hz).
-/// Power Saver / Reduce Motion: the same scene evaluated once at `stillTime`.
+/// Power Saver / Reduce Motion: the same scene evaluated once at `stillTime`, washes only.
+/// Particles show only while the clock runs: paused or still, they fade out rather than
+/// sit frozen on screen (a parked flake reads as stuck), and come back at the current
+/// moment when it runs again.
 struct FestiveBackground: NSViewRepresentable {
   let style: BackgroundStyle
   /// The popup is open.
@@ -53,6 +56,8 @@ final class FestiveClock {
   weak var tape: TickerTapeView?
   /// The moment the background last drew.
   fileprivate var time = FestiveView.stillTime
+  /// The background's display link is running (so the foreground's particles may show).
+  fileprivate var running = false
 }
 
 /// (Inside an NSView, `BackgroundStyle` means NSView.BackgroundStyle.)
@@ -61,7 +66,7 @@ typealias PopupStyle = BackgroundStyle
 final class FestiveView: NSView {
   enum Mode { case running, paused, still }
 
-  /// A moment that reads well as a still: flakes spread out, a twinkle lit, embers mid-rise.
+  /// The moment the washes are drawn at for a still frame (particles are hidden then).
   static let stillTime = 41.3
 
   private let scene = CALayer()
@@ -146,18 +151,23 @@ final class FestiveView: NSView {
     default: break
     }
     animator = a
+    // Particles only while the clock runs; a fresh scene starts with them hidden otherwise.
     if front {
+      a.showParticles(clock?.running ?? false)
       a.update(clock?.time ?? Self.stillTime)
     } else {
+      a.showParticles(mode == .running)
       a.update(mode == .running ? Self.now() : (mode == .still ? Self.stillTime : lastTime))
     }
     CATransaction.commit()
     built = (style, dark, size)
   }
 
-  /// Runs the display link only while running; otherwise leaves (or sets) a still frame.
+  /// Runs the display link only while running. Otherwise stops it and fades the particles
+  /// (here and in the foreground) so none is left frozen; a still frame keeps the washes.
   private func syncClock() {
     if front { return }
+    clock?.running = mode == .running
     switch mode {
     case .running:
       guard link == nil, window != nil else { return }
@@ -165,14 +175,25 @@ final class FestiveView: NSView {
       l.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 15, preferred: 15)
       l.add(to: .main, forMode: .common)
       link = l
+      // Back at the current moment (not the frame left when it paused), then shown.
+      showParticles(true)
+      draw(at: Self.now())
     case .paused:
       link?.invalidate()
       link = nil
+      showParticles(false)
     case .still:
       link?.invalidate()
       link = nil
+      showParticles(false)
       if lastTime != Self.stillTime { draw(at: Self.stillTime) }
     }
+  }
+
+  private func showParticles(_ on: Bool) {
+    let fade = on ? 0 : 0.6
+    animator?.showParticles(on, fade: fade)
+    if let f = clock?.front, f.window === window { f.animator?.showParticles(on, fade: fade) }
   }
 
   @objc private func tick(_ l: CADisplayLink) { draw(at: Self.now()) }
@@ -249,6 +270,29 @@ private final class Animator {
   var crosses: [Cross] = []
   var movers: [Mover] = []
   var twinkles: [Twinkle] = []
+  /// Movers and twinkles are visible. Off while the clock isn't running: `update` leaves
+  /// them alone, so they stay hidden instead of frozen in place.
+  private(set) var particlesShown = true
+
+  /// Hides (fading over `fade` seconds) or shows the particles. Showing is instant: the
+  /// caller draws the current moment straight after.
+  func showParticles(_ on: Bool, fade: Double = 0) {
+    guard on != particlesShown else { return }
+    particlesShown = on
+    CATransaction.begin()
+    CATransaction.setDisableActions(fade <= 0)
+    if fade > 0 { CATransaction.setAnimationDuration(fade) }
+    for m in movers {
+      if on { m.layer.removeAnimation(forKey: "opacity") }
+      // Movers with a fade envelope get their opacity back on the next update.
+      m.layer.opacity = on ? 1 : 0
+    }
+    for tw in twinkles {
+      if on { tw.layer.removeAnimation(forKey: "opacity") }
+      tw.layer.opacity = 0
+    }
+    CATransaction.commit()
+  }
 
   func update(_ t: Double) {
     for d in drifts {
@@ -259,6 +303,7 @@ private final class Animator {
     for c in crosses {
       c.layer.position = CGPoint(x: c.from + (c.to - c.from) * cycle(t, c.duration, c.phase), y: c.y)
     }
+    guard particlesShown else { return }
     for m in movers {
       let u = cycle(t, m.duration, m.phase)
       m.layer.position = CGPoint(x: m.x0 + m.slant * u + m.sway * wave(t, m.swayPeriod, m.swayPhase), y: m.y0 + (m.y1 - m.y0) * u)
