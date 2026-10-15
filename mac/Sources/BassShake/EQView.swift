@@ -109,10 +109,18 @@ struct EQView: View {
       let kbDot: Int? = focused && kbActive ? kbBand : nil
       let boostDb = shown.boostDb
       ZStack {
-        if controller.settings.waveform && controller.settings.enabled && !powerSaver {
-          WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
-            .allowsHitTesting(false)
-            .transition(.opacity)
+        if controller.settings.waveform && controller.settings.enabled {
+          // Spectrum keeps running under Power Saver (at the ticker's 10 Hz);
+          // the scope, which needs the full rate to read, does not.
+          if controller.settings.spectrum {
+            SpectrumView(model: controller.spectrum, color: spectrumColor)
+              .allowsHitTesting(false)
+              .transition(.opacity)
+          } else if !powerSaver {
+            WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
+              .allowsHitTesting(false)
+              .transition(.opacity)
+          }
         }
         Canvas { ctx, size in
           draw(ctx, size: size, bands: bands, boost: boostDb, showNodes: showNodes && lineDrag == nil, kbDot: kbDot)
@@ -192,6 +200,17 @@ struct EQView: View {
     )
     .clipShape(RoundedRectangle(cornerRadius: chrome ? 12 : 0, style: .continuous))
     .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
+  }
+
+  /// Spectrum's one hue: the tile's ink (Bento), else the scope colour; the
+  /// system accent is lifted a little on dark, where it reads too deep.
+  private var spectrumColor: Color {
+    if let filament { return filament }
+    let c = controller.settings.scopeColor
+    if c == .accent && scheme == .dark {
+      return Color(nsColor: NSColor.controlAccentColor.blended(withFraction: 0.35, of: .white) ?? .controlAccentColor)
+    }
+    return c.color
   }
 
   /// Caption #9: the node under the pointer (empty space: nothing).

@@ -169,6 +169,7 @@ final class AudioController: ObservableObject {
   /// Live Channels: apps making sound, their levels, one-click mute.
   let live = LiveChannels()
   let waveform = WaveformModel()
+  let spectrum = SpectrumModel()
   /// Mac Volume: the system output's volume and mute, followed whether or not
   /// the pipeline runs (its own queues; only its small views observe it).
   let macVolume = MacVolume()

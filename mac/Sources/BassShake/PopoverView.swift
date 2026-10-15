@@ -328,8 +328,13 @@ struct PopoverView: View {
         if let w = window.window, !w.isVisible || !w.occlusionState.contains(.visible) { return }
         NowPlaying.shared.noteVisible()
         meters.update(controller.pollMeters())
-        if controller.settings.waveform && !controller.settings.powerSaver && role != .launchWindow {
-          controller.waveform.pull(controller)
+        let s = controller.settings
+        if s.waveform && s.enabled && role != .launchWindow {
+          if s.spectrum {
+            controller.spectrum.pull(controller)
+          } else if !s.powerSaver {
+            controller.waveform.pull(controller)
+          }
         }
       }
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
@@ -930,8 +935,12 @@ struct PopoverView: View {
                                                       set: { controller.settings.artworkStyle = $0 })) {
             ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
           }
-          Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
-                                              set: { controller.settings.waveform = $0 }))
+          // What's drawn behind the EQ curve: the scope (time), the
+          // analyser (frequency, on the EQ's own axis), or nothing.
+          Picker("EQ Visual", selection: Binding(get: { controller.settings.eqVisual },
+                                                 set: { controller.settings.eqVisual = $0 })) {
+            ForEach(EQVisual.allCases) { Text($0.title).tag($0) }
+          }
           Picker("Scope Color", selection: Binding(get: { controller.settings.scopeColor },
                                                     set: { controller.settings.scopeColor = $0 })) {
             ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
