@@ -80,10 +80,10 @@ function ramp(tones, score) {
 
 // ---------- world model (units ~ 1, cube 100 x 100 x 100, plus a raised shaker lid) ----------
 const AZ = 57, EL = 28;           // slightly dimetric: the woofer face (+y) turns toward the viewer
-const EDGE_R = 11;                // vertical edge radius, 11% of the face
-const TOP_R = 12, BOT_R = 6;      // top / bottom edge roundings (stacked slabs)
+const EDGE_R = 12.5;              // vertical edge radius, 12.5% of the face
+const TOP_R = 13.4, BOT_R = 7;    // top / bottom edge roundings (stacked slabs)
 const H = 100, SOLE = 4;
-const LID_IN = 15, LID_H = 4.5, LID_R = 3.5; // thin steel cap: inset from the cube edge, height, rolled top edge
+const LID_IN = 15, LID_H = 3, LID_R = 2.4; // thin steel cap: inset from the cube edge, height, rolled top edge
 const PLAN = { x: 0, y: 0, w: 100, d: 100, r: EDGE_R };
 const LIDP = { ...K.insetPlan(PLAN, LID_IN), r: 15 };
 const ART = 1024, OBJECT = 630;   // hero box ~62% of the Icon Composer canvas width
@@ -118,20 +118,51 @@ function revolve(F, meridian, tones, { steps = 96, darken = null } = {}) {
 const painted = (facets) => facets.sort((a, b) => a.depth - b.depth).map((f) => f.svg).join("");
 const circle = (F, s, r, n = 120) => d(Array.from({ length: n }, (_, i) => at(G.pointOf(F, s, r, (i / n) * Math.PI * 2))));
 
-// Kit prism with the four kit shade buckets filled by our tones (no outline / crease).
-function slab(plan, z, h, tones, top, { steps = 10 } = {}) {
+// Prism sides shaded continuously: each facet uses the kit's light score, and the four tones are pinned to the
+// score of the flat face in each kit bucket, so flat faces keep their exact tone while the rounded corners roll
+// smoothly between them (no stepped bands).
+function smoothSides(plan, z, h, tones, steps = 18) {
+  const ring = K.ringOf(plan, steps), n = ring.length;
+  const area = ring.reduce((a, [x0, y0], i) => { const [x1, y1] = ring[(i + 1) % n]; return a + x0 * y1 - x1 * y0; }, 0);
+  const [vx, vy] = K.towardViewer(P), { sinA, cosA } = K.cameraOf(P);
+  const segs = [];
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = ring[i], [bx, by] = ring[(i + 1) % n], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+    const [nx, ny] = area > 0 ? [dy / len, -dx / len] : [-dy / len, dx / len];
+    if (nx * vx + ny * vy <= 1e-9) continue;
+    const lit = (nx * -sinA + ny * cosA + 1) / 2;
+    segs.push({ i, len, lit, b: Math.min(K.SHADES - 1, Math.max(0, Math.floor(lit * K.SHADES))) });
+  }
+  const pins = [0, 1, 2, 3].map((b) => { const f = segs.filter((g) => g.b === b).sort((p, q) => q.len - p.len)[0]; return f && f.len > 8 ? f.lit : (b + 0.5) / 4; });
+  const tone = (lit) => {
+    if (lit <= pins[0]) return tones[0];
+    for (let k = 1; k < 4; k++) if (lit <= pins[k]) return mix(tones[k - 1], tones[k], (lit - pins[k - 1]) / (pins[k] - pins[k - 1] || 1));
+    return tones[3];
+  };
+  // A vertical prism's visible facets run monotonically in screen x, so the whole visible side is one path with
+  // a horizontal gradient: one stop per facet, no seams between thin corner facets.
+  const k0 = segs.findIndex((g, j) => j === 0 ? !segs.some((q) => q.i === (g.i + n - 1) % n) : g.i !== segs[j - 1].i + 1);
+  const run = [...segs.slice(Math.max(0, k0)), ...segs.slice(0, Math.max(0, k0))];
+  const pts = [ring[run[0].i], ...run.map((g) => ring[(g.i + 1) % n])];
+  const top = pts.map(([x, y]) => at([x, y, z + h])), bot = pts.map(([x, y]) => at([x, y, z])).reverse();
+  const xs = top.map((p) => p[0]), x0 = Math.min(...xs), x1 = Math.max(...xs), id = `ss${++SS}`;
+  const stops = run.map((g, j) => [((top[j][0] + top[j + 1][0]) / 2 - x0) / (x1 - x0 || 1), tone(g.lit)])
+    .sort((p, q) => p[0] - q[0]).map(([o, c]) => `<stop offset="${o.toFixed(4)}" stop-color="${c}"/>`).join("");
+  return `<defs><linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x0.toFixed(2)}" y1="0" x2="${x1.toFixed(2)}" y2="0">${stops}</linearGradient></defs>` +
+    `<path d="${d([...top, ...bot])}" fill="url(#${id})" stroke="url(#${id})" stroke-width="0.6" stroke-linejoin="round"/>`;
+}
+let SS = 0;
+function slab(plan, z, h, tones, top, { steps = 18 } = {}) {
   const s = K.slabOf(plan, z, h, P, steps);
-  const shades = s.shades.map((p, i) => (p ? `<path d="${p}" fill="${tones[i]}" stroke="${tones[i]}" stroke-width="0.6"/>` : "")).join("");
-  return { s, svg: shades + (top ? `<path d="${s.top}" fill="${top}"/>` : "") };
+  return { s, svg: (h > 0 ? smoothSides(plan, z, h, tones, steps) : "") + (top ? `<path d="${s.top}" fill="${top}"/>` : "") };
 }
 const flatTop = (plan, z, fill) => `<path d="${K.slabOf(plan, z, 0, P, 10).top}" fill="${fill}"/>`;
 
 // Rounded edge as a stack of thin kit slabs, each inset along a quarter circle and tinted toward `toward`.
-// Going up, the tint peaks just past the middle of the arc and eases back, so the lit edge reads as a crisp
-// bright rim line (a lacquered vinyl edge) instead of a gradual fade into the top face.
+// Going up, the tint eases monotonically into the top face, so the edge reads as one soft continuous roll.
 function roundStack(plan, z0, R, n, from, toward, up) {
   let svg = "";
-  const tint = (u) => (up ? (u < 0.68 ? Math.pow(u / 0.68, 1.8) : 1 - ((u - 0.68) / 0.32) * 0.45) : u * 0.5);
+  const tint = (u) => (up ? Math.pow(u, 1.6) : u * 0.5);
   for (let i = 0; i < n; i++) {
     const a0 = (i / n) * (Math.PI / 2), a1 = ((i + 1) / n) * (Math.PI / 2), am = (a0 + a1) / 2;
     const inset = R * (1 - Math.cos(am));
@@ -158,16 +189,16 @@ function art(pal) {
 
   // ---- cube group: sole, bottom rounding, jelly body (opaque face tones, inner depth tint, frost),
   // top rounding with a bright rim, shoulder, lid seam ----
-  const sole = slab(K.insetPlan(PLAN, 3), 0, SOLE, pal.sole, null).svg;
-  const bottom = roundStack(PLAN, BODY_Z0, BOT_R, 4, pal.sides, pal.interior, false);
-  const body = K.slabOf(PLAN, BODY_Z0, BODY_Z1 - BODY_Z0, P, 10);
-  const faces = body.shades.map((p, i) => (p ? `<path d="${p}" fill="${pal.sides[i]}" stroke="${pal.sides[i]}" stroke-width="0.6"/>` : "")).join("");
+  const sole = slab(K.insetPlan(PLAN, 3), 0, SOLE, pal.sole, pal.sole[0]).svg;
+  const bottom = roundStack(PLAN, BODY_Z0, BOT_R, 10, pal.sides, pal.interior, false);
+  const body = K.slabOf(PLAN, BODY_Z0, BODY_Z1 - BODY_Z0, P, 18);
+  const faces = smoothSides(PLAN, BODY_Z0, BODY_Z1 - BODY_Z0, pal.sides);
   // Inner depth: a jelly block gets denser toward its base.
   defs.push(`<linearGradient id="depth" gradientUnits="userSpaceOnUse" x1="0" y1="${yOf(BODY_Z1)}" x2="0" y2="${yOf(BODY_Z0)}"><stop offset="0.25" stop-color="${pal.interior}" stop-opacity="0"/><stop offset="1" stop-color="${pal.interior}" stop-opacity="${pal.depth}"/></linearGradient>`);
   const W = G.frameAlong([50, 100, (BODY_Z0 + BODY_Z1) / 2 + 1], [0, 1, 0]); // woofer axis on the +y face
   defs.push(`<linearGradient id="frost" gradientUnits="userSpaceOnUse" x1="0" y1="${yOf(BODY_Z1)}" x2="0" y2="${yOf(BODY_Z0)}"><stop offset="0" stop-color="#FFFFFF" stop-opacity="${pal.frost}"/><stop offset="0.4" stop-color="#FFFFFF" stop-opacity="${pal.frost * 0.25}"/><stop offset="0.85" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient>`);
   const jelly = faces + `<path d="${body.fill}" fill="url(#depth)"/>` + `<path d="${body.fill}" fill="url(#frost)"/>`;
-  const rim = roundStack(PLAN, BODY_Z1, TOP_R, 28, pal.sides, pal.rim, true);
+  const rim = roundStack(PLAN, BODY_Z1, TOP_R, 36, pal.sides, pal.rim, true);
   defs.push(`<linearGradient id="topFace" gradientUnits="userSpaceOnUse" x1="0" y1="${at([0, 0, H])[1]}" x2="0" y2="${at([100, 100, H])[1]}"><stop offset="0" stop-color="${pal.top}"/><stop offset="1" stop-color="${mix(pal.top, pal.sides[3], 0.18)}"/></linearGradient>`);
   const shoulder = `<path d="${K.slabOf(TOPP, H, 0, P, 10).top}" fill="url(#topFace)"/>` + flatTop(K.insetPlan(LIDP, -1.2), H, pal.groove);
   const cube = sole + bottom + jelly + rim + shoulder;
@@ -178,10 +209,10 @@ function art(pal) {
   defs.push(`<linearGradient id="lidTop" gradientUnits="userSpaceOnUse" x1="0" y1="${at([LID_IN, LID_IN, lidTop])[1]}" x2="0" y2="${at([100 - LID_IN, 100 - LID_IN, lidTop])[1]}"><stop offset="0" stop-color="${pal.lidTop[0]}"/><stop offset="1" stop-color="${pal.lidTop[1]}"/></linearGradient>`);
   let lid = slab(LIDP, H, LID_H - LID_R, pal.lidSides, null).svg + roundStack(LIDP, lidTop - LID_R, LID_R, 10, pal.lidSides, pal.lidRim, true) +
     `<path d="${K.slabOf(K.insetPlan(LIDP, LID_R), lidTop, 0, P, 10).top}" fill="url(#lidTop)"/>`;
-  const HOLE_R = 1.5, RING = 7;
+  const HOLE_R = 2.25, RING = 10.5;
   [[0, 0], ...Array.from({ length: 6 }, (_, i) => [RING * Math.cos((i * Math.PI) / 3 + Math.PI / 4), RING * Math.sin((i * Math.PI) / 3 + Math.PI / 4)])].forEach(([dx, dy]) => {
     const F = G.frameAlong([50 + dx, 50 + dy, lidTop], [0, 0, 1]);
-    lid += `<path d="${circle(F, 0, HOLE_R, 32)}" fill="${pal.holeLip}" opacity="0.75" transform="translate(0 1.6)"/><path d="${circle(F, 0, HOLE_R, 32)}" fill="${pal.holeFloor}"/>`;
+    lid += `<path d="${circle(F, 0, HOLE_R, 32)}" fill="${pal.holeLip}" opacity="0.75" transform="translate(0 2)"/><path d="${circle(F, 0, HOLE_R, 32)}" fill="${pal.holeFloor}"/>`;
   });
 
   // ---- woofer group: thin trim ring, rubber roll surround (~11% of radius), shallow matte cone, dust cap
