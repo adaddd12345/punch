@@ -69,6 +69,7 @@ struct PresetStrip: View {
               controller.apply(preset: p)
             }
             .pointerHint(Caption.preset(p))
+            .pointerHintQuick()
           }
           Button { if !DragScrollGate.suppressTap { editor = .create } } label: {
             Image(systemName: "plus")

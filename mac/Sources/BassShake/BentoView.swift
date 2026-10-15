@@ -1177,6 +1177,7 @@ struct BentoView: View {
         .environment(\.bentoChips, true)
     }
     .pointerHintTint(ink(.frost))
+    .pointerHintQuick()
   }
 
   // MARK: - Modes
@@ -1227,6 +1228,7 @@ struct BentoView: View {
       }
       .frame(height: side)
     }
+    .pointerHintQuick()
   }
 
   /// Study, Sleep or Late Night: on/off, or (lit, strip hidden) bring its strip forward.

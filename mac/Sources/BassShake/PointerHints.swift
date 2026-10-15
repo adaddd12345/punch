@@ -27,6 +27,8 @@ struct PointerHint: Equatable {
   var live: Bool
   /// The card's tint (Bento: the hovered tile's ink). nil = accent colour.
   var tint: Color?
+  /// Shows after a short rest (mode tiles, presets: people hover them to learn what they do).
+  var quick = false
 
   init(_ name: String, value: String? = nil, does sentence: String? = nil, gestures: [String] = [],
        live: Bool = false, tint: Color? = nil) {
@@ -93,6 +95,8 @@ final class PointerHintHub: ObservableObject {
 
   /// A pointer passing by shows nothing; one that rests on a control does.
   private static let dwellDelay = 0.7
+  /// For quick captions (mode tiles, presets).
+  private static let quickDelay = 0.2
   /// After a caption leaves by the pointer (not a click), the next shows at once.
   private static let warmWindow = 0.6
 
@@ -214,7 +218,8 @@ final class PointerHintHub: ObservableObject {
     }
     dwell = item
     dwellID = id
-    DispatchQueue.main.asyncAfter(deadline: .now() + Self.dwellDelay, execute: item)
+    let delay = (top.source?().quick ?? top.hint.quick) ? Self.quickDelay : Self.dwellDelay
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
   }
 
   private func show(_ e: Entry) {
@@ -282,7 +287,14 @@ extension EnvironmentValues {
     get { self[HintTintKey.self] }
     set { self[HintTintKey.self] = newValue }
   }
+  /// Hints below this point show after a short rest (pointerHintQuick()).
+  var pointerHintQuick: Bool {
+    get { self[HintQuickKey.self] }
+    set { self[HintQuickKey.self] = newValue }
+  }
 }
+
+private struct HintQuickKey: EnvironmentKey { static let defaultValue = false }
 
 extension View {
   /// Root of a window: named coordinate space + overlay + environment.
@@ -314,6 +326,12 @@ extension View {
   }
 
   /// Colour for the hints under this view.
+  /// Mode tiles and presets: their captions explain what a setting does, so
+  /// they come up after a short rest instead of the usual dwell.
+  func pointerHintQuick() -> some View {
+    environment(\.pointerHintQuick, true)
+  }
+
   func pointerHintTint(_ color: Color?) -> some View {
     environment(\.pointerHintTint, color)
   }
@@ -362,6 +380,7 @@ private struct PointerHintModifier: ViewModifier {
   @Environment(\.pointerHintHub) private var hub
   @Environment(\.pointerHintsOn) private var on
   @Environment(\.pointerHintTint) private var tint
+  @Environment(\.pointerHintQuick) private var quick
   @State private var id = UUID()
   @State private var box = FrameBox()
 
@@ -369,6 +388,7 @@ private struct PointerHintModifier: ViewModifier {
     var h = h
     h.live = live
     if h.tint == nil { h.tint = tint }
+    if quick { h.quick = true }
     return h
   }
 
@@ -397,8 +417,8 @@ private struct PointerHintModifier: ViewModifier {
         switch phase {
         case .active(let p):
           let src: (() -> PointerHint)? = make.map { m in
-            let t = tint, l = live
-            return { var h = m(); h.live = l; if h.tint == nil { h.tint = t }; return h }
+            let t = tint, l = live, q = quick
+            return { var h = m(); h.live = l; if h.tint == nil { h.tint = t }; if q { h.quick = true }; return h }
           }
           hub.hover(id: id, hint: current, anchor: box.rect, location: p, source: src, essential: essential)
         case .ended:
@@ -613,15 +633,20 @@ struct PointerHintCard: View {
       shape.fill(Color(nsColor: .windowBackgroundColor))
         .overlay(shape.strokeBorder(ink, lineWidth: 1))
     } else {
-      let wash = LinearGradient(colors: [ink.opacity(dark ? 0.18 : 0.10), ink.opacity(dark ? 0.07 : 0.04)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing)
+      // A clean frosted card: near-white (or near-black) over the material,
+      // only a breath of the tile's ink, so it never reads as muddy grey.
+      let wash = LinearGradient(colors: [dark ? Color.black.opacity(0.35) : Color.white.opacity(0.72),
+                                         dark ? Color.black.opacity(0.25) : Color.white.opacity(0.60)],
+                                startPoint: .top, endPoint: .bottom)
+      let breath = ink.opacity(dark ? 0.06 : 0.03)
       let rim = LinearGradient(colors: [Color.white.opacity(dark ? 0.20 : 0.70), Color.white.opacity(dark ? 0.04 : 0.15)],
                                startPoint: .top, endPoint: .bottom)
       shape.fill(dark ? Material.regularMaterial : Material.thickMaterial)
         .overlay(shape.fill(wash))
+        .overlay(shape.fill(breath))
         .overlay(shape.strokeBorder(Color.primary.opacity(dark ? 0.12 : 0.08), lineWidth: 0.5))
         .overlay(shape.strokeBorder(rim, lineWidth: 0.75))
-        .shadow(color: Color.black.opacity(dark ? 0.30 : 0.10), radius: 4, y: 1)
+        .shadow(color: Color.black.opacity(dark ? 0.32 : 0.12), radius: 10, y: 3)
     }
   }
 }
