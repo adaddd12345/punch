@@ -1,0 +1,84 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.88627,0.91765,0.96078,1.00000",
+          "srgb:0.72549,0.78431,0.87059,1.00000"
+        ],
+        "orientation" : {
+          "start" : { "x" : 0.5, "y" : 0 },
+          "stop" : { "x" : 0.5, "y" : 1 }
+        }
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.14902,0.20000,0.30588,1.00000",
+          "srgb:0.05490,0.07843,0.12941,1.00000"
+        ],
+        "orientation" : {
+          "start" : { "x" : 0.5, "y" : 0 },
+          "stop" : { "x" : 0.5, "y" : 1 }
+        }
+      }
+    },
+    {
+      "appearance" : "tinted",
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.22745,0.22745,0.23529,1.00000",
+          "srgb:0.10980,0.10980,0.11765,1.00000"
+        ],
+        "orientation" : {
+          "start" : { "x" : 0.5, "y" : 0 },
+          "stop" : { "x" : 0.5, "y" : 1 }
+        }
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name-specializations" : [
+            { "value" : "woofer.png" },
+            { "appearance" : "dark", "value" : "woofer-dark.png" },
+            { "appearance" : "tinted", "value" : "woofer-mono.png" }
+          ],
+          "name" : "woofer",
+          "position" : { "scale" : 1, "translation-in-points" : [ 0, 0 ] }
+        },
+        {
+          "glass" : false,
+          "image-name-specializations" : [
+            { "value" : "lid.png" },
+            { "appearance" : "dark", "value" : "lid-dark.png" },
+            { "appearance" : "tinted", "value" : "lid-mono.png" }
+          ],
+          "name" : "lid",
+          "position" : { "scale" : 1, "translation-in-points" : [ 0, 0 ] }
+        },
+        {
+          "glass" : false,
+          "image-name-specializations" : [
+            { "value" : "cube.png" },
+            { "appearance" : "dark", "value" : "cube-dark.png" },
+            { "appearance" : "tinted", "value" : "cube-mono.png" }
+          ],
+          "name" : "cube",
+          "position" : { "scale" : 1, "translation-in-points" : [ 0, 0 ] }
+        }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "specular" : false,
+      "translucency" : { "enabled" : false, "value" : 0.5 }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [ "macOS" ]
+  }
+}

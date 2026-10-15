@@ -1,4 +1,4 @@
-# Regenerates AppIcon.png + MenuBarIcon*.png from the source artwork:
+# Regenerates MenuBarIcon*.png from the source artwork (the app icon now comes from mac/scripts/make_app_icon.sh):
 #   python3 mac/scripts/make_icons.py mac/Resources/source/icon-source.webp mac/Resources /tmp/icon-preview.png
 import sys
 import numpy as np
@@ -33,7 +33,7 @@ shadow.paste(Image.new("RGBA", (T, T), (0, 0, 0, 255)), ((S - T) // 2, (S - T) /
 shadow = shadow.filter(ImageFilter.GaussianBlur(14))
 canvas = Image.alpha_composite(canvas, shadow)
 canvas.alpha_composite(tile_img, ((S - T) // 2, (S - T) // 2))
-canvas.save(f"{outdir}/AppIcon.png")
+# (old tile icon kept in the preview only; AppIcon.png is made by make_app_icon.sh)
 
 # --- menu bar template: the black shaker only ----------------------------
 lum = tile.mean(axis=2)

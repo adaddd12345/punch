@@ -37,7 +37,9 @@ cp mac/Resources/MenuBarIcon*.png "$APP/Contents/Resources/"
 # Optional preset-icon artwork (PresetIcons/<sf-symbol-or-id>.png).
 if [ -d mac/Resources/PresetIcons ]; then cp -R mac/Resources/PresetIcons "$APP/Contents/Resources/"; fi
 
-# App icon: render the shaker onto a rounded tile and build an .icns.
+# App icon (sources: mac/scripts/make_app_icon.sh). Always an .icns from the
+# pre-composited master (824 squircle body on 1024) for macOS 14.4-15 and as a
+# fallback (CFBundleIconFile).
 if [ -f mac/Resources/AppIcon.png ]; then
   ICONSET="build/AppIcon.iconset"
   rm -rf "$ICONSET" && mkdir -p "$ICONSET"
@@ -46,6 +48,27 @@ if [ -f mac/Resources/AppIcon.png ]; then
     sips -z $((s*2)) $((s*2)) mac/Resources/AppIcon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
   done
   iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+fi
+# macOS 26: compile the Icon Composer bundle (Liquid Glass, dark and tinted
+# appearances) into Assets.car + CFBundleIconName. Needs full Xcode 26's actool
+# (CI has it); with only the Command Line Tools the .icns above ships alone.
+if [ -d mac/Resources/AppIcon.icon ]; then
+  ACT_OUT="build/actool"
+  rm -rf "$ACT_OUT" && mkdir -p "$ACT_OUT"
+  if xcrun --find actool >/dev/null 2>&1 &&
+     xcrun actool mac/Resources/AppIcon.icon --compile "$ACT_OUT" \
+       --app-icon AppIcon --platform macosx --target-device mac \
+       --minimum-deployment-target 14.4 --enable-on-demand-resources NO \
+       --development-region en --output-partial-info-plist "$ACT_OUT/partial.plist" \
+       --output-format human-readable-text --errors --warnings --notices &&
+     [ -f "$ACT_OUT/Assets.car" ]; then
+    cp "$ACT_OUT/Assets.car" "$APP/Contents/Resources/Assets.car"
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$APP/Contents/Info.plist"
+    echo "App icon: Assets.car (Icon Composer) + AppIcon.icns fallback"
+  else
+    msg="App icon: actool could not compile AppIcon.icon (needs Xcode 26); shipping AppIcon.icns only"
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::warning::$msg"; else echo "$msg"; fi
+  fi
 fi
 
 BUNDLE_ID="app.bassshake.BassShake"
