@@ -31,6 +31,7 @@ final class AudioController: ObservableObject {
   enum RebuildReason: String {
     case launch, toggle, deviceChange, deviceAlive, sampleRateChange, formatChange, liveChannelsExclude
     case deadTap, stalled, silentTap, checkAndFix, wake, userSwitch, coreaudiodRestart, other
+    case staleDevice, stepAsideRetry
 
     /// Listener-driven reasons are often no-ops (our own aggregate coming
     /// and going fires them too); everything else is a real request or a
@@ -73,6 +74,9 @@ final class AudioController: ObservableObject {
   @Published private(set) var balance: Double?
   /// Shown when one channel dropped out and we restarted the audio.
   @Published private(set) var channelNotice: String?
+  /// The silence watchdog stepped aside (no tap, the Mac plays unprocessed)
+  /// because apps were playing but nothing reached us. Retries on its own.
+  @Published private(set) var steppedAside = false
   /// Night Guard's live reduction for the UI. Its own object (not a
   /// @Published here): it moves every meter tick, and publishing it on the
   /// controller re-rendered the whole popover at 60 Hz.
@@ -192,6 +196,8 @@ final class AudioController: ObservableObject {
   private var morphTimer: Timer?
   /// Between willSleep and didWake: listener noise must not rebuild.
   private var isSleeping = false
+  /// Main only: another user has the Mac (fast user switching).
+  private var sessionInactive = false
   /// Where a running preset glide is heading; saved instead of the
   /// half-way bands if a device switch or save lands mid-glide.
   private var morphTarget: [EQBand]?
@@ -256,6 +262,7 @@ final class AudioController: ObservableObject {
     bootstrapped = true
     log.notice("bootstrap")
     BSCrashGuardInstall()
+    startRescue()
     // Debounced: browsers add and drop helper processes, and each change to
     // the excluded set means a pipeline rebuild.
     live.onMutedProcessesChanged = { [weak self] in self?.scheduleRebuild(.liveChannelsExclude, delay: 1.0) }
@@ -1042,6 +1049,7 @@ final class AudioController: ObservableObject {
   /// What the last Check & Fix found and did (shown as a banner).
   @Published var doctorReport: [String]?
   @Published private(set) var doctorRunning = false
+  private var doctorToken = 0
 
   /// One click for "it came back muffled / silent / one-sided". The usual
   /// culprit after sleep is a Bluetooth headset stuck in call mode (HFP:
@@ -1056,8 +1064,31 @@ final class AudioController: ObservableObject {
     guard !isMirror else { return }
     guard !doctorRunning else { return }
     doctorRunning = true
+    doctorToken &+= 1
+    let token = doctorToken
     let balanceOff = balanceIsOff
+    if !auto {
+      // The user is clicking, so the Mac is awake: a missed didWake must not
+      // turn this rebuild into a no-op.
+      if isSleeping && !sessionInactive {
+        log.notice("check & fix: cleared a stale sleep flag")
+        isSleeping = false
+        hqGuardSessionActive.store(true)
+      }
+      // The audio queue is stuck in a Core Audio call (seen after wake on a
+      // reconnecting Bluetooth device): release our tap from the rescue queue
+      // so the Mac plays, and say so instead of spinning forever.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+        guard let self, self.doctorRunning, self.doctorToken == token else { return }
+        self.doctorRunning = false
+        self.rescueFailOpen(why: "check & fix timed out")
+        self.doctorReport = ["macOS's audio service didn't answer, so The Bass Shaker stepped aside and your Mac is playing normally. If it stays silent, use Restart macOS Audio."]
+      }
+    }
     audioQueue.async {
+      // A fresh pipeline that is still silent with apps playing steps aside
+      // at once instead of rebuilding again.
+      if !auto { self.lastSilenceFix = ProcessInfo.processInfo.systemUptime }
       var notes: [String] = []
       var waitForBluetooth = false
       if !auto, self.hqGuardPausedUntil > ProcessInfo.processInfo.systemUptime {
@@ -1140,10 +1171,13 @@ final class AudioController: ObservableObject {
       }
       if self.settings.enabled && (!auto || waitForBluetooth) {
         self.startFailures = 0
+        self.steppedAside = false
+        self.audioQueue.async { self.cancelStepAside() }
         self.scheduleRebuild(.checkAndFix, delay: waitForBluetooth ? 1.5 : 0.1)
-        if !auto { notes.append("Reconnected The Bass Shaker's audio.") }
+        if !auto { notes.append("Reconnected The Bass Shaker's audio. If it's still silent, it steps aside within a few seconds so your Mac plays normally.") }
       }
       if !auto && notes.count <= 1 { notes.insert("Everything looked fine.", at: 0) }
+      guard self.doctorRunning else { return }  // timed out; already reported
       self.doctorRunning = false
       if !notes.isEmpty { self.doctorReport = notes }
       self.log.notice("check & fix (auto \(auto)): \(notes.joined(separator: " | "), privacy: .public)")
@@ -1421,7 +1455,8 @@ final class AudioController: ObservableObject {
   private func stop() {
     rebuildWork?.cancel()
     pendingRebuildReason = nil
-    audioQueue.async { self.pipelineStop(fade: true) }
+    audioQueue.async { self.cancelStepAside(); self.pipelineStop(fade: true) }
+    steppedAside = false
     status = .off
   }
 
@@ -1509,6 +1544,7 @@ final class AudioController: ObservableObject {
             return
           }
           self.startFailures = 0
+          self.steppedAside = false
           self.status = .running(device: info.deviceName, sampleRate: info.sampleRate)
           self.lightsOutPipelineStarted(deviceID: device.id)
         }
@@ -1527,6 +1563,7 @@ final class AudioController: ObservableObject {
             self.scheduleRebuild(reason, delay: delays[self.startFailures - 1])
           } else {
             self.log.error("start failed: \(String(describing: error), privacy: .public)")
+            self.steppedAside = false
             self.status = .failed("The Bass Shaker couldn't start on this output. Your audio is playing normally without it. Try Retry, or pick another output.")
           }
         }
@@ -1675,6 +1712,7 @@ final class AudioController: ObservableObject {
     // Fast user switching: stop while another account has the Mac.
     observers.append(ws.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
       guard let self else { return }
+      self.sessionInactive = true
       self.isSleeping = true
       self.hqGuardSessionActive.store(false)
       self.rebuildWork?.cancel()
@@ -1682,6 +1720,7 @@ final class AudioController: ObservableObject {
       self.audioQueue.async { self.pipelineStop(fade: false) }
     })
     observers.append(ws.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+      self?.sessionInactive = false
       self?.isSleeping = false
       self?.hqGuardSessionActive.store(true)
       DispatchQueue.main.async { self?.scheduleRebuild(.userSwitch, delay: 1.5) }
@@ -1702,6 +1741,15 @@ final class AudioController: ObservableObject {
         guard let self, self.settings.autoFixAfterSleep, !self.isSleeping else { return }
         self.checkAndFix(auto: true)
       }
+    })
+    // Backstop for a missed didWake: the screens woke while we still think
+    // the Mac is asleep, so nothing would ever rebuild.
+    observers.append(ws.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
+      guard let self, self.isSleeping, !self.sessionInactive else { return }
+      self.log.notice("screens woke while still marked asleep; resuming")
+      self.isSleeping = false
+      self.hqGuardSessionActive.store(true)
+      self.scheduleRebuild(.wake, delay: 1.5)
     })
   }
 
@@ -1985,17 +2033,25 @@ final class AudioController: ObservableObject {
   private var watchdogPausedUntil: TimeInterval = 0   // audioQueue
   /// Main writes, audioQueue reads: is silent output expected right now?
   private let silenceExpected = AtomicFlag()
-  private var lastDeadRebuild: TimeInterval = 0
+  /// audioQueue. Uptime of the last rebuild made to cure silence (watchdog
+  /// or Check & Fix). Silence again within a minute of it fails open.
+  private var lastSilenceFix: TimeInterval = -1_000
+  private var watchdogTicks = 0
 
-  /// audioQueue only. Detects (a) a tap that has gone "silently dead" while
-  /// other apps are playing and (b) a permission denial that slipped past
-  /// preflight. Rebuilding during digital silence is inaudible, so false
-  /// positives are cheap; leaving a dead muted tap is not.
+  /// audioQueue only. Detects, while our muted tap is in place, (a) apps
+  /// playing but nothing reaching us (the tap gives zeros, or the IOProc
+  /// isn't called), (b) sound coming in but nothing going out, (c) a
+  /// permission denial that slipped past preflight, and (d) a pipeline built
+  /// for a device that is gone, replaced or no longer the default. Each is
+  /// fixed by one rebuild; if that doesn't cure it, the pipeline steps aside
+  /// so the Mac plays unprocessed. Never pauses with the tap still muting.
   private func startWatchdog() {
     audioWatchdog?.cancel()
+    cancelStepAside()
     lastStats = BSRenderStats()
     silentStreak = 0
     stalledStreak = 0
+    deadStreak = 0
     everHeardAudio = false
     othersWerePlaying = false
     let t = DispatchSource.makeTimerSource(queue: audioQueue)
@@ -2028,6 +2084,7 @@ final class AudioController: ObservableObject {
     let dSilent = s.silentCallbacks - lastStats.silentCallbacks
     let dDead = s.deadOutputCallbacks - lastStats.deadOutputCallbacks
     lastStats = s
+    let now = ProcessInfo.processInfo.systemUptime
 
     // Fail-safe: music is coming in but our output is silent (or broken
     // numbers). First restart once; if it happens again within a minute,
@@ -2040,14 +2097,13 @@ final class AudioController: ObservableObject {
     if audible > 0 && Double(dDead) * 10 >= Double(audible) * 9 && !silentByDesign { deadStreak += 1 } else { deadStreak = 0 }
     if deadStreak >= 2 {
       deadStreak = 0
-      let now = ProcessInfo.processInfo.systemUptime
       log.error("output silent while input has sound (\(dDead, privacy: .public)/\(audible, privacy: .public) cycles)")
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.log.error("state at silent output: \(self.diagnosticSummary(), privacy: .public)")
       }
-      if now - lastDeadRebuild > 60 {
-        lastDeadRebuild = now
+      if now - lastSilenceFix > 60 {
+        lastSilenceFix = now
         DispatchQueue.main.async { [weak self] in self?.scheduleRebuild(.deadTap, delay: 0) }
       } else {
         pipelineStop(fade: false)
@@ -2057,7 +2113,8 @@ final class AudioController: ObservableObject {
       }
       return
     }
-    let othersPlaying = TapPipeline.othersArePlaying(excluding: audioExcluded)
+    let playing = TapPipeline.playingProcesses(excluding: audioExcluded)
+    let othersPlaying = !playing.isEmpty
     let statsLine = "cycles \(s.callbacks) silent-in \(s.silentCallbacks) dead-out \(s.deadOutputCallbacks) layout-err \(s.layoutErrors) ch \(s.lastInputChannels)->\(s.lastOutputChannels)"
     DispatchQueue.main.async { [weak self] in self?.lastStatsLine = statsLine }
 
@@ -2065,43 +2122,179 @@ final class AudioController: ObservableObject {
     // playback resuming after other apps stopped their output, starts the count
     // over. A pause shorter than the player's own IO keepalive (Music/Spotify keep
     // output running for a while after pause) can't be seen here and still counts;
-    // the watchdog backoff (3 per 2 min) bounds the cost.
+    // that costs at most an inaudible rebuild and a quiet step-aside that retries.
     if !othersPlaying || !othersWerePlaying { silentStreak = 0 }
     othersWerePlaying = othersPlaying
-    if dCallbacks > dSilent { everHeardAudio = true; silentStreak = 0 }
+    if dCallbacks > dSilent { everHeardAudio = true; silentStreak = 0; stepAsideCount = 0 }
     if othersPlaying && dCallbacks > 0 && dSilent == dCallbacks { silentStreak += 1 }
     if othersPlaying && dCallbacks == 0 { stalledStreak += 1 } else { stalledStreak = 0 }
 
-    if !everHeardAudio {
-      // Audio is playing, but not a single non-zero sample has reached us:
-      // almost certainly no capture permission. Release the tap so the user
-      // gets their (unprocessed) sound back. (Checked before any rebuild, or
-      // the rebuild would always win and this could never trigger.)
-      if silentStreak >= 5 && AudioCapturePermission.preflight() == .granted {
-        // Permission is fine: an app is just outputting silence (a call
-        // app idling, a WebAudio tab, protected video). Don't cry wolf.
-        silentStreak = 0
-      } else if silentStreak >= 5 {
-        pipelineStop(fade: false)
-        DispatchQueue.main.async { [weak self] in self?.status = .needsPermission }
-      }
-    } else if silentStreak >= 4 || stalledStreak >= 3 {
+    if silentStreak >= 3 || stalledStreak >= 3 {
+      // Apps are playing but nothing from them reaches us. Our tap mutes
+      // them, so the Mac may be silent: never wait this out.
       let reason: RebuildReason = stalledStreak >= 3 ? .stalled : .silentTap
       silentStreak = 0
       stalledStreak = 0
-      // Back off: an app whose output runs silently (a call app, a WebAudio
-      // tab) can look like a dead tap forever. Three rebuilds in two
-      // minutes, then pause automatic rebuilds for five.
-      let now = ProcessInfo.processInfo.systemUptime
+      if !everHeardAudio && reason == .silentTap && AudioCapturePermission.preflight() != .granted {
+        // Not a single non-zero sample: almost certainly no capture permission.
+        pipelineStop(fade: false)
+        DispatchQueue.main.async { [weak self] in self?.status = .needsPermission }
+        return
+      }
+      if now - lastSilenceFix > 60 {
+        lastSilenceFix = now
+        log.notice("watchdog: \(reason.rawValue, privacy: .public) while apps play (heard audio \(self.everHeardAudio, privacy: .public)); rebuilding")
+        DispatchQueue.main.async { [weak self] in self?.scheduleRebuild(reason, delay: 0) }
+      } else {
+        stepAside(reason, playing: playing)
+      }
+      return
+    }
+
+    // Every 3 s: is the pipeline still wired to the live default output?
+    // Catches listeners that never fired (sleep, a Bluetooth reconnect that
+    // gave the headset a new object ID, an aggregate whose sub-device died).
+    watchdogTicks &+= 1
+    if watchdogTicks % 3 == 0, let info = p.info, let why = pipelineStaleness(p, info) {
       watchdogRebuilds = watchdogRebuilds.filter { now - $0 < 120 }
       if now < watchdogPausedUntil { return }
       if watchdogRebuilds.count >= 3 {
         watchdogPausedUntil = now + 300
-        log.notice("watchdog: repeated silent-tap rebuilds (\(reason.rawValue, privacy: .public)); pausing automatic rebuilds for 5 min")
+        log.notice("watchdog: pipeline keeps looking stale (\(why, privacy: .public)); pausing these rebuilds for 5 min")
         return
       }
       watchdogRebuilds.append(now)
-      DispatchQueue.main.async { [weak self] in self?.scheduleRebuild(reason, delay: 0) }
+      log.notice("watchdog: pipeline stale (\(why, privacy: .public)); rebuilding")
+      DispatchQueue.main.async { [weak self] in self?.scheduleRebuild(.staleDevice, delay: 0) }
+    }
+  }
+
+  /// audioQueue only. Why the running pipeline no longer matches the
+  /// current output, or nil if it still does. Cheap property reads only.
+  @available(macOS 14.2, *)
+  private func pipelineStaleness(_ p: TapPipeline, _ info: TapPipeline.Info) -> String? {
+    let def = Devices.defaultOutput()
+    if def != 0 && def != info.deviceID { return "default output \(info.deviceID) -> \(def)" }
+    if ((try? HAL.get(info.deviceID, .global(kAudioDevicePropertyDeviceIsAlive), default: UInt32(1))) ?? 1) == 0 {
+      return "device not alive"
+    }
+    let rate = Devices.nominalSampleRate(info.deviceID)
+    if rate > 0 && abs(rate - info.sampleRate) >= 0.5 { return "rate \(info.sampleRate) -> \(rate)" }
+    if !p.aggregateIsRunning { return "aggregate not running" }
+    if let subs = p.activeSubDevices, !subs.contains(info.deviceID) { return "aggregate lost its output (\(subs))" }
+    return nil
+  }
+
+  // MARK: Step aside
+
+  // audioQueue-confined.
+  private var stepAsideTimer: DispatchSourceTimer?
+  private var stepAsideCount = 0
+
+  /// audioQueue only. Releases the tap (the Mac plays unprocessed) and
+  /// retries when the set of playing apps changes (new playback usually
+  /// means a new or restarted output stream) or after 20/40/60 s. An app
+  /// that keeps its output running with digital silence (an idle call app)
+  /// looks the same as a dead tap, so this stays quiet: a banner in the
+  /// popover, no alarm. A dead tap costs at most ~3 s per retry.
+  private func stepAside(_ reason: RebuildReason, playing: Set<AudioObjectID>) {
+    pipelineStop(fade: false)
+    stepAsideCount += 1
+    let wait = Double(min(stepAsideCount, 3) * 20)
+    log.error("watchdog: \(reason.rawValue, privacy: .public) persisted after a rebuild; stepped aside (#\(self.stepAsideCount, privacy: .public), retry in \(Int(wait), privacy: .public) s or when playback changes)")
+    DispatchQueue.main.async { [weak self] in self?.steppedAside = true }
+    armStepAsideRetry(after: wait, playing: playing)
+  }
+
+  /// audioQueue only.
+  private func armStepAsideRetry(after wait: Double, playing: Set<AudioObjectID>?) {
+    stepAsideTimer?.cancel()
+    let deadline = ProcessInfo.processInfo.systemUptime + wait
+    let excluded = audioExcluded
+    var baseline = playing
+    let t = DispatchSource.makeTimerSource(queue: audioQueue)
+    t.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
+    t.setEventHandler { [weak self] in
+      guard let self else { return }
+      let now = TapPipeline.playingProcesses(excluding: excluded)
+      if baseline == nil { baseline = now }
+      guard now != baseline || ProcessInfo.processInfo.systemUptime >= deadline else { return }
+      self.stepAsideTimer?.cancel()
+      self.stepAsideTimer = nil
+      // A retry that is still silent steps aside again without another rebuild.
+      self.lastSilenceFix = ProcessInfo.processInfo.systemUptime
+      DispatchQueue.main.async { self.scheduleRebuild(.stepAsideRetry, delay: 0) }
+    }
+    t.resume()
+    stepAsideTimer = t
+  }
+
+  /// audioQueue only.
+  private func cancelStepAside() {
+    stepAsideTimer?.cancel()
+    stepAsideTimer = nil
+  }
+
+  // MARK: Wedge rescue
+
+  /// Independent of audioQueue. Every HAL call runs on audioQueue, so one
+  /// that never returns (coreaudiod busy with a Bluetooth reconnect after
+  /// wake) would freeze the watchdog and Check & Fix while our tap keeps the
+  /// Mac muted. If audioQueue stops answering for 8 s, destroy the tap and
+  /// aggregate from here (BSCrashGuardFailOpen: atomic hand-off, so the
+  /// pipeline's own teardown later skips them).
+  private let rescueQueue = DispatchQueue(label: "bassshake.rescue", qos: .userInitiated)
+  private var rescueTimer: DispatchSourceTimer?        // rescueQueue
+  private var audioQueueBeat: TimeInterval = 0         // rescueQueue
+  private var beatPending = false                      // rescueQueue
+  private var rescued = false                          // rescueQueue
+
+  private func startRescue() {
+    rescueQueue.async {
+      self.audioQueueBeat = ProcessInfo.processInfo.systemUptime
+      let t = DispatchSource.makeTimerSource(queue: self.rescueQueue)
+      t.schedule(deadline: .now() + 2, repeating: 2, leeway: .milliseconds(500))
+      t.setEventHandler { [weak self] in self?.rescueTick() }
+      t.resume()
+      self.rescueTimer = t
+    }
+  }
+
+  /// rescueQueue.
+  private func rescueTick() {
+    let now = ProcessInfo.processInfo.systemUptime
+    if !beatPending {
+      beatPending = true
+      audioQueue.async { [weak self] in
+        guard let self else { return }
+        self.rescueQueue.async {
+          self.beatPending = false
+          self.audioQueueBeat = ProcessInfo.processInfo.systemUptime
+          self.rescued = false
+        }
+      }
+    }
+    guard !rescued, now - audioQueueBeat > 8, BSCrashGuardHoldsTap() else { return }
+    rescued = true
+    failOpenFromRescue(why: "audio queue unresponsive for \(Int(now - audioQueueBeat)) s")
+  }
+
+  /// Main: Check & Fix found the audio queue stuck.
+  private func rescueFailOpen(why: String) {
+    rescueQueue.async { self.failOpenFromRescue(why: why) }
+  }
+
+  /// rescueQueue.
+  private func failOpenFromRescue(why: String) {
+    let did = BSCrashGuardFailOpen()
+    log.error("rescue: \(why, privacy: .public); released the tap: \(did, privacy: .public)")
+    guard did else { return }
+    DispatchQueue.main.async { [weak self] in self?.steppedAside = true }
+    // Runs once the queue is free again: forget the destroyed pipeline and retry later.
+    audioQueue.async { [weak self] in
+      guard let self else { return }
+      self.pipelineStop(fade: false)
+      self.armStepAsideRetry(after: 20, playing: nil)
     }
   }
 }

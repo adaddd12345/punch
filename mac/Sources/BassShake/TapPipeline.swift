@@ -53,6 +53,13 @@ final class TapPipeline {
       ((try? HAL.get(aggregateID, .global(kAudioDevicePropertyDeviceIsRunning), default: UInt32(0))) ?? 0) != 0
   }
 
+  /// HAL call: audioQueue only. The aggregate's live sub-devices (it should
+  /// hold the output device's current object), or nil if unreadable.
+  var activeSubDevices: [AudioObjectID]? {
+    guard aggregateID != unknownObject else { return nil }
+    return try? HAL.array(aggregateID, .global(kAudioAggregateDevicePropertyActiveSubDeviceList), of: AudioObjectID.self, zero: 0)
+  }
+
   /// HAL calls: audioQueue only. The tap and aggregate still have the
   /// channel count and rate the engine was prepared for.
   func liveFormatMatches() -> Bool {
@@ -189,18 +196,23 @@ final class TapPipeline {
       let deadline = Date().addingTimeInterval(0.25)
       while !BSRenderContextIsFadedOut(ctx) && Date() < deadline { usleep(5_000) }
     }
+    // The rescue path (AudioController's wedge rescue) may already have
+    // destroyed these from another queue: never touch a released ID again.
+    var ownsAgg = false, ownsTap = false
+    BSCrashGuardRelease(aggregateID, tapID, &ownsAgg, &ownsTap)
     if let proc = procID {
-      AudioDeviceStop(aggregateID, proc)
-      AudioDeviceDestroyIOProcID(aggregateID, proc)
+      if ownsAgg {
+        AudioDeviceStop(aggregateID, proc)
+        AudioDeviceDestroyIOProcID(aggregateID, proc)
+      }
       procID = nil
     }
-    BSCrashGuardClear()
     if aggregateID != unknownObject {
-      AudioHardwareDestroyAggregateDevice(aggregateID)
+      if ownsAgg { AudioHardwareDestroyAggregateDevice(aggregateID) }
       aggregateID = unknownObject
     }
     if tapID != unknownObject {
-      AudioHardwareDestroyProcessTap(tapID)
+      if ownsTap { AudioHardwareDestroyProcessTap(tapID) }
       tapID = unknownObject
     }
     if let ctx = context {
@@ -245,13 +257,19 @@ final class TapPipeline {
   /// never reaches our tap, so counting it would make a healthy tap look
   /// dead (rebuild loop, or a false "needs permission" banner).
   static func othersArePlaying(excluding extra: Set<AudioObjectID> = []) -> Bool {
+    !playingProcesses(excluding: extra).isEmpty
+  }
+
+  /// The processes (other than us and `extra`) running output right now.
+  static func playingProcesses(excluding extra: Set<AudioObjectID> = []) -> Set<AudioObjectID> {
     let own = ownProcessObject()
     let procs = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyProcessObjectList),
                                 of: AudioObjectID.self, zero: 0)) ?? []
+    var out: Set<AudioObjectID> = []
     for p in procs where p != own && !extra.contains(p) {
       let running = (try? HAL.get(p, .global(kAudioProcessPropertyIsRunningOutput), default: UInt32(0))) ?? 0
-      if running != 0 { return true }
+      if running != 0 { out.insert(p) }
     }
-    return false
+    return out
   }
 }

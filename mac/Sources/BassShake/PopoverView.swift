@@ -743,6 +743,10 @@ struct PopoverView: View {
              text: "Your sound is panned to the \((controller.balance ?? 0.5) < 0.5 ? "left" : "right") by macOS's balance setting, so one side is quieter or silent.",
              action: ("Center It", controller.centerBalance),
              secondary: ("Keep Centered", { controller.settings.balanceLock = true; controller.centerBalance() }))
+    case _ where controller.steppedAside:
+      Banner(symbol: "speaker.slash", tint: .orange,
+             text: "Apps were playing but no sound reached The Bass Shaker, so it stepped aside and your Mac is playing normally. It tries again when playback changes.",
+             action: ("Try Again", { controller.checkAndFix() }), secondary: nil)
     case .starting:
       EmptyView()  // shown late, as an overlay: see slowStart
     case .failed(let msg):
