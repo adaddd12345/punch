@@ -58,6 +58,11 @@ void punch_set_crossfeed(PunchEngine* e, bool enabled, float amount) {
 }
 
 void punch_set_output_gain_db(PunchEngine* e, float db) { e->engine.edit().outputGainDb = db; }
+void punch_set_master_fade(PunchEngine* e, float target_db, float ramp_ms) {
+  e->engine.edit().masterFadeDb = target_db;
+  e->engine.edit().masterFadeMs = ramp_ms;
+}
+double punch_master_fade_db(const PunchEngine* e) { return e->engine.masterFadeDb(); }
 
 void punch_set_limiter(PunchEngine* e, bool enabled, float ceiling_db, float release_ms) {
   auto& l = e->engine.edit().limiter;

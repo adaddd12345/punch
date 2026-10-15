@@ -49,6 +49,12 @@ void punch_set_bass(PunchEngine* e, bool enabled, float amount, float cutoff_hz)
 void punch_set_stereo_width(PunchEngine* e, bool enabled, float width);
 void punch_set_crossfeed(PunchEngine* e, bool enabled, float amount);
 void punch_set_output_gain_db(PunchEngine* e, float db);
+/* Master fade (Lights Out): a last gain after the limiter, also in bypass.
+ * Moves linearly in dB to target_db over ramp_ms; at or below -90 dB the
+ * output is exactly silent. 0 dB settled = bit-exact. */
+void punch_set_master_fade(PunchEngine* e, float target_db, float ramp_ms);
+/* Where the master fade stands now (dB). Any thread. */
+double punch_master_fade_db(const PunchEngine* e);
 void punch_set_limiter(PunchEngine* e, bool enabled, float ceiling_db, float release_ms);
 void punch_set_bypass(PunchEngine* e, bool bypass);
 /* Bass-priority limiting: below crossover_hz the bass is limited against the

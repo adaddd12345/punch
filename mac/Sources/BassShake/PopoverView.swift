@@ -776,6 +776,7 @@ struct PopoverView: View {
                                                                         set: { controller.settings.earProtector = $0 }))
         Toggle("Fair Level (even out loudness between apps)", isOn: Binding(get: { controller.settings.fairLevel },
                                                                             set: { controller.settings.fairLevel = $0 }))
+        LightsOutMenu(controller: controller)
         Button("Hearing Fit…") { withAnimation { showHearingFit = true } }
         if controller.settings.hearing != nil {
           Toggle("Hearing Fit On", isOn: Binding(get: { controller.settings.hearing?.enabled ?? false },

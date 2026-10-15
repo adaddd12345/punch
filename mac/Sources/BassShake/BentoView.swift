@@ -143,7 +143,10 @@ struct BentoView: View {
 
   /// The sections in the user's order (Mini: Mac Volume, the slim hero, the dials).
   private var blockKeys: [String] {
-    if size == .mini { return [LayoutSection.macVolume.key, LayoutSection.bentoHero.key, LayoutSection.bentoDials.key] }
+    if size == .mini {
+      return [LayoutSection.macVolume.key, LayoutSection.bentoHero.key, LayoutSection.bentoLightsOut.key,
+              LayoutSection.bentoDials.key]
+    }
     return s.layoutOrder(bento: !flat).filter { !$0.fixed }.map(\.key)
   }
 
@@ -161,6 +164,10 @@ struct BentoView: View {
     case LayoutSection.bentoDials.key: return mini || (!flat && s.shows(.bentoDials))
     case LayoutSection.classicSliders.key: return flat && s.shows(.classicSliders)
     case LayoutSection.classicMeters.key: return flat && size == .full && s.shows(.classicMeters)
+    case LayoutSection.bentoLightsOut.key, LayoutSection.classicLightsOut.key:
+      // Mini: only while it runs, ended or has a note (a slim row).
+      if mini { return controller.lightsOut.active }
+      return s.shows(flat ? .classicLightsOut : .bentoLightsOut) && (controller.lightsOut.active || controller.lightsOutOpen)
     default:
       guard !mini, let sec = (flat ? LayoutSection.classic : LayoutSection.bento).first(where: { $0.key == key })
       else { return false }
@@ -224,6 +231,8 @@ struct BentoView: View {
       modeGrid
     case LayoutSection.bentoModeSettings.key, LayoutSection.classicModeSettings.key:
       modeDetails
+    case LayoutSection.bentoLightsOut.key, LayoutSection.classicLightsOut.key:
+      if mini { LightsOutMiniRow(controller: controller) } else { LightsOutBlock(controller: controller, compact: size == .compact) }
     default:
       EmptyView()
     }
@@ -1252,7 +1261,7 @@ struct BentoView: View {
     } fact: {
       switch m {
       case .study: StudyFact(endsAt: controller.pomodoroEndsAt, onBreak: controller.pomodoroOnBreak)
-      case .sleep: SleepFact(endsAt: controller.sleepEndsAt, finished: controller.sleepFinished)
+      case .sleep: SleepFact(endsAt: controller.sleepEndsAt, ending: controller.lightsOut.ending)
       default: BentoFactText(text: "Haze \(Int((s.lateNightHaze * 100).rounded()))%")
       }
     }
@@ -1278,7 +1287,9 @@ struct BentoView: View {
       state = (controller.pomodoroOnBreak ? "Break, " : "Focus, ") + "\(left) min left"
     } else if m == .sleep {
       if controller.sleepFinished {
-        state = "Faded out"
+        state = "Held silent"
+      } else if controller.lightsOut.ending == .paused {
+        state = "Paused"
       } else if let end = controller.sleepEndsAt {
         state = "\(max(1, Int((end.timeIntervalSinceNow / 60).rounded(.up)))) min left"
       } else {
@@ -1386,9 +1397,10 @@ struct BentoView: View {
     .pointerHintTint(ink(tint(.indigo)))
   }
 
+  /// Sleep's timer is Lights Out: its length here, its countdown in the Lights Out block.
   private var sleepRow: some View {
     HStack(spacing: 8) {
-      IconText(title: "Timer", symbol: "timer", size: 11)
+      IconText(title: "Lights Out", symbol: "moon.fill", size: 11)
       Menu {
         ForEach(SleepTimer.choices, id: \.self) { m in
           Button("\(m) min") { controller.setSleepMinutes(m) }
@@ -1401,16 +1413,11 @@ struct BentoView: View {
       .menuStyle(.borderlessButton)
       .controlSize(.small)
       .fixedSize()
+      .pointerHint("Lights Out", value: s.sleepMinutes == 0 ? "Off" : "\(s.sleepMinutes) min",
+                   does: "Sleep's sound fades out, then what's playing pauses if it can.")
       Spacer(minLength: 4)
       if controller.sleepFinished {
-        Button("Wake") { controller.wakeFromSleep() }.controlSize(.small)
-      } else if let end = controller.sleepEndsAt {
-        Text(end, style: .timer)
-          .font(.system(size: 13, weight: .heavy, design: .rounded))
-          .monospacedDigit()
-          .lineLimit(1)
-          .fixedSize()
-          .frame(minWidth: 56, alignment: .trailing)
+        Button("Unmute") { controller.wakeFromSleep() }.controlSize(.small)
       }
     }
   }
@@ -2453,10 +2460,12 @@ private struct NightGuardFact: View {
 /// Sleep: minutes left on the fade-out timer, refreshed twice a minute.
 private struct SleepFact: View {
   let endsAt: Date?
-  let finished: Bool
+  let ending: LightsOutState.Ending?
   var body: some View {
-    if finished {
-      Text("Faded out").bentoFact()
+    if ending == .held || ending == .macMuted {
+      Text("Held silent").bentoFact()
+    } else if ending == .paused || ending == .stopping {
+      Text("Paused").bentoFact()
     } else if let end = endsAt {
       TimelineView(.periodic(from: .now, by: 30)) { ctx in
         let left = max(1, Int((end.timeIntervalSince(ctx.date) / 60).rounded(.up)))

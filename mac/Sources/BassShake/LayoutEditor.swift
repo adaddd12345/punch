@@ -44,6 +44,8 @@ struct LayoutSection: Identifiable, Equatable {
   static let bentoModes = LayoutSection(key: "bento.modes", name: "Modes", symbol: "square.grid.3x2", tint: .indigo, height: 56)
   static let bentoModeSettings = LayoutSection(key: "bento.modeSettings", name: "Mode Settings", symbol: "slider.horizontal.3",
                                                tint: .lilac, height: 36, when: "Night Guard, Study, Sleep")
+  static let bentoLightsOut = LayoutSection(key: "bento.lightsOut", name: "Lights Out", symbol: "moon.fill", tint: .frost,
+                                            height: 64, when: "While Lights Out runs, or opened from ⋯")
   static let bentoFooter = LayoutSection(key: "bento.footer", name: "Bottom Bar", symbol: "ellipsis.circle", tint: .graphite,
                                          height: 32, locked: "Always shown: it has the ⋯ menu.")
 
@@ -60,15 +62,18 @@ struct LayoutSection: Identifiable, Equatable {
   static let classicModes = LayoutSection(key: "classic.modes", name: "Modes", symbol: "square.grid.3x2", tint: .indigo, height: 44)
   static let classicModeSettings = LayoutSection(key: "classic.modeSettings", name: "Mode Settings", symbol: "slider.horizontal.3",
                                                  tint: .lilac, height: 36, when: "Night Guard, Study, Sleep")
+  static let classicLightsOut = LayoutSection(key: "classic.lightsOut", name: "Lights Out", symbol: "moon.fill", tint: .frost,
+                                              height: 64, when: "While Lights Out runs, or opened from ⋯")
   static let classicFooter = LayoutSection(key: "classic.footer", name: "Bottom Bar", symbol: "ellipsis.circle", tint: .graphite,
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
   /// Default orders, top to bottom: Mac Volume sits right under the EQ.
   static let bento: [LayoutSection] = [bentoHero, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials, bentoPresets,
-                                       bentoModes, bentoModeSettings, bentoFooter]
+                                       bentoModes, bentoModeSettings, bentoLightsOut, bentoFooter]
   /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
   static let classic: [LayoutSection] = [classicHeader, classicNowPlaying, classicEQ, macVolume, remoteMacs, classicMeters,
-                                         classicSliders, classicPresets, classicModes, classicModeSettings, classicFooter]
+                                         classicSliders, classicPresets, classicModes, classicModeSettings, classicLightsOut,
+                                         classicFooter]
 
   /// The defaults before Mac Volume moved under the EQ (it was first). A saved
   /// order equal to these was never really customised: it gets the new default.
