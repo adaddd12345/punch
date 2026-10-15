@@ -3,7 +3,7 @@
 // face buckets, the kit's light for every round part, and depth-sorted painter's order. No strokes anywhere:
 // form comes from face tones, a bright rim on the top edges and the lid's rolled edge.
 //
-//   node build.mjs   ->  icon.svg, icon-dark.svg, icon-mono.svg, layers/**.svg
+//   node build.mjs   ->  icon.svg, icon-dark.svg, icon-mono.svg, icon-freezing.svg, icon-ember.svg, layers/**.svg
 //
 // Art is authored in Icon Composer space (1024 = the squircle body). icon*.svg are pre-composited masters:
 // that art scaled into the 824 body centred on 1024, clipped by a squircle, over the background gradient.
@@ -47,6 +47,36 @@ const PALETTES = {
     surround: ["#132F6E", "#1D4296", "#3060C4", "#5686E6"],
     cone: ["#2E62D2", "#4580F0", "#6E9CF4", "#98B9F8"],
     cap: ["#4583F5", "#86AEFA", "#B4CDFF", "#F0F5FF"], spec: "#FFFFFF",
+  },
+  freezing: { // deep-blue ice: white-cyan top falling into cobalt, frosted silver cap, ultramarine woofer with an icy cap
+    bg: ["#0A1F5C", "#1B9ED2"],
+    shadow: "#041340", shadowOpacity: 0.45,
+    top: "#F2FBFF", rim: "#FFFFFF",
+    sides: ["#1A50B8", "#2766C8", "#3A80D8", "#559CE6"],
+    interior: "#0A2478", depth: 0.5, frost: 0.3, frostColor: "#E8FBFF",
+    sole: ["#1D4FA6", "#2459B0", "#2C64BA", "#3570C4"],
+    groove: "#7FB4E2",
+    lidSides: ["#8FA6BF", "#A9BCD0", "#C6D4E2", "#E1E9F1"], lidTop: ["#FAFCFE", "#D6E2EE"], lidRim: "#FFFFFF",
+    holeFloor: "#1B3566", holeLip: "#FFFFFF",
+    trim: ["#5C9AD8", "#8CC0EA", "#C2E2F7", "#F0FAFF"],
+    surround: ["#071A5A", "#0C2A82", "#1640A8", "#2A5FCC"],
+    cone: ["#1635A8", "#2048C8", "#3462DC", "#5582EA"],
+    cap: ["#2E8FE0", "#5CC0F2", "#A6E6FF", "#EFFCFF"], spec: "#FFFFFF",
+  },
+  ember: { // lava: obsidian body with a red-orange glow rising from the base, warm gunmetal cap, molten woofer
+    bg: ["#2A0608", "#B23A18"],
+    shadow: "#1A0200", shadowOpacity: 0.5,
+    top: "#6E5049", rim: "#F2A272",
+    sides: ["#1E1719", "#272022", "#312829", "#3C3232"],
+    interior: "#D83A0E", depth: 0.45, frost: 0.1, frostColor: "#FFB27A",
+    sole: ["#7A1E0C", "#8C250E", "#A02C10", "#B43414"],
+    groove: "#2A2122",
+    lidSides: ["#2E2828", "#3B3434", "#4A4242", "#5C5352"], lidTop: ["#857B77", "#5A5250"], lidRim: "#B8A298",
+    holeFloor: "#F2661A", holeLip: "#FFD08A",
+    trim: ["#3A2E2C", "#5A4842", "#87695C", "#B8907A"],
+    surround: ["#3A0608", "#5E0C0C", "#8A1810", "#B22A14"],
+    cone: ["#B8200C", "#D8380E", "#F06018", "#FF8A2A"],
+    cap: ["#F07A14", "#FFA828", "#FFD25A", "#FFF4C0"], spec: "#FFFBEA",
   },
   mono: { // tinted/clear annotation: hero (woofer) white, everything else greys
     bg: ["#3A3A3C", "#1C1C1E"],
@@ -196,7 +226,7 @@ function art(pal) {
   // Inner depth: a jelly block gets denser toward its base.
   defs.push(`<linearGradient id="depth" gradientUnits="userSpaceOnUse" x1="0" y1="${yOf(BODY_Z1)}" x2="0" y2="${yOf(BODY_Z0)}"><stop offset="0.25" stop-color="${pal.interior}" stop-opacity="0"/><stop offset="1" stop-color="${pal.interior}" stop-opacity="${pal.depth}"/></linearGradient>`);
   const W = G.frameAlong([50, 100, (BODY_Z0 + BODY_Z1) / 2 + 1], [0, 1, 0]); // woofer axis on the +y face
-  defs.push(`<linearGradient id="frost" gradientUnits="userSpaceOnUse" x1="0" y1="${yOf(BODY_Z1)}" x2="0" y2="${yOf(BODY_Z0)}"><stop offset="0" stop-color="#FFFFFF" stop-opacity="${pal.frost}"/><stop offset="0.4" stop-color="#FFFFFF" stop-opacity="${pal.frost * 0.25}"/><stop offset="0.85" stop-color="#FFFFFF" stop-opacity="0"/></linearGradient>`);
+  defs.push(`<linearGradient id="frost" gradientUnits="userSpaceOnUse" x1="0" y1="${yOf(BODY_Z1)}" x2="0" y2="${yOf(BODY_Z0)}"><stop offset="0" stop-color="${pal.frostColor ?? "#FFFFFF"}" stop-opacity="${pal.frost}"/><stop offset="0.4" stop-color="${pal.frostColor ?? "#FFFFFF"}" stop-opacity="${pal.frost * 0.25}"/><stop offset="0.85" stop-color="${pal.frostColor ?? "#FFFFFF"}" stop-opacity="0"/></linearGradient>`);
   const jelly = faces + `<path d="${body.fill}" fill="url(#depth)"/>` + `<path d="${body.fill}" fill="url(#frost)"/>`;
   const rim = roundStack(PLAN, BODY_Z1, TOP_R, 36, pal.sides, pal.rim, true);
   defs.push(`<linearGradient id="topFace" gradientUnits="userSpaceOnUse" x1="0" y1="${at([0, 0, H])[1]}" x2="0" y2="${at([100, 100, H])[1]}"><stop offset="0" stop-color="${pal.top}"/><stop offset="1" stop-color="${mix(pal.top, pal.sides[3], 0.18)}"/></linearGradient>`);
@@ -279,4 +309,7 @@ writeFileSync(join(HERE, "icon-mono.svg"), master(PALETTES.mono));
 layers(PALETTES.default, join(HERE, "layers"));
 layers(PALETTES.dark, join(HERE, "layers", "dark"));
 layers(PALETTES.mono, join(HERE, "layers", "mono"));
-console.log("wrote icon.svg, icon-dark.svg, icon-mono.svg, layers/");
+// Picker colourways (pre-composited only; mac/Resources/AppIconVariants/*.png)
+writeFileSync(join(HERE, "icon-freezing.svg"), master(PALETTES.freezing));
+writeFileSync(join(HERE, "icon-ember.svg"), master(PALETTES.ember));
+console.log("wrote icon.svg, icon-dark.svg, icon-mono.svg, icon-freezing.svg, icon-ember.svg, layers/");
