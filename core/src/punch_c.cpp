@@ -45,6 +45,18 @@ void punch_set_bass(PunchEngine* e, bool enabled, float amount, float cutoff_hz)
   b.cutoffHz = cutoff_hz;
 }
 
+void punch_set_bass_mode(PunchEngine* e, int mode) { e->engine.edit().bassShaker = mode == 1; }
+
+void punch_set_bass_shaker(PunchEngine* e, float boost_db, float harmonics) {
+  auto& s = e->engine.edit().shaker;
+  s.boostDb = boost_db;
+  s.harmonics = harmonics;
+}
+
+void punch_set_bass_pace(PunchEngine* e, float bpm) { e->engine.edit().shaker.paceBpm = bpm; }
+float punch_bass_pace_bpm(const PunchEngine* e) { return e->engine.bassPaceBpm(); }
+float punch_bass_shaker_strength_scale(void) { return punch::BassShaker::kStrengthScale; }
+
 void punch_set_stereo_width(PunchEngine* e, bool enabled, float width) {
   auto& s = e->engine.edit().stereo;
   s.enabled = enabled;

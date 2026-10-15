@@ -40,6 +40,7 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   eq_.prepare(sampleRate, numChannels_);
   bassChar_.prepare(sampleRate, numChannels_);
   bass_.prepare(sampleRate, numChannels_);
+  shaker_.prepare(sampleRate, numChannels_);
   lateNight_.prepare(sampleRate, numChannels_);
   stereo_.prepare(sampleRate);
   crossfeed_.prepare(sampleRate);
@@ -135,6 +136,7 @@ void Engine::applySnapshot(const EngineParams& p) {
     eq_.setParams(flat);
     bassChar_.setParams({});
     bass_.setParams({});
+    shaker_.setParams({});
     lateNight_.setParams({});
     stereo_.setParams({});
     crossfeed_.setParams({});
@@ -161,7 +163,16 @@ void Engine::applySnapshot(const EngineParams& p) {
   BassCharacterParams bc = p.bassCharacter;
   if (p.lateNight.enabled) bc.driveScale = std::min(bc.driveScale, 0.6f);  // mellow: cap Distort's drive
   bassChar_.setParams(bc);
-  bass_.setParams(p.bass);
+  if (p.bassShaker) {
+    bass_.setParams({});
+    BassShakerParams sp = p.shaker;
+    sp.amount = p.bass.enabled ? p.bass.amount : 0.f;
+    sp.ceilingDb = std::min(p.limiter.ceilingDb, 0.f);
+    shaker_.setParams(sp);
+  } else {
+    bass_.setParams(p.bass);
+    shaker_.setParams({});
+  }
   lateNight_.setParams(p.lateNight);
   stereo_.setParams(p.stereo);
   crossfeed_.setParams(p.crossfeed);
@@ -224,6 +235,8 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   saturator_.process(ch, numChannels, numFrames);
   compressor_.process(ch, numChannels, numFrames);
   bass_.process(ch, numChannels, numFrames);
+  shaker_.setTempoHint(dj_.trackingBpm());
+  shaker_.process(ch, numChannels, numFrames);
   stereo_.process(ch, numChannels, numFrames);
   lateNight_.process(ch, numChannels, numFrames);
   ambience_.process(ch, numChannels, numFrames);
@@ -269,6 +282,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
     eq_.reset();
     bassChar_.reset();
     bass_.reset();
+    shaker_.reset();
     lateNight_.reset();
     stereo_.reset();
     crossfeed_.reset();

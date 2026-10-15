@@ -2,9 +2,11 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <complex>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <new>
 #include <numbers>
 #include <random>
@@ -424,6 +426,15 @@ TEST(engine_process_is_allocation_free) {
   g_trackAllocs = true;
   for (int k = 0; k < 50; ++k) e.processInterleaved(buf.data(), buf.data(), 2, 2048);  // > maxFrames: chunks
   (void)e.takeMeters();
+  g_trackAllocs = false;
+  CHECK(g_allocCount.load() == 0);
+  // The Bass Shaker path too.
+  e.edit().bass.amount = 0.8f;
+  e.edit().bassShaker = true;
+  e.publish();
+  g_allocCount = 0;
+  g_trackAllocs = true;
+  for (int k = 0; k < 50; ++k) e.processInterleaved(buf.data(), buf.data(), 2, 2048);
   g_trackAllocs = false;
   CHECK(g_allocCount.load() == 0);
 }
@@ -1428,6 +1439,548 @@ TEST(bass_character_c_api) {
   std::vector<float> buf(512 * 2, 0.2f);
   punch_process_interleaved(e, buf.data(), buf.data(), 2, 512);
   for (float v : buf) CHECK(std::isfinite(v));
+  punch_engine_destroy(e);
+}
+
+// ---- Bass character timing / image (owner: "Distort nudges my bass to the
+// right and brings it in a few ms late").
+namespace bctest {
+constexpr double kFs = 48000.0;
+// Zero-phase Butterworth analysis filter (forward + backward).
+static std::vector<float> zeroPhase(std::vector<float> y, FilterType t, double hz) {
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int k = 0; k < 2; ++k) {
+      const SvfCoeffs c = SvfCoeffs::make({t, hz, 0, 0.7071, true}, kFs);
+      SvfState s;
+      for (auto& v : y) v = s.tick(c, v);
+    }
+    std::reverse(y.begin(), y.end());
+  }
+  return y;
+}
+static std::vector<float> envelope(const std::vector<float>& x) {
+  std::vector<float> e(x.size());
+  const float a = float(1 - std::exp(-1.0 / (0.0003 * kFs)));
+  float z = 0;
+  for (size_t i = 0; i < x.size(); ++i) { z += a * (std::fabs(x[i]) - z); e[i] = z; }
+  z = 0;
+  for (size_t i = e.size(); i-- > 0;) { z += a * (e[i] - z); e[i] = z; }
+  return e;
+}
+static std::complex<double> toneAt(const std::vector<float>& x, double hz, size_t a, size_t b) {
+  std::complex<double> s = 0;
+  for (size_t i = a; i < b; ++i) s += double(x[i]) * std::polar(1.0, -2 * std::numbers::pi * hz * double(i) / kFs);
+  return s * (2.0 / double(b - a));
+}
+static void run(BassCharacter& bc, std::vector<float>& l, std::vector<float>& r) {
+  for (size_t i = 0; i < l.size(); i += 512) {
+    float* p[2] = {l.data() + i, r.data() + i};
+    bc.process(p, 2, int(std::min<size_t>(512, l.size() - i)));
+  }
+}
+// A kick: 158 -> 48 Hz chirp, 0.7 ms attack, 160 ms decay.
+static std::vector<float> kicks(std::vector<size_t>& onsets) {
+  std::vector<float> m(size_t(kFs * 3), 0.f);
+  for (double t = 0.5; t < 2.6; t += 0.5) {
+    const size_t o = size_t(t * kFs);
+    onsets.push_back(o);
+    double ph = 0;
+    for (size_t i = 0; i < size_t(0.45 * kFs); ++i) {
+      const double s = double(i) / kFs;
+      ph += 2 * std::numbers::pi * (48 + 110 * std::exp(-s / 0.025)) / kFs;
+      m[o + i] += float(0.7 * std::exp(-s / 0.16) * (1 - std::exp(-s / 0.0007)) * std::sin(ph));
+    }
+  }
+  return m;
+}
+}  // namespace bctest
+
+TEST(bass_character_keeps_the_bass_image) {
+  using namespace bctest;
+  for (int kind = 1; kind <= 2; ++kind) {
+    for (double lean : {0.0, 0.15}) {
+      const size_t n = size_t(kFs * 2);
+      std::vector<float> l(n), r(n);
+      for (size_t i = 0; i < n; ++i) {
+        const double t = double(i) / kFs;
+        const double b = 0.4 * std::sin(2 * std::numbers::pi * 55 * t) + 0.25 * std::sin(2 * std::numbers::pi * 90 * t + 1) +
+                         0.15 * std::sin(2 * std::numbers::pi * 140 * t + 2);
+        l[i] = float(b * (1 - lean));
+        r[i] = float(b * (1 + lean));
+      }
+      const auto l0 = l, r0 = r;
+      BassCharacter bc;
+      bc.prepare(kFs, 2);
+      bc.setParams({BassCharacterKind(kind), 0.8f, 1.f});
+      run(bc, l, r);
+      CHECK(l != l0);  // it did something
+      if (lean == 0.0) CHECK(l == r);  // a centred bass stays exactly centred
+      const size_t a = size_t(kFs), e = n;
+      for (double hz : {55.0, 90.0, 140.0}) {
+        const double balIn = 20 * std::log10(std::abs(toneAt(r0, hz, a, e)) / std::abs(toneAt(l0, hz, a, e)));
+        const auto ol = toneAt(l, hz, a, e), orr = toneAt(r, hz, a, e);
+        const double balOut = 20 * std::log10(std::abs(orr) / std::abs(ol));
+        const double phase = std::arg(orr / ol) * 180 / std::numbers::pi;
+        CHECK_NEAR(balOut, balIn, 0.1);
+        CHECK_NEAR(phase, 0.0, 1.0);
+      }
+    }
+  }
+}
+
+TEST(bass_character_onset_timing) {
+  using namespace bctest;
+  std::vector<size_t> on;
+  const auto dry = kicks(on);
+  const auto dl = zeroPhase(dry, FilterType::LowPass, 150);
+  const auto ed = envelope(dl);
+  for (int kind = 1; kind <= 2; ++kind) {
+    auto l = dry, r = dry;
+    BassCharacter bc;
+    bc.prepare(kFs, 2);
+    bc.setParams({BassCharacterKind(kind), 0.6f, 1.f});
+    run(bc, l, r);
+    // The summed low band lands with the dry one (cross-correlation lag).
+    const auto ol = zeroPhase(l, FilterType::LowPass, 150);
+    double best = -1e30;
+    int lag = 0;
+    for (int L = -48; L <= 48; ++L) {
+      double s = 0;
+      for (size_t i = size_t(0.9 * kFs); i < size_t(2.9 * kFs); ++i) s += double(dl[i]) * ol[size_t(long(i) + L)];
+      if (s > best) { best = s; lag = L; }
+    }
+    const double lagMs = lag / kFs * 1000;
+    // What Distort adds (its grit) arrives with the kick: envelope lag of
+    // (out - dry) against the dry lows over the first 60 ms of each hit.
+    std::vector<float> add(dry.size());
+    for (size_t i = 0; i < dry.size(); ++i) add[i] = l[i] - dry[i];
+    const auto ea = envelope(zeroPhase(add, FilterType::LowPass, 2000));
+    best = -1e30;
+    int glag = 0;
+    for (int L = -240; L <= 480; ++L) {
+      double s = 0;
+      for (size_t o : on)
+        if (o > size_t(0.9 * kFs))
+          for (size_t i = o; i < o + size_t(0.06 * kFs); ++i) s += double(ed[i]) * ea[size_t(long(i) + L)];
+      if (s > best) { best = s; glag = L; }
+    }
+    const double gritMs = glag / kFs * 1000;
+    std::printf("    %s: low band lag %+.2f ms, added part lag %+.2f ms\n", kind == 1 ? "distort" : "punch", lagMs, gritMs);
+    CHECK(std::fabs(lagMs) <= 0.5);
+    if (kind == 1) CHECK(gritMs <= 2.0);  // an LR4 split put it ~4 ms late
+  }
+}
+
+// Punch's boost used to be x + (g - 1) * LR4(x), which cancels against the
+// dry signal at the 150 Hz crossover: a quiet 150 Hz tone dipped on every hit.
+TEST(punch_does_not_notch_150hz) {
+  using namespace bctest;
+  const size_t n = size_t(kFs * 4);
+  std::vector<float> x(n, 0.f);
+  for (double t0 = 0.25; t0 < 3.6; t0 += 0.5) {
+    const size_t o = size_t(t0 * kFs);
+    for (size_t i = 0; i < size_t(0.4 * kFs) && o + i < n; ++i) {
+      const double t = double(i) / kFs;
+      x[o + i] += float(0.5 * std::exp(-t / 0.15) * (1 - std::exp(-t / 0.001)) * std::sin(2 * std::numbers::pi * 45 * t));
+    }
+  }
+  for (size_t i = 0; i < n; ++i) x[i] += float(0.03 * std::sin(2 * std::numbers::pi * 150 * double(i) / kFs));
+  for (float amt : {0.3f, 0.6f, 1.f}) {
+    auto l = x, r = x;
+    BassCharacter bc;
+    bc.prepare(kFs, 2);
+    bc.setParams({BassCharacterKind::Punch, amt, 1.f});
+    run(bc, l, r);
+    double pin = 0, pout = 0;
+    for (double t0 = 0.75; t0 < 3.6; t0 += 0.5) {
+      const size_t o = size_t((t0 + 0.005) * kFs), e = size_t((t0 + 0.060) * kFs);
+      auto lock = [&](const std::vector<float>& v) {
+        std::complex<double> s = 0;
+        double ws = 0;
+        for (size_t i = o; i < e; ++i) {
+          const double w = 0.5 - 0.5 * std::cos(2 * std::numbers::pi * double(i - o) / double(e - o));
+          s += w * double(v[i]) * std::polar(1.0, -2 * std::numbers::pi * 150 * double(i) / kFs);
+          ws += w;
+        }
+        return std::norm(s / ws);
+      };
+      pin += lock(x);
+      pout += lock(l);
+    }
+    const double d = 10 * std::log10(pout / pin);
+    std::printf("    punch %.1f: 150 Hz during hits %+.2f dB\n", double(amt), d);
+    CHECK(d >= -0.5);
+  }
+}
+
+// ---- Bass Shaker (the Bass Shake preset's low end)
+namespace shtest {
+constexpr double kFs = 48000.0;
+constexpr double kPi = std::numbers::pi;
+using Buf = std::vector<float>;
+struct St { Buf L, R; };
+
+static Buf lr4(const Buf& x, FilterType t, double hz) {
+  const SvfCoeffs c = SvfCoeffs::make({t, hz, 0, 0.7071, true}, kFs);
+  SvfState a, b;
+  Buf y(x.size());
+  for (size_t i = 0; i < x.size(); ++i) y[i] = b.tick(c, a.tick(c, x[i]));
+  return y;
+}
+static Buf mono(const St& s) {
+  Buf m(s.L.size());
+  for (size_t i = 0; i < m.size(); ++i) m[i] = 0.5f * (s.L[i] + s.R[i]);
+  return m;
+}
+static double pw(const Buf& x, size_t a, size_t b) {
+  double s = 0;
+  b = std::min(b, x.size());
+  for (size_t i = a; i < b; ++i) s += double(x[i]) * x[i];
+  return b > a ? s / double(b - a) : 0;
+}
+static double dB(double p) { return 10 * std::log10(std::max(p, 1e-20)); }
+struct Pink {
+  std::mt19937 rng{7};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  float b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  float next() {
+    const float w = nd(rng) * 0.05f;
+    b0 = 0.99886f * b0 + w * 0.0555179f; b1 = 0.99332f * b1 + w * 0.0750759f;
+    b2 = 0.96900f * b2 + w * 0.1538520f; b3 = 0.86650f * b3 + w * 0.3104856f;
+    b4 = 0.55000f * b4 + w * 0.5329522f; b5 = -0.7616f * b5 - w * 0.0168980f;
+    const float p = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362f;
+    b6 = w * 0.115926f;
+    return p;
+  }
+};
+static void addKick(Buf& m, size_t at, float amp) {
+  double ph = 0;
+  for (size_t i = 0; i < size_t(0.45 * kFs) && at + i < m.size(); ++i) {
+    const double t = double(i) / kFs;
+    ph += 2 * kPi * (48 + 110 * std::exp(-t / 0.025)) / kFs;
+    m[at + i] += amp * float(std::exp(-t / 0.16) * (1 - std::exp(-t / 0.0007)) * std::sin(ph));
+  }
+}
+static void add808(Buf& m, size_t at, double f, double dur, float amp) {
+  double ph = 0;
+  for (size_t i = 0; i < size_t(dur * kFs) && at + i < m.size(); ++i) {
+    const double t = double(i) / kFs;
+    ph += 2 * kPi * f * (1 + 0.6 * std::exp(-t / 0.012)) / kFs;
+    const double env = std::exp(-t / 0.9) * (1 - std::exp(-t / 0.003)) * std::min(1.0, (dur - t) / 0.02);
+    m[at + i] += amp * float(std::tanh(1.4 * std::sin(ph)) / std::tanh(1.4) * env);
+  }
+}
+static std::vector<size_t> onsets(double secs) {
+  std::vector<size_t> v;
+  for (double t = 0.25; t < secs - 0.5; t += 0.5) v.push_back(size_t(t * kFs));
+  return v;
+}
+static void normPeak(St& s, float peak) {
+  float p = 0;
+  for (size_t i = 0; i < s.L.size(); ++i) p = std::max({p, std::fabs(s.L[i]), std::fabs(s.R[i])});
+  for (size_t i = 0; i < s.L.size(); ++i) { s.L[i] *= peak / p; s.R[i] *= peak / p; }
+}
+// The app's Bass Shake (Limit off): new preset EQ, the Shaker at `strength`,
+// and the safety net the Shaker always turns on.
+static PunchEngine* bassShake(double strength) {
+  PunchEngine* e = punch_engine_create();
+  const double bands[6][4] = {{PUNCH_LOW_SHELF, 105, 0, 0.71}, {PUNCH_BELL, 55, 0, 1.2}, {PUNCH_BELL, 250, -1.5, 1},
+                              {PUNCH_BELL, 1000, 0, 1}, {PUNCH_BELL, 3500, 1.5, 1}, {PUNCH_HIGH_SHELF, 10000, 1.5, 0.71}};
+  punch_set_num_bands(e, 6);
+  for (int i = 0; i < 6; ++i) punch_set_band(e, i, PunchFilterType(int(bands[i][0])), bands[i][1], bands[i][2], bands[i][3], true);
+  punch_set_auto_preamp(e, false);
+  punch_set_bass(e, strength > 0.001, float(strength), 110);
+  punch_set_bass_mode(e, 1);
+  punch_set_bass_shaker(e, 0.f, 1.f);
+  punch_set_limiter(e, true, -1, 80);
+  punch_set_boost_leveler(e, true);
+  punch_set_limiter_shape(e, 600, 1);
+  punch_set_bass_priority(e, 150);
+  punch_engine_prepare(e, kFs, 2, 512);
+  punch_engine_publish(e);
+  return e;
+}
+static St render(PunchEngine* e, St s) {
+  const size_t n = s.L.size();
+  for (size_t i = 0; i < n; i += 512) {
+    float* p[2] = {s.L.data() + i, s.R.data() + i};
+    punch_process_planar(e, p, 2, int(std::min<size_t>(512, n - i)));
+  }
+  const size_t lat = size_t(punch_engine_latency_frames(e));
+  s.L.erase(s.L.begin(), s.L.begin() + long(lat)); s.L.resize(n, 0.f);
+  s.R.erase(s.R.begin(), s.R.begin() + long(lat)); s.R.resize(n, 0.f);
+  return s;
+}
+static void fft(std::vector<std::complex<double>>& a) {
+  const size_t n = a.size();
+  for (size_t i = 1, j = 0; i < n; ++i) {
+    size_t bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) std::swap(a[i], a[j]);
+  }
+  for (size_t len = 2; len <= n; len <<= 1) {
+    const std::complex<double> wl = std::polar(1.0, -2 * kPi / double(len));
+    for (size_t i = 0; i < n; i += len) {
+      std::complex<double> w(1);
+      for (size_t j = 0; j < len / 2; ++j) {
+        const auto u = a[i + j], v = a[i + j + len / 2] * w;
+        a[i + j] = u + v;
+        a[i + j + len / 2] = u - v;
+        w *= wl;
+      }
+    }
+  }
+}
+}  // namespace shtest
+
+TEST(bass_shaker_bit_exact_when_off) {
+  const auto in = pinkStereo(48000 * 2, -14.f, 11);
+  BassShaker sh;
+  sh.prepare(48000, 2);
+  auto a = in;
+  runStereo(sh, a);
+  CHECK(a == in);
+  sh.setParams({0.7f, 0.f, -1.f, 0.f, 1.f});
+  auto b = in;
+  runStereo(sh, b);
+  CHECK(b != in);
+  sh.setParams({});
+  auto c = in;
+  runStereo(sh, c);  // glides out
+  auto d = in;
+  runStereo(sh, d);
+  CHECK(d == in);
+  CHECK(sh.idle());
+  // Through the engine: Shaker mode at Strength 0 is the plain chain.
+  Engine e1, e2;
+  e1.edit().bassShaker = true;
+  e1.edit().eq.numBands = 1;
+  e1.edit().eq.bands[0] = {FilterType::Bell, 1000, 2, 1, true};
+  e2.edit() = e1.edit();
+  e2.edit().bassShaker = false;
+  e1.prepare(48000, 2, 512);
+  e2.prepare(48000, 2, 512);
+  auto x = in, y = in;
+  e1.processInterleaved(x.data(), x.data(), 2, 48000);
+  e2.processInterleaved(y.data(), y.data(), 2, 48000);
+  CHECK(x == y);
+}
+
+TEST(bass_shaker_amount_step_has_no_jumps) {
+  BassShaker sh;
+  sh.prepare(48000, 2);
+  const int n = 48000 * 2;
+  std::vector<float> l(static_cast<size_t>(n)), r(static_cast<size_t>(n));
+  for (int i = 0; i < n; ++i) {
+    const double t = i / 48000.0;
+    const double ph = std::fmod(t, 0.5);  // kicks keep the dynamics moving
+    l[size_t(i)] = r[size_t(i)] = float(0.3 * std::sin(2 * std::numbers::pi * 60 * t) +
+                                        0.4 * std::exp(-ph / 0.12) * std::sin(2 * std::numbers::pi * 50 * ph));
+  }
+  const auto l0 = l;
+  double maxJump = 0, maxChange = 0, steadyJump = 0;
+  float prev = 0.f;
+  bool stepped = false;
+  for (int s = 0; s < n; s += 256) {
+    if (s >= n / 2 && !stepped) {
+      sh.setParams({1.f, 0.f, -1.f, 0.f, 1.f});  // 0 -> 1 in one go
+      stepped = true;
+    }
+    float* ch[2] = {l.data() + s, r.data() + s};
+    sh.process(ch, 2, std::min(256, n - s));
+    for (int i = s; i < std::min(n, s + 256); ++i) {
+      const float d = l[size_t(i)] - l0[size_t(i)];  // what the stage changed
+      const double j = std::fabs(d - prev);
+      if (i >= n / 2 && i < n / 2 + 4800) maxJump = std::max(maxJump, j);  // the 100 ms after the step
+      if (i >= n - 24000) steadyJump = std::max(steadyJump, j);             // settled at 1
+      maxChange = std::max(maxChange, double(std::fabs(d)));
+      prev = d;
+    }
+  }
+  std::printf("    largest sample-to-sample step of the change: %.4f after the step, %.4f settled (change up to %.3f)\n",
+              maxJump, steadyJump, maxChange);
+  CHECK(maxChange > 0.05);
+  CHECK(maxJump <= 1.2 * steadyJump);  // no click: never steeper than the settled sound
+  bool finite = true;
+  for (float v : l) finite &= std::isfinite(v);
+  CHECK(finite);
+}
+
+TEST(bass_shaker_finite_no_denormals_44k_192k) {
+  for (double fs : {44100.0, 192000.0}) {
+    Engine e;
+    e.edit().bassShaker = true;
+    e.edit().bass = {1.f, 110.f, 4.f, true};
+    e.edit().limiter.enabled = true;
+    e.prepare(fs, 2, 512);
+    const int n = int(fs) * 3;
+    std::vector<float> buf(size_t(n) * 2);
+    auto noise = pinkStereo(n, -10.f, 9);
+    for (int i = 0; i < n; ++i)
+      for (int c = 0; c < 2; ++c)
+        buf[size_t(i) * 2 + size_t(c)] = i < n / 2 ? 1.5f * float(std::sin(2 * std::numbers::pi * 45 * i / fs)) +
+                                                         noise[size_t(i) * 2 + size_t(c)]
+                                                   : 0.f;  // then silence: decaying state
+    bool finite = true, subnormal = false;
+    float peak = 0.f;
+    for (int s = 0; s < n; s += 512) {
+      if (s == n / 4) { e.edit().bass.amount = 0.3f; e.edit().shaker.paceBpm = 95.f; e.publish(); }
+      const int m = std::min(512, n - s);
+      e.processInterleaved(&buf[size_t(s) * 2], &buf[size_t(s) * 2], 2, m);
+    }
+    for (float v : buf) {
+      finite &= std::isfinite(v);
+      subnormal |= std::fpclassify(v) == FP_SUBNORMAL;
+      peak = std::max(peak, std::fabs(v));
+    }
+    CHECK(finite);
+    CHECK(!subnormal);
+    CHECK(peak < 1.f);  // the limiter held it
+    // Hostile input: NaN/Inf must not latch.
+    std::vector<float> bad(1024, std::numeric_limits<float>::quiet_NaN());
+    e.processInterleaved(bad.data(), bad.data(), 2, 512);
+    std::vector<float> ok(1024, 0.1f);
+    e.processInterleaved(ok.data(), ok.data(), 2, 512);
+    bool fin2 = true;
+    for (float v : ok) fin2 &= std::isfinite(v);
+    CHECK(fin2);
+  }
+}
+
+// R&D thresholds (harness, run 8): punchy, no mid pumping, no junk in the
+// vocal band, at the default Strength.
+TEST(bass_shaker_regression_thresholds) {
+  using namespace shtest;
+  const double secs = 12;
+  const size_t n = size_t(secs * kFs);
+  // A (quiet): kick every beat + 808 + steady vocal-band tones, -12 dB.
+  {
+    Buf m(n, 0.f);
+    const double notes[] = {55, 49, 41.2};
+    int k = 0;
+    for (size_t o : onsets(secs)) {
+      addKick(m, o, 0.6f);
+      if (k % 4 == 0) add808(m, o, notes[(k / 4) % 3], 4 * 0.5 - 0.02, 0.45f);
+      ++k;
+    }
+    St s{m, m};
+    for (size_t i = 0; i < n; ++i) {
+      const double t = double(i) / kFs;
+      const float v = 0.08f * float(std::sin(2 * kPi * 431 * t) + std::sin(2 * kPi * 1013 * t) + std::sin(2 * kPi * 2311 * t));
+      s.L[i] += v;
+      s.R[i] += v;
+    }
+    normPeak(s, 0.89f * 0.25f);
+    PunchEngine* e = bassShake(0.55);
+    const St o = render(e, s);
+    punch_engine_destroy(e);
+    const Buf li = lr4(mono(s), FilterType::LowPass, 120), lo = lr4(mono(o), FilterType::LowPass, 120);
+    double ti = 0, to = 0, si = 0, so = 0;
+    for (size_t on : onsets(secs)) {
+      if (on < size_t(2.25 * kFs) || on > n - size_t(0.6 * kFs)) continue;
+      ti += pw(li, on, on + size_t(0.03 * kFs)); to += pw(lo, on, on + size_t(0.03 * kFs));
+      si += pw(li, on + size_t(0.15 * kFs), on + size_t(0.45 * kFs)); so += pw(lo, on + size_t(0.15 * kFs), on + size_t(0.45 * kFs));
+    }
+    const double punchIndex = (dB(to) - dB(ti)) - (dB(so) - dB(si));
+    std::printf("    punch index (transient - sustain lift) %.2f dB\n", punchIndex);
+    CHECK(punchIndex > 0.0);
+  }
+  // B (hot): pink noise + kicks: the 600 Hz-3 kHz band must not swing.
+  {
+    Buf m(n, 0.f);
+    for (size_t o : onsets(secs)) addKick(m, o, 0.7f);
+    St s{m, m};
+    Pink pl, pr;
+    for (size_t i = 0; i < n; ++i) {
+      const float c = pl.next(), d = pr.next();
+      s.L[i] += 0.12f * (0.8f * c + 0.2f * d);
+      s.R[i] += 0.12f * (0.8f * c + 0.2f * d * -1 + 0.4f * d);
+    }
+    normPeak(s, 0.89f);
+    PunchEngine* e = bassShake(0.55);
+    const St o = render(e, s);
+    punch_engine_destroy(e);
+    const Buf mi = lr4(lr4(mono(s), FilterType::HighPass, 600), FilterType::LowPass, 3000);
+    const Buf mo = lr4(lr4(mono(o), FilterType::HighPass, 600), FilterType::LowPass, 3000);
+    std::vector<double> ratio;
+    for (size_t a = size_t(2.25 * kFs); a + 480 <= n - size_t(0.6 * kFs); a += 480)
+      ratio.push_back(dB(pw(mo, a, a + 480)) - dB(pw(mi, a, a + 480)));
+    std::sort(ratio.begin(), ratio.end());
+    const double swing = ratio[size_t(0.98 * double(ratio.size() - 1))] - ratio[size_t(0.02 * double(ratio.size() - 1))];
+    std::printf("    600 Hz-3 kHz swing (p98-p2) %.2f dB\n", swing);
+    CHECK(swing < 1.0);
+  }
+  // D: steady 55 + 65.4 Hz minor third under a 1 kHz tone: whatever lands in
+  // 300 Hz-3 kHz that isn't the tone or a bass harmonic is junk.
+  {
+    const size_t nd = size_t(6 * kFs);
+    St s{Buf(nd), Buf(nd)};
+    for (size_t i = 0; i < nd; ++i) {
+      const double t = double(i) / kFs;
+      s.L[i] = s.R[i] = 0.35f * float(std::sin(2 * kPi * 55 * t) + std::sin(2 * kPi * 65.41 * t)) + 0.06f * float(std::sin(2 * kPi * 1013 * t));
+    }
+    PunchEngine* e = bassShake(0.55);
+    const St o = render(e, s);
+    punch_engine_destroy(e);
+    const Buf mo = mono(o);
+    const size_t N = size_t(1) << 17, at = size_t(1.5 * kFs);
+    std::vector<std::complex<double>> a(N);
+    for (size_t i = 0; i < N; ++i) {
+      const double t = double(i) / double(N - 1);
+      const double w = 0.35875 - 0.48829 * std::cos(2 * kPi * t) + 0.14128 * std::cos(4 * kPi * t) - 0.01168 * std::cos(6 * kPi * t);
+      a[i] = mo[at + i] * w;
+    }
+    fft(a);
+    const double hz = kFs / double(N);
+    std::vector<char> known(N / 2, 0);
+    auto mark = [&](double f, int w) {
+      for (long b = long(std::lround(f / hz)) - w; b <= long(std::lround(f / hz)) + w; ++b)
+        if (b >= 0 && b < long(N / 2)) known[size_t(b)] = 1;
+    };
+    for (int k = 1; k * 55 < 3200; ++k) mark(55.0 * k, 5);
+    for (int k = 1; k * 65.41 < 3200; ++k) mark(65.41 * k, 5);
+    mark(1013, 6);
+    double tone = 0, junk = 0;
+    for (long b = long(std::lround(1013 / hz)) - 4; b <= long(std::lround(1013 / hz)) + 4; ++b) tone += std::norm(a[size_t(b)]);
+    for (size_t b = size_t(300 / hz); b < size_t(3000 / hz); ++b)
+      if (!known[b]) junk += std::norm(a[b]);
+    const double junkDb = 10 * std::log10(junk / tone);
+    std::printf("    vocal-band junk %.1f dBr the 1 kHz tone\n", junkDb);
+    CHECK(junkDb < -25.0);
+  }
+}
+
+TEST(bass_shaker_c_api_and_pace) {
+  PunchEngine* e = punch_engine_create();
+  punch_set_bass(e, true, 0.55f, 110);
+  punch_set_bass_mode(e, 1);
+  punch_set_bass_shaker(e, 3.f, 1.6f);
+  punch_set_bass_pace(e, 90.f);
+  punch_engine_prepare(e, 48000, 2, 512);
+  punch_engine_publish(e);
+  std::vector<float> buf(512 * 2, 0.f);
+  for (int k = 0; k < 400; ++k) {
+    for (int i = 0; i < 512; ++i) buf[size_t(i) * 2] = buf[size_t(i) * 2 + 1] = 0.3f * float(std::sin((k * 512 + i) * 0.007));
+    punch_process_interleaved(e, buf.data(), buf.data(), 2, 512);
+  }
+  for (float v : buf) CHECK(std::isfinite(v));
+  CHECK_NEAR(punch_bass_pace_bpm(e), 90.0, 0.5);
+  CHECK_NEAR(punch_bass_shaker_strength_scale(), 1.4, 1e-6);
+  // Automatic pace from kicks at 100 BPM (no tracker running).
+  punch_set_bass_pace(e, 0.f);
+  punch_engine_publish(e);
+  const int beat = int(48000 * 0.6);
+  for (int k = 0; k < 400; ++k) {
+    for (int i = 0; i < 512; ++i) {
+      const int t = (k * 512 + i) % beat;
+      const double s = t / 48000.0;
+      buf[size_t(i) * 2] = buf[size_t(i) * 2 + 1] = float(0.5 * std::exp(-s / 0.1) * (1 - std::exp(-s / 0.001)) * std::sin(2 * std::numbers::pi * 50 * s));
+    }
+    punch_process_interleaved(e, buf.data(), buf.data(), 2, 512);
+  }
+  std::printf("    pace from 100 BPM kicks: %.1f BPM\n", double(punch_bass_pace_bpm(e)));
+  CHECK_NEAR(punch_bass_pace_bpm(e), 100.0, 3.0);
   punch_engine_destroy(e);
 }
 

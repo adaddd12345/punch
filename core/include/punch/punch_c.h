@@ -46,6 +46,22 @@ void punch_set_band(PunchEngine* e, int index, PunchFilterType type, double freq
 void punch_set_preamp_db(PunchEngine* e, float db);
 void punch_set_auto_preamp(PunchEngine* e, bool on);
 void punch_set_bass(PunchEngine* e, bool enabled, float amount, float cutoff_hz);
+/* Bass stage for punch_set_bass's amount (Strength): 0 Classic (psychoacoustic
+ * harmonics, cutoff_hz used), 1 Bass Shaker (dynamic punch + body shelves,
+ * headroom-aware, clean harmonics, mono lows; cutoff_hz ignored). */
+void punch_set_bass_mode(PunchEngine* e, int mode);
+/* Bass Shaker extras: boost_db = gain after the stage (Boost + automatic
+ * lifts, for its headroom), harmonics = harmonic mix scale (1 = default,
+ * more for small built-in speakers, 0..3). */
+void punch_set_bass_shaker(PunchEngine* e, float boost_db, float harmonics);
+/* Bass Shaker pace (its release times follow the beat): BPM, 0 = automatic
+ * (tempo tracker when sure, else the kicks, else 120). */
+void punch_set_bass_pace(PunchEngine* e, float bpm);
+/* Pace in use (BPM). Any thread. */
+float punch_bass_pace_bpm(const PunchEngine* e);
+/* Strength -> the Shaker's internal S (S = Strength * this); the Shaker's
+ * peak lift is about S * 3 dB for the safety-limit estimate. */
+float punch_bass_shaker_strength_scale(void);
 void punch_set_stereo_width(PunchEngine* e, bool enabled, float width);
 void punch_set_crossfeed(PunchEngine* e, bool enabled, float amount);
 void punch_set_output_gain_db(PunchEngine* e, float db);

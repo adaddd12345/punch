@@ -390,7 +390,7 @@ struct BentoView: View {
                   format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
           if $0 != controller.settings.bass { controller.settings.bass = $0 }
         } accessory: { EmptyView() }
-        .pointerHint(Caption.strength(bass, scrub: true), live: true)
+        .pointerHint(Caption.strength(bass, scrub: true, shaker: s.character.bassStage == .shaker), live: true)
       }
       .pointerHintTint(ink(tint(.bass)))
       // Also follows a drag of the EQ line (Boost).
@@ -414,7 +414,7 @@ struct BentoView: View {
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                     range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
                     param: controller.param("strength", \.bass, step: 0.01))
-        .pointerHint(Caption.strength(s.bass, scrub: false), live: true, track: false)
+        .pointerHint(Caption.strength(s.bass, scrub: false, shaker: s.character.bassStage == .shaker), live: true, track: false)
       // Follows a drag of the EQ line (Boost) as it happens.
       LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
         LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
@@ -1534,7 +1534,7 @@ struct BentoTint: Equatable {
   /// presets, Custom) hashes its name to one, the same every launch.
   static func forPreset(_ name: String?) -> BentoTint {
     switch name {
-    case "Bass Shake", "Bass Boost", "Basic Enhance": return .butter
+    case "Bass Shake", "Bass Shake Classic", "Bass Boost", "Basic Enhance": return .butter
     case "Laptop", "Treble", "Ambience": return .aqua
     case "Vocal", "Podcast": return .mint
     case "Flat", "Loudness", "Underground Rap", nil: return .sand

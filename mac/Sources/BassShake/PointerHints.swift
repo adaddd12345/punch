@@ -700,9 +700,11 @@ enum Caption {
   static let resetTap = "Double-click to reset"
 
   /// Strength. `scrub`: the Bento drag-the-number tile (double-click resets);
-  /// otherwise the classic slider.
-  static func strength(_ bass: Double, scrub: Bool) -> PointerHint {
-    PointerHint("Strength", does: "Tricks your ear into hearing deep bass, even on small speakers.",
+  /// otherwise the classic slider. `shaker`: the preset uses the Bass Shaker
+  /// (punch on hits, body, clean harmonics) instead of the harmonic enhancer.
+  static func strength(_ bass: Double, scrub: Bool, shaker: Bool = false) -> PointerHint {
+    PointerHint("Strength", does: shaker ? "How hard kicks punch and how full the bass sits."
+                                         : "Tricks your ear into hearing deep bass, even on small speakers.",
                 gestures: scrub ? [drag, resetTap] : [])
   }
 
@@ -803,7 +805,8 @@ enum Caption {
     // Strength and ends Study/Sleep; Boost, Limit, Studio Ears and Loudness
     // keep working.
     "Flat": "Clears EQ and Strength; Boost, Limit, Studio Ears and Loudness still apply.",
-    "Bass Shake": "Deep, punchy bass with a little extra sparkle on top.",
+    "Bass Shake": "Bass that hits on kicks and eases off under long notes.",
+    "Bass Shake Classic": "The original Bass Shake: a fixed bass lift plus harmonics.",
     "Bass Boost": "Lots more low bass; everything else stays the same.",
     "Laptop": "Helps small laptop speakers sound fuller and less thin.",
     "Vocal": "Makes voices clearer and easier to follow.",
