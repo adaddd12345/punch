@@ -81,6 +81,7 @@ struct PopoverView: View {
     .pointerHintRoot(enabled: controller.settings.pointerHints)
     // Power Saver for everything inside; animation pauses while the window is covered.
     .drawBudgetRoot()
+    .environment(\.artworkStyle, controller.settings.artworkStyle)
   }
 
   private var labels: LabelLevel { controller.settings.labelLevel }
@@ -841,6 +842,11 @@ struct PopoverView: View {
             Section("Seasonal") {
               ForEach(BackgroundStyle.allCases.filter(\.festive)) { Text($0.title).tag($0) }
             }
+          }
+          // What's Playing art: the cover, or a sleeve with a record peeking out.
+          Picker("Artwork Style", selection: Binding(get: { controller.settings.artworkStyle },
+                                                      set: { controller.settings.artworkStyle = $0 })) {
+            ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
           }
           Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
                                               set: { controller.settings.waveform = $0 }))

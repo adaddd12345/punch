@@ -539,6 +539,7 @@ struct NowEntryArtButton: View {
   let size: CGFloat
   @State private var hover = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.artworkStyle) private var artStyle
 
   var body: some View {
     let app = entry.app
@@ -563,16 +564,17 @@ struct NowEntryArtButton: View {
       label = playing ? "Pause \(app.name)" : "Play \(app.name)"
     }
     let showGlyph = hover || mutedHere || (!muteGlyph && !playing)
-    let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+    let shape = artStyle.plate(size)
     let hint = locked
       ? PointerHint(app.name, does: "Pausing needs Accessibility; this opens \(app.name) instead.")
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
                         chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
                         browser: app.isBrowser)
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
-      NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: size)
+      // Its record stays still (Vinyl Peek): only the hero's turns, one motion at a time.
+      NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: size, paused: !playing)
         .nowPlayingBars(model, entry, art: size)
-        .overlay {
+        .onSleeve(size: size) {
           if showGlyph {
             ZStack {
               shape.fill(muted && (mutedHere || muteGlyph) ? Color.orange.opacity(0.85) : Color.black.opacity(0.42))
@@ -583,7 +585,7 @@ struct NowEntryArtButton: View {
             .transition(.opacity)
           }
         }
-        .contentShape(shape)
+        .contentShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
     }
     .buttonStyle(BentoPressStyle())
     .fixedSize()
@@ -638,7 +640,7 @@ struct NowDrawerTile: View {
       ZStack(alignment: .leading) {
         ForEach(Array(covers.enumerated().reversed()), id: \.element.id) { i, e in
           let t = model.describe(e)
-          NowArt(artwork: t.artwork, favicon: t.favicon, icon: model.icon(e.app), size: mini)
+          NowArt(artwork: t.artwork, favicon: t.favicon, icon: model.icon(e.app), size: mini, style: .cover)
             .modifier(NowMorph(id: e.id))
             .scaleEffect(1 - CGFloat(i) * 0.08)
             .opacity(1 - Double(i) * 0.12)
@@ -754,13 +756,20 @@ struct LoadingLine: ViewModifier {
 struct LoadingArt: ViewModifier {
   let loading: Bool
   let size: CGFloat
+  @Environment(\.artworkStyle) private var style
 
   func body(content: Content) -> some View {
     content
       .opacity(loading ? 0 : 1)
       .overlay {
-        RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
-          .fill(Color.primary.opacity(NowLoading.ink))
+        Group {
+          if style.resolved(for: size) == .vinyl {
+            VinylSkeleton(size: size)
+          } else {
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+              .fill(Color.primary.opacity(NowLoading.ink))
+          }
+        }
           .modifier(LoadingBreath(active: loading))
           .frame(width: size, height: size)
           .opacity(loading ? 1 : 0)
