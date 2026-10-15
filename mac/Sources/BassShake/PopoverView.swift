@@ -949,7 +949,10 @@ struct PopoverView: View {
           }
           Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
                                                    set: { controller.settings.setBackground($0) })) {
-            ForEach(BackgroundStyle.allCases.filter { !$0.scene }) { Text($0.title).tag($0) }
+            ForEach(BackgroundStyle.allCases.filter { !$0.scene && !$0.morph }) { Text($0.title).tag($0) }
+            Section("Morphing") {
+              ForEach(BackgroundStyle.allCases.filter(\.morph)) { Text($0.title).tag($0) }
+            }
             Section("Seasonal") {
               ForEach(BackgroundStyle.allCases.filter(\.festive)) { Text($0.title).tag($0) }
             }

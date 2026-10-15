@@ -482,7 +482,12 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   // Themes: Wall Street (trading-floor wash, drifting currency marks and a ticker
   // tape of the app's own state; Festive.swift + TickerTape.swift).
   case wallStreet
+  // Morphing: Freezing (new) and Ember (raw value kept, so a saved Ember still loads)
+  // are animated mesh gradients, nothing but colour (MorphBackground.swift).
+  case freezing
   var id: String { rawValue }
+  /// Listed under Morphing.
+  var morph: Bool { self == .freezing || self == .ember }
   /// Listed under Seasonal.
   var festive: Bool {
     switch self {
@@ -501,6 +506,7 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
     case .coffee: return "Coffee Brown"
     case .irishGreen: return "Irish Green"
     case .ember: return "Ember"
+    case .freezing: return "Freezing"
     case .violet: return "Midnight Violet"
     case .rose: return "Rose Quartz"
     case .arctic: return "Arctic Teal"
