@@ -181,6 +181,25 @@ final class LiveDrawer {
     setLift(0)   // the popup glides back down to the Dock
   }
 
+  /// After the glide: if the popup couldn't actually rise far enough (macOS
+  /// keeps a popover on screen), the tray would sit behind the Dock. Then it
+  /// goes beside instead.
+  private func verifyLift() {
+    verifyWork?.cancel()
+    let work = DispatchWorkItem { [weak self] in
+      guard let self, let panel = self.panel, panel.isVisible, self.placement == .liftedBelow,
+            let vis = (panel.parent ?? panel).screen?.visibleFrame else { return }
+      if panel.frame.minY < vis.minY + 2 {
+        self.placement = .beside
+        self.noRoom = true
+        self.reposition()
+      }
+    }
+    verifyWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+  }
+  private var verifyWork: DispatchWorkItem?
+
   private func setLift(_ v: CGFloat) {
     guard abs(v - lifted) > 0.5 else { return }
     lifted = v
@@ -199,8 +218,10 @@ final class LiveDrawer {
     // Under a Dock popup: lifted by the tray, its top must stay on screen.
     let liftBy = h + liftGap
     let fitsLifted: Bool = {
-      guard liftable, let vis, let host else { return false }
-      return host.frame.maxY - popupLift() + liftBy <= vis.maxY - 4
+      // The popup's content (not its window, which carries shadow and arrow
+      // margins) must stay on screen once lifted, with a little air.
+      guard liftable, let vis else { return false }
+      return r.maxY - popupLift() + liftBy <= vis.maxY - 12
     }()
     if decide {
       decidedOn = host?.screen
@@ -217,6 +238,7 @@ final class LiveDrawer {
       }
     }
     setLift(placement == .liftedBelow ? liftBy : 0)
+    if placement == .liftedBelow { verifyLift() }
     switch placement {
     case .below:
       panel.setFrameOrigin(NSPoint(x: r.minX, y: below))
