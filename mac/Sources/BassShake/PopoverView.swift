@@ -192,6 +192,16 @@ struct PopoverView: View {
       mutedNotice
       if size != .mini {
         Divider().opacity(0.5)
+          // Wall Street: a ticker tape in the gap above the footer (an overlay, so
+          // nothing moves), edge to edge across the popup.
+          .overlay {
+            if controller.settings.backgroundStyle == .wallStreet {
+              TickerTape(controller: controller)
+                .frame(width: 360, height: TickerTape.height)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+          }
         footer
       }
     }
@@ -919,10 +929,13 @@ struct PopoverView: View {
               .help("Off while Power Saver or Reduce Transparency is on")
           }
           Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
-                                                   set: { controller.settings.backgroundStyle = $0 })) {
-            ForEach(BackgroundStyle.allCases.filter { !$0.festive }) { Text($0.title).tag($0) }
+                                                   set: { controller.settings.setBackground($0) })) {
+            ForEach(BackgroundStyle.allCases.filter { !$0.scene }) { Text($0.title).tag($0) }
             Section("Seasonal") {
               ForEach(BackgroundStyle.allCases.filter(\.festive)) { Text($0.title).tag($0) }
+            }
+            Section("Themes") {
+              ForEach(BackgroundStyle.allCases.filter(\.theme)) { Text($0.title).tag($0) }
             }
           }
           // What's Playing art: the cover, or a sleeve with a record peeking out.
@@ -933,7 +946,7 @@ struct PopoverView: View {
           // What's drawn behind the EQ curve: the scope (time), the
           // analyser (frequency, on the EQ's own axis), or nothing.
           Picker("EQ Visual", selection: Binding(get: { controller.settings.eqVisual },
-                                                 set: { controller.settings.eqVisual = $0 })) {
+                                                 set: { controller.settings.setEQVisualByHand($0) })) {
             ForEach(EQVisual.allCases) { Text($0.title).tag($0) }
           }
           Picker("Scope Color", selection: Binding(get: { controller.settings.scopeColor },

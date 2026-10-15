@@ -16,7 +16,7 @@ struct PopupBackground: View {
   @Environment(\.drawPaused) private var drawPaused
 
   var body: some View {
-    if style.festive {
+    if style.scene {
       // Seasonal scenes (Festive.swift): a still frame under Power Saver and Reduce Motion.
       FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion, clock: clock)
         .allowsHitTesting(false)
@@ -56,11 +56,13 @@ private struct PopupBackdrop: ViewModifier {
 
   func body(content: Content) -> some View {
     content
+      // The ticker tape (Wall Street) rides the same clock.
+      .environment(\.festiveClock, clock)
       .background(PopupBackground(style: style, active: active, clock: clock))
       // An overlay takes no part in layout. Left out when the scene is a still frame
       // (Power Saver / Reduce Motion), where a frozen particle would sit on the text.
       .overlay {
-        if style.festive && !(powerSaver || reduceMotion) {
+        if style.scene && !(powerSaver || reduceMotion) {
           FestiveForeground(style: style, clock: clock)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
@@ -79,7 +81,7 @@ struct AmbientPalette {
 
   static func `for`(_ style: BackgroundStyle) -> AmbientPalette? {
     switch style {
-    case .system, .frost, .pumpkin, .lunar, .sakura: return nil
+    case .system, .frost, .pumpkin, .lunar, .sakura, .wallStreet: return nil
     case .ambientBlue:
       return .init(dark: c(0.02, 0.05, 0.14), light: c(0.86, 0.91, 1.0),
                    plumes: [c(0.10, 0.42, 1.00), c(0.05, 0.70, 1.00), c(0.20, 0.30, 0.95), c(0.00, 0.55, 0.90), c(0.45, 0.65, 1.00)])
