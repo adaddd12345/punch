@@ -874,11 +874,11 @@ struct PopoverView: View {
           Text("Open/Close Anywhere: \(GlobalHotkey.openLabel)")
           if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
         }
+        // Remote control between Macs: both switches and pairing live in this one panel.
+        Button("Connect Another Mac…") { reshuffle.set(false); withAnimation { showRemote = true } }
         Menu("Presets & Settings") {
           Button("My Sounds…") { reshuffle.set(false); withAnimation { showMySounds = true } }
           Button("Edit Layout…") { reshuffle.set(false); withAnimation { showLayoutEditor = true } }
-          // Remote control between Macs: both switches and pairing live in this one panel.
-          Button("Other Macs…") { reshuffle.set(false); withAnimation { showRemote = true } }
           Toggle("Show Mac Volume", isOn: Binding(get: { controller.settings.showMacVolume },
                                                   set: { controller.settings.showMacVolume = $0 }))
           // Stored as `pointerHints` so saved settings keep loading.
@@ -1204,6 +1204,22 @@ final class PopupSpace: ObservableObject {
 /// One ScrollView, as tall as its content up to the space; not ViewThatFits,
 /// which rebuilt the whole block column (~35 ms) whenever any text in it
 /// changed width, so a Strength scrub re-made every tile per pointer event.
+/// The popup's overflow scroller: the native overlay scroller at the small
+/// control size (the default regular one looked oversized in a 360 pt popup).
+private struct SlimScroller: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView { Probe() }
+  func updateNSView(_ nsView: NSView, context: Context) {}
+  final class Probe: NSView {
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      guard let sv = enclosingScrollView else { return }
+      sv.scrollerStyle = .overlay
+      sv.verticalScroller?.controlSize = .small
+      sv.autohidesScrollers = true
+    }
+  }
+}
+
 struct OverflowScroll<Content: View>: View {
   @ViewBuilder let content: () -> Content
   @State private var contentHeight: CGFloat?
@@ -1216,6 +1232,7 @@ struct OverflowScroll<Content: View>: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
           if h != contentHeight { contentHeight = h }
         }
+        .background(SlimScroller())
     }
     .scrollBounceBehavior(.basedOnSize)
     // Fitting, it draws like a plain stack (glows and a dragged block aren't cut off).

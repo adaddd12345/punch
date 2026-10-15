@@ -30,8 +30,8 @@ struct LayoutSection: Identifiable, Equatable {
                                        tint: .steel, height: 32)
 
   // Both layouts, Full and Compact: paired Macs nearby (Remote.swift).
-  static let remoteMacs = LayoutSection(key: "remote.macs", name: "Other Macs", symbol: "laptopcomputer",
-                                        tint: .steel, height: 56, when: "With Control Other Macs on and a paired Mac nearby")
+  static let remoteMacs = LayoutSection(key: "remote.macs", name: "Connected Mac", symbol: "laptopcomputer",
+                                        tint: .steel, height: 56, when: "With Control Another Mac From Here on and a paired Mac nearby")
 
   // Bento, top to bottom.
   static let bentoHero = LayoutSection(key: "bento.hero", name: "Top Tile", symbol: "power", tint: .butter,

@@ -371,7 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   private var lastProblem: String?
 
   private func closeIfUnpinned() {
-    if Date() < suppressResignCloseUntil { return }
+    if Date() < suppressResignCloseUntil || Date() < PopoverHold.until { return }
     if popover.isShown && !controller.pinned { closePopover() }
   }
 
@@ -617,7 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     removeOutsideClickMonitors()
     let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
     if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
-      guard let self, !self.controller.pinned else { return }
+      guard let self, !self.controller.pinned, Date() >= PopoverHold.until else { return }
       // A press on our Dock tile: the reopen its mouseUp sends must not reopen it.
       let m = NSEvent.mouseLocation
       if self.controller.settings.showInDock, let s = DockGeometry.screen(at: m), DockGeometry.isNearDock(m, on: s) {
@@ -1013,3 +1013,11 @@ struct ShakerIcon: View {
 }
 
 
+
+
+/// Keeps the popup open while a system prompt it caused (Local Network) is up:
+/// answering the prompt takes focus and clicks outside, which would close it.
+enum PopoverHold {
+  static var until = Date.distantPast
+  static func forPrompt(_ seconds: TimeInterval = 20) { until = Date().addingTimeInterval(seconds) }
+}

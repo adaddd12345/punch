@@ -514,10 +514,10 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
   static func text(for r: RemoteRefusal, name: String, during phase: Phase) -> String? {
     switch r {
     case .version: return "Update The Bass Shaker on both Macs to the same version."
-    case .notPairing: return "Open ⋯ › Presets & Settings › Other Macs… on \(name) to show its code."
+    case .notPairing: return "Open ⋯ › Connect Another Mac… on \(name) to show its code."
     case .busy: return phase == .pairing ? "\(name) is pairing with another Mac. Try again in a moment." : nil
     case .badCode: return "That code didn't match. \(name) now shows a new one."
-    case .notPaired, .revoked: return "\(name) no longer accepts this Mac. Pair again in Other Macs."
+    case .notPaired, .revoked: return "\(name) no longer accepts this Mac. Pair again in Connect Another Mac."
     case .rateLimited: return "Too many wrong codes. Wait a minute, then try the new code."
     case .notLocal: return "\(name) only accepts Macs on its own network."
     case .keyChanged: return "This isn't the \(name) you paired. Revoke it and pair again."

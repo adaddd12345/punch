@@ -377,7 +377,7 @@ struct RemotePanelView: View {
     HStack(spacing: 8) {
       Image(systemName: "laptopcomputer").font(.system(size: 12, weight: .semibold))
       VStack(alignment: .leading, spacing: 0) {
-        Text("Other Macs").font(.system(size: 13, weight: .bold, design: .rounded))
+        Text("Connect Another Mac").font(.system(size: 13, weight: .bold, design: .rounded))
         Text(remote.localName.isEmpty ? "Control The Bass Shaker on your other Macs" : "This Mac: \(remote.localName)")
           .font(.system(size: 10, weight: .medium, design: .rounded))
           .foregroundStyle(.secondary)
@@ -396,8 +396,11 @@ struct RemotePanelView: View {
   private var allowCard: some View {
     BentoTile(tint: .steel) {
       VStack(alignment: .leading, spacing: 6) {
-        switchRow("Allow Remote Control", "Paired Macs can change this Mac's sound and volume.",
-                  isOn: Binding(get: { s.remoteAllow }, set: { controller.settings.remoteAllow = $0 }))
+        switchRow("Let Another Mac Control This One", "Paired Macs can change this Mac's sound and volume.",
+                  isOn: Binding(get: { s.remoteAllow }, set: { on in
+                    if on { PopoverHold.forPrompt() }
+                    controller.settings.remoteAllow = on
+                  }))
         if s.remoteAllow {
           if remote.hostStatus == .denied {
             LocalNetworkNote(remote: remote)
@@ -444,8 +447,11 @@ struct RemotePanelView: View {
   private var controlCard: some View {
     BentoTile(tint: .steel) {
       VStack(alignment: .leading, spacing: 6) {
-        switchRow("Control Other Macs", "Paired Macs nearby get a tile in the popup.",
-                  isOn: Binding(get: { s.remoteControl }, set: { controller.settings.remoteControl = $0 }))
+        switchRow("Control Another Mac From Here", "Paired Macs nearby get a tile in the popup.",
+                  isOn: Binding(get: { s.remoteControl }, set: { on in
+                    if on { PopoverHold.forPrompt() }
+                    controller.settings.remoteControl = on
+                  }))
         if s.remoteControl {
           if remote.browseStatus == .denied {
             LocalNetworkNote(remote: remote)
@@ -454,7 +460,7 @@ struct RemotePanelView: View {
             if pairable.isEmpty {
               HStack(spacing: 6) {
                 ProgressView().controlSize(.mini)
-                Text("Looking for Macs with Allow Remote Control on…")
+                Text("Looking for Macs that allow control…")
                   .font(.system(size: 10))
                   .foregroundStyle(.secondary)
               }
