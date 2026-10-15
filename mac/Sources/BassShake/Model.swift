@@ -780,6 +780,10 @@ struct Settings: Codable, Equatable {
   /// Hidden from Edit Layout; brought back there or in ⋯ › Presets & Settings.
   /// While hidden, a red notice says when the Mac is muted or at 0.
   var showMacVolume = true
+  /// Live Time (Edit Layout, or ⋯ › Presets & Settings › Show Live Time): a slim
+  /// tile at the top with the time in Lights Out's figures (LiveTime.swift).
+  /// One switch for both layouts; off by default.
+  var showLiveTime = false
   /// Mini's hero shows the app you hear most (its icon is play/pause), with
   /// the preset as a small chip under its name. Song and cover only while
   /// What's Playing is on. Nothing playing: Mini looks as it always did.
@@ -911,6 +915,7 @@ struct Settings: Codable, Equatable {
     showInDock = (try? c.decodeIfPresent(Bool.self, forKey: .showInDock)) ?? d.showInDock
     showInMenuBar = (try? c.decodeIfPresent(Bool.self, forKey: .showInMenuBar)) ?? d.showInMenuBar
     showMacVolume = (try? c.decodeIfPresent(Bool.self, forKey: .showMacVolume)) ?? d.showMacVolume
+    showLiveTime = (try? c.decodeIfPresent(Bool.self, forKey: .showLiveTime)) ?? d.showLiveTime
     showPlayingChannel = (try? c.decodeIfPresent(Bool.self, forKey: .showPlayingChannel)) ?? d.showPlayingChannel
     playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume

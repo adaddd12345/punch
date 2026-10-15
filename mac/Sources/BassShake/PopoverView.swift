@@ -1008,6 +1008,9 @@ struct PopoverView: View {
           Button("Edit Layout…") { reshuffle.set(false); withAnimation { showLayoutEditor = true } }
           Toggle("Show Mac Volume", isOn: Binding(get: { controller.settings.showMacVolume },
                                                   set: { controller.settings.showMacVolume = $0 }))
+          // Lights Out's figures as a slim clock tile at the top (off by default).
+          Toggle("Show Live Time", isOn: Binding(get: { controller.settings.showLiveTime },
+                                                 set: { controller.settings.showLiveTime = $0 }))
           // Stored as `pointerHints` so saved settings keep loading.
           Toggle("Tutorial Mode", isOn: Binding(get: { controller.settings.pointerHints },
                                                 set: { controller.settings.pointerHints = $0 }))

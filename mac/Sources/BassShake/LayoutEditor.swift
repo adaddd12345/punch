@@ -7,7 +7,8 @@ import SwiftUI
 // Order: Settings.bentoOrder / classicOrder, changed by holding a block in
 // the popup (Reshuffle.swift) or with each card's up/down arrows here.
 // Mac Volume is the exception: one switch (Settings.showMacVolume) for both
-// layouts and every size, Mini included.
+// layouts and every size, Mini included. Live Time is the other: one switch
+// (Settings.showLiveTime, off by default) for both layouts, Full and Compact.
 
 /// One part of the popup the editor can show or hide.
 struct LayoutSection: Identifiable, Equatable {
@@ -28,6 +29,11 @@ struct LayoutSection: Identifiable, Equatable {
   // as Settings.showMacVolume, not in hiddenSections.
   static let macVolume = LayoutSection(key: "mac.volume", name: "Mac Volume", symbol: "speaker.wave.2.fill",
                                        tint: .steel, height: 32)
+
+  // Both layouts, Full and Compact: the time in Lights Out's figures, or its
+  // time left while it runs (LiveTime.swift). Stored as Settings.showLiveTime.
+  static let liveTime = LayoutSection(key: "live.time", name: "Live Time", symbol: "clock.fill",
+                                      tint: .frost, height: 36, when: "Lights Out: time left")
 
   // Both layouts, Full and Compact: paired Macs nearby (Remote.swift).
   static let remoteMacs = LayoutSection(key: "remote.macs", name: "Connected Mac", symbol: "laptopcomputer",
@@ -67,11 +73,11 @@ struct LayoutSection: Identifiable, Equatable {
   static let classicFooter = LayoutSection(key: "classic.footer", name: "Bottom Bar", symbol: "ellipsis.circle", tint: .graphite,
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
-  /// Default orders, top to bottom: Mac Volume sits right under the EQ.
-  static let bento: [LayoutSection] = [bentoHero, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials, bentoPresets,
+  /// Default orders, top to bottom: Live Time first, Mac Volume right under the EQ.
+  static let bento: [LayoutSection] = [liveTime, bentoHero, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials, bentoPresets,
                                        bentoModes, bentoModeSettings, bentoLightsOut, bentoFooter]
   /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
-  static let classic: [LayoutSection] = [classicHeader, classicNowPlaying, classicEQ, macVolume, remoteMacs, classicMeters,
+  static let classic: [LayoutSection] = [liveTime, classicHeader, classicNowPlaying, classicEQ, macVolume, remoteMacs, classicMeters,
                                          classicSliders, classicPresets, classicModes, classicModeSettings, classicLightsOut,
                                          classicFooter]
 
@@ -123,6 +129,7 @@ extension Settings {
   /// The layout editor hasn't hidden this section.
   func shows(_ section: LayoutSection) -> Bool {
     if section.key == LayoutSection.macVolume.key { return showMacVolume }
+    if section.key == LayoutSection.liveTime.key { return showLiveTime }
     return section.locked != nil || !hiddenSections.contains(section.key)
   }
 }
@@ -143,7 +150,10 @@ struct LayoutEditorView: View {
 
   private var sections: [LayoutSection] { controller.settings.layoutOrder(bento: controller.settings.bento) }
 
-  private var anyHidden: Bool { sections.contains { !controller.settings.shows($0) } }
+  /// Live Time is opt-in (off by default), so Show All leaves it alone.
+  private var anyHidden: Bool {
+    sections.contains { $0.key != LayoutSection.liveTime.key && !controller.settings.shows($0) }
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -224,6 +234,8 @@ struct LayoutEditorView: View {
     guard s.locked == nil else { return }
     if s.key == LayoutSection.macVolume.key {
       controller.settings.showMacVolume.toggle()
+    } else if s.key == LayoutSection.liveTime.key {
+      controller.settings.showLiveTime.toggle()
     } else if let i = controller.settings.hiddenSections.firstIndex(of: s.key) {
       controller.settings.hiddenSections.remove(at: i)
     } else {

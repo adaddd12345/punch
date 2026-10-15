@@ -136,6 +136,51 @@ private struct RollCell: View {
   }
 }
 
+/// Lights Out's clock face, shared with the Live Time tile (LiveTime.swift):
+/// tall compressed figures (CountdownFont, stretched) rolling as they change,
+/// with a small heavy condensed superscript beside them like a clock's PM.
+/// Fits the figures to the width it gets; still under Reduce Motion and Power Saver.
+struct TallClockFace: View {
+  let text: String
+  let sup: String
+  var dim = false
+  /// The figures' height on screen.
+  let height: CGFloat
+  /// Counting down, new figures drop in from above; counting up, they rise.
+  var down = true
+  /// Room kept for the superscript when fitting the figures.
+  var supWidth: CGFloat = 58
+  var supSize: CGFloat = 11
+  /// Previews only.
+  var scrub: (from: String, progress: Double)? = nil
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+
+  var body: some View {
+    GeometryReader { g in
+      // Fit the figures to the tile (an hour adds three characters).
+      let m = CountdownFont.metrics
+      let fit = (g.size.width - supWidth) / max(1, CountdownFont.width(text))
+      let size = min(height / (m.figure * 1.06 * CountdownFont.stretch), fit)
+      HStack(alignment: .top, spacing: 6) {
+        RollingText(text: text, size: size, down: down, animated: !reduceMotion && !powerSaver, scrub: scrub)
+          .scaleEffect(x: 1, y: CountdownFont.stretch, anchor: .top)
+          .foregroundStyle(Color.primary.opacity(dim ? 0.3 : 0.9))
+        Text(sup)
+          .font(.system(size: supSize, weight: .heavy).width(.condensed))
+          .tracking(0.6)
+          .foregroundStyle(Color.primary.opacity(dim ? 0.4 : 0.6))
+          .lineLimit(1)
+          .fixedSize()
+        Spacer(minLength: 0)
+      }
+      .frame(width: g.size.width, height: g.size.height, alignment: .topLeading)
+    }
+    .frame(height: height)
+    .accessibilityElement(children: .combine)
+  }
+}
+
 /// The big clock: what's left (running), the length a chip would start (idle),
 /// or when it ended (done), with a small superscript like a clock's PM.
 struct LightsOutClock: View {
@@ -145,8 +190,6 @@ struct LightsOutClock: View {
   let height: CGFloat
   /// Previews only.
   var scrub: (from: String, progress: Double)? = nil
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.powerSaver) private var powerSaver
   @Environment(\.drawPaused) private var drawPaused
 
   var body: some View {
@@ -164,28 +207,7 @@ struct LightsOutClock: View {
   }
 
   private func face(_ text: String, sup: String, dim: Bool) -> some View {
-    GeometryReader { g in
-      // Fit the figures to the tile (an hour adds three characters).
-      let supW: CGFloat = 58
-      let m = CountdownFont.metrics
-      let fit = (g.size.width - supW) / max(1, CountdownFont.width(text))
-      let size = min(height / (m.figure * 1.06 * CountdownFont.stretch), fit)
-      HStack(alignment: .top, spacing: 6) {
-        RollingText(text: text, size: size, animated: !reduceMotion && !powerSaver, scrub: scrub)
-          .scaleEffect(x: 1, y: CountdownFont.stretch, anchor: .top)
-          .foregroundStyle(Color.primary.opacity(dim ? 0.3 : 0.9))
-        Text(sup)
-          .font(.system(size: 11, weight: .heavy).width(.condensed))
-          .tracking(0.6)
-          .foregroundStyle(Color.primary.opacity(dim ? 0.4 : 0.6))
-          .lineLimit(1)
-          .fixedSize()
-        Spacer(minLength: 0)
-      }
-      .frame(width: g.size.width, height: g.size.height, alignment: .topLeading)
-    }
-    .frame(height: height)
-    .accessibilityElement(children: .combine)
+    TallClockFace(text: text, sup: sup, dim: dim, height: height, scrub: scrub)
   }
 
   static func endTime(_ d: Date) -> String {

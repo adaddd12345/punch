@@ -159,6 +159,7 @@ struct BentoView: View {
     let mini = size == .mini
     switch key {
     case LayoutSection.macVolume.key: return macBlock != nil
+    case LayoutSection.liveTime.key: return !mini && s.showLiveTime
     case LayoutSection.remoteMacs.key: return !mini && remoteBlock != nil && !remoteMacs.shown.isEmpty && s.shows(.remoteMacs)
     case LayoutSection.bentoHero.key, LayoutSection.classicHeader.key: return true
     case LayoutSection.bentoDials.key: return mini || (!flat && s.shows(.bentoDials))
@@ -189,6 +190,9 @@ struct BentoView: View {
       if let macBlock { macBlock }
     case LayoutSection.remoteMacs.key:
       if let remoteBlock { remoteBlock }
+    case LayoutSection.liveTime.key:
+      LiveTimeTile(endsAt: controller.lightsOut.endsAt, fading: controller.lightsOut.fading, live: live,
+                   compact: size == .compact)
     case LayoutSection.bentoHero.key, LayoutSection.classicHeader.key:
       if mini {
         // Mini: the slim hero and the two dials, nothing else.
