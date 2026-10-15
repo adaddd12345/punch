@@ -692,3 +692,254 @@ private struct GlyphPainter {
     w.fill(ring(3.6, n: 16), with: .foreground)
   }
 }
+
+// MARK: - Footer glyphs: Check & Fix and Quit
+
+/// The footer's other two drawn glyphs, in the shaker's camera and line weight so the
+/// three read as one set: Check & Fix as an upright magnifier with a heartbeat across the
+/// glass, Quit as a speaker driver on edge whose surround is the power ring and whose dust
+/// cap is the dot the bar rises from. `angle` turns the object about its vertical axis like
+/// ShakerGlyph (degrees); animatable, so the footer's spring can carry it. The rest pose is
+/// fitted once, so the turn never rescales it.
+struct FooterGlyph: View, Animatable {
+  enum Kind { case check, quit }
+  let kind: Kind
+  var angle: Double = 0
+  var animatableData: Double {
+    get { angle }
+    set { angle = newValue }
+  }
+
+  var body: some View {
+    let model = kind.model
+    let spin = CGFloat(angle * .pi / 180)
+    Canvas { ctx, size in
+      let box = model.rest
+      let u = size.width / 16
+      let m = 1.2 * u
+      let k = min((size.width - m) / box.width, (size.height - m) / box.height) * model.fill
+      let iso = Iso(k: k, ox: size.width / 2 - box.midX * k, oy: size.height / 2 - box.midY * k)
+      ctx.drawLayer { l in model.draw(IsoPen(l, u: u), IsoCam(iso: iso, spin: spin)) }
+    }
+    .accessibilityHidden(true)
+  }
+}
+
+private extension FooterGlyph.Kind {
+  static let magnifier = FittedModel(MagnifierModel())
+  static let power = FittedModel(SpeakerPowerModel())
+  var model: FittedModel { self == .check ? Self.magnifier : Self.power }
+}
+
+/// A model plus its rest pose's on-screen box at scale 1 (measured once).
+private struct FittedModel {
+  let draw: (IsoPen, IsoCam) -> Void
+  let fill: CGFloat
+  let rest: CGRect
+  init<M: IsoModel>(_ m: M) {
+    draw = m.draw
+    fill = m.fill
+    let box = IsoBox()
+    m.draw(IsoPen(nil, u: 1), IsoCam(iso: Iso(k: 1, ox: 0, oy: 0), spin: 0, box: box))
+    rest = CGRect(x: box.minX, y: box.minY, width: box.maxX - box.minX, height: box.maxY - box.minY)
+  }
+}
+
+private protocol IsoModel {
+  /// Fraction of the 16 pt box the rest pose fills (optical sizing).
+  var fill: CGFloat { get }
+  func draw(_ pen: IsoPen, _ g: IsoCam)
+}
+
+/// Upright hand magnifier turned 16° (like the shaker's woofer): a thick ring (solid band,
+/// the inner wall lighter), a ferrule and a round-ended grip, the heartbeat across the glass.
+private struct MagnifierModel: IsoModel {
+  var fill: CGFloat { 1 }
+  func draw(_ pen: IsoPen, _ g: IsoCam) {
+    let n = V3.az(rad(16))
+    let (u, v) = discBasis(n)
+    let R: CGFloat = 22, r: CGFloat = 16, t: CGFloat = 7
+    let d = (u * cos(rad(-50)) + v * sin(rad(-50))).unit
+    let e2 = d.cross(n).unit
+    let f0 = d * (R - 3), f1 = d * (R + 5), h1 = d * (R + 19)
+    let grip = cylinder(g, f1, h1, 4.4, n, e2, roundEnd: true)
+    let ferrule = cylinder(g, f0, f1, 5.4, n, e2)
+    pen.clear(grip); pen.clear(ferrule)
+    pen.fill(grip); pen.fill(ferrule)
+    pen.clearStroke(poly(g.frontArc(f1 + d * 0.6, n, e2, 5.4), close: false), 0.6)
+    lensRing(pen, g, c: .O, n: n, R: R, r: r, t: t) { p, c, u, v in
+      p.stroke(heartbeat(g, c, u, v, r), 1)
+    }
+  }
+}
+
+/// Power as a speaker: a driver on edge (frame, basket tapering to the magnet in a lighter
+/// tone); its surround is the power ring, the dust cap the dot the bar rises from.
+private struct SpeakerPowerModel: IsoModel {
+  var fill: CGFloat { 0.9 }
+  func draw(_ pen: IsoPen, _ g: IsoCam) {
+    let n = V3.az(rad(34))
+    let (u, v) = discBasis(n)
+    let R: CGFloat = 21
+    let f = n * 2, b = -n * 17
+    let sil = poly(hull(g.circle(f, u, v, R) + g.circle(b, u, v, 8)))
+    let face = poly(g.circle(f, u, v, R))
+    pen.clear(sil)
+    var side = sil; side.addPath(face)
+    pen.fill(side, 0.4, eo: true)
+    pen.stroke(face, 1)
+    // The basket's outline only where it shows beyond the frame (no doubled, darker rim).
+    var outside = Path(CGRect(x: -1e4, y: -1e4, width: 2e4, height: 2e4)); outside.addPath(face)
+    pen.clipped(outside, eo: true) { $0.stroke(sil, 1) }
+    // The cone: a lighter dish inside the surround, whose rim is the power ring.
+    pen.fill(poly(g.circle(f - n * 1.5, u, v, 12.5)), 0.18)
+    let c = f - n * 1.5, r: CGFloat = 12.5, gap = rad(40)
+    pen.stroke(g.line((0...40).map { i in
+      let a = .pi / 2 + gap + (2 * .pi - 2 * gap) * CGFloat(i) / 40
+      return c + u * (r * cos(a)) + v * (r * sin(a))
+    }), 1)
+    let cap = f - n * 5
+    pen.fill(poly(g.circle(cap, u, v, 5)))
+    pen.stroke(g.line([cap + v * 3, f + v * 16.5]), 1)
+  }
+}
+
+// A few 3D helpers for those two (the shaker's own camera, Iso, with free-standing vectors).
+
+private struct V3 {
+  var x: CGFloat, y: CGFloat, z: CGFloat
+  init(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) { self.x = x; self.y = y; self.z = z }
+  static func + (a: V3, b: V3) -> V3 { V3(a.x + b.x, a.y + b.y, a.z + b.z) }
+  static func - (a: V3, b: V3) -> V3 { V3(a.x - b.x, a.y - b.y, a.z - b.z) }
+  static func * (a: V3, s: CGFloat) -> V3 { V3(a.x * s, a.y * s, a.z * s) }
+  static prefix func - (a: V3) -> V3 { V3(-a.x, -a.y, -a.z) }
+  func dot(_ b: V3) -> CGFloat { x * b.x + y * b.y + z * b.z }
+  func cross(_ b: V3) -> V3 { V3(y * b.z - z * b.y, z * b.x - x * b.z, x * b.y - y * b.x) }
+  var unit: V3 { let l = sqrt(dot(self)); return l > 0 ? self * (1 / l) : self }
+  static let O = V3(0, 0, 0)
+  /// Horizontal unit vector at azimuth a (0 = toward the viewer, + = turned to screen-left).
+  static func az(_ a: CGFloat) -> V3 { V3(cos(a), sin(a), 0) }
+}
+
+private func rad(_ d: CGFloat) -> CGFloat { d * .pi / 180 }
+
+private final class IsoBox {
+  var minX = CGFloat.infinity, minY = CGFloat.infinity, maxX = -CGFloat.infinity, maxY = -CGFloat.infinity
+  func add(_ p: CGPoint) { minX = min(minX, p.x); maxX = max(maxX, p.x); minY = min(minY, p.y); maxY = max(maxY, p.y) }
+}
+
+/// Iso with the model turned about z by `spin`; `box`, when set, records every projected point.
+private struct IsoCam {
+  var iso: Iso
+  var spin: CGFloat
+  var box: IsoBox? = nil
+  static let view = V3(Iso.cE, 0, Iso.sE)   // toward the viewer, in the turned frame
+
+  func rot(_ v: V3) -> V3 {
+    let c = cos(spin), s = sin(spin)
+    return V3(v.x * c - v.y * s, v.x * s + v.y * c, v.z)
+  }
+  func p(_ v: V3) -> CGPoint {
+    let r = rot(v)
+    let q = iso.p(r.x, r.y, r.z)
+    box?.add(q)
+    return q
+  }
+  /// > 0 when a surface with normal n faces the viewer.
+  func facing(_ n: V3) -> CGFloat { rot(n).dot(Self.view) }
+  func circle(_ c: V3, _ e1: V3, _ e2: V3, _ r: CGFloat, n: Int = 48) -> [CGPoint] {
+    (0...n).map { i in
+      let t = 2 * .pi * CGFloat(i) / CGFloat(n)
+      return p(c + e1 * (r * cos(t)) + e2 * (r * sin(t)))
+    }
+  }
+  /// The half of a cross-section circle that faces the viewer (a seam on a cylinder).
+  func frontArc(_ c: V3, _ e1: V3, _ e2: V3, _ r: CGFloat, n: Int = 48) -> [CGPoint] {
+    let ts = (0..<n).map { CGFloat($0) / CGFloat(n) * 2 * .pi }
+    let vis = ts.map { facing(e1 * cos($0) + e2 * sin($0)) > 0 }
+    guard let start = vis.indices.first(where: { !vis[$0] && vis[($0 + 1) % n] }) else { return [] }
+    var out: [CGPoint] = []
+    var i = (start + 1) % n
+    while vis[i] { let t = ts[i]; out.append(p(c + e1 * (r * cos(t)) + e2 * (r * sin(t)))); i = (i + 1) % n }
+    return out
+  }
+  func line(_ pts: [V3]) -> Path { poly(pts.map(p), close: false) }
+}
+
+/// In-plane basis of a disc facing n: u to screen-right-ish, v up (for horizontal n).
+private func discBasis(_ n: V3) -> (V3, V3) {
+  let h = V3(n.y, -n.x, 0)
+  let u = (abs(h.x) + abs(h.y) > 1e-6 ? h : V3(0, -1, 0)).unit
+  return (u, u.cross(n).unit)
+}
+
+/// Draws in the foreground style; `nil` context = measuring only. Line widths are in
+/// 16 pt units (`u` = frame width / 16), as GlyphPainter's are at 16 pt.
+private final class IsoPen {
+  let c: GraphicsContext?
+  let u: CGFloat
+  init(_ c: GraphicsContext?, u: CGFloat) { self.c = c; self.u = u }
+
+  func clear(_ p: Path) {
+    guard var x = c else { return }
+    x.blendMode = .clear; x.fill(p, with: .color(.black))
+  }
+  func clearStroke(_ p: Path, _ lw: CGFloat) {
+    guard var x = c else { return }
+    x.blendMode = .clear
+    x.stroke(p, with: .color(.black), style: StrokeStyle(lineWidth: lw * u, lineCap: .round, lineJoin: .round))
+  }
+  func fill(_ p: Path, _ op: Double = 1, eo: Bool = false) {
+    guard var x = c else { return }
+    x.opacity = op; x.fill(p, with: .foreground, style: FillStyle(eoFill: eo))
+  }
+  func stroke(_ p: Path, _ lw: CGFloat = 1, _ op: Double = 1) {
+    guard var x = c else { return }
+    x.opacity = op
+    x.stroke(p, with: .foreground, style: StrokeStyle(lineWidth: lw * u, lineCap: .round, lineJoin: .round))
+  }
+  func clipped(_ p: Path, eo: Bool = false, _ body: (IsoPen) -> Void) {
+    guard var x = c else { body(self); return }
+    x.clip(to: p, style: FillStyle(eoFill: eo)); body(IsoPen(x, u: u))
+  }
+}
+
+/// A cylinder's silhouette between a and b (radius r; e1, e2 span its cross-section).
+private func cylinder(_ g: IsoCam, _ a: V3, _ b: V3, _ r: CGFloat, _ e1: V3, _ e2: V3,
+                      roundEnd: Bool = false) -> Path {
+  var pts = g.circle(a, e1, e2, r, n: 32) + g.circle(b, e1, e2, r, n: 32)
+  if roundEnd {
+    let d = (b - a).unit
+    for s in 1...3 {
+      let t = CGFloat(s) / 3 * .pi / 2
+      pts += g.circle(b + d * (r * sin(t)), e1, e2, r * cos(t), n: 24)
+    }
+  }
+  return poly(hull(pts))
+}
+
+/// The lens: a ring of thickness t (outer R, inner r) facing n. Solid band, the inner wall
+/// seen through the opening in a lighter tone, and `content` drawn in the clear aperture.
+private func lensRing(_ pen: IsoPen, _ g: IsoCam, c: V3, n n0: V3, R: CGFloat, r: CGFloat, t: CGFloat,
+                      wall: Double = 0.4, content: (IsoPen, V3, V3, V3) -> Void) {
+  let n = g.facing(n0) >= 0 ? n0 : -n0
+  let (u, v) = discBasis(n0)
+  let f = c + n * (t / 2), b = c - n * (t / 2)
+  let sil = poly(hull(g.circle(f, u, v, R) + g.circle(b, u, v, R)))
+  let innerF = poly(g.circle(f, u, v, r)), innerB = poly(g.circle(b, u, v, r))
+  pen.clear(sil)
+  var band = sil; band.addPath(innerF)
+  pen.fill(band, eo: true)
+  pen.clipped(innerF) { p in p.clipped(innerB) { q in content(q, c, u, v) } }
+  pen.clipped(innerF) { p in
+    var w = innerF; w.addPath(innerB)
+    p.fill(w, wall, eo: true)
+  }
+}
+
+/// The heartbeat trace on the plane (c, u, v), in units of s (the aperture radius).
+private func heartbeat(_ g: IsoCam, _ c: V3, _ u: V3, _ v: V3, _ s: CGFloat) -> Path {
+  let pts: [(CGFloat, CGFloat)] = [(-1.3, -0.02), (-0.52, -0.02), (-0.28, 0.6), (0.02, -0.56),
+                                   (0.28, 0.12), (0.4, -0.02), (1.3, -0.02)]
+  return g.line(pts.map { c + u * ($0.0 * s) + v * ($0.1 * s) })
+}

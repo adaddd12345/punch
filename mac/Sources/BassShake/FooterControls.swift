@@ -3,9 +3,9 @@ import SwiftUI
 
 // The popup's footer (Live, DJ, Beats, Check & Fix, the ⋯ shaker, Quit): one quiet,
 // shared response. Hover fades in a soft plate and lifts the control 1 pt; a press sinks
-// it a little. A few glyphs add one small gesture that says what they do (the DJ dial
-// turns like a knob, the stethoscope tips as if listening, the shaker turns on its
-// plinth like the launch trophy). Once per hover, one spring, nothing loops.
+// it a little. The three drawn glyphs (Check & Fix's magnifier, the ⋯ shaker, Quit's
+// speaker) turn 24° on their axis like a slice of the launch trophy's spin; the DJ dial
+// turns like a knob. Once per hover, one spring, nothing loops.
 // Reduce Motion: the plate only (no lift, press or gesture). Power Saver: the plate
 // only, without animation. Layout and hit areas never change: every effect is
 // render-only, and the hit shape stays the control's own frame.
@@ -15,6 +15,8 @@ enum FooterMotion {
   static let spring = Animation.spring(response: 0.3, dampingFraction: 0.82)
   static let lift: CGFloat = 1
   static let pressScale: CGFloat = 0.93
+  /// The drawn glyphs' hover turn about their vertical axis, in degrees.
+  static let turn: Double = 24
 }
 
 private struct FooterHoverKey: EnvironmentKey { static let defaultValue = false }
@@ -100,6 +102,20 @@ private struct FooterGesture: ViewModifier {
   }
 }
 
+/// A footer button's drawn glyph (16 pt) that turns on its axis while its control is
+/// hovered, like the ⋯ shaker. Plate, lift and press come from FooterButtonStyle, and
+/// `footerHover` is already off under Reduce Motion and Power Saver (plate only).
+struct FooterTurningGlyph: View {
+  let kind: FooterGlyph.Kind
+  @Environment(\.footerHover) private var hover
+
+  var body: some View {
+    FooterGlyph(kind: kind, angle: hover ? FooterMotion.turn : 0)
+      .frame(width: FooterBlank.size, height: FooterBlank.size)
+      .animation(FooterMotion.spring, value: hover)
+  }
+}
+
 /// The ⋯ menu as the launch trophy's shaker-speaker. The Menu keeps a plain, invisible
 /// label of the same size (its own click handling is untouched); the drawn shaker sits
 /// over it and never takes a click. Hover turns it 24° on its axis and lifts it 1 pt,
@@ -126,7 +142,7 @@ struct FooterShakerMenu<Content: View>: View {
     .menuIndicator(.hidden)
     .fixedSize()
     .overlay {
-      ShakerGlyph(angle: motion && hovered && !open ? 24 : 0)
+      ShakerGlyph(angle: motion && hovered && !open ? FooterMotion.turn : 0)
         .frame(width: Self.size, height: Self.size)
         .foregroundStyle(.secondary)
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)

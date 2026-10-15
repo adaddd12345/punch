@@ -851,11 +851,15 @@ struct PopoverView: View {
       Button {
         controller.checkAndFix()
       } label: {
-        Image(systemName: controller.doctorRunning ? "hourglass" : "stethoscope")
-          .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(.secondary)
-          // Tips a little, as if listening (not while the check runs).
-          .footerGesture(degrees: controller.doctorRunning ? 0 : -10, anchor: .top)
+        Group {
+          if controller.doctorRunning {
+            Image(systemName: "hourglass").font(.system(size: 11, weight: .semibold))
+              .frame(width: 16, height: 16)
+          } else {
+            FooterTurningGlyph(kind: .check)
+          }
+        }
+        .foregroundStyle(.secondary)
       }
       .buttonStyle(FooterButtonStyle())
       .accessibilityLabel("Check and fix sound issues")
@@ -1049,9 +1053,10 @@ struct PopoverView: View {
         Divider()
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       }
-      // Quit: the plate and press only; nothing that invites the click.
+      // Quit: the word with full labels; otherwise the speaker-driver power glyph, which
+      // turns on hover like the shaker beside it.
       Button { NSApp.terminate(nil) } label: {
-        if labels == .full { Text("Quit").fixedSize() } else { Image(systemName: "power") }
+        if labels == .full { Text("Quit").fixedSize() } else { FooterTurningGlyph(kind: .quit) }
       }
       .accessibilityLabel("Quit")
         .buttonStyle(FooterButtonStyle())
