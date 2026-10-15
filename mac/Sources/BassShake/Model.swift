@@ -713,6 +713,9 @@ struct Settings: Codable, Equatable {
   var nightGuard = false
   /// Quick fade when the controls appear and disappear.
   var fadeWindows = true
+  /// Opened from the Dock: the controls sit in a header at the top (icon, name)
+  /// instead of the footer. Off (hover ✕, or ⋯ › Look): the footer, as from the menu bar.
+  var dockHeader = true
   var autoFixAfterSleep = true                    // Check & Fix runs itself after wake
   var centerLock: CenterLock = .off
   var earProtector = false                        // duck sudden blasts (opt-in)
@@ -893,6 +896,7 @@ struct Settings: Codable, Equatable {
     limit = (try? c.decodeIfPresent(Bool.self, forKey: .limit)) ?? d.limit
     nightGuard = (try? c.decodeIfPresent(Bool.self, forKey: .nightGuard)) ?? d.nightGuard
     fadeWindows = (try? c.decodeIfPresent(Bool.self, forKey: .fadeWindows)) ?? d.fadeWindows
+    dockHeader = (try? c.decodeIfPresent(Bool.self, forKey: .dockHeader)) ?? d.dockHeader
     autoFixAfterSleep = (try? c.decodeIfPresent(Bool.self, forKey: .autoFixAfterSleep)) ?? d.autoFixAfterSleep
     centerLock = (try? c.decodeIfPresent(CenterLock.self, forKey: .centerLock)) ?? d.centerLock
     earProtector = (try? c.decodeIfPresent(Bool.self, forKey: .earProtector)) ?? d.earProtector
