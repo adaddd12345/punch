@@ -252,7 +252,7 @@ struct PopoverView: View {
       if on {
         controller.dj.listening = true  // the panel may only be re-ordered in (no onAppear)
         showBeats = false
-        LiveDrawer.shared.show(DJView(controller: controller))
+        LiveDrawer.shared.show(DJView(controller: controller), height: Drawer.height)
       } else if !showLive && !showBeats {
         LiveDrawer.shared.hide()
       }
@@ -265,9 +265,6 @@ struct PopoverView: View {
       } else if !showLive && !showDJ {
         LiveDrawer.shared.hide()
       }
-    }
-    .onChange(of: controller.settings.beatsSide) { _, _ in
-      if showBeats { showBeatsDrawer() }
     }
     .onChange(of: beats.revealCount) { _, _ in
       // A beat opened from Finder: the popup comes up first, then Beats.
@@ -330,10 +327,14 @@ struct PopoverView: View {
   }
 
   private func showBeatsDrawer() {
-    // Beside a popup on a side Dock the tray always uses its side layout.
-    let side = controller.settings.beatsSide || LiveDrawer.shared.sideOnly
-    LiveDrawer.shared.show(BeatsView(player: beats, side: side) { [controller] in controller.settings.beatsSide.toggle() },
-                           side: side, width: side ? BeatsView.sideWidth : nil)
+    // Under the popup (lifted on a bottom Dock) like DJ and Live whenever it
+    // fits; the slim side card only beside a popup on a side Dock.
+    let side = LiveDrawer.shared.sideOnly
+    LiveDrawer.shared.show(BeatsView(player: beats, side: side, grid: controller.settings.beatsGrid) { [controller] g in
+                             if controller.settings.beatsGrid != g { controller.settings.beatsGrid = g }
+                           },
+                           side: side, width: side ? BeatsView.sideWidth : nil,
+                           height: side ? BeatsView.sideHeight : Drawer.height)
   }
 
   /// ⌘1/⌘2/⌘3: Full, Compact, Mini.
@@ -734,7 +735,7 @@ struct PopoverView: View {
       } label: {
         HStack(spacing: 4) {
           Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 9, weight: .bold))
-            .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible && !controller.settings.powerSaver)
+            .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible && !controller.settings.powerSaver && !reduceMotion)
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip()
