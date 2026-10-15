@@ -665,6 +665,12 @@ enum PresetIcon {
   ]
 }
 
+/// App icon colourways. Artwork: Contents/Resources/AppIconVariants/<rawValue>.png.
+enum AppIconStyle: String, Codable, CaseIterable {
+  case light, dark, freezing, ember
+  var title: String { rawValue.capitalized }
+}
+
 /// Everything the user can change, persisted as one JSON blob.
 struct Settings: Codable, Equatable {
   var enabled = true
@@ -776,6 +782,9 @@ struct Settings: Codable, Equatable {
   /// Show in Menu Bar (⋯ › Look): may only be off while Show in Dock is on,
   /// so the app can always be found. Read `menuBarIconShown`, not this.
   var showInMenuBar = true
+  /// App icon colourway (right-click › App Icon): the Dock / app-switcher
+  /// icon while running. Light is the bundle's own icon.
+  var appIconStyle: AppIconStyle = .light
   /// Mac Volume (top of the popup): the Mac's own output volume and mute.
   /// Hidden from Edit Layout; brought back there or in ⋯ › Presets & Settings.
   /// While hidden, a red notice says when the Mac is muted or at 0.
@@ -914,6 +923,7 @@ struct Settings: Codable, Equatable {
     liquidGlass = (try? c.decodeIfPresent(Bool.self, forKey: .liquidGlass)) ?? d.liquidGlass
     showInDock = (try? c.decodeIfPresent(Bool.self, forKey: .showInDock)) ?? d.showInDock
     showInMenuBar = (try? c.decodeIfPresent(Bool.self, forKey: .showInMenuBar)) ?? d.showInMenuBar
+    appIconStyle = (try? c.decodeIfPresent(AppIconStyle.self, forKey: .appIconStyle)) ?? d.appIconStyle
     showMacVolume = (try? c.decodeIfPresent(Bool.self, forKey: .showMacVolume)) ?? d.showMacVolume
     showLiveTime = (try? c.decodeIfPresent(Bool.self, forKey: .showLiveTime)) ?? d.showLiveTime
     showPlayingChannel = (try? c.decodeIfPresent(Bool.self, forKey: .showPlayingChannel)) ?? d.showPlayingChannel

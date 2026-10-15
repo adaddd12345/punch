@@ -242,6 +242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       .receive(on: RunLoop.main)
       .sink { MacVolume.menuBarScroll = $0 }
       .store(in: &cancellables)
+    // App Icon colourway: at launch (first value) and on every change.
+    controller.$settings.map(\.appIconStyle).removeDuplicates()
+      .receive(on: RunLoop.main)
+      .sink { $0.apply() }
+      .store(in: &cancellables)
     installScrollMonitor()
     controller.$earAlerts.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
       guard let self, !self.popover.isShown else { return }
@@ -759,6 +764,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     mute.state = v.silent ? .on : .off
     menu.addItem(.separator())
     add(controller.pinned ? "Unpin" : "Pin Open", #selector(menuPin))
+    menu.addItem(appIconMenuItem())
     if forDock {
       add("Show in Menu Bar", #selector(menuShowInMenuBar), on: controller.settings.menuBarIconShown)
       return menu
@@ -774,6 +780,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     force.target = self
     force.toolTip = "Ends The Bass Shaker immediately, even if it's stuck. Your Mac's sound goes back to normal."
     return menu
+  }
+
+  /// App Icon colourways, each with a small thumbnail when the artwork ships.
+  private func appIconMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(title: "App Icon", action: nil, keyEquivalent: "")
+    let sub = NSMenu()
+    for style in AppIconStyle.allCases {
+      let it = sub.addItem(withTitle: style.title, action: #selector(menuAppIcon(_:)), keyEquivalent: "")
+      it.target = self
+      it.representedObject = style.rawValue
+      it.state = controller.settings.appIconStyle == style ? .on : .off
+      it.image = style.thumbnail
+    }
+    item.submenu = sub
+    return item
+  }
+  @objc private func menuAppIcon(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String, let style = AppIconStyle(rawValue: raw) else { return }
+    controller.settings.appIconStyle = style   // applied by the settings sink
   }
 
   /// Lights Out from the menu bar: a length, or +10 / cancel while it runs.
@@ -901,6 +926,35 @@ private struct WhereItLivesText: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     }
+  }
+}
+
+/// App Icon colourways while running (Dock tile, app switcher). Only the
+/// running icon changes: NSWorkspace.setIcon on the bundle adds a FinderInfo
+/// xattr + Icon\r file that break `codesign --verify --strict`, so Finder and
+/// a not-running Dock tile keep the bundle icon.
+extension AppIconStyle {
+  var imageURL: URL? {
+    Bundle.main.resourceURL?.appendingPathComponent("AppIconVariants/\(rawValue).png")
+  }
+  var image: NSImage? { imageURL.flatMap(NSImage.init(contentsOf:)) }
+  /// 18 pt menu thumbnail, rendered once (menus are rebuilt on every open).
+  nonisolated(unsafe) private static var thumbs: [AppIconStyle: NSImage] = [:]
+  var thumbnail: NSImage? {   // main thread (menu building)
+    if let t = Self.thumbs[self] { return t }
+    guard let img = image else { return nil }
+    let t = NSImage(size: NSSize(width: 36, height: 36))
+    t.lockFocus()
+    NSGraphicsContext.current?.imageInterpolation = .high
+    img.draw(in: NSRect(x: 0, y: 0, width: 36, height: 36))
+    t.unlockFocus()
+    t.size = NSSize(width: 18, height: 18)
+    Self.thumbs[self] = t
+    return t
+  }
+  /// Light (or missing artwork) = nil, the bundle's own icon.
+  func apply() {
+    NSApp.applicationIconImage = self == .light ? nil : image
   }
 }
 
