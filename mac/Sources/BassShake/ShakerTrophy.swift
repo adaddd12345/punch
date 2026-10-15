@@ -584,3 +584,111 @@ private struct TrophyPainter {
     }
   }
 }
+
+// MARK: - Footer glyph
+
+/// The trophy as a small one-colour glyph (the footer's ⋯ menu): the same isometric
+/// shaker-speaker on its plinth, cut down to the outlines that still read at 16 pt (plinth,
+/// tapered glass, the woofer, collar and dome) and stroked in the foreground style, so it
+/// tints like an SF Symbol. `angle` turns it about its axis exactly like the trophy (the
+/// woofer slides round the glass); animatable, so a spring can carry it.
+struct ShakerGlyph: View, Animatable {
+  var angle: Double = 0
+  var animatableData: Double {
+    get { angle }
+    set { angle = newValue }
+  }
+
+  var body: some View {
+    let a = CGFloat(angle * .pi / 180)
+    Canvas { ctx, size in GlyphPainter(spin: a).draw(&ctx, size) }
+      .accessibilityHidden(true)
+  }
+}
+
+private struct GlyphPainter {
+  let spin: CGFloat
+  static let plinthR: CGFloat = 26
+  static let line: CGFloat = 1
+
+  func draw(_ ctx: inout GraphicsContext, _ size: CGSize) {
+    // The model spans x ±plinthR and, on screen, from the dome's top (z 81) down to the
+    // plinth's front edge: fit that box, centred.
+    let top: CGFloat = 81 * Iso.cE, bottom = Self.plinthR * Iso.sE
+    let k = min(size.width / (2 * Self.plinthR + 3), size.height / (top + bottom + 3))
+    let g = Iso(k: k, ox: size.width / 2, oy: size.height / 2 + (top - bottom) / 2 * k)
+    let R = TrophyPainter.bodyR
+    let cap = TrophyPainter.capR
+    ctx.drawLayer { c in
+      // Back to front; each part first clears what it hides, so outlines overlap like solids.
+      solid(&c, poly(hull(g.arc(Self.plinthR, 0, 0, 2 * .pi, n: 40) + g.arc(Self.plinthR, 3, 0, 2 * .pi, n: 40))),
+            lineWidth: Self.line * 0.85)
+      let glass = poly(hull(g.arc(R(3), 3, 0, 2 * .pi, n: 40) + g.arc(R(62), 62, 0, 2 * .pi, n: 40)))
+      solid(&c, glass)
+      // Salt up to a wavy level that turns with the body, as on the trophy (and the menu-bar mark).
+      let n = 24
+      let wave = (0...n).map { i -> CGPoint in
+        let psi = .pi / 2 - .pi * CGFloat(i) / CGFloat(n)
+        let z = 33 + 2 * sin(3 * (psi - spin))
+        return g.c(R(z), psi, z)
+      }
+      var salt = c
+      salt.clip(to: glass)
+      salt.opacity = 0.35
+      salt.fill(poly(g.arc(R(3), 3, -.pi / 2, .pi / 2, n: 24) + wave), with: .foreground)
+      drawWoofer(&c, g)
+      // Cap and dome: one solid piece with pour holes, like the menu-bar shaker's.
+      var dome: [CGPoint] = g.arc(cap, 63, 0, 2 * .pi, n: 40)
+      for s in 0...6 {
+        let t = CGFloat(s) / 6 * .pi / 2
+        dome += g.arc(cap * cos(t), 71 + TrophyPainter.domeH * sin(t), 0, 2 * .pi, n: 32)
+      }
+      c.fill(poly(hull(dome)), with: .foreground)
+      c.blendMode = .clear
+      // The seam between skirt and dome, and the front ring of holes.
+      c.stroke(poly(g.arc(cap, 71, -.pi / 2, .pi / 2, n: 24), close: false), with: .color(.black), lineWidth: 0.7)
+      for i in 0..<6 {
+        let psi = wrapPi(spin + CGFloat(i) * .pi / 3 + .pi / 6)
+        guard cos(psi) > -0.2 else { continue }
+        let rho: CGFloat = 8.5
+        let q = g.p(rho * cos(psi), rho * sin(psi), TrophyPainter.domeZ(rho))
+        let d = 1.5 * g.k
+        c.fill(Path(ellipseIn: CGRect(x: q.x - d, y: q.y - d * 0.6, width: 2 * d, height: 1.2 * d)), with: .color(.black))
+      }
+      c.blendMode = .normal
+    }
+  }
+
+  /// Clears the part's silhouette, then strokes it.
+  func solid(_ c: inout GraphicsContext, _ outline: Path, lineWidth: CGFloat = GlyphPainter.line) {
+    c.blendMode = .clear
+    c.fill(outline, with: .color(.black))
+    c.blendMode = .normal
+    c.stroke(outline, with: .foreground, style: StrokeStyle(lineWidth: lineWidth, lineJoin: .round))
+  }
+
+  /// The woofer: a ring wrapped on the glass, facing where the speaker points (it clears
+  /// the salt behind it); it fades out as it turns toward the silhouette.
+  func drawWoofer(_ c: inout GraphicsContext, _ g: Iso) {
+    let psi0 = wrapPi(TrophyPainter.front + spin)
+    let facing = cos(psi0)
+    guard facing > 0.45 else { return }
+    let zc = TrophyPainter.wooferZ + 1
+    func ring(_ rho: CGFloat, n: Int = 28) -> Path {
+      poly((0..<n).map { i in
+        let t = CGFloat(i) / CGFloat(n) * 2 * .pi
+        let z = zc + rho * sin(t)
+        let r = TrophyPainter.bodyR(z)
+        let psi = min(.pi / 2, max(-.pi / 2, psi0 + rho * cos(t) / r))
+        return g.c(r, psi, z)
+      })
+    }
+    var w = c
+    w.opacity = Double(fade(facing, 0.45, 0.8))
+    w.blendMode = .clear
+    w.fill(ring(10.5), with: .color(.black))
+    w.blendMode = .normal
+    w.stroke(ring(9.5), with: .foreground, lineWidth: Self.line * 0.9)
+    w.fill(ring(3.6, n: 16), with: .foreground)
+  }
+}

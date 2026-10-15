@@ -773,7 +773,7 @@ struct PopoverView: View {
         .lineLimit(2)
         .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 4)
-      Menu {
+      FooterShakerMenu(help: "Options for the Mac you're controlling") {
         Button("Connect Another Mac…") { withAnimation { showRemote = true } }
         Button("Switch Back to This Mac") { TakeControl.shared.switchBack() }
         Divider()
@@ -793,16 +793,7 @@ struct PopoverView: View {
         Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
         Divider()
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
-      } label: {
-        Image(nsImage: MenuBarIcon.menuGlyph)
-          .renderingMode(.template)
-          .foregroundStyle(.secondary)
       }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .help("Options for the Mac you're controlling")
-      .accessibilityLabel("More")
     }
   }
 
@@ -813,7 +804,9 @@ struct PopoverView: View {
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
         HStack(spacing: 4) {
+          // A knob: hover turns it a notch.
           Image(systemName: "dial.medium").font(.system(size: 9, weight: .bold))
+            .footerGesture(degrees: 30)
           if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip()
@@ -821,7 +814,7 @@ struct PopoverView: View {
         .background(Capsule().fill(controller.dj.anyActive ? Color.purple
                                    : (showDJ ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08))))
       }
-      .buttonStyle(.plain)
+      .buttonStyle(FooterButtonStyle(chip: true))
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
       Button {
         if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
@@ -835,7 +828,7 @@ struct PopoverView: View {
         .foregroundStyle(beats.playing ? Color.accentColor : Color.primary)
         .background(Capsule().fill(showBeats ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
       }
-      .buttonStyle(.plain)
+      .buttonStyle(FooterButtonStyle(chip: true))
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
       LatencyChip(lab: latencyLab) { withAnimation { showLatencyLab = true } }
       Spacer(minLength: 4)
@@ -850,11 +843,13 @@ struct PopoverView: View {
         Image(systemName: controller.doctorRunning ? "hourglass" : "stethoscope")
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(.secondary)
+          // Tips a little, as if listening (not while the check runs).
+          .footerGesture(degrees: controller.doctorRunning ? 0 : -10, anchor: .top)
       }
-      .buttonStyle(.plain)
+      .buttonStyle(FooterButtonStyle())
       .accessibilityLabel("Check and fix sound issues")
       .pointerHint(Caption.checkAndFix())
-      Menu {
+      FooterShakerMenu(help: "Updates, version and Quit") {
         Button("Check & Fix Sound Issues") { controller.checkAndFix() }
         Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
                                                                set: { controller.settings.autoFixAfterSleep = $0 }))
@@ -1039,21 +1034,13 @@ struct PopoverView: View {
         Button("About The Bass Shaker (\(updates.currentVersion))") { AboutPanel.show() }
         Divider()
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
-      } label: {
-        Image(nsImage: MenuBarIcon.menuGlyph)
-          .renderingMode(.template)
-          .foregroundStyle(.secondary)
       }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .help("Updates, version and Quit")
-      .accessibilityLabel("More")
+      // Quit: the plate and press only; nothing that invites the click.
       Button { NSApp.terminate(nil) } label: {
         if labels == .full { Text("Quit").fixedSize() } else { Image(systemName: "power") }
       }
       .accessibilityLabel("Quit")
-        .buttonStyle(.plain)
+        .buttonStyle(FooterButtonStyle())
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
     }

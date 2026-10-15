@@ -389,7 +389,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       suppressResignCloseUntil = Date().addingTimeInterval(0.6)
       NSApp.setActivationPolicy(want)
       NSApp.activate(ignoringOtherApps: true)
-      popover.contentViewController?.view.window?.makeKey()
+      // Front, not just key: see showPopover (a half-done activation closes the next menu).
+      popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
     } else {
       NSApp.setActivationPolicy(want)
     }
@@ -534,8 +535,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     anchoredAt = anchor
     watchPopupWindow()
     // A menu-bar-only app must activate for the popover to take keys.
+    // On macOS 14+ activate() alone is only a request: the popup's window
+    // turned key but the app stayed in the background until the first click
+    // inside it, and that late activation, arriving while the ⋯ menu was
+    // opening, closed the menu at once (first open only). Ordering the
+    // window front makes the activation real now.
     NSApp.activate(ignoringOtherApps: true)
-    popover.contentViewController?.view.window?.makeKey()
+    popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
     popover.contentViewController?.view.window?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     installOutsideClickMonitors()
   }
@@ -915,22 +921,6 @@ enum MenuBarIcon {
     let img = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
       NSColor.black.setFill()
       ShakerIcon.path(in: rect).fill()
-      return true
-    }
-    img.isTemplate = true
-    return img
-  }()
-}
-
-extension MenuBarIcon {
-  /// The shaker for the footer's ⋯ menu: 13 pt like its 11 pt semibold
-  /// neighbours. A template, tinted .secondary by the view so it carries the
-  /// same weight as the stethoscope beside it (a colour baked into a shared
-  /// image was dimmed again by the menu button and kept a stale appearance).
-  static let menuGlyph: NSImage = {
-    let base = image
-    let img = NSImage(size: NSSize(width: 13, height: 13), flipped: false) { r in
-      base.draw(in: r)
       return true
     }
     img.isTemplate = true

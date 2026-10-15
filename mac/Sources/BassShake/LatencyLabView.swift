@@ -382,7 +382,7 @@ struct LatencyChip: View {
         .foregroundStyle(lab.savedForCurrentPair == nil ? Color.secondary : Color.primary)
         .background(Capsule().fill(Color.primary.opacity(0.08)))
       }
-      .buttonStyle(.plain)
+      .buttonStyle(FooterButtonStyle(chip: true))
       .help(helpText)
       .onAppear { lab.startMonitoring() }
     }

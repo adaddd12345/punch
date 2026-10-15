@@ -37,7 +37,7 @@ struct LiveChannelsButton: View {
       .foregroundStyle(Color.primary)
       .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(0.08)))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(FooterButtonStyle(chip: true))
     .pointerHint(hint(n, mutedCount))
   }
 
