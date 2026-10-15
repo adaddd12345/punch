@@ -81,7 +81,8 @@ struct NowPlayingHeadline: View {
     .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: text.paused,
                                     picked: stack.pinned != nil && stack.pinned == entry.id))
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(note.map { $0.text } ?? (loading ? "Loading \(app.name)" : accessibility(entry)))
+    .accessibilityLabel(note.map { $0.text } ?? (loading ? "Loading \(app.name)" : model.accessibility(entry).label))
+    .accessibilityValue(note != nil || loading ? "" : model.accessibility(entry).value)
     .accessibilityActions {
       if note?.settings == true {
         Button("Open Accessibility Settings") { MediaKeys.openSettings() }
@@ -94,6 +95,7 @@ struct NowPlayingHeadline: View {
                        loading: Bool) -> some View {
       HStack(alignment: .center, spacing: 8) {
         NowArt(artwork: text.artwork, favicon: text.favicon, icon: model.icon(app), size: art)
+          .nowPlayingBars(model, entry, art: art, hidden: loading)
           .loadingArt(loading, size: art)
           .modifier(NowMorph(id: entry.id))
         VStack(alignment: .leading, spacing: 2) {
@@ -132,10 +134,6 @@ struct NowPlayingHeadline: View {
       }
   }
 
-  private func accessibility(_ e: NowEntry) -> String {
-    let t = model.describe(e, state: false)
-    return "\(t.paused ? "Paused" : "Playing"): \(t.title), \(t.subtitle)"
-  }
 }
 
 /// The transport, beside the headline in player order: a small mute, the big

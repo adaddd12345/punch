@@ -518,6 +518,8 @@ final class NowPlaying: ObservableObject {
     let dt = lastTick == 0 ? 0.1 : min(0.5, now - lastTick)
     lastTick = now
     let levels = live.levels
+    // The playing bars (NowPlayingBars), at this tick's 10 Hz, only while seen.
+    NowLevels.shared.feed(levels, metering: metering && !levels.isEmpty)
     // The meter takes a moment to build: don't pick a hero from silence.
     if levels.isEmpty && now - activeSince < 1.0 { return }
     updateAudible(levels, now: now, dt: dt)
@@ -1084,7 +1086,7 @@ final class NowPlaying: ObservableObject {
         if case .stopped = state, b.isLive { state = .unavailable }
         // Only after the tabs were read: an Automation denial reads nothing more.
         var ax: (names: [String], windows: Int)? = nil
-        if case .tabs = state, b.hasTabStripAudio, let pid = b.pid { ax = BrowserAX.tabNames(pid: pid) }
+        if case .tabs = state, b.hasTabStripAudio, let pid = b.pid { ax = BrowserAX.tabNames(pid: pid, safari: b.kind == .safari) }
         results.append((b, appID, state, ax))
       }
       DispatchQueue.main.async {
@@ -1108,6 +1110,8 @@ final class NowPlaying: ObservableObject {
     guard active, mayAsk else { return }
     let now = ProcessInfo.processInfo.systemUptime
     var next = items
+    // The only browser sounding: a guess keeps its media-site tabs only.
+    let browsersShown = ([hero].compactMap { $0 } + others).filter(\.isBrowser).count
     for (b, appID, r, ax) in results {
       itemsMemo[appID] = nil
       // One rule for every failed poll: the last tabs stay until three in a row.
@@ -1134,7 +1138,7 @@ final class NowPlaying: ObservableObject {
         answered.insert(b.rawValue)
         failures[b.rawValue] = nil
         var list = BrowserTabs.items(appID: appID, tabs: tabs, axNames: ax?.names,
-                                     axWindows: ax?.windows ?? 0)
+                                     axWindows: ax?.windows ?? 0, mediaOnly: browsersShown == 1)
         for i in list.indices {
           if itemSeen[list[i].id] == nil { itemSeen[list[i].id] = now }
           if let vid = list[i].url.flatMap({ BrowserTabs.youTubeID($0.absoluteString) }) {
@@ -1146,7 +1150,9 @@ final class NowPlaying: ObservableObject {
           }
         }
         // Heard tabs first, then a stable order (first seen), so tiles don't shuffle.
-        list = list.enumerated().sorted { x, y in
+        // A guess keeps the browser's order: the front window's active tab leads.
+        let guess = !list.contains(where: \.certain)
+        list = guess ? list : list.enumerated().sorted { x, y in
           let a = x.element, b = y.element
           if a.playing != b.playing { return a.playing }
           if a.muted != b.muted { return !a.muted }

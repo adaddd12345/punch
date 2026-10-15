@@ -23,8 +23,9 @@ enum NowBrowser: String, CaseIterable {
     }
   }
 
-  /// Chromium's own tab strip names its tabs "<title> - Audio playing" (Accessibility).
-  var hasTabStripAudio: Bool { kind == .chromium }
+  /// The tab strip says which tab sounds (Accessibility): Chromium names its
+  /// tabs "<title> - Audio playing"; Safari gives a sounding tab a mute button.
+  var hasTabStripAudio: Bool { kind != .arc }
 
   var isRunning: Bool { RunningApps.isLive(rawValue) }
   var isLive: Bool { RunningApps.isLive(rawValue) }
@@ -206,7 +207,10 @@ enum BrowserTabs {
   /// active tabs first, marked not certain and not known to be playing.
   /// `axWindows`: windows the tab strip walk saw (unused: a tab named only by
   /// the tab strip is never an item, since it may be in a private window).
-  static func items(appID: String, tabs: [BrowserTab], axNames: [String]?, axWindows: Int = 0, limit: Int = 6) -> [NowItem] {
+  /// `mediaOnly`: the guess keeps media-site tabs only (never a window's
+  /// active tab on some other site), for a browser that is the only one sounding.
+  static func items(appID: String, tabs: [BrowserTab], axNames: [String]?, axWindows: Int = 0, limit: Int = 6,
+                    mediaOnly: Bool = false) -> [NowItem] {
     func item(_ t: BrowserTab, playing: Bool, muted: Bool, certain: Bool) -> NowItem {
       let site = siteName(t.url)
       var title = cleanTitle(t.title, site: site)
@@ -238,8 +242,9 @@ enum BrowserTabs {
     let open = tabs.filter { !$0.url.isEmpty }
     if open.count == 1 { return [item(open[0], playing: true, muted: false, certain: true)] }
     // Else a guess: media-site tabs (active first); none, then each window's active tab.
+    // Windows come front to back, so the front window's active tab leads.
     let media = open.filter { mediaSite($0.url) != nil }
-    let pool = media.isEmpty ? open.filter(\.active) : media
+    let pool = media.isEmpty && !mediaOnly ? open.filter(\.active) : media
     let ordered = pool.filter(\.active) + pool.filter { !$0.active }
     return ordered.prefix(limit).map { item($0, playing: false, muted: false, certain: false) }
   }
@@ -250,7 +255,8 @@ enum BrowserTabs {
 enum BrowserAX {
   /// Tab names from every window's tab strip, and how many windows were walked.
   /// nil: not trusted, or no tab found. At most about a second of IPC.
-  static func tabNames(pid: pid_t) -> (names: [String], windows: Int)? {
+  /// `safari`: a tab's sound is its mute button (SafariTabAudio), named like Chromium's.
+  static func tabNames(pid: pid_t, safari: Bool = false) -> (names: [String], windows: Int)? {
     guard AXIsProcessTrusted() else { return nil }
     let app = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(app, 0.5)
@@ -280,6 +286,14 @@ enum BrowserAX {
         found = true
         let title = vals[2] as? String ?? ""
         let desc = vals[3] as? String ?? ""
+        if safari {
+          // Title only (its description is the generic "Tab"); the sound is a child button.
+          let name = title.isEmpty ? desc : title
+          let kids = vals[4] as? [AXUIElement] ?? []
+          budget -= kids.count
+          if !name.isEmpty { names.append(SafariTabAudio.name(name, audio: SafariTabAudio.audio(kids))) }
+          continue
+        }
         let name = title.isEmpty ? desc : title
         if !name.isEmpty { names.append(desc.isEmpty || desc == title ? name : name + " - " + desc) }
         continue
@@ -290,7 +304,7 @@ enum BrowserAX {
     return found ? (names, wins.count) : nil
   }
 
-  /// A radio button whose parent is a tab group (older Chromium has no AXTabButton subrole).
+  /// A radio button whose parent is a tab group (older Chromium and Safari have no AXTabButton subrole).
   private static func isInTabStrip(_ e: AXUIElement) -> Bool {
     var p: CFTypeRef?
     guard AXUIElementCopyAttributeValue(e, kAXParentAttribute as CFString, &p) == .success,
@@ -299,6 +313,64 @@ enum BrowserAX {
     var r: CFTypeRef?
     AXUIElementCopyAttributeValue(parent, kAXRoleAttribute as CFString, &r)
     return (r as? String) == (kAXTabGroupRole as String)
+  }
+}
+
+/// Safari's tab strip (Accessibility): a tab that is making sound carries a
+/// speaker button whose description is Safari's own "mute tab" (muted:
+/// "unmute tab"); it goes away a few seconds after the sound stops. Strings
+/// come from Safari's framework in the user's language, English always too.
+enum SafariTabAudio {
+  /// Lowercased button names that mean the tab plays / plays muted.
+  static let names: (playing: Set<String>, muted: Set<String>) = {
+    let playKeys = ["mute tab", "Mute Tab", "Mute This Tab"]
+    let muteKeys = ["unmute tab", "Unmute Tab", "Unmute This Tab"]
+    var playing = Set(playKeys.map { $0.lowercased() })
+    var muted = Set(muteKeys.map { $0.lowercased() })
+    let base = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/Safari.framework/Resources")
+    if let b = Bundle(url: base.deletingLastPathComponent()),
+       let loc = Bundle.preferredLocalizations(from: b.localizations, forPreferences: Locale.preferredLanguages).first,
+       loc != "en", loc != "Base",
+       let data = try? Data(contentsOf: base.appendingPathComponent("\(loc).lproj/Localizable.strings")),
+       let table = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: String] {
+      for k in playKeys { if let v = table[k], !v.isEmpty { playing.insert(v.lowercased()) } }
+      for k in muteKeys { if let v = table[k], !v.isEmpty { muted.insert(v.lowercased()) } }
+    }
+    return (playing, muted)
+  }()
+
+  /// Pure: what one button's description / title / help says, if it's the tab's speaker.
+  static func audio(_ label: String) -> BrowserTabs.Audio? {
+    let l = label.trimmingCharacters(in: .whitespaces).lowercased()
+    guard !l.isEmpty else { return nil }
+    if names.muted.contains(l) { return .muted }
+    if names.playing.contains(l) { return .playing }
+    return nil
+  }
+
+  /// A tab's own buttons (one IPC each, a handful per tab). Never web content.
+  static func audio(_ kids: [AXUIElement]) -> BrowserTabs.Audio? {
+    let keys = [kAXRoleAttribute, kAXDescriptionAttribute, kAXTitleAttribute, kAXHelpAttribute] as CFArray
+    for k in kids.prefix(8) {
+      AXUIElementSetMessagingTimeout(k, 0.25)
+      var valsRef: CFArray?
+      guard AXUIElementCopyMultipleAttributeValues(k, keys, AXCopyMultipleAttributeOptions(rawValue: 0), &valsRef) == .success,
+            let vals = valsRef as? [Any], vals.count == 4,
+            (vals[0] as? String) == (kAXButtonRole as String) else { continue }
+      for v in vals.dropFirst() {
+        if let s = v as? String, let a = audio(s) { return a }
+      }
+    }
+    return nil
+  }
+
+  /// The tab-strip name BrowserTabs.items reads (Chromium's wording).
+  static func name(_ title: String, audio: BrowserTabs.Audio?) -> String {
+    switch audio {
+    case .playing: return title + " - Audio playing"
+    case .muted: return title + " - Audio muted"
+    case nil: return title
+    }
   }
 }
 

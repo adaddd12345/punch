@@ -101,11 +101,44 @@ final class NowStack: ObservableObject {
   /// the drawer ("+N", N at least 2), which opens the rest inline as tiles.
   static let maxCells = 6
 
+  /// Guessed tabs (`certain` false) shown at most, the hero's included, when
+  /// one browser is all that sounds: the rest wait in the drawer, so tabs we
+  /// can't hear aren't laid out as equals.
+  static let maxGuesses = 3
+
   /// The tiles on screen and the ones behind the drawer (empty: no drawer).
-  static func split(_ rest: [NowEntry], open: Bool) -> (shown: [NowEntry], hidden: [NowEntry]) {
-    guard rest.count > maxCells else { return (rest, []) }
-    let hidden = Array(rest.dropFirst(maxCells - 1))
-    return (open ? rest : Array(rest.prefix(maxCells - 1)), hidden)
+  /// `guessCap`: guessed tabs kept out of the drawer (see `guessCap(lead:rest:)`).
+  static func split(_ rest: [NowEntry], open: Bool, guessCap: Int = .max) -> (shown: [NowEntry], hidden: [NowEntry]) {
+    var kept: [NowEntry] = []
+    var extra: [NowEntry] = []
+    var guesses = 0
+    for e in rest {
+      if e.item?.certain == false {
+        guesses += 1
+        if guesses > guessCap { extra.append(e); continue }
+      }
+      kept.append(e)
+    }
+    // A drawer holds at least two (one tile would take its own place anyway).
+    if extra.count < 2 { kept = rest; extra = [] }
+    if kept.count + (extra.isEmpty ? 0 : 1) > maxCells {
+      extra = Array(kept.dropFirst(maxCells - 1)) + extra
+      kept = Array(kept.prefix(maxCells - 1))
+    }
+    guard !extra.isEmpty else { return (rest, []) }
+    return (open ? kept + extra : kept, extra)
+  }
+
+  /// `maxGuesses` less the hero's, when exactly one browser is on screen and
+  /// none of its tabs is certain; otherwise no cap.
+  static func guessCap(lead: NowEntry?, rest: [NowEntry]) -> Int {
+    guard let lead else { return .max }
+    let all = [lead] + rest
+    let browsers = Set(all.filter { $0.app.isBrowser }.map(\.app.id))
+    guard browsers.count == 1, let id = browsers.first else { return .max }
+    let tabs = all.filter { $0.app.id == id }
+    guard tabs.allSatisfy({ $0.item?.certain == false }) else { return .max }
+    return maxGuesses - (lead.app.id == id ? 1 : 0)
   }
 
   /// The hero's entry (the loudest app's lead tab, or the app). nil: nothing playing.
@@ -184,7 +217,9 @@ final class NowStack: ObservableObject {
         lead = r.lead
         rest = r.rest
         pending = wait
-        if drawerOpen && r.rest.count <= Self.maxCells { drawerOpen = false }
+        if drawerOpen && Self.split(r.rest, open: false, guessCap: Self.guessCap(lead: r.lead, rest: r.rest)).hidden.isEmpty {
+          drawerOpen = false
+        }
       }
     } else {
       lead = r.lead
@@ -197,7 +232,7 @@ final class NowStack: ObservableObject {
   /// Opens or closes the drawer: the hidden tiles fly out of (or back into) it
   /// on the stack's one spring.
   func setDrawer(_ open: Bool) {
-    let open = open && rest.count > Self.maxCells
+    let open = open && !Self.split(rest, open: false, guessCap: Self.guessCap(lead: lead, rest: rest)).hidden.isEmpty
     guard open != drawerOpen else { return }
     var t = Transaction(animation: Self.morph)
     t[NowMorphing.self] = true
@@ -389,7 +424,7 @@ struct NowPlayingTiles: View {
     // Up to three rows; past six, the sixth cell is the drawer of the rest
     // (N is at least 2). Open, every tile shows and the drawer becomes a slim
     // "Show less" row at the end, in the same view so its glass morphs.
-    let split = NowStack.split(rest, open: stack.drawerOpen)
+    let split = NowStack.split(rest, open: stack.drawerOpen, guessCap: NowStack.guessCap(lead: stack.lead, rest: rest))
     let drawer = !split.hidden.isEmpty
     let open = drawer && stack.drawerOpen
     let cells = split.shown.count + (drawer && !open ? 1 : 0)
@@ -479,7 +514,8 @@ struct NowStackTile: View {
         }
         .buttonStyle(.plain)
         .pointerHint(Caption.alsoPlaying(app.name, song: text.song, paused: text.paused))
-        .accessibilityLabel(loading ? "Loading \(app.name)" : accessibility)
+        .accessibilityLabel(loading ? "Loading \(app.name)" : model.accessibility(entry).label)
+        .accessibilityValue(loading ? "" : model.accessibility(entry).value)
         .accessibilityHint("Shows it in the top tile")
         .accessibilityAction(named: "Open \(app.name)") { NowStack.focus(entry, model: model) }
         if wide && model.route(app) != .mute {
@@ -489,10 +525,6 @@ struct NowStackTile: View {
       }
   }
 
-  private var accessibility: String {
-    let t = model.describe(entry, state: false)
-    return "\(t.paused ? "Paused" : "Playing"): \(t.title), \(t.subtitle)"
-  }
 }
 
 /// The art as the play/pause button: the action's glyph over it while
@@ -539,6 +571,7 @@ struct NowEntryArtButton: View {
                         browser: app.isBrowser)
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
       NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: size)
+        .nowPlayingBars(model, entry, art: size)
         .overlay {
           if showGlyph {
             ZStack {
