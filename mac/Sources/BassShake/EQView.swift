@@ -5,7 +5,8 @@ import SwiftUI
 ///   drag        frequency + gain (Shift = fine)
 ///   scroll      Q (bandwidth) of the hovered / grabbed node
 ///   double-click  reset that node to 0 dB;  ⌥-click: reset it fully
-///   drag the line (between nodes)  raises/lowers everything = Boost;
+///   drag the line (between nodes)  raises/lowers everything = Boost
+///               (the line is always drawn as EQ + Boost: your whole sound);
 ///               ⌥-drag tilts bass against treble (the two shelves);
 ///               double-click the line: Boost to 0
 ///   keyboard    ←/→ pick a node, ↑/↓ gain (⇧ fine), ⌥←/→ frequency,
@@ -36,11 +37,6 @@ struct EQView: View {
   /// The pointer is on the line (within `lineReach`), not on a node.
   @State private var onLine = false
   @State private var lineDrag: LineDrag?
-  /// Boost drag: how far (pt) the lit line is lifted off the EQ shape; it
-  /// springs back to 0 on release (the Boost tile already shows the level).
-  @State private var lift: CGFloat = 0
-  /// The lifted copy of the line is on screen (dragging or settling back).
-  @State private var sliding = false
   /// The value chip by the pointer while the line is held.
   @State private var lineChip: (text: String, at: CGPoint)?
   @State private var cursorPushed = false
@@ -52,7 +48,6 @@ struct EQView: View {
   @Environment(\.powerSaver) private var powerSaver
   /// Inside a Liquid Glass tile (the readout skips its own blur there).
   @Environment(\.bentoGlass) private var bentoGlass
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   private static let colors: [Color] = [
     Color(red: 1.00, green: 0.36, blue: 0.36),
@@ -74,7 +69,13 @@ struct EQView: View {
     var low: Int, high: Int      // shelf indices (tilt)
     var lastStep: Int            // whole dB, for the haptic tick
   }
-  private let gainSpan = 12.0
+  /// The dB scale: room above for Boost (0–12) on top of the EQ, so the
+  /// drawn line (EQ + Boost) rarely clips. 0 dB sits a little below middle.
+  private let topDb = 18.0
+  private let bottomDb = -12.0
+  private let pad: CGFloat = 12
+  /// The real total level: the line is drawn this far above the EQ shape.
+  private var boost: Double { controller.settings.boostDb }
 
   var body: some View {
     GeometryReader { geo in
@@ -83,20 +84,17 @@ struct EQView: View {
       // Read here (not only in the Canvas) so changes redraw it.
       let showNodes = pointerIn || grabbed != nil
       let kbDot: Int? = focused && kbActive ? kbBand : nil
+      let boostDb = controller.settings.boostDb
       ZStack {
         if controller.settings.waveform && controller.settings.enabled && !powerSaver {
           WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
             .allowsHitTesting(false)
             .transition(.opacity)
         }
-        Canvas { ctx, size in draw(ctx, size: size, bands: bands, showNodes: showNodes && !sliding, kbDot: kbDot) }
-          .id(powerSaver)  // redraw without the glow when Power Saver flips
-        // Boost by the line: the lit line slides, the EQ shape stays as a ghost.
-        if sliding {
-          Canvas { ctx, size in drawLineOnly(ctx, size: size, bands: bands) }
-            .offset(y: lift)
-            .allowsHitTesting(false)
+        Canvas { ctx, size in
+          draw(ctx, size: size, bands: bands, boost: boostDb, showNodes: showNodes && lineDrag == nil, kbDot: kbDot)
         }
+          .id(powerSaver)  // redraw without the glow when Power Saver flips
         if controller.settings.limit && controller.settings.enabled {
           LimitOverlay(meters: controller.meters, size: size, bassEdgeX: x(150, size.width),
                        yFor: { y($0, size.height) })
@@ -105,9 +103,9 @@ struct EQView: View {
         // With Tutorial Mode on, the hint is the pointer's readout; the
         // in-graph readout stays for the keyboard.
         if let i = hintsOn ? (focused && kbActive && grabbed == nil ? kbBand : nil) : (grabbed ?? hovered ?? (focused ? kbBand : nil)),
-           i < bands.count, lineDrag == nil, !sliding {
+           i < bands.count, lineDrag == nil {
           let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
-          let ny: CGFloat = nodeY(bands[i], response(bands), size.height)
+          let ny: CGFloat = nodeY(bands[i], response(bands), size.height, boost: boostDb)
           readout(bands[i], color: Self.colors[i])
             .position(x: nx, y: ny < 30 ? ny + 24 : ny - 22)
             .allowsHitTesting(false)
@@ -178,14 +176,12 @@ struct EQView: View {
 
   private func x(_ f: Double, _ w: CGFloat) -> CGFloat { w * CGFloat(log10(f / 20) / 3) }
   private func freq(_ x: CGFloat, _ w: CGFloat) -> Double { 20 * pow(10, 3 * Double(x / w)) }
-  private func y(_ g: Double, _ h: CGFloat) -> CGFloat {
-    let pad: CGFloat = 12
-    return h / 2 - CGFloat(g / gainSpan) * (h / 2 - pad)
-  }
-  private func gain(_ y: CGFloat, _ h: CGFloat) -> Double {
-    let pad: CGFloat = 12
-    return Double((h / 2 - y) / (h / 2 - pad)) * gainSpan
-  }
+  /// Points per dB on the vertical scale.
+  private func ptPerDb(_ h: CGFloat) -> CGFloat { (h - 2 * pad) / CGFloat(topDb - bottomDb) }
+  private func y(_ g: Double, _ h: CGFloat) -> CGFloat { pad + CGFloat(topDb - g) * ptPerDb(h) }
+  private func gain(_ y: CGFloat, _ h: CGFloat) -> Double { topDb - Double((y - pad) / ptPerDb(h)) }
+  /// A level as drawn: kept just inside the view.
+  private func clampDb(_ db: Double) -> Double { max(bottomDb - 1, min(topDb + 1, db)) }
 
   // MARK: - Nodes sit on the combined line
 
@@ -202,9 +198,10 @@ struct EQView: View {
     return resp[i] + (resp[j] - resp[i]) * a
   }
   /// Where a node is drawn: at its frequency, on the line (not at its own
-  /// gain, which floats off the line when neighbouring bands overlap).
-  private func nodeY(_ b: EQBand, _ resp: [Double], _ h: CGFloat) -> CGFloat {
-    y(max(-gainSpan * 1.1, min(gainSpan * 1.1, sample(resp, at: b.freq))), h)
+  /// gain, which floats off the line when neighbouring bands overlap), which
+  /// is the EQ plus Boost.
+  private func nodeY(_ b: EQBand, _ resp: [Double], _ h: CGFloat, boost: Double) -> CGFloat {
+    y(clampDb(sample(resp, at: b.freq) + boost), h)
   }
   /// How much of a band's own gain shows at its own frequency: all of it for
   /// a bell, about half at a shelf's corner.
@@ -215,7 +212,7 @@ struct EQView: View {
     let resp = response(bands)
     var best: (Int, CGFloat)?
     for (i, b) in bands.enumerated() {
-      let d = hypot(x(b.freq, size.width) - p.x, nodeY(b, resp, size.height) - p.y)
+      let d = hypot(x(b.freq, size.width) - p.x, nodeY(b, resp, size.height, boost: boost) - p.y)
       if d < hitRadius, d < (best?.1 ?? .infinity) { best = (i, d) }
     }
     return best?.0
@@ -223,9 +220,9 @@ struct EQView: View {
 
   // MARK: - Drawing
 
-  private func draw(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], showNodes: Bool, kbDot: Int?) {
+  private func draw(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], boost: Double, showNodes: Bool, kbDot: Int?) {
     if let filament {
-      drawFilament(ctx, size: size, bands: bands, color: filament, showNodes: showNodes, kbDot: kbDot)
+      drawFilament(ctx, size: size, bands: bands, boost: boost, color: filament, showNodes: showNodes, kbDot: kbDot)
       return
     }
     let w = size.width, h = size.height
@@ -235,13 +232,15 @@ struct EQView: View {
     for f in [50.0, 100, 200, 500, 1_000, 2_000, 5_000, 10_000] {
       grid.move(to: CGPoint(x: x(f, w), y: 0)); grid.addLine(to: CGPoint(x: x(f, w), y: h))
     }
-    for g in [-6.0, 6] {
+    for g in [-6.0, 6, 12] {
       grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
     }
     ctx.stroke(grid, with: .color(.primary.opacity(contrast == .increased ? 0.18 : 0.06)), lineWidth: 1)
     var zero = Path()
     zero.move(to: CGPoint(x: 0, y: y(0, h))); zero.addLine(to: CGPoint(x: w, y: y(0, h)))
     ctx.stroke(zero, with: .color(.primary.opacity(0.14)), lineWidth: 1)
+    ctx.draw(Text("0 dB").font(.system(size: 8, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
+             at: CGPoint(x: w - 4, y: y(0, h) + 6), anchor: .trailing)
     for (f, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")] {
       ctx.draw(Text(label).font(.system(size: 8, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
                at: CGPoint(x: x(f, w) + 3, y: h - 7), anchor: .leading)
@@ -249,20 +248,17 @@ struct EQView: View {
 
     drawGhost(ctx, size: size)
     let resp = response(bands)
-    // While the line is lifted, the EQ shape here is its ghost.
-    var ctx = ctx
-    if sliding { ctx.opacity = 0.28 }
     // Per-node soft "influence" glow so you can see what each node does.
     for (i, b) in bands.enumerated() where abs(b.gain) > 0.05 {
       let cx = x(b.freq, w)
       let rect = CGRect(x: cx - 40, y: 0, width: 80, height: h)
       ctx.fill(Path(rect), with: .radialGradient(
         Gradient(colors: [Self.colors[i].opacity(0.10 * min(1, abs(b.gain) / 6)), .clear]),
-        center: CGPoint(x: cx, y: nodeY(b, resp, h)), startRadius: 0, endRadius: 44))
+        center: CGPoint(x: cx, y: nodeY(b, resp, h, boost: boost)), startRadius: 0, endRadius: 44))
     }
 
     // Response curve.
-    let curve = curvePath(bands, size: size)
+    let curve = curvePath(bands, size: size, boost: boost)
     var fill = curve
     fill.addLine(to: CGPoint(x: w, y: y(0, h)))
     fill.addLine(to: CGPoint(x: 0, y: y(0, h)))
@@ -276,8 +272,8 @@ struct EQView: View {
       .init(color: Color(red: 0.25, green: 0.60, blue: 1.0).opacity(0.25), location: 0.70),
       .init(color: Color(red: 0.45, green: 0.35, blue: 1.0).opacity(0.40), location: 1.0),
     ])
-    ctx.fill(fill, with: .linearGradient(shade, startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
-                                         endPoint: CGPoint(x: 0, y: y(-gainSpan, h))))
+    ctx.fill(fill, with: .linearGradient(shade, startPoint: CGPoint(x: 0, y: y(12, h)),
+                                         endPoint: CGPoint(x: 0, y: y(-12, h))))
     let stroke = Gradient(stops: [
       .init(color: Color(red: 1.0, green: 0.32, blue: 0.32), location: 0.0),
       .init(color: Color(red: 1.0, green: 0.70, blue: 0.25), location: 0.32),
@@ -285,20 +281,21 @@ struct EQView: View {
       .init(color: Color(red: 0.35, green: 0.70, blue: 1.0), location: 0.68),
       .init(color: Color(red: 0.55, green: 0.45, blue: 1.0), location: 1.0),
     ])
-    ctx.stroke(curve, with: .linearGradient(stroke, startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
-                                            endPoint: CGPoint(x: 0, y: y(-gainSpan, h))),
+    ctx.stroke(curve, with: .linearGradient(stroke, startPoint: CGPoint(x: 0, y: y(12, h)),
+                                            endPoint: CGPoint(x: 0, y: y(-12, h))),
                style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
-    drawNodes(ctx, size: size, bands: bands, resp: resp)
+    drawNodes(ctx, size: size, bands: bands, resp: resp, boost: boost)
   }
 
-  private func curvePath(_ bands: [EQBand], size: CGSize) -> Path {
+  /// The drawn line: the EQ's response raised by `boost` (the real total).
+  private func curvePath(_ bands: [EQBand], size: CGSize, boost: Double) -> Path {
     let w = size.width, h = size.height
     let n = max(64, Int(w / 2))
     let resp = controller.curve(for: bands, count: n)
     var curve = Path()
     for (k, db) in resp.enumerated() {
-      let p = CGPoint(x: w * CGFloat(k) / CGFloat(n - 1), y: y(max(-gainSpan * 1.1, min(gainSpan * 1.1, db)), h))
+      let p = CGPoint(x: w * CGFloat(k) / CGFloat(n - 1), y: y(clampDb(db + boost), h))
       k == 0 ? curve.move(to: p) : curve.addLine(to: p)
     }
     return curve
@@ -307,20 +304,23 @@ struct EQView: View {
   /// Bento's lit filament: fill fading to clear, a soft glow, then the line.
   /// Nodes show in full while the pointer is over the EQ (or one is held /
   /// keyboard-picked); otherwise only as small dots on the line.
-  private func drawFilament(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], color: Color,
+  private func drawFilament(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], boost: Double, color: Color,
                             showNodes: Bool, kbDot: Int?) {
     let w = size.width, h = size.height
     let dark = scheme == .dark
+    // Faint 0 dB reference, so a Boost offset reads.
+    var zero = Path()
+    zero.move(to: CGPoint(x: 0, y: y(0, h))); zero.addLine(to: CGPoint(x: w, y: y(0, h)))
+    ctx.stroke(zero, with: .color(.primary.opacity(contrast == .increased ? 0.22 : 0.10)),
+               style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
     drawGhost(ctx, size: size)
-    var ctx = ctx
-    if sliding { ctx.opacity = 0.28 }
-    let curve = curvePath(bands, size: size)
+    let curve = curvePath(bands, size: size, boost: boost)
     var fill = curve
     fill.addLine(to: CGPoint(x: w, y: h))
     fill.addLine(to: CGPoint(x: 0, y: h))
     fill.closeSubpath()
     ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.30 : 0.18), color.opacity(0)]),
-                                         startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
+                                         startPoint: CGPoint(x: 0, y: y(12, h)),
                                          endPoint: CGPoint(x: 0, y: h)))
     if !powerSaver {
       ctx.drawLayer { glow in
@@ -333,12 +333,12 @@ struct EQView: View {
 
     let resp = response(bands)
     if showNodes {
-      drawNodes(ctx, size: size, bands: bands, resp: resp)
+      drawNodes(ctx, size: size, bands: bands, resp: resp, boost: boost)
     } else {
       // Small dots on the line; the keyboard-picked node is a little larger,
       // in its own colour, so the arrows' target stays visible.
       for (i, b) in bands.enumerated() {
-        let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h))
+        let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h, boost: boost))
         let picked = i == kbDot
         let r: CGFloat = picked ? 5.5 : 2.5
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
@@ -350,36 +350,8 @@ struct EQView: View {
   /// ⌥-drag (tilt): where the line was when it was grabbed.
   private func drawGhost(_ ctx: GraphicsContext, size: CGSize) {
     guard let d = lineDrag, d.tilt else { return }
-    ctx.stroke(curvePath(d.startBands, size: size), with: .color(.primary.opacity(0.28)),
+    ctx.stroke(curvePath(d.startBands, size: size, boost: d.startBoost), with: .color(.primary.opacity(0.28)),
                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [3, 3]))
-  }
-
-  /// The lit line alone (Boost drag), in the look of the view it's in.
-  private func drawLineOnly(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand]) {
-    let h = size.height
-    let curve = curvePath(bands, size: size)
-    if let filament {
-      let dark = scheme == .dark
-      if !powerSaver {
-        ctx.drawLayer { glow in
-          glow.addFilter(.blur(radius: 5))
-          glow.stroke(curve, with: .color(filament.opacity(dark ? 0.75 : 0.28)),
-                      style: StrokeStyle(lineWidth: dark ? 6 : 5, lineCap: .round, lineJoin: .round))
-        }
-      }
-      ctx.stroke(curve, with: .color(filament), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-    } else {
-      let stroke = Gradient(stops: [
-        .init(color: Color(red: 1.0, green: 0.32, blue: 0.32), location: 0.0),
-        .init(color: Color(red: 1.0, green: 0.70, blue: 0.25), location: 0.32),
-        .init(color: .primary.opacity(0.85), location: 0.5),
-        .init(color: Color(red: 0.35, green: 0.70, blue: 1.0), location: 0.68),
-        .init(color: Color(red: 0.55, green: 0.45, blue: 1.0), location: 1.0),
-      ])
-      ctx.stroke(curve, with: .linearGradient(stroke, startPoint: CGPoint(x: 0, y: y(gainSpan, h)),
-                                              endPoint: CGPoint(x: 0, y: y(-gainSpan, h))),
-                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
-    }
   }
 
   private func lineChipView(_ text: String) -> some View {
@@ -392,10 +364,10 @@ struct EQView: View {
                                     : AnyShapeStyle(.regularMaterial), in: Capsule())
   }
 
-  private func drawNodes(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], resp: [Double]) {
+  private func drawNodes(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], resp: [Double], boost: Double) {
     let w = size.width, h = size.height
     for (i, b) in bands.enumerated() {
-      let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h))
+      let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h, boost: boost))
       let active = grabbed == i || hovered == i
       let r: CGFloat = active ? 7.5 : 5.5
       if active {
@@ -460,12 +432,13 @@ struct EQView: View {
         let ox = x(origin.band.freq, size.width)
         // The dot sits on the summed line, so the drag moves the line: solve
         // this band's gain so the curve passes under the pointer at its new
-        // frequency, given what the other bands already add there.
+        // frequency, given what the other bands (and Boost) already add there.
         let share = selfShare(origin.band)
-        let oy = y(sample(othersCurve, at: origin.band.freq) + origin.band.gain * share, size.height)
+        let lift = boost
+        let oy = y(sample(othersCurve, at: origin.band.freq) + origin.band.gain * share + lift, size.height)
         b.freq = min(EQBand.freqRange.upperBound, max(EQBand.freqRange.lowerBound, freq(ox + dx, size.width)))
         let target = gain(oy + dy, size.height)
-        let solved = (target - sample(othersCurve, at: b.freq)) / share
+        let solved = (target - sample(othersCurve, at: b.freq) - lift) / share
         var g = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, solved))
         // Hysteresis snap to 0 dB: catch within 0.4 dB, release beyond 0.8.
         if snapped {
@@ -491,8 +464,8 @@ struct EQView: View {
   /// Within `lineReach` of the drawn line (and not on a node).
   private func lineHit(_ p: CGPoint, size: CGSize) -> Bool {
     guard p.x >= 0, p.x <= size.width, nearest(p, size: size) == nil else { return false }
-    let db = sample(response(controller.settings.bands), at: freq(p.x, size.width))
-    return abs(y(max(-gainSpan * 1.1, min(gainSpan * 1.1, db)), size.height) - p.y) <= lineReach
+    let db = sample(response(controller.settings.bands), at: freq(p.x, size.width)) + boost
+    return abs(y(clampDb(db), size.height) - p.y) <= lineReach
   }
 
   private func setLineCursor(_ on: Bool) {
@@ -508,17 +481,16 @@ struct EQView: View {
     lineDrag = LineDrag(startY: v.startLocation.y, startBoost: controller.settings.boostDb, tilt: tilt,
                         startBands: bands, low: low ?? 0, high: high ?? 0,
                         lastStep: tilt ? 0 : Int(controller.settings.boostDb.rounded(.down)))
-    if !tilt { lift = 0; sliding = true }
     setLineCursor(true)
   }
 
-  /// Up = louder (Boost, same 0–12 dB as its tile) or, with ⌥, more bass and
-  /// less treble (each shelf ±6 dB from where it was).
+  /// Up = louder (Boost, same 0–12 dB as its tile; the line moves 1:1 with
+  /// the pointer) or, with ⌥, more bass and less treble (each shelf ±6 dB).
   private func dragLine(_ v: DragGesture.Value, size: CGSize, frameOrigin: CGPoint) {
     guard var d = lineDrag else { return }
     let h = size.height
     let fine: CGFloat = NSEvent.modifierFlags.contains(.shift) ? 0.2 : 1.0
-    let db = Double(-(v.location.y - d.startY) * fine / (h / 2 - 12)) * gainSpan
+    let db = Double(-(v.location.y - d.startY) * fine / ptPerDb(h))
     let at = CGPoint(x: v.location.x - frameOrigin.x, y: v.location.y - frameOrigin.y)
     let step: Int
     if d.tilt {
@@ -533,7 +505,6 @@ struct EQView: View {
     } else {
       let b = (min(12, max(0, d.startBoost + db)) * 10).rounded() / 10
       if b != controller.settings.boostDb { controller.settings.boostDb = b }
-      lift = -CGFloat((b - d.startBoost) / gainSpan) * (h / 2 - 12)
       step = Int(b.rounded(.down))
       lineChip = ("Boost +\(Int(b.rounded())) dB", at)
     }
@@ -544,16 +515,11 @@ struct EQView: View {
     }
   }
 
-  /// Let go: the lifted line springs back onto the EQ shape.
+  /// Let go: the line stays where it was put (that is the Boost now).
   private func endLine() {
     lineDrag = nil
     lineChip = nil
     if !onLine { setLineCursor(false) }
-    withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.38, dampingFraction: 0.82)) {
-      lift = 0
-    } completion: {
-      if lineDrag == nil { sliding = false }
-    }
   }
 
   private static func signed(_ v: Double) -> String {
