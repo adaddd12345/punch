@@ -481,7 +481,8 @@ struct PopoverView: View {
                  dimmed: !controller.settings.enabled,
                  param: controller.param("strength", \.bass, step: 0.01)) { EmptyView() }
           .frame(width: col)
-          .pointerHint(Caption.strength(controller.settings.bass, scrub: false), live: true, track: false)
+          .pointerHint(Caption.strength(controller.settings.bass, scrub: false,
+                                        shaker: controller.settings.character.bassStage == .shaker), live: true, track: false)
         MiniDial(title: "Boost", symbol: "speaker.wave.3",
                  value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
                  range: 0...12, format: { ("+", "\(Int($0.rounded()))", " dB") },

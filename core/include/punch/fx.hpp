@@ -218,6 +218,8 @@ class DjFx {
   void process(float* const* ch, int numChannels, int numFrames);
   // Detected tempo (BPM, 0 when unknown or unsure). Any thread.
   float bpm() const { return bpm_.load(std::memory_order_relaxed); }
+  // The tempo while the tracker is running (0 when it isn't). Audio thread.
+  float trackingBpm() const { return tracking_ ? bpm_.load(std::memory_order_relaxed) : 0.f; }
   bool rollSilent() const { return perform_.rollSilent(); }
 
  private:

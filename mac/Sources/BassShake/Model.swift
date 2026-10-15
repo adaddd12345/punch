@@ -71,13 +71,39 @@ extension EQBand {
 }
 
 extension Preset {
+  static let classicBassShakeNodes: [(freq: Double, gain: Double, q: Double)] =
+    [(105, 5, 0.71), (55, 3, 1.2), (250, -2, 1), (1_000, 0, 1), (3_500, 1.5, 1), (10_000, 1.5, 0.71)]
+
+  /// Saves from before the Bass Shaker: "Bass Shake" with the old, unedited
+  /// curve and no stage set becomes the new Bass Shake (the old one lives on
+  /// as Bass Shake Classic). Anything edited or saved as a user preset keeps
+  /// its classic sound.
+  static func migrateBassShake(presetName: String?, bands: inout [EQBand], character: inout SoundCharacter) {
+    guard presetName == "Bass Shake", character == .neutral, let new = all.first(where: { $0.name == "Bass Shake" }) else { return }
+    let old = zip(EQBand.defaults, classicBassShakeNodes).map { b, n in
+      var x = b; x.freq = n.freq; x.gain = n.gain; x.q = n.q; return x
+    }
+    guard bands.count == old.count,
+          zip(bands, old).allSatisfy({ abs($0.freq - $1.freq) < 0.5 && abs($0.gain - $1.gain) < 0.05 && abs($0.q - $1.q) < 0.01 && $0.kind == $1.kind })
+    else { return }
+    bands = new.bands()
+    character = new.character
+  }
+
   // Anchored to the Harman in-room bass target (~+4…6 dB shelf near 105 Hz).
   // Columns: low shelf, bell, bell, bell, bell, high shelf — (Hz, dB, Q).
   static let all: [Preset] = [
     Preset(name: "Flat", nodes: [(80, 0, 0.71), (150, 0, 1), (400, 0, 1), (1_500, 0, 1), (4_000, 0, 1), (10_000, 0, 0.71)],
            bass: 0, symbol: "minus"),
-    Preset(name: "Bass Shake", nodes: [(105, 5, 0.71), (55, 3, 1.2), (250, -2, 1), (1_000, 0, 1), (3_500, 1.5, 1), (10_000, 1.5, 0.71)],
-           bass: 0.55, symbol: "waveform.path"),
+    // The Bass Shaker stage owns the low end (Strength): no fixed low boost.
+    // The 250 Hz cut is -1.5 as in the R&D runs (the stage dips 260 Hz itself).
+    Preset(name: "Bass Shake", nodes: [(105, 0, 0.71), (55, 0, 1.2), (250, -1.5, 1), (1_000, 0, 1), (3_500, 1.5, 1), (10_000, 1.5, 0.71)],
+           bass: 0.55, symbol: "waveform.path", character: SoundCharacter(bassStage: .shaker)),
+    // The original Bass Shake, kept to compare by ear: fixed low shelf and
+    // 55 Hz bell plus the classic harmonic enhancer.
+    Preset(name: "Bass Shake Classic", nodes: Preset.classicBassShakeNodes,
+           bass: 0.55, symbol: "waveform",
+           subtitle: "The first Bass Shake: a fixed bass lift plus added harmonics."),
     // Warm, close, treated-booth voice (the SM7B sound): rumble trimmed,
     // chest at 165 Hz, room box out at 420 Hz, 1-4 kHz speech band left
     // within about 1 dB, sibilance and top softened. Narrower stereo pulls
@@ -114,6 +140,14 @@ extension Preset {
   ] + HeadphonePresets.all
 }
 
+/// Which engine stage the Strength slider drives.
+enum BassStage: String, Codable {
+  /// Psychoacoustic harmonics (the original Bass Shake's enhancer).
+  case classic
+  /// The Bass Shaker: dynamic punch and body, headroom-aware, clean harmonics.
+  case shaker
+}
+
 /// Character stages a preset or mode can switch on beyond the EQ.
 struct SoundCharacter: Codable, Equatable {
   struct Compressor: Codable, Equatable {
@@ -133,13 +167,14 @@ struct SoundCharacter: Codable, Equatable {
   var width: Double = 1.0       // M/S width, 1 = untouched
   var crossfeed: Double = 0     // 0...1 (headphones only)
   var ceilingDb: Double = -1    // limiter ceiling
+  var bassStage: BassStage = .classic  // what Strength drives (saves without it: classic)
 
   static let neutral = SoundCharacter()
 
   init(compressor: Compressor? = nil, saturator: Saturator? = nil, ambience: Ambience? = nil,
-       width: Double = 1.0, crossfeed: Double = 0, ceilingDb: Double = -1) {
+       width: Double = 1.0, crossfeed: Double = 0, ceilingDb: Double = -1, bassStage: BassStage = .classic) {
     self.compressor = compressor; self.saturator = saturator; self.ambience = ambience
-    self.width = width; self.crossfeed = crossfeed; self.ceilingDb = ceilingDb
+    self.width = width; self.crossfeed = crossfeed; self.ceilingDb = ceilingDb; self.bassStage = bassStage
   }
 
   // Tolerant: a field added later must not make the whole settings blob
@@ -152,6 +187,7 @@ struct SoundCharacter: Codable, Equatable {
     width = (try? c.decodeIfPresent(Double.self, forKey: .width)) ?? 1.0
     crossfeed = (try? c.decodeIfPresent(Double.self, forKey: .crossfeed)) ?? 0
     ceilingDb = (try? c.decodeIfPresent(Double.self, forKey: .ceilingDb)) ?? -1
+    bassStage = (try? c.decodeIfPresent(BassStage.self, forKey: .bassStage)) ?? .classic
   }
 }
 
@@ -822,6 +858,7 @@ struct Settings: Codable, Equatable {
       }
       var s = Settings()
       s.bands = Preset.all[1].bands()
+      s.character = Preset.all[1].character
       return s
     }
     s.sanitize()
@@ -843,13 +880,19 @@ struct Settings: Codable, Equatable {
         bands = b.bands; bass = b.bass; character = b.character
         presetName = b.presetName; userPresetID = b.userPresetID
       } else {
-        bands = Preset.all[1].bands(); bass = Preset.all[1].bass; character = .neutral
+        bands = Preset.all[1].bands(); bass = Preset.all[1].bass; character = Preset.all[1].character
         presetName = Preset.all[1].name; userPresetID = nil
       }
       mode = .off
       beforeMode = nil
     }
     noiseOn = false
+    Preset.migrateBassShake(presetName: presetName, bands: &bands, character: &character)
+    deviceSounds = deviceSounds.mapValues { d in
+      var d = d
+      Preset.migrateBassShake(presetName: d.presetName, bands: &d.bands, character: &d.character)
+      return d
+    }
   }
 
   func save() {

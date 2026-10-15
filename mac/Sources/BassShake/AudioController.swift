@@ -1222,6 +1222,7 @@ final class AudioController: ObservableObject {
     var volume: Double?   // device volume 0...1, when known
     var fairDb = 0.0      // Fair Level gain
     var deviceName: String?
+    var builtInSpeaker = false  // the Mac's own speakers (the Shaker leans on harmonics there)
   }
 
   /// The DJ filter mid-drag (heard, not yet written to `dj`).
@@ -1238,7 +1239,8 @@ final class AudioController: ObservableObject {
     return LiveState(dj: dj, fade: fade, headphones: isHeadphones,
                      bypass: bypassed || (uid.map { settings.bypassDevices.contains($0) } ?? false),
                      volume: deviceVolume, fairDb: settings.fairLevel ? fairLevelDb : 0,
-                     deviceName: currentDevice?.name)
+                     deviceName: currentDevice?.name,
+                     builtInSpeaker: (currentDevice?.isBuiltIn ?? false) && !isHeadphones)
   }
 
   /// Most the positive gain path (EQ peak + Boost + Fair Level + loudness
@@ -1247,6 +1249,12 @@ final class AudioController: ObservableObject {
   static let autoLimitAboveDb = 6.0
   /// Rough peak lift (dB) of the Bass slider at full amount, for the above.
   static let bassPeakDb = 4.0
+  /// The Bass Shaker's rough peak lift per unit of its internal S
+  /// (S = Strength * punch_bass_shaker_strength_scale()).
+  static let shakerPeakDbPerS = 3.0
+  /// Harmonic mix scale for the Bass Shaker on the Mac's own speakers, which
+  /// can't play much below ~150 Hz (headphones and other outputs: 1).
+  static let shakerBuiltInHarmonics = 1.7
   /// Punch's transient lift at full amount (engine: +6 dB on kick attacks).
   static let punchPeakDb = 6.0
   /// Strength cap while Distort is on (its harmonics would stack on the drive).
@@ -1283,6 +1291,8 @@ final class AudioController: ObservableObject {
     // Distort already makes the 808's harmonics; cap Strength's extra lift on top.
     if s.bassCharacter == .distort { bass = min(bass, Self.distortMaxStrength) }
     punch_set_bass(e, bass > 0.001, Float(bass), 110)
+    let shaker = s.character.bassStage == .shaker
+    punch_set_bass_mode(e, shaker ? 1 : 0)
     punch_set_bass_character(e, s.bassCharacter.kind, Float(max(0, min(1, s.bassAmount))))
     punch_set_late_night(e, s.mode == .lateNight, Float(max(0, min(1, s.lateNightHaze))))
 
@@ -1331,12 +1341,19 @@ final class AudioController: ObservableObject {
       audioPeakKey = peakKey
       audioPeakDb = punch_eq_peak_boost_db(e)
     }
-    let eqPeak = max(0, audioPeakDb + bass * Self.bassPeakDb + punchPeak)
+    let bassPeak = shaker ? bass * Double(punch_bass_shaker_strength_scale()) * Self.shakerPeakDbPerS : bass * Self.bassPeakDb
+    let eqPeak = max(0, audioPeakDb + bassPeak + punchPeak)
     var auto = loudnessMakeup + fair
     if auto > 0 { auto = min(auto, max(0, Self.maxLiftDb - eqPeak - max(0, boost))) }
     let lift = boost + auto
-    let safetyLimit = eqPeak + max(0, lift) > Self.autoLimitAboveDb
-    punch_set_output_gain_db(e, Float(lift + fade.musicDb + currentQuietFloorDb))
+    // The Bass Shaker's punch is allowed ~3 dB over the ceiling on hits
+    // (its headroom rule), so with it on the safety net always runs: without
+    // it a mastered track peaked at +2.4 dBFS in the R&D harness.
+    let safetyLimit = eqPeak + max(0, lift) > Self.autoLimitAboveDb || (shaker && bass > 0.001)
+    let outGain = lift + fade.musicDb + currentQuietFloorDb
+    punch_set_output_gain_db(e, Float(outGain))
+    // The Shaker leaves room for what follows it (Boost and the automatic lifts).
+    punch_set_bass_shaker(e, Float(max(0, outGain)), Float(live.builtInSpeaker ? Self.shakerBuiltInHarmonics : 1))
     // Lights Out / the headphone guard: last in the chain, A/B included.
     punch_set_master_fade(e, Float(fade.master.db), Float(fade.master.ms))
     punch_set_loudness_guard(e, s.nightGuard, Float(s.nightGuardDb), 20)

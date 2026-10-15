@@ -2,7 +2,7 @@
 //
 //   in -> device correction EQ (AutoEq / Studio Ears) -> user EQ (with preamp)
 //      -> bass character (Distort / Punch) -> saturator -> compressor
-//      -> bass enhancer -> stereo width -> Late Night -> ambience -> crossfeed -> output gain ("boost") -> noise bed
+//      -> bass enhancer or Bass Shaker -> stereo width -> Late Night -> ambience -> crossfeed -> output gain ("boost") -> noise bed
 //      -> look-ahead limiter -> master fade (Lights Out; also in bypass) -> out
 //
 // Correction and user EQ are separate stages so a per-headphone AutoEq
@@ -36,6 +36,10 @@ struct EngineParams {
   EqParams eq;          // user preset / graphic EQ
   bool autoPreamp = true;  // preamp = min(user preamps, -combined EQ peak boost)
   BassEnhancerParams bass;
+  // Bass stage: false = the classic harmonic enhancer (bass above), true =
+  // the Bass Shaker (enhancers.hpp), which takes bass.amount as Strength.
+  bool bassShaker = false;
+  BassShakerParams shaker;  // boost / pace / harmonics (amount and ceiling filled in)
   BassCharacterParams bassCharacter;  // Distort / Punch (after the user EQ)
   LateNightParams lateNight;          // Late Night mode's mellow master tone
   StereoParams stereo;
@@ -103,6 +107,8 @@ class Engine {
   uint32_t spikeEvents() const { return spike_.events(); }
   // Tempo the DJ stage detected (BPM, 0 when unknown); any thread.
   float djBpm() const { return dj_.bpm(); }
+  // Pace the Bass Shaker is using (BPM); any thread.
+  float bassPaceBpm() const { return shaker_.paceBpm(); }
   // Roll is looping a silent slice (expected silent output); any thread.
   bool djRollSilent() const { return dj_.rollSilent(); }
   // Post-processing mono feed for the UI spectrum analyzer.
@@ -128,6 +134,7 @@ class Engine {
   ParametricEq eq_;
   BassCharacter bassChar_;
   BassEnhancer bass_;
+  BassShaker shaker_;
   LateNight lateNight_;
   StereoWidener stereo_;
   Crossfeed crossfeed_;
