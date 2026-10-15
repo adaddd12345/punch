@@ -66,6 +66,15 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
 void BSCrashGuardInstall(void);
 void BSCrashGuardSet(AudioObjectID aggregate, AudioObjectID tap);
 void BSCrashGuardClear(void);
+// Hands this pipeline's IDs back from the guard. *owns… is false for an ID
+// BSCrashGuardFailOpen already destroyed (the caller must not touch it again:
+// Core Audio may have reused the number).
+void BSCrashGuardRelease(AudioObjectID aggregate, AudioObjectID tap, bool* ownsAggregate, bool* ownsTap);
+// Rescue path (never the IO thread, never main): destroys the guarded
+// aggregate and tap now so the original audio plays unprocessed. Used when
+// the audio queue is wedged in a HAL call. True if anything was destroyed.
+bool BSCrashGuardFailOpen(void);
+bool BSCrashGuardHoldsTap(void);
 // Extra taps destroyed by the same guard: the Live Channels per-app mute
 // taps (CATapMuteBehavior.muted silences an app whether or not anyone reads
 // the tap, so one left behind would keep that app silent). A small fixed

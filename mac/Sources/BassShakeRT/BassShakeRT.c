@@ -206,6 +206,22 @@ void BSCrashGuardSet(AudioObjectID aggregate, AudioObjectID tap) {
 
 void BSCrashGuardClear(void) { BSCrashGuardSet(kAudioObjectUnknown, kAudioObjectUnknown); }
 
+void BSCrashGuardRelease(AudioObjectID aggregate, AudioObjectID tap, bool* ownsAggregate, bool* ownsTap) {
+  AudioObjectID a = aggregate, t = tap;
+  *ownsAggregate = aggregate != kAudioObjectUnknown && atomic_compare_exchange_strong(&gGuardAggregate, &a, kAudioObjectUnknown);
+  *ownsTap = tap != kAudioObjectUnknown && atomic_compare_exchange_strong(&gGuardTap, &t, kAudioObjectUnknown);
+}
+
+bool BSCrashGuardFailOpen(void) {
+  const AudioObjectID agg = atomic_exchange(&gGuardAggregate, kAudioObjectUnknown);
+  const AudioObjectID tap = atomic_exchange(&gGuardTap, kAudioObjectUnknown);
+  if (agg != kAudioObjectUnknown) AudioHardwareDestroyAggregateDevice(agg);
+  if (tap != kAudioObjectUnknown && AudioHardwareDestroyProcessTap != NULL) AudioHardwareDestroyProcessTap(tap);
+  return agg != kAudioObjectUnknown || tap != kAudioObjectUnknown;
+}
+
+bool BSCrashGuardHoldsTap(void) { return atomic_load(&gGuardTap) != kAudioObjectUnknown; }
+
 static _Atomic AudioObjectID gGuardExtraTaps[BSCrashGuardMaxExtraTaps];  // zero == kAudioObjectUnknown
 
 bool BSCrashGuardAddTap(AudioObjectID tap) {
