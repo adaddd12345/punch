@@ -830,7 +830,10 @@ struct PopoverView: View {
           }
           Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
                                                    set: { controller.settings.backgroundStyle = $0 })) {
-            ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }
+            ForEach(BackgroundStyle.allCases.filter { !$0.festive }) { Text($0.title).tag($0) }
+            Section("Seasonal") {
+              ForEach(BackgroundStyle.allCases.filter(\.festive)) { Text($0.title).tag($0) }
+            }
           }
           Toggle("Scope on EQ", isOn: Binding(get: { controller.settings.waveform },
                                               set: { controller.settings.waveform = $0 }))

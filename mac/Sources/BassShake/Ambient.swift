@@ -14,7 +14,11 @@ struct PopupBackground: View {
   @Environment(\.drawPaused) private var drawPaused
 
   var body: some View {
-    if let palette = AmbientPalette.for(style) {
+    if style.festive {
+      // Seasonal scenes (Festive.swift): a still frame under Power Saver and Reduce Motion.
+      FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion)
+        .allowsHitTesting(false)
+    } else if let palette = AmbientPalette.for(style) {
       Group {
         if powerSaver || reduceMotion {
           // The same colourway drawn once and left still: no per-frame blur pass.
@@ -43,7 +47,7 @@ struct AmbientPalette {
 
   static func `for`(_ style: BackgroundStyle) -> AmbientPalette? {
     switch style {
-    case .system: return nil
+    case .system, .frost, .pumpkin, .lunar, .sakura: return nil
     case .ambientBlue:
       return .init(dark: c(0.02, 0.05, 0.14), light: c(0.86, 0.91, 1.0),
                    plumes: [c(0.10, 0.42, 1.00), c(0.05, 0.70, 1.00), c(0.20, 0.30, 0.95), c(0.00, 0.55, 0.90), c(0.45, 0.65, 1.00)])
