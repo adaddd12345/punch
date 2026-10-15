@@ -59,7 +59,12 @@ final class AudioController: ObservableObject {
   @Published private(set) var needsOnboarding = !UserDefaults.standard.bool(forKey: AudioController.onboardedKey)
   private static let onboardedKey = "BassShake.onboarded.v1"
   @Published private(set) var currentDeviceID: AudioObjectID = 0 {
-    didSet { if currentDeviceID != oldValue { deviceChanged(from: oldValue) } }
+    didSet {
+      if currentDeviceID != oldValue {
+        lightsOutOutputChanged(from: oldValue)
+        deviceChanged(from: oldValue)
+      }
+    }
   }
   /// Microphones / inputs and the system default input.
   @Published private(set) var inputs: [OutputDevice] = []
@@ -133,7 +138,7 @@ final class AudioController: ObservableObject {
         // Fresh start each time: no stale A/B or finished sleep fade (which
         // would otherwise leave the output silent after off/on).
         bypassed = false
-        if sleepFinished { stopSleepTimer() }
+        if lightsOut.ending == .held { wakeLightsOut() }
         settings.enabled ? start(.toggle) : stop()
       }
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
@@ -170,7 +175,7 @@ final class AudioController: ObservableObject {
 
   private let engine: OpaquePointer
   private let curveEngine: OpaquePointer
-  private let audioQueue = DispatchQueue(label: "bassshake.audio", qos: .userInteractive)
+  let audioQueue = DispatchQueue(label: "bassshake.audio", qos: .userInteractive)
   /// HAL property-listener callbacks land here, never on main. Registering a
   /// listener that targets the main queue *from* the main thread hung the app
   /// on macOS 26 (launch hang in beta 1-16, freeze after Continue in beta 18).
@@ -449,6 +454,8 @@ final class AudioController: ObservableObject {
   func pollMeters() -> PunchMeters {
     if isMirror { return PunchMeters() }
     let m = punch_take_meters(engine)
+    // Lights Out checks that a pause took (anything still coming in?).
+    if max(m.in_peak.0, m.in_peak.1) > LightsOutRun.loudLinear { lightsOutRun.inputLoudAt = ProcessInfo.processInfo.systemUptime }
     checkChannels(m)
     // Whole dB only (the chip shows "−N dB"), so it publishes rarely.
     let cut = Double(punch_loudness_guard_cut_db(engine)).rounded()
@@ -558,6 +565,15 @@ final class AudioController: ObservableObject {
   // MARK: - Per-device sound
 
   var currentDevice: OutputDevice? { devices.first { $0.id == currentDeviceID } }
+
+  #if DEBUG
+  /// Debug builds only: fake outputs and a switch between them (no HAL), to
+  /// walk the headphone guard through a disconnect.
+  func debugSimulateOutputs(_ devs: [OutputDevice], current: AudioObjectID) {
+    devices = devs
+    currentDeviceID = current
+  }
+  #endif
 
   private var currentSound: Settings.DeviceSound {
     .init(bands: morphTarget ?? settings.bands, bass: settings.bass, boostDb: settings.boostDb, character: settings.character,
@@ -739,21 +755,41 @@ final class AudioController: ObservableObject {
 
   // MARK: - Modes (Study / Sleep) and Studio Ears
 
-  /// Sleep-timer state, published for the countdown in the popover.
-  @Published private(set) var sleepEndsAt: Date?
-  @Published private(set) var sleepFinished = false
+  /// Lights Out (LightsOut.swift): the sleep timer, its ending and the
+  /// headphone guard. Changes a few times per run (start, fade, end), never per tick.
+  @Published var lightsOut = LightsOutState()
+  /// The Lights Out block is open with no timer running (⋯ › Lights Out). Not saved.
+  @Published var lightsOutOpen = false
+  /// Lights Out's bookkeeping (main only; LightsOut.swift).
+  var lightsOutRun = LightsOutRun()
+  var sleepEndsAt: Date? { lightsOut.endsAt }
+  /// The timer ran out and couldn't pause the app: the output is held silent.
+  var sleepFinished: Bool { lightsOut.ending == .held }
   /// Pomodoro: current phase end, and whether it's a break.
   @Published private(set) var pomodoroEndsAt: Date?
   @Published private(set) var pomodoroOnBreak = false
   @Published private(set) var pomodoroPlan: (focus: Int, rest: Int)?
-  /// Live fade offsets (dB) from the sleep timer; not persisted.
-  private var fade = Fade()
+  /// Live fade offsets (dB) from the sleep timer and the headphone guard; not persisted.
+  var fade = Fade() {
+    didSet { if fade != oldValue { pushParams() } }
+  }
   private var modeTimer: Timer?
-  private var sleepStartedAt: Date?
 
   struct Fade: Equatable {
+    /// Sleep mode's own fade (the music, then the noise bed).
     var musicDb: Double = 0
     var noiseDb: Double = 0
+    /// The master fade (after everything, bypass included): Lights Out and the guard.
+    var timer = Ramp()
+    var guardRamp = Ramp()
+
+    struct Ramp: Equatable {
+      var db: Double = 0
+      var ms: Double = 300
+    }
+
+    /// The quieter of the two wins; its ramp time goes with it.
+    var master: Ramp { guardRamp.db < timer.db ? guardRamp : timer }
   }
 
   func setMode(_ mode: ListeningMode) {
@@ -801,23 +837,27 @@ final class AudioController: ObservableObject {
       if !mode.isLayered { s.beforeMode = nil }  // a layered mode still restores it when it ends
       s.noiseOn = false
     }
-    stopSleepTimer()
+    // Sleep's own timer ends with Sleep; one started on its own carries on.
+    lightsOutModeWillChange(to: mode)
     stopPomodoro()
     settings = s
     morph(to: target, duration: 0.8)
-    if mode == .sleep && settings.sleepMinutes > 0 { startSleepTimer() }
+    if mode == .sleep && settings.sleepMinutes > 0 && lightsOut.endsAt == nil {
+      startLightsOut(minutes: settings.sleepMinutes, fromSleep: true)
+    }
   }
 
   /// Picking a preset while a mode is on ends the mode without restoring.
   private func leaveModeQuietly() {
     guard settings.mode != .off else { return }
-    stopSleepTimer()
+    lightsOutModeWillChange(to: .off)
     stopPomodoro()
     settings.mode = .off
     settings.beforeMode = nil
     settings.noiseOn = false
   }
 
+  /// Sleep mode's timer length (also Lights Out's last length): restarts a running timer.
   func setSleepMinutes(_ m: Int) {
     if isMirror {
       mirrorLink?.mirrorSend(.setSleepMinutes(m))
@@ -825,45 +865,22 @@ final class AudioController: ObservableObject {
       return
     }
     settings.sleepMinutes = m
-    if settings.mode == .sleep {
-      stopSleepTimer()
-      if m > 0 { startSleepTimer() }
+    if m > 0 {
+      if settings.mode == .sleep || lightsOut.endsAt != nil { startLightsOut(minutes: m, fromSleep: settings.mode == .sleep) }
+    } else if lightsOut.fromSleep {
+      stopLightsOut()
     }
   }
 
-  /// Sleep timer: music holds, then fades linearly in dB from 0 to -40 over
-  /// the last `fadeMinutes`, then a 30 s tail to -60 dB. The noise bed
+  /// Legacy name: ends the timer and its fade.
+  func stopSleepTimer() { stopLightsOut() }
+
+  /// Restores sound after the timer ran out.
+  func wakeFromSleep() { wakeLightsOut() }
+
+  /// Sleep mode's fade: music holds, then fades linearly in dB from 0 to -40
+  /// over the last `fadeMinutes`, then a 30 s tail to -60 dB. The noise bed
   /// starts its fade 5 min later and ends 5 min later (or stays all night).
-  /// Afterwards the music stays muted (the tap keeps the original silent);
-  /// any touch on the popover wakes it.
-  private func startSleepTimer() {
-    let total = Double(settings.sleepMinutes) * 60
-    sleepStartedAt = Date()
-    sleepEndsAt = Date().addingTimeInterval(total)
-    sleepFinished = false
-    startModeTicker()
-  }
-
-  func stopSleepTimer() {
-    if isMirror { return }
-    sleepEndsAt = nil
-    sleepStartedAt = nil
-    sleepFinished = false
-    if fade != Fade() {
-      fade = Fade()
-      pushParams()
-    }
-    if pomodoroEndsAt == nil { modeTimer?.invalidate(); modeTimer = nil }
-  }
-
-  /// Restores sound after the sleep timer ran out.
-  func wakeFromSleep() {
-    guard sleepFinished || sleepEndsAt != nil else { return }
-    if isMirror { mirrorLink?.mirrorSend(.wakeFromSleep); return }
-    stopSleepTimer()
-    if settings.mode == .sleep && settings.sleepMinutes > 0 { startSleepTimer() }
-  }
-
   static func sleepFade(elapsed t: Double, total: Double, fadeLen: Double, delay: Double = 0) -> Double {
     let fadeStart = total - fadeLen + delay
     let fadeEnd = total + delay
@@ -893,35 +910,26 @@ final class AudioController: ObservableObject {
     pomodoroPlan = nil
     pomodoroEndsAt = nil
     pomodoroOnBreak = false
-    if sleepEndsAt == nil { modeTimer?.invalidate(); modeTimer = nil }
+    stopModeTickerIfIdle()
   }
 
-  private func startModeTicker() {
+  func startModeTicker() {
     guard modeTimer == nil else { return }
     let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.modeTick() }
+    t.tolerance = 0.1
     RunLoop.main.add(t, forMode: .common)
     modeTimer = t
   }
 
+  func stopModeTickerIfIdle() {
+    guard pomodoroEndsAt == nil, !lightsOutRun.ticking else { return }
+    modeTimer?.invalidate()
+    modeTimer = nil
+  }
+
   private func modeTick() {
     let now = Date()
-    if let start = sleepStartedAt, settings.mode == .sleep {
-      let total = Double(settings.sleepMinutes) * 60
-      let fadeLen = SleepTimer.fadeMinutes(for: settings.sleepMinutes) * 60
-      let t = now.timeIntervalSince(start)
-      var f = Fade()
-      f.musicDb = Self.sleepFade(elapsed: t, total: total, fadeLen: fadeLen)
-      f.noiseDb = settings.noiseAllNight ? 0 : Self.sleepFade(elapsed: t, total: total, fadeLen: fadeLen, delay: 300)
-      if f.musicDb <= -60 {
-        f.musicDb = -120   // effectively silent; noise may continue
-        if !sleepFinished { sleepFinished = true; sleepEndsAt = nil }
-      }
-      if f.noiseDb <= -60 { f.noiseDb = -120 }
-      if f != fade {
-        fade = f
-        pushParams()
-      }
-    }
+    lightsOutTick(now)
     if let end = pomodoroEndsAt, let plan = pomodoroPlan, now >= end {
       pomodoroOnBreak.toggle()
       pomodoroEndsAt = now.addingTimeInterval(Double(pomodoroOnBreak ? plan.rest : plan.focus) * 60)
@@ -996,6 +1004,8 @@ final class AudioController: ObservableObject {
       mirrorQuiet = false
       return
     }
+    // Picked here on purpose: the headphone guard leaves this switch alone.
+    lightsOutRun.userPickedAt = ProcessInfo.processInfo.systemUptime
     // Following the system default keeps us in step with the Sound menu,
     // Control Center and AirPods auto-switching.
     audioQueue.async { try? Devices.setDefaultOutput(device.id) }
@@ -1157,8 +1167,10 @@ final class AudioController: ObservableObject {
   @discardableResult
   func shutdown() -> Bool {
     let done = DispatchSemaphore(value: 0)
+    let bridge = lightsOutRun.bridgeDevice
     audioQueue.async {
       self.pipelineStop(fade: true)
+      self.lightsOutShutdownOffMain(bridge: bridge)
       done.signal()
     }
     let finished = done.wait(timeout: .now() + 1.5) == .success
@@ -1190,7 +1202,8 @@ final class AudioController: ObservableObject {
   private func flushParams() {
     pushScheduled = false
     lastPushAt = ProcessInfo.processInfo.systemUptime
-    silenceExpected.store((dj.isOn(.low) && dj.isOn(.mid) && dj.isOn(.high)) || dj.isOn(.tapeStop) || fade.musicDb < -20 || sleepFinished)
+    silenceExpected.store((dj.isOn(.low) && dj.isOn(.mid) && dj.isOn(.high)) || dj.isOn(.tapeStop) || fade.musicDb < -20
+                          || fade.master.db < -20 || sleepFinished)
     let s = shownSettings
     let e = engine
     let live = liveState
@@ -1324,6 +1337,8 @@ final class AudioController: ObservableObject {
     let lift = boost + auto
     let safetyLimit = eqPeak + max(0, lift) > Self.autoLimitAboveDb
     punch_set_output_gain_db(e, Float(lift + fade.musicDb + currentQuietFloorDb))
+    // Lights Out / the headphone guard: last in the chain, A/B included.
+    punch_set_master_fade(e, Float(fade.master.db), Float(fade.master.ms))
     punch_set_loudness_guard(e, s.nightGuard, Float(s.nightGuardDb), 20)
     let d = live.dj
     punch_set_dj(e, d.isOn(.low), d.isOn(.mid), d.isOn(.high), Float(d.filter), d.isOn(.echo), d.isOn(.crush),
@@ -1395,7 +1410,7 @@ final class AudioController: ObservableObject {
   /// Debounced full rebuild on the current default output device. Requests
   /// landing in the same debounce window merge into one; a reason that must
   /// always rebuild is never downgraded to one that may be skipped.
-  private func scheduleRebuild(_ reason: RebuildReason, delay: Double = 0.3) {
+  func scheduleRebuild(_ reason: RebuildReason, delay: Double = 0.3) {
     guard settings.enabled, !isSleeping else { return }
     rebuildWork?.cancel()
     var merged = reason
@@ -1477,6 +1492,7 @@ final class AudioController: ObservableObject {
           }
           self.startFailures = 0
           self.status = .running(device: info.deviceName, sampleRate: info.sampleRate)
+          self.lightsOutPipelineStarted(deviceID: device.id)
         }
         self.startWatchdog()
       } catch {
@@ -2107,8 +2123,8 @@ struct MirrorSnapshot {
   var currentID: AudioObjectID
   var enabled: Bool
   var bypassed: Bool
-  var sleepEndsAt: Date?
-  var sleepFinished: Bool
+  /// Lights Out as that Mac runs it (its timer, ending and guard note).
+  var lightsOut: LightsOutState
   var studyEndsAt: Date?
   var studyOnBreak: Bool
   var studyPlan: (focus: Int, rest: Int)?
@@ -2134,8 +2150,12 @@ extension AudioController {
       default: return true
       }
     }
-    if moved(sleepEndsAt, m.sleepEndsAt) { sleepEndsAt = m.sleepEndsAt }
-    if sleepFinished != m.sleepFinished { sleepFinished = m.sleepFinished }
+    // Shown only: the mirror never runs a Lights Out clock, fade or guard of its own.
+    var lo = m.lightsOut
+    if !moved(lightsOut.endsAt, lo.endsAt) { lo.endsAt = lightsOut.endsAt }
+    if !moved(lightsOut.startedAt, lo.startedAt) { lo.startedAt = lightsOut.startedAt }
+    if !moved(lightsOut.endedAt, lo.endedAt) { lo.endedAt = lightsOut.endedAt }
+    if lightsOut != lo { lightsOut = lo }
     if moved(pomodoroEndsAt, m.studyEndsAt) { pomodoroEndsAt = m.studyEndsAt }
     if pomodoroOnBreak != m.studyOnBreak { pomodoroOnBreak = m.studyOnBreak }
     if pomodoroPlan?.focus != m.studyPlan?.focus || pomodoroPlan?.rest != m.studyPlan?.rest { pomodoroPlan = m.studyPlan }

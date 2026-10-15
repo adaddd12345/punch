@@ -230,11 +230,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       .store(in: &cancellables)
     // The Mac's volume on the icon: redrawn only when the glyph changes
     // (MacVolume's HAL listeners; nothing polls).
-    Publishers.CombineLatest(controller.macVolume.$state.map(VolumeGlyph.init), controller.$settings.map(\.menuBarVolume))
-      .map { glyph, on in on ? glyph : nil }
+    // Lights Out adds a small moon while it counts down (or holds the sound silent).
+    Publishers.CombineLatest3(controller.macVolume.$state.map(VolumeGlyph.init), controller.$settings.map(\.menuBarVolume),
+                              controller.$lightsOut.map { $0.running || $0.ending == .held }.removeDuplicates())
+      .map { glyph, on, moon in MenuBarIcon.Key(glyph: on ? glyph : nil, moon: moon) }
       .removeDuplicates()
       .receive(on: DispatchQueue.main)
-      .sink { [weak self] glyph in self?.statusItem?.button?.image = glyph.map(MenuBarIcon.image(for:)) ?? MenuBarIcon.image }
+      .sink { [weak self] key in self?.statusItem?.button?.image = MenuBarIcon.image(for: key) }
       .store(in: &cancellables)
     controller.$settings.map(\.menuBarIconShown).removeDuplicates()
       .receive(on: RunLoop.main)
@@ -743,6 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     if controller.devices.isEmpty { outs.addItem(withTitle: "No Outputs", action: nil, keyEquivalent: "").isEnabled = false }
     output.submenu = outs
     menu.addItem(output)
+    menu.addItem(lightsOutMenuItem())
     let v = controller.macVolume.state
     let mute = menu.addItem(withTitle: "Mute Mac", action: v.canMute || v.canSetVolume ? #selector(menuMuteMac) : nil,
                             keyEquivalent: "")
@@ -766,6 +769,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     force.toolTip = "Ends The Bass Shaker immediately, even if it's stuck. Your Mac's sound goes back to normal."
     return menu
   }
+
+  /// Lights Out from the menu bar: a length, or +10 / cancel while it runs.
+  private func lightsOutMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(title: "Lights Out", action: nil, keyEquivalent: "")
+    let sub = NSMenu()
+    func add(_ title: String, _ sel: Selector, tag: Int = 0) {
+      let it = sub.addItem(withTitle: title, action: sel, keyEquivalent: "")
+      it.target = self
+      it.tag = tag
+    }
+    if let end = controller.lightsOut.endsAt {
+      sub.addItem(withTitle: "Ends at \(LightsOutClock.endTime(end))", action: nil, keyEquivalent: "").isEnabled = false
+      add("+\(SleepTimer.extraMinutes) min", #selector(menuLightsOutExtend))
+      add("Cancel Lights Out", #selector(menuLightsOutCancel))
+    } else {
+      for m in SleepTimer.choices { add("\(m) min", #selector(menuLightsOutStart(_:)), tag: m) }
+    }
+    if controller.sleepFinished || controller.lightsOut.ending == .macMuted { add("Unmute", #selector(menuLightsOutWake)) }
+    item.submenu = sub
+    return item
+  }
+  @objc private func menuLightsOutStart(_ sender: NSMenuItem) { controller.startLightsOut(minutes: sender.tag) }
+  @objc private func menuLightsOutExtend() { controller.extendLightsOut() }
+  @objc private func menuLightsOutCancel() { controller.stopLightsOut() }
+  @objc private func menuLightsOutWake() { controller.wakeLightsOut() }
 
   @objc private func menuEnabled() { controller.toggle() }
   @objc private func menuOutput(_ sender: NSMenuItem) {
@@ -923,6 +951,41 @@ enum VolumeGlyph: Hashable {
     if s.silent { self = .slash; return }
     guard s.known, s.canSetVolume, let v = s.volume else { self = .bars(0); return }
     self = .bars(max(1, min(Self.barCount, Int((v * Double(Self.barCount)).rounded(.up)))))
+  }
+}
+
+extension MenuBarIcon {
+  struct Key: Hashable {
+    var glyph: VolumeGlyph?
+    var moon = false
+  }
+  private static var moonCache: [Key: NSImage] = [:]
+
+  /// The icon for a volume glyph (or none), with Lights Out's moon when armed:
+  /// a 6 pt crescent on the shaker's top right, cut clear around it.
+  static func image(for key: Key) -> NSImage {
+    let base = key.glyph.map(image(for:)) ?? image
+    guard key.moon else { return base }
+    if let hit = moonCache[key] { return hit }
+    let size = base.size
+    let img = NSImage(size: size, flipped: true) { _ in
+      base.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1,
+                respectFlipped: true, hints: nil)
+      guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
+      let r = CGRect(x: 12.5, y: 0.5, width: 6, height: 6)
+      ctx.setBlendMode(.clear)
+      ctx.fillEllipse(in: r.insetBy(dx: -1.2, dy: -1.2))
+      ctx.setBlendMode(.normal)
+      ctx.setFillColor(NSColor.black.cgColor)
+      ctx.fillEllipse(in: r)
+      ctx.setBlendMode(.clear)
+      ctx.fillEllipse(in: r.offsetBy(dx: 2.4, dy: -1.4))
+      ctx.setBlendMode(.normal)
+      return true
+    }
+    img.isTemplate = true
+    moonCache[key] = img
+    return img
   }
 }
 

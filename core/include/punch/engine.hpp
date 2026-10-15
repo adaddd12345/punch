@@ -3,7 +3,7 @@
 //   in -> device correction EQ (AutoEq / Studio Ears) -> user EQ (with preamp)
 //      -> bass character (Distort / Punch) -> saturator -> compressor
 //      -> bass enhancer -> stereo width -> Late Night -> ambience -> crossfeed -> output gain ("boost") -> noise bed
-//      -> look-ahead limiter -> out
+//      -> look-ahead limiter -> master fade (Lights Out; also in bypass) -> out
 //
 // Correction and user EQ are separate stages so a per-headphone AutoEq
 // profile stays applied underneath whatever preset the user picks.
@@ -55,6 +55,12 @@ struct EngineParams {
   bool boostLeveler = false;
   LimiterParams limiter;
   bool bypass = false;
+  // Master fade (Lights Out, the headphone guard): a last gain after the
+  // limiter that also applies in bypass. It moves linearly in dB from where
+  // it is to masterFadeDb over masterFadeMs; at or below kSilentDb the output
+  // is exactly zero. 0 dB and settled = bit-exact.
+  float masterFadeDb = 0.f;
+  float masterFadeMs = 300.f;
 
   friend bool operator==(const EngineParams&, const EngineParams&) = default;
 };
@@ -84,6 +90,10 @@ class Engine {
   // Interleaved float32, the native layout of most Core Audio devices/taps.
   // `in` and `out` may alias.
   void processInterleaved(const float* in, float* out, int numChannels, int numFrames);
+
+  static constexpr double kSilentDb = -90.0;
+  // Where the master fade stands (dB); any thread, for tests and the UI.
+  double masterFadeDb() const { return fadeNowDb_.load(std::memory_order_relaxed); }
 
   int latencyFrames() const { return limiter_.latencyFrames() + bassLimiter_.latencyFrames(); }
   // Peaks accumulated since the previous call (UI polls at ~30-60 Hz).
@@ -126,6 +136,10 @@ class Engine {
   Ambience ambience_;
   NoiseBed noise_;
   Smoothed outGain_;
+  // Master fade, linear in dB (real-time thread only, but fadeNowDb_).
+  double fadeDb_ = 0.0, fadeTargetDb_ = 0.0, fadeStepDb_ = 0.0;  // step: dB per sample
+  std::atomic<double> fadeNowDb_{0.0};
+  void applyMasterFade(float* const* ch, int numChannels, int numFrames);
   Smoothed leveler_;          // 0 = off, 1 = boost leveler fully in
   float levelEnv_ = 0.f;      // slow peak estimate of the signal entering the boost
   float levelAtt_ = 0.f, levelRel_ = 0.f;

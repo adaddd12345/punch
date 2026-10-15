@@ -663,6 +663,25 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
     case .wakeFromSleep?:
       c.wakeFromSleep()
       reply(true, nil)
+    case .startLightsOut?:
+      guard let m = command.num, m.isFinite, m >= 1, m <= Double(SleepTimer.maxMinutes) else { reply(false, nil); return }
+      c.startLightsOut(minutes: Int(m))
+      reply(true, nil)
+    case .extendLightsOut?:
+      c.extendLightsOut()
+      reply(true, nil)
+    case .stopLightsOut?:
+      c.stopLightsOut()
+      reply(true, nil)
+    case .lightsOutSeen?:
+      c.lightsOutSeen()
+      reply(true, nil)
+    case .lightsOutPlayHere?:
+      c.playHereAfterGuard()
+      reply(true, nil)
+    case .lightsOutDismiss?:
+      c.dismissGuardNotice()
+      reply(true, nil)
     case nil:
       reply(false, "Update The Bass Shaker on \(here) to use this.")
     }
@@ -715,8 +734,7 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
     c.macVolume.$state.sink(receiveValue: mark).store(in: &hostSinks)
     c.live.$apps.sink(receiveValue: mark).store(in: &hostSinks)
     NowStack.shared.$lead.sink(receiveValue: mark).store(in: &hostSinks)
-    c.$sleepEndsAt.sink(receiveValue: mark).store(in: &hostSinks)
-    c.$sleepFinished.sink(receiveValue: mark).store(in: &hostSinks)
+    c.$lightsOut.sink(receiveValue: mark).store(in: &hostSinks)
     c.$pomodoroEndsAt.sink(receiveValue: mark).store(in: &hostSinks)
     c.$pomodoroOnBreak.sink(receiveValue: mark).store(in: &hostSinks)
     NowPlaying.shared.$tracks.sink(receiveValue: mark).store(in: &hostSinks)
@@ -781,6 +799,7 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
     r.hasMute = mv.canMute
     r.sleepLeft = c.sleepEndsAt.map { max(0, $0.timeIntervalSinceNow.rounded()) }
     r.sleepFinished = c.sleepFinished
+    r.lightsOut = RemoteLightsOut(c.lightsOut)
     r.studyLeft = c.pomodoroEndsAt.map { max(0, $0.timeIntervalSinceNow.rounded()) }
     r.studyOnBreak = c.pomodoroOnBreak
     r.studyFocus = c.pomodoroPlan?.focus

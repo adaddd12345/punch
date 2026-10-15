@@ -78,6 +78,10 @@ void Engine::prepare(double sampleRate, int numChannels, int maxFrames) {
   eq_.reset();
   outGain_.snap(outGain_.target());
   leveler_.snap(leveler_.target());
+  // A new pipeline starts where the fade is heading (silent stays silent).
+  fadeDb_ = fadeTargetDb_;
+  fadeStepDb_ = 0.0;
+  fadeNowDb_.store(fadeDb_, std::memory_order_relaxed);
 }
 
 void Engine::publish() {
@@ -85,6 +89,8 @@ void Engine::publish() {
   // Never let a bad control value (NaN/Inf) silence or unlimit the output.
   auto fin = [](float& v, float fallback) { if (!std::isfinite(v)) v = fallback; };
   fin(snap.outputGainDb, 0.f);
+  fin(snap.masterFadeDb, 0.f);
+  fin(snap.masterFadeMs, 300.f);
   fin(snap.limiter.ceilingDb, -1.f);
   fin(snap.eq.preampDb, 0.f);
   fin(snap.correction.preampDb, 0.f);
@@ -109,6 +115,14 @@ void Engine::publish() {
 }
 
 void Engine::applySnapshot(const EngineParams& p) {
+  // The master fade applies in bypass too: a new target re-plans the ramp
+  // from wherever it is now; the same target (any other edit) leaves it alone.
+  const double fadeTarget = std::clamp(double(p.masterFadeDb), kSilentDb, 0.0);
+  if (fadeTarget != fadeTargetDb_) {
+    fadeTargetDb_ = fadeTarget;
+    const double samples = std::max(1.0, double(std::max(p.masterFadeMs, 0.f)) * 0.001 * sampleRate_);
+    fadeStepDb_ = std::fabs(fadeTargetDb_ - fadeDb_) / samples;
+  }
   if (p.bypass) {
     // Bypass == glide everything to neutral. Keeps latency constant (the
     // limiter stays in circuit at 0 dBFS as a safety net) and is click-free
@@ -169,6 +183,30 @@ void Engine::applySnapshot(const EngineParams& p) {
                          p.limiter.enabled && p.limiter.bassPriorityHz > 0.f);
 }
 
+// Linear in dB, gain interpolated linearly over 32-sample steps (no pow per
+// sample). At or below kSilentDb the gain is exactly 0.
+void Engine::applyMasterFade(float* const* ch, int numChannels, int numFrames) {
+  if (fadeDb_ == 0.0 && fadeTargetDb_ == 0.0) return;  // bit-exact
+  auto gainAt = [](double db) { return db <= kSilentDb ? 0.f : float(std::pow(10.0, db / 20.0)); };
+  constexpr int kStep = 32;
+  for (int i0 = 0; i0 < numFrames; i0 += kStep) {
+    const int n = std::min(kStep, numFrames - i0);
+    const float g0 = gainAt(fadeDb_);
+    if (fadeDb_ != fadeTargetDb_) {
+      const double move = fadeStepDb_ * n;
+      fadeDb_ = fadeDb_ > fadeTargetDb_ ? std::max(fadeTargetDb_, fadeDb_ - move) : std::min(fadeTargetDb_, fadeDb_ + move);
+    }
+    const float g1 = gainAt(fadeDb_);
+    if (g0 == 1.f && g1 == 1.f) continue;
+    const float dg = (g1 - g0) / float(n);
+    for (int c = 0; c < numChannels; ++c) {
+      float* x = ch[c] + i0;
+      for (int i = 0; i < n; ++i) x[i] *= g0 + dg * float(i + 1);
+    }
+  }
+  fadeNowDb_.store(fadeDb_, std::memory_order_relaxed);
+}
+
 void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   ScopedFlushDenormals ftz;
   if (mailbox_.read(live_)) applySnapshot(live_);
@@ -216,6 +254,7 @@ void Engine::processPlanar(float* const* ch, int numChannels, int numFrames) {
   // safety net. With the limiter off (No Limit) neither runs.
   if (bassPriority_) bassLimiter_.process(ch, numChannels, numFrames);
   limiter_.process(ch, numChannels, numFrames);
+  applyMasterFade(ch, numChannels, numFrames);
 
   // NaN/Inf can arrive from a misbehaving client app or a driver glitch and
   // would otherwise latch inside the IIR state forever. Detect, emit silence

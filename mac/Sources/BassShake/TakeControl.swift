@@ -87,6 +87,8 @@ struct SoundField {
     field("earProtector", \.earProtector),
     field("fairLevel", \.fairLevel),
     field("centerLock", \.centerLock),
+    // Lights Out's headphone guard watches that Mac's headphones.
+    field("lightsOutGuard", \.lightsOutGuard),
     // Shown only; they change through setMode / setSleepMinutes (timers, glides).
     field("mode", \.mode, writable: false),
     field("sleepMinutes", \.sleepMinutes, writable: false),
@@ -273,7 +275,7 @@ final class TakeoverSession: ObservableObject, MirrorLink {
     var s = mirror.settings
     SoundField.mirrorLook(&s)
     mirror.mirrorApply(MirrorSnapshot(settings: s, devices: [], currentID: 0, enabled: s.enabled, bypassed: false,
-                                      sleepEndsAt: nil, sleepFinished: false, studyEndsAt: nil, studyOnBreak: false,
+                                      lightsOut: LightsOutState(), studyEndsAt: nil, studyOnBreak: false,
                                       studyPlan: nil))
     mirror.mirrorLink = self
     mirror.macVolume.remote = { [weak self] op in self?.volume(op) }
@@ -381,8 +383,7 @@ final class TakeoverSession: ObservableObject, MirrorLink {
     let plan = st.studyFocus.flatMap { f in st.studyRest.map { (focus: f, rest: $0) } }
     mirror.mirrorApply(MirrorSnapshot(settings: s, devices: devices, currentID: currentID(st), enabled: st.enabled,
                                       bypassed: st.bypassed,
-                                      sleepEndsAt: st.sleepLeft.map { Date().addingTimeInterval($0) },
-                                      sleepFinished: st.sleepFinished,
+                                      lightsOut: LightsOutState(remote: st, minutes: s.sleepMinutes, mode: s.mode),
                                       studyEndsAt: st.studyLeft.map { Date().addingTimeInterval($0) },
                                       studyOnBreak: st.studyOnBreak, studyPlan: plan))
     if !ready { ready = true }
@@ -713,7 +714,51 @@ private enum MirrorSnapshotBuilder {
     let enabled: Bool
     if case .running = c.status { enabled = true } else { enabled = false }
     return MirrorSnapshot(settings: c.settings, devices: c.devices, currentID: c.currentDeviceID, enabled: enabled,
-                          bypassed: c.bypassed, sleepEndsAt: c.sleepEndsAt, sleepFinished: c.sleepFinished,
+                          bypassed: c.bypassed, lightsOut: c.lightsOut,
                           studyEndsAt: c.pomodoroEndsAt, studyOnBreak: c.pomodoroOnBreak, studyPlan: c.pomodoroPlan)
+  }
+}
+
+// MARK: - Lights Out over the wire
+
+extension RemoteLightsOut {
+  /// This Mac's Lights Out, for a controlling Mac's popup.
+  init(_ st: LightsOutState) {
+    self.init()
+    let now = Date()
+    left = st.endsAt.map { max(0, $0.timeIntervalSince(now).rounded()) }
+    startedAgo = st.startedAt.map { max(0, now.timeIntervalSince($0).rounded()) }
+    minutes = st.minutes
+    fromSleep = st.fromSleep
+    fading = st.fading
+    ending = st.ending?.rawValue
+    endedAgo = st.endedAt.map { max(0, now.timeIntervalSince($0).rounded()) }
+    notice = st.notice?.text
+    noticeHeld = st.notice?.held ?? false
+  }
+}
+
+extension LightsOutState {
+  /// The other Mac's Lights Out, as the mirror shows it. A Mac from before
+  /// Lights Out sends only Sleep's timer (`minutes`: its sleepMinutes).
+  init(remote st: RemoteState, minutes fallback: Int, mode: ListeningMode) {
+    self.init()
+    let now = Date()
+    guard let w = st.lightsOut else {
+      endsAt = st.sleepLeft.map { now.addingTimeInterval($0) }
+      minutes = fallback
+      startedAt = endsAt.map { $0.addingTimeInterval(-Double(fallback) * 60) }
+      fromSleep = mode == .sleep && endsAt != nil
+      if st.sleepFinished { ending = .held }
+      return
+    }
+    endsAt = w.left.map { now.addingTimeInterval($0) }
+    startedAt = w.startedAgo.map { now.addingTimeInterval(-$0) }
+    minutes = w.minutes
+    fromSleep = w.fromSleep
+    fading = w.fading
+    ending = w.ending.flatMap(Ending.init(rawValue:))
+    endedAt = ending == nil ? nil : w.endedAgo.map { now.addingTimeInterval(-$0) }
+    notice = w.notice.map { GuardNotice(text: $0, held: w.noticeHeld) }
   }
 }

@@ -474,9 +474,27 @@ enum ScopeColor: String, Codable, CaseIterable, Identifiable {
   var title: String { self == .accent ? "System Accent" : rawValue.capitalized }
 }
 
-/// Sleep timer presets in minutes; 0 = no timer.
+/// Lights Out's headphone guard: when it's armed.
+enum OutputGuard: String, Codable, CaseIterable, Identifiable {
+  case off, withTimer, always
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .off: return "Off"
+    case .withTimer: return "While Lights Out Runs"
+    case .always: return "Always"
+    }
+  }
+}
+
+/// Sleep timer (Lights Out) presets in minutes; 0 = no timer.
 enum SleepTimer {
   static let choices = [15, 30, 45, 60, 90]
+  /// Lights Out's fade to silence outside Sleep mode (Sleep has its own, longer one).
+  static let fadeSeconds = 45.0
+  /// "+10" adds this much; a run never goes past `maxMinutes`.
+  static let extraMinutes = 10
+  static let maxMinutes = 12 * 60
   static let defaultMinutes = 45
   /// Fade length per the research: last 20 min, shorter/longer at the ends.
   static func fadeMinutes(for total: Int) -> Double {
@@ -676,6 +694,10 @@ struct Settings: Codable, Equatable {
   /// Take Control: the paired Mac (fingerprint) the whole popup drives until
   /// Switch Back; nil drives this Mac. Kept across relaunch, sleep and close.
   var remoteTakeover: String? = nil
+  /// Lights Out (docs/research/31-sleep-timer.md): pause smoothly when the
+  /// headphones drop and the Mac falls back to its speakers. The timer's
+  /// length is `sleepMinutes` (shared with Sleep mode).
+  var lightsOutGuard: OutputGuard = .withTimer
 
   /// Whether the menu-bar icon is shown: never hidden unless the Dock icon is on.
   var menuBarIconShown: Bool { showInMenuBar || !showInDock }
@@ -780,6 +802,7 @@ struct Settings: Codable, Equatable {
     remoteControl = (try? c.decodeIfPresent(Bool.self, forKey: .remoteControl)) ?? d.remoteControl
     remotePeers = ((try? c.decodeIfPresent([Lossy<RemotePeer>].self, forKey: .remotePeers)) ?? nil)?.compactMap(\.value) ?? []
     remoteTakeover = (try? c.decodeIfPresent(String.self, forKey: .remoteTakeover)) ?? nil
+    lightsOutGuard = (try? c.decodeIfPresent(OutputGuard.self, forKey: .lightsOutGuard)) ?? d.lightsOutGuard
   }
 
   static func load() -> Settings {

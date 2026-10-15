@@ -1431,6 +1431,82 @@ TEST(bass_character_c_api) {
   punch_engine_destroy(e);
 }
 
+// Lights Out's master fade: bit-exact at 0 dB, a smooth monotonic ramp to
+// exact silence (bypass included), a new pipeline starts where it's heading,
+// and the way back is a ramp too.
+TEST(master_fade_bit_exact_ramps_to_silence) {
+  auto sine = [](std::vector<float>& b, int n, int off) {
+    for (int i = 0; i < n; ++i) b[size_t(i) * 2] = b[size_t(i) * 2 + 1] = 0.5f * float(std::sin((off + i) * 0.05));
+  };
+  // Off: identical to an engine without it.
+  {
+    Engine a, b;
+    a.edit().limiter.enabled = false; b.edit().limiter.enabled = false;
+    a.edit().bypass = b.edit().bypass = true;
+    a.prepare(48000, 2, 512); b.prepare(48000, 2, 512);
+    b.edit().masterFadeDb = 0.f; b.edit().masterFadeMs = 45000.f; b.publish();
+    std::vector<float> x(1024), y(1024);
+    for (int k = 0; k < 20; ++k) {
+      sine(x, 512, k * 512); y = x;
+      a.processInterleaved(x.data(), x.data(), 2, 512);
+      b.processInterleaved(y.data(), y.data(), 2, 512);
+      for (size_t i = 0; i < x.size(); ++i) CHECK(x[i] == y[i]);
+    }
+  }
+  Engine e;
+  e.edit().bypass = true;   // applies in A/B too
+  e.prepare(48000, 2, 480);
+  std::vector<float> buf(960);
+  for (int k = 0; k < 10; ++k) {   // fill the limiter's look-ahead first
+    std::fill(buf.begin(), buf.end(), 1.f);
+    e.processInterleaved(buf.data(), buf.data(), 2, 480);
+  }
+  e.edit().masterFadeDb = -120.f;   // clamps to silent
+  e.edit().masterFadeMs = 300.f;
+  e.publish();
+  double lastDb = 0, maxJump = 0;
+  float prevAbsGain = 1.f;
+  bool monotonic = true;
+  for (int k = 0; k < 40; ++k) {   // 400 ms
+    for (int i = 0; i < 480; ++i) buf[size_t(i) * 2] = buf[size_t(i) * 2 + 1] = 1.f;   // DC: out = gain
+    e.processInterleaved(buf.data(), buf.data(), 2, 480);
+    for (int i = 0; i < 480; ++i) {
+      const float g = buf[size_t(i) * 2];
+      if (g > prevAbsGain + 1e-6f) monotonic = false;
+      maxJump = std::max(maxJump, double(prevAbsGain - g));
+      prevAbsGain = g;
+    }
+    const double db = e.masterFadeDb();
+    CHECK(db <= lastDb);
+    lastDb = db;
+  }
+  CHECK(monotonic);
+  CHECK(maxJump < 0.01);         // no step: a ramp
+  CHECK(lastDb == Engine::kSilentDb);
+  CHECK(buf[958] == 0.f);        // exactly silent
+  // Another edit (same target) doesn't restart it; a rebuild starts silent.
+  e.edit().outputGainDb = 3.f; e.publish();
+  e.prepare(44100, 2, 512);
+  CHECK(e.masterFadeDb() == Engine::kSilentDb);
+  // Back up over 100 ms: still silent at once, then a ramp to unity.
+  e.edit().masterFadeDb = 0.f; e.edit().masterFadeMs = 100.f; e.publish();
+  std::vector<float> one(1024, 1.f);
+  e.processInterleaved(one.data(), one.data(), 2, 512);
+  CHECK(one[0] < 0.01f);
+  for (int k = 0; k < 20; ++k) { std::fill(one.begin(), one.end(), 1.f); e.processInterleaved(one.data(), one.data(), 2, 512); }
+  CHECK(e.masterFadeDb() == 0.0);
+  CHECK_NEAR(one[1022], 1.0, 1e-6);
+  // C API.
+  PunchEngine* c = punch_engine_create();
+  punch_engine_prepare(c, 48000, 2, 512);
+  punch_set_master_fade(c, -90.f, 10.f);
+  punch_engine_publish(c);
+  std::vector<float> z(1024, 0.5f);
+  for (int k = 0; k < 4; ++k) punch_process_interleaved(c, z.data(), z.data(), 2, 512);
+  CHECK(punch_master_fade_db(c) == -90.0);
+  punch_engine_destroy(c);
+}
+
 int main() {
   for (const auto& t : registry()) {
     const int before = g_failures;

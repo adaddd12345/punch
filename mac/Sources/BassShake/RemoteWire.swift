@@ -136,6 +136,9 @@ struct RemoteState: Codable, Equatable {
   var studyOnBreak = false
   var studyFocus: Int? = nil
   var studyRest: Int? = nil
+  /// Lights Out in full (its ending, the guard's note). Older Macs send only
+  /// `sleepLeft` / `sleepFinished`, which stay filled for older controllers.
+  var lightsOut: RemoteLightsOut? = nil
 
   init() {}
 
@@ -169,6 +172,39 @@ struct RemoteState: Codable, Equatable {
     studyOnBreak = (try? c.decodeIfPresent(Bool.self, forKey: .studyOnBreak)) ?? d.studyOnBreak
     studyFocus = (try? c.decodeIfPresent(Int.self, forKey: .studyFocus)) ?? nil
     studyRest = (try? c.decodeIfPresent(Int.self, forKey: .studyRest)) ?? nil
+    lightsOut = (try? c.decodeIfPresent(RemoteLightsOut.self, forKey: .lightsOut)) ?? nil
+  }
+}
+
+/// Lights Out on the other Mac (docs/research/31-sleep-timer.md), times as
+/// seconds from when the snapshot was made.
+struct RemoteLightsOut: Codable, Equatable {
+  var left: Double? = nil
+  var startedAgo: Double? = nil
+  var minutes = 0
+  var fromSleep = false
+  var fading = false
+  /// LightsOutState.Ending raw value ("stopping", "paused", "held", "macMuted").
+  var ending: String? = nil
+  var endedAgo: Double? = nil
+  /// The headphone guard's note, and whether it still holds the sound silent.
+  var notice: String? = nil
+  var noticeHeld = false
+
+  init() {}
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    let d = RemoteLightsOut()
+    left = (try? c.decodeIfPresent(Double.self, forKey: .left)) ?? nil
+    startedAgo = (try? c.decodeIfPresent(Double.self, forKey: .startedAgo)) ?? nil
+    minutes = (try? c.decodeIfPresent(Int.self, forKey: .minutes)) ?? d.minutes
+    fromSleep = (try? c.decodeIfPresent(Bool.self, forKey: .fromSleep)) ?? d.fromSleep
+    fading = (try? c.decodeIfPresent(Bool.self, forKey: .fading)) ?? d.fading
+    ending = (try? c.decodeIfPresent(String.self, forKey: .ending)) ?? nil
+    endedAgo = (try? c.decodeIfPresent(Double.self, forKey: .endedAgo)) ?? nil
+    notice = (try? c.decodeIfPresent(String.self, forKey: .notice)) ?? nil
+    noticeHeld = (try? c.decodeIfPresent(Bool.self, forKey: .noticeHeld)) ?? d.noticeHeld
   }
 }
 
@@ -189,6 +225,9 @@ struct RemoteCommand: Codable, Equatable {
     case setBypass
     /// Sleep timer minutes (`num`), Study plan "focus/rest" (`str`), and their stops.
     case setSleepMinutes, startStudy, stopStudy, wakeFromSleep
+    /// Lights Out: start (`num` minutes), +10, cancel, the popup saw its
+    /// ending, and the headphone guard's Play Here / dismiss. (Unmute is wakeFromSleep.)
+    case startLightsOut, extendLightsOut, stopLightsOut, lightsOutSeen, lightsOutPlayHere, lightsOutDismiss
   }
   var name: String
   var num: Double? = nil
@@ -216,6 +255,12 @@ struct RemoteCommand: Codable, Equatable {
   static func startStudy(focus: Int, rest: Int) -> Self { .init(name: Name.startStudy.rawValue, str: "\(focus)/\(rest)") }
   static let stopStudy = Self(name: Name.stopStudy.rawValue)
   static let wakeFromSleep = Self(name: Name.wakeFromSleep.rawValue)
+  static func startLightsOut(_ m: Int) -> Self { .init(name: Name.startLightsOut.rawValue, num: Double(m)) }
+  static let extendLightsOut = Self(name: Name.extendLightsOut.rawValue)
+  static let stopLightsOut = Self(name: Name.stopLightsOut.rawValue)
+  static let lightsOutSeen = Self(name: Name.lightsOutSeen.rawValue)
+  static let lightsOutPlayHere = Self(name: Name.lightsOutPlayHere.rawValue)
+  static let lightsOutDismiss = Self(name: Name.lightsOutDismiss.rawValue)
 }
 
 /// One message inside the encrypted channel.

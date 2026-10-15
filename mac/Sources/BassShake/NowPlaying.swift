@@ -1399,7 +1399,7 @@ final class NowPlayingScripts {
     case unavailable
   }
 
-  enum Command { case playPause, next }
+  enum Command { case playPause, next, pause }
 
   /// errAEEventNotPermitted: the user said no in the Automation prompt.
   static let notPermitted = -1743
@@ -1482,7 +1482,12 @@ final class NowPlayingScripts {
   /// nil when it ran; otherwise the AppleScript error code.
   @discardableResult
   func command(_ p: NowPlayer, _ c: Command) -> Int? {
-    let verb = c == .playPause ? "playpause" : "next track"
+    let verb: String
+    switch c {
+    case .playPause: verb = "playpause"
+    case .next: verb = "next track"
+    case .pause: verb = "pause"
+    }
     let source = """
     if application id "\(p.rawValue)" is running then
       tell application id "\(p.rawValue)"
