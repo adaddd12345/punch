@@ -440,7 +440,16 @@ enum CenterLock: String, Codable, CaseIterable, Identifiable {
 
 enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   case system, ambientBlue, coffee, irishGreen, ember, violet, rose, arctic
+  // Seasonal (vector snow, embers, gold flecks, petals over a wash; Festive.swift).
+  // An older build that doesn't know these raw values falls back to System Grey.
+  case frost, pumpkin, lunar, sakura
   var id: String { rawValue }
+  var festive: Bool {
+    switch self {
+    case .frost, .pumpkin, .lunar, .sakura: return true
+    default: return false
+    }
+  }
   var title: String {
     switch self {
     case .system: return "System Grey"
@@ -451,6 +460,10 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
     case .violet: return "Midnight Violet"
     case .rose: return "Rose Quartz"
     case .arctic: return "Arctic Teal"
+    case .frost: return "Frost"
+    case .pumpkin: return "Pumpkin Glow"
+    case .lunar: return "Lunar"
+    case .sakura: return "Sakura"
     }
   }
 }
