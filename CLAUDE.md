@@ -20,6 +20,7 @@ C++20 DSP core, SwiftUI + AppKit UI, Sparkle auto-updates. Bundle id `app.basssh
 - Shipping betas / the Sparkle update pipeline: see docs/UPDATES.md. Handoff notes: docs/HANDOFF.md.
 
 ## Rules that matter
+- Agents: keep testing conservative on tokens. Build once, verify the change with the smallest check that proves it (one targeted render or test, not boards of variants), skip exploratory passes unless asked, and keep reports short.
 - Never call the HAL (Core Audio object APIs) on the main thread; use `audioQueue` / `listenerQueue`.
 - Settings fields: add with a default and a `try?` decode line (old saved data must keep loading).
 - Fast-changing values must not be `@Published` on `AudioController` (re-renders the whole popover = CPU). Put them in a small ObservableObject observed by a tiny view.
