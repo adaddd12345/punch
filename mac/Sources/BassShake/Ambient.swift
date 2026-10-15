@@ -8,6 +8,8 @@ struct PopupBackground: View {
   let style: BackgroundStyle
   /// False while the popup is closed/hidden: the smoke stops drawing.
   var active = true
+  /// Seasonal styles: lets a FestiveForeground ride this background's display link.
+  var clock: FestiveClock? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
   /// The window is hidden or fully covered (e.g. a pinned panel behind other windows).
@@ -16,7 +18,7 @@ struct PopupBackground: View {
   var body: some View {
     if style.festive {
       // Seasonal scenes (Festive.swift): a still frame under Power Saver and Reduce Motion.
-      FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion)
+      FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion, clock: clock)
         .allowsHitTesting(false)
     } else if let palette = AmbientPalette.for(style) {
       Group {
@@ -34,6 +36,36 @@ struct PopupBackground: View {
     } else {
       Color.clear
     }
+  }
+}
+
+extension View {
+  /// The popup's background style behind the content; for a seasonal style, also a few
+  /// faint particles drifting in front of it.
+  func popupBackdrop(_ style: BackgroundStyle, active: Bool) -> some View {
+    modifier(PopupBackdrop(style: style, active: active))
+  }
+}
+
+private struct PopupBackdrop: ViewModifier {
+  let style: BackgroundStyle
+  let active: Bool
+  @State private var clock = FestiveClock()
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+
+  func body(content: Content) -> some View {
+    content
+      .background(PopupBackground(style: style, active: active, clock: clock))
+      // An overlay takes no part in layout. Left out when the scene is a still frame
+      // (Power Saver / Reduce Motion), where a frozen particle would sit on the text.
+      .overlay {
+        if style.festive && !(powerSaver || reduceMotion) {
+          FestiveForeground(style: style, clock: clock)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+      }
   }
 }
 

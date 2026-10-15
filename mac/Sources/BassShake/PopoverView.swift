@@ -184,7 +184,7 @@ struct PopoverView: View {
     .frame(width: 360)
     // Never taller than the screen space it hangs in (menu-bar popover only).
     .frame(maxHeight: role == .menuBar ? space.maxHeight : nil, alignment: .top)
-    .background(PopupBackground(style: controller.settings.backgroundStyle, active: visible))
+    .popupBackdrop(controller.settings.backgroundStyle, active: visible)
     // "Updated to …" sits in the band UpdateBand makes for it. Its dismissal is
     // the one state change that collapses the band (the popup's height follows
     // the same animation frame by frame).

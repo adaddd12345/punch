@@ -19,13 +19,38 @@ struct FestiveBackground: NSViewRepresentable {
   let active: Bool
   /// Power Saver / Reduce Motion: one still frame, nothing moving.
   let still: Bool
+  /// Shared with the popup's FestiveForeground, which this view's display link also moves.
+  var clock: FestiveClock? = nil
 
-  func makeNSView(context: Context) -> FestiveView { FestiveView() }
+  func makeNSView(context: Context) -> FestiveView { FestiveView(clock: clock) }
 
   func updateNSView(_ view: FestiveView, context: Context) {
     let mode: FestiveView.Mode = still ? .still : (active && !context.environment.drawPaused ? .running : .paused)
     view.update(style: style, mode: mode)
   }
+}
+
+/// A few faint particles of the same kind drifting in front of the popup's content.
+/// No timer of its own: the background's display link moves it (via the shared clock), so
+/// it runs and pauses with the background. Not shown when the background is a still
+/// frame (Power Saver / Reduce Motion): a frozen particle would sit on the text.
+struct FestiveForeground: NSViewRepresentable {
+  let style: BackgroundStyle
+  let clock: FestiveClock
+
+  func makeNSView(context: Context) -> FestiveView { FestiveView(clock: clock, front: true) }
+
+  func updateNSView(_ view: FestiveView, context: Context) {
+    clock.front = view
+    view.update(style: style, mode: .paused)
+  }
+}
+
+/// Links a popup's festive background (which owns the display link) to its foreground.
+final class FestiveClock {
+  weak var front: FestiveView?
+  /// The moment the background last drew.
+  fileprivate var time = FestiveView.stillTime
 }
 
 /// (Inside an NSView, `BackgroundStyle` means NSView.BackgroundStyle.)
@@ -44,12 +69,18 @@ final class FestiveView: NSView {
   private var animator: Animator?
   private var link: CADisplayLink?
   private var lastTime = FestiveView.stillTime
+  private let clock: FestiveClock?
+  /// The foreground set: no wash, no clock of its own.
+  private let front: Bool
 
-  init() {
+  init(clock: FestiveClock? = nil, front: Bool = false) {
+    self.clock = clock
+    self.front = front
     super.init(frame: .zero)
     wantsLayer = true
     layer?.masksToBounds = true
     layer?.addSublayer(scene)
+    setAccessibilityElement(false)
   }
   required init?(coder: NSCoder) { fatalError() }
 
@@ -99,21 +130,30 @@ final class FestiveView: NSView {
     scene.frame = bounds
     scene.sublayers = nil
     let a = Animator()
-    switch style {
-    case .frost: Frost.build(scene, a, size, dark)
-    case .pumpkin: Pumpkin.build(scene, a, size, dark)
-    case .lunar: Lunar.build(scene, a, size, dark)
-    case .sakura: Sakura.build(scene, a, size, dark)
+    switch (style, front) {
+    case (.frost, false): Frost.build(scene, a, size, dark)
+    case (.frost, true): Frost.buildFront(scene, a, size, dark)
+    case (.pumpkin, false): Pumpkin.build(scene, a, size, dark)
+    case (.pumpkin, true): Pumpkin.buildFront(scene, a, size, dark)
+    case (.lunar, false): Lunar.build(scene, a, size, dark)
+    case (.lunar, true): Lunar.buildFront(scene, a, size, dark)
+    case (.sakura, false): Sakura.build(scene, a, size, dark)
+    case (.sakura, true): Sakura.buildFront(scene, a, size, dark)
     default: break
     }
     animator = a
-    a.update(mode == .running ? Self.now() : (mode == .still ? Self.stillTime : lastTime))
+    if front {
+      a.update(clock?.time ?? Self.stillTime)
+    } else {
+      a.update(mode == .running ? Self.now() : (mode == .still ? Self.stillTime : lastTime))
+    }
     CATransaction.commit()
     built = (style, dark, size)
   }
 
   /// Runs the display link only while running; otherwise leaves (or sets) a still frame.
   private func syncClock() {
+    if front { return }
     switch mode {
     case .running:
       guard link == nil, window != nil else { return }
@@ -135,9 +175,11 @@ final class FestiveView: NSView {
 
   private func draw(at t: Double) {
     lastTime = t
+    clock?.time = t
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     animator?.update(t)
+    if let f = clock?.front, f.window === window { f.animator?.update(t) }
     CATransaction.commit()
   }
 }
@@ -354,6 +396,9 @@ private enum Frost {
   // Two depths: far flakes are smaller, fainter, slower and sway less (parallax).
   static let far = flakes(8, seed: 11, size: 6...8, speed: 5...8, sway: 4...8, alpha: 0.40...0.55)
   static let near = flakes(7, seed: 47, size: 10...14, speed: 9...13, sway: 8...14, alpha: 0.65...0.85)
+  /// In front of the content: few, small, faint (under half the near flakes' opacity) and
+  /// quicker, so none rests on a label.
+  static let front = flakes(5, seed: 131, size: 9...11, speed: 13...17, sway: 8...14, alpha: 0.36...0.42)
 
   static let washesDark = [
     Wash(x: 0.18, y: 0.12, r: 0.55, drift: 0.07, period: 71, squash: 0.75, colour: RGB(0.30, 0.48, 0.92), alpha: 0.40),
@@ -430,7 +475,11 @@ private enum Frost {
     for f in near { addFlake(scene, a, f, size, dark) }
   }
 
-  static func addFlake(_ scene: CALayer, _ a: Animator, _ f: Flake, _ size: CGSize, _ dark: Bool) {
+  static func buildFront(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {
+    for f in front { addFlake(scene, a, f, size, dark, front: true) }
+  }
+
+  static func addFlake(_ scene: CALayer, _ a: Animator, _ f: Flake, _ size: CGSize, _ dark: Bool, front: Bool = false) {
     let w = Double(size.width), h = Double(size.height)
     let r = f.size / 2
     let span = h + 40
@@ -445,7 +494,9 @@ private enum Frost {
     let rim = dark ? RGB(0.30, 0.44, 0.74).cg(0.7) : RGB(0.36, 0.50, 0.78).cg(0.6)
     let back = shape(designs[f.design], scale: r, stroke: rim, width: line * (dark ? 1.2 : 1.8))
     back.zPosition = -max(1.0, 0.22 * r)
-    let face = shape(designs[f.design], scale: r, stroke: (dark ? RGB(0.94, 0.97, 1.0) : RGB(1, 1, 1)).cg(), width: line)
+    // In front, light mode: pale ice blue, as white would vanish on the light tiles.
+    let ice = dark ? RGB(0.94, 0.97, 1.0) : (front ? RGB(0.66, 0.78, 0.98) : RGB(1, 1, 1))
+    let face = shape(designs[f.design], scale: r, stroke: ice.cg(), width: line)
     turn.addSublayer(back)
     turn.addSublayer(face)
     var m = Animator.Mover(layer: holder, x0: -slant + f.x * (w + slant + 10), y0: -20, y1: h + 20, slant: slant,
@@ -479,6 +530,13 @@ private enum Pumpkin {
     Mote(x: 0.06 + 0.88 * seeded(31, i), rise: 0.38 + 0.30 * seeded(32, i), speed: 6 + 6 * seeded(33, i),
          wander: 5 + 9 * seeded(34, i), wanderRate: 0.05 + 0.07 * seeded(35, i), phase: seeded(36, i),
          flicker: 0.9 + 1.6 * seeded(37, i), r: 0.8 + 0.7 * seeded(38, i))
+  }
+
+  /// In front: a handful, smaller and fainter.
+  static let front: [Mote] = (0..<5).map { i in
+    Mote(x: 0.08 + 0.84 * seeded(131, i), rise: 0.40 + 0.25 * seeded(132, i), speed: 9 + 5 * seeded(133, i),
+         wander: 6 + 8 * seeded(134, i), wanderRate: 0.05 + 0.07 * seeded(135, i), phase: seeded(136, i),
+         flicker: 0.9 + 1.6 * seeded(137, i), r: 0.7 + 0.4 * seeded(138, i))
   }
 
   // Indigo and plum up top; pumpkin and amber low down.
@@ -519,26 +577,32 @@ private enum Pumpkin {
                              duration: (to - from) / 3.2, phase: Double(i) * 0.5))
     }
 
-    // Embers.
+    for m in motes { addEmber(scene, a, m, size, dark, alpha: 1) }
+  }
+
+  static func buildFront(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {
+    for m in front { addEmber(scene, a, m, size, dark, alpha: 0.5) }
+  }
+
+  static func addEmber(_ scene: CALayer, _ a: Animator, _ m: Mote, _ size: CGSize, _ dark: Bool, alpha k: Double) {
+    let w = Double(size.width), h = Double(size.height)
     let glowColour = dark ? RGB(1.0, 0.62, 0.22) : RGB(0.98, 0.50, 0.12)
     let core = dark ? RGB(1.0, 0.86, 0.58) : RGB(0.92, 0.44, 0.10)
-    for m in motes {
-      let travel = h * m.rise + 30
-      let holder = CALayer()
-      let flicker = CALayer()
-      let hr = m.r * 5.5
-      flicker.addSublayer(glow(glowColour, dark ? 0.42 : 0.30, width: 2 * hr, height: 2 * hr))
-      flicker.addSublayer(shape(circle(m.r), scale: 1, fill: core.cg(dark ? 0.95 : 0.8)))
-      holder.addSublayer(flicker)
-      scene.addSublayer(holder)
-      var mv = Animator.Mover(layer: holder, x0: m.x * w, y0: h + 8, y1: h + 8 - travel, slant: 0, duration: travel / m.speed,
-                              phase: m.phase, sway: m.wander, swayPeriod: 1 / m.wanderRate, swayPhase: m.phase * 1.3)
-      // Fade in quickly near the bottom, out over the upper half of the rise.
-      mv.fade = [(0, 0), (0.12, 1), (0.45, 1), (1, 0)]
-      mv.flicker = flicker
-      mv.flickerPeriod = 3 / m.flicker
-      a.movers.append(mv)
-    }
+    let travel = h * m.rise + 30
+    let holder = CALayer()
+    let flicker = CALayer()
+    let hr = m.r * 5.5
+    flicker.addSublayer(glow(glowColour, (dark ? 0.42 : 0.30) * k, width: 2 * hr, height: 2 * hr))
+    flicker.addSublayer(shape(circle(m.r), scale: 1, fill: core.cg((dark ? 0.95 : 0.8) * k)))
+    holder.addSublayer(flicker)
+    scene.addSublayer(holder)
+    var mv = Animator.Mover(layer: holder, x0: m.x * w, y0: h + 8, y1: h + 8 - travel, slant: 0, duration: travel / m.speed,
+                            phase: m.phase, sway: m.wander, swayPeriod: 1 / m.wanderRate, swayPhase: m.phase * 1.3)
+    // Fade in quickly near the bottom, out over the upper half of the rise.
+    mv.fade = [(0, 0), (0.12, 1), (0.45, 1), (1, 0)]
+    mv.flicker = flicker
+    mv.flickerPeriod = 3 / m.flicker
+    a.movers.append(mv)
   }
 }
 
@@ -551,6 +615,13 @@ private enum Lunar {
     Fleck(x: seeded(51, i), y: seeded(52, i), speed: 3.5 + 4 * seeded(53, i), wander: 3 + 6 * seeded(54, i),
           phase: seeded(55, i), r: 0.7 + 0.6 * seeded(56, i),
           glintPeriod: 7 + 9 * seeded(57, i), glintOffset: seeded(58, i))
+  }
+
+  /// In front: a few, fainter.
+  static let front: [Fleck] = (0..<6).map { i in
+    Fleck(x: seeded(151, i), y: seeded(152, i), speed: 6 + 4 * seeded(153, i), wander: 3 + 6 * seeded(154, i),
+          phase: seeded(155, i), r: 0.7 + 0.4 * seeded(156, i),
+          glintPeriod: 9 + 9 * seeded(157, i), glintOffset: seeded(158, i))
   }
 
   // Lacquer red and wine, with warm gold low and to one side.
@@ -566,14 +637,22 @@ private enum Lunar {
   ]
 
   static func build(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {
-    let w = Double(size.width), h = Double(size.height)
     scene.backgroundColor = (dark ? RGB(0.17, 0.03, 0.04) : RGB(1.0, 0.94, 0.91)).cg(0.60)
     for (i, wash) in (dark ? washesDark : washesLight).enumerated() { wash.add(to: scene, a, size, phase: Double(i) * 0.29) }
 
     // Gold flecks drifting up; now and then one catches the light.
+    addFlecks(scene, a, flecks, size, dark, alpha: 1)
+  }
+
+  static func buildFront(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {
+    addFlecks(scene, a, front, size, dark, alpha: 0.5)
+  }
+
+  static func addFlecks(_ scene: CALayer, _ a: Animator, _ flecks: [Fleck], _ size: CGSize, _ dark: Bool, alpha: Double) {
+    let w = Double(size.width), h = Double(size.height)
     let gold = dark ? RGB(1.0, 0.84, 0.48) : RGB(0.80, 0.52, 0.12)
     let span = h + 20
-    let k = dark ? 1.0 : 0.85
+    let k = (dark ? 1.0 : 0.85) * alpha
     for f in flecks {
       let holder = CALayer()
       holder.addSublayer(shape(circle(f.r), scale: 1, fill: gold.cg()))
@@ -588,7 +667,7 @@ private enum Lunar {
       mv.glint = glint
       mv.glintPeriod = f.glintPeriod
       mv.glintPhase = f.glintOffset
-      mv.glintPeak = dark ? 0.9 : 0.8
+      mv.glintPeak = (dark ? 0.9 : 0.8) * alpha
       a.movers.append(mv)
     }
   }
@@ -616,6 +695,8 @@ private enum Sakura {
   // Two depths: far petals smaller, fainter and slower.
   static let far = petals(11, seed: 71, size: 5.5...7.0, speed: 7...10, alpha: 0.55...0.72)
   static let near = petals(7, seed: 83, size: 8.0...10.0, speed: 11...15, alpha: 0.80...0.95)
+  /// In front: few, small, faint (under half the near petals' opacity) and quicker.
+  static let front = petals(5, seed: 97, size: 8.0...9.5, speed: 14...18, alpha: 0.42...0.48)
 
   /// One petal of length 1, centred, with its notched tip up.
   static let petal: Path = {
@@ -647,6 +728,10 @@ private enum Sakura {
     for (i, wash) in (dark ? washesDark : washesLight).enumerated() { wash.add(to: scene, a, size, phase: Double(i) * 0.27) }
     for p in far { addPetal(scene, a, p, size, dark) }
     for p in near { addPetal(scene, a, p, size, dark) }
+  }
+
+  static func buildFront(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {
+    for p in front { addPetal(scene, a, p, size, dark) }
   }
 
   static func addPetal(_ scene: CALayer, _ a: Animator, _ p: Petal, _ size: CGSize, _ dark: Bool) {
