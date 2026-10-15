@@ -68,6 +68,8 @@ final class RemotePeerModel: ObservableObject, Identifiable {
 
   fileprivate var client: RemoteClient?
   fileprivate var reachable = false
+  /// Take Control's commands wait for their own acks (by command id).
+  private var ackHandlers: [Int: (Bool, String?) -> Void] = [:]
   private var noteWork: DispatchWorkItem?
   private var pendingVolume: Double?
   private var volumeSentAt: TimeInterval = 0
@@ -98,6 +100,12 @@ final class RemotePeerModel: ObservableObject, Identifiable {
   fileprivate func setLink(_ l: RemoteClient.Link) {
     guard l != link else { return }
     link = l
+    if l != .connected, !ackHandlers.isEmpty {
+      // A dropped session never acks: settle every command still waiting.
+      let waiting = ackHandlers.values
+      ackHandlers = [:]
+      for h in waiting { h(false, nil) }
+    }
     switch l {
     case .failed(let r):
       if let text = RemoteControl.text(for: r, name: name, during: .session) { show(text, sticky: true) }
@@ -123,8 +131,15 @@ final class RemotePeerModel: ObservableObject, Identifiable {
     client.send(cmd)
   }
 
-  fileprivate func ack(ok: Bool, note: String?) {
+  fileprivate func ack(id: Int, ok: Bool, note: String?) {
+    if let h = ackHandlers.removeValue(forKey: id) { h(ok, note); return }
     if !ok, let note { show(note) }
+  }
+
+  /// Take Control: a command whose ack goes to `onAck` (false at once when not connected).
+  func send(_ cmd: RemoteCommand, onAck: @escaping (Bool, String?) -> Void) {
+    guard let client, connected else { onAck(false, nil); return }
+    ackHandlers[client.send(cmd)] = onAck
   }
 
   /// Dragging: at most ~20 sends a second, the last value always sent.
@@ -332,6 +347,7 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
     browser = nil
     for m in models.values { m.client?.close(); m.client = nil }
     models = [:]
+    TakeControl.shared.modelsChanged()
     if !directory.shown.isEmpty { directory.shown = [] }
     nearby = []
     code = nil
@@ -440,7 +456,7 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
           self?.publishShown()
         }
         c.onState = { [weak m] st in m?.receive(st) }
-        c.onAck = { [weak m] _, ok, note in m?.ack(ok: ok, note: note) }
+        c.onAck = { [weak m] id, ok, note in m?.ack(id: id, ok: ok, note: note) }
         c.setWatching(popups > 0)
         m.client = c
       }
@@ -449,6 +465,7 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
       m.client?.setEndpoint(seen?.endpoint)
     }
     publishShown()
+    TakeControl.shared.modelsChanged()
   }
 
   /// A tile for every paired Mac that's nearby or still connected.
@@ -548,6 +565,8 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
   }
 
   func remoteHost(sessions: [String: String], watchers: Int) {
+    // A Mac that left mid-drag: its live edit stops being heard (nothing saved).
+    for fp in controllers.keys where sessions[fp] == nil { controller?.remoteCommit(fp, nil) }
     if controllers != sessions { controllers = sessions }
     let grew = watchers > self.watchers
     self.watchers = watchers
@@ -560,6 +579,13 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
   func remoteHost(command: RemoteCommand, from fingerprint: String, reply: @escaping (Bool, String?) -> Void) {
     guard let c = controller else { reply(false, nil); return }
     defer { markDirty() }
+    #if DEBUG
+    // Loopback test only: one line per command on stderr (its log), sound fields by name.
+    if ProcessInfo.processInfo.environment["BASSSHAKE_REMOTE_TEST_CODEFILE"] != nil {
+      let what = command.sound.map { $0.keys.sorted().joined(separator: ",") } ?? command.str ?? command.num.map { "\($0)" } ?? ""
+      FileHandle.standardError.write(Data("[target] cmd \(command.name) \(what)\n".utf8))
+    }
+    #endif
     let here = localName
     switch command.known {
     case .setVolume?:
@@ -602,6 +628,40 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
       reply(true, nil)
     case .toggleEnabled?:
       c.toggle()
+      reply(true, nil)
+    // Take Control (v2): the controller's popup edits this Mac's sound as if here.
+    case .soundPreview?, .soundCommit?:
+      let change = SoundField.patch(command.sound ?? [:])
+      if command.known == .soundPreview { c.remotePreview(fingerprint, change) } else { c.remoteCommit(fingerprint, change) }
+      reply(true, nil)
+    case .soundCancel?:
+      c.remoteCommit(fingerprint, nil)
+      reply(true, nil)
+    case .applyUserPreset?:
+      guard let p = c.settings.userPresets.first(where: { $0.id.uuidString == command.str }) else {
+        reply(false, "That sound is gone from \(here)."); return
+      }
+      c.apply(userPreset: p)
+      reply(true, nil)
+    case .setBypass?:
+      let on = (command.num ?? 0) != 0
+      guard c.settings.enabled || !on else { reply(false, nil); return }
+      if c.bypassed != on { c.bypassed = on }
+      reply(true, nil)
+    case .setSleepMinutes?:
+      guard let m = command.num, m.isFinite, m >= 0, m <= 24 * 60 else { reply(false, nil); return }
+      c.setSleepMinutes(Int(m))
+      reply(true, nil)
+    case .startStudy?:
+      let parts = (command.str ?? "").split(separator: "/").compactMap { Int($0) }
+      guard parts.count == 2, (1...240).contains(parts[0]), (1...120).contains(parts[1]) else { reply(false, nil); return }
+      c.startPomodoro((focus: parts[0], rest: parts[1]))
+      reply(true, nil)
+    case .stopStudy?:
+      c.stopPomodoro()
+      reply(true, nil)
+    case .wakeFromSleep?:
+      c.wakeFromSleep()
       reply(true, nil)
     case nil:
       reply(false, "Update The Bass Shaker on \(here) to use this.")
@@ -655,6 +715,10 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
     c.macVolume.$state.sink(receiveValue: mark).store(in: &hostSinks)
     c.live.$apps.sink(receiveValue: mark).store(in: &hostSinks)
     NowStack.shared.$lead.sink(receiveValue: mark).store(in: &hostSinks)
+    c.$sleepEndsAt.sink(receiveValue: mark).store(in: &hostSinks)
+    c.$sleepFinished.sink(receiveValue: mark).store(in: &hostSinks)
+    c.$pomodoroEndsAt.sink(receiveValue: mark).store(in: &hostSinks)
+    c.$pomodoroOnBreak.sink(receiveValue: mark).store(in: &hostSinks)
     NowPlaying.shared.$tracks.sink(receiveValue: mark).store(in: &hostSinks)
   }
 
@@ -711,6 +775,16 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
     }
     let scriptable = leadApp().map { $0.player != nil && s.showNowPlaying && s.playingDetails } ?? false
     r.canPlayPause = keysAllowed || scriptable
+    // v2: everything Take Control's popup shows.
+    r.sound = SoundField.encodeAll(s)
+    r.outputKinds = c.devices.map(\.transport)
+    r.hasMute = mv.canMute
+    r.sleepLeft = c.sleepEndsAt.map { max(0, $0.timeIntervalSinceNow.rounded()) }
+    r.sleepFinished = c.sleepFinished
+    r.studyLeft = c.pomodoroEndsAt.map { max(0, $0.timeIntervalSinceNow.rounded()) }
+    r.studyOnBreak = c.pomodoroOnBreak
+    r.studyFocus = c.pomodoroPlan?.focus
+    r.studyRest = c.pomodoroPlan?.rest
     return r
   }
 }

@@ -95,6 +95,26 @@ final class MacVolume: ObservableObject {
   /// No HAL here: AudioController creates this during SwiftUI's scene build.
   init() {}
 
+  // MARK: Take Control
+
+  enum RemoteOp { case volume(Double, dragging: Bool), toggleMute }
+  /// Take Control's copy: this model shows another Mac's volume (never
+  /// started, no HAL) and its writes go here instead.
+  var remote: ((RemoteOp) -> Void)?
+  private var remoteHoldUntil: TimeInterval = 0
+
+  /// That Mac's volume from a snapshot. A drag (and a moment after it)
+  /// keeps showing its own value, so echoes of older steps don't pull it back.
+  func mirror(_ s: MacVolumeState) {
+    var s = s
+    if activeDrag || ProcessInfo.processInfo.systemUptime < remoteHoldUntil {
+      s.volume = state.volume
+      s.muted = state.muted
+    }
+    if let v = s.volume, v >= 0.05 { lastAudible = v }
+    assign(s)
+  }
+
   // MARK: Main-thread API
 
   /// Starts following the default output. Safe to call more than once.
@@ -142,6 +162,11 @@ final class MacVolume: ObservableObject {
     if v > 0 && s.muted && s.canMute { s.muted = false }
     assign(s)
     // While dragging, echoes are held anyway; the drag's end starts the hold.
+    if let remote {
+      remoteHoldUntil = ProcessInfo.processInfo.systemUptime + 0.6
+      remote(.volume(v, dragging: dragging))
+      return
+    }
     if !dragging { hold(0.25) }
     lock.lock()
     pendingVolume = (state.deviceID, v)
@@ -154,6 +179,15 @@ final class MacVolume: ObservableObject {
   /// The glyph: flips mute, or (no mute control) toggles between 0 and the last level.
   func toggleMute() {
     let s = state
+    if let remote, s.canMute {
+      // That Mac flips its own mute (or volume 0, with no mute control).
+      var n = s
+      n.muted.toggle()
+      assign(n)
+      remoteHoldUntil = ProcessInfo.processInfo.systemUptime + 0.6
+      remote(.toggleMute)
+      return
+    }
     if s.canMute {
       setMuted(!s.muted)
     } else if s.canSetVolume {
@@ -176,6 +210,10 @@ final class MacVolume: ObservableObject {
   }
 
   private func setMuted(_ m: Bool) {
+    if remote != nil {
+      if m != state.muted { toggleMute() }
+      return
+    }
     var s = state
     s.muted = m
     assign(s)
@@ -186,6 +224,12 @@ final class MacVolume: ObservableObject {
 
   /// Echoes of our own writes are ignored until `seconds` from now; then one read reconciles.
   private func hold(_ seconds: Double) {
+    if let remote {
+      // Take Control: only a drag's end lands here. Send where it ended (never read this Mac's HAL).
+      remoteHoldUntil = ProcessInfo.processInfo.systemUptime + 0.6
+      if let v = state.volume, state.canSetVolume { remote(.volume(v, dragging: false)) }
+      return
+    }
     holdUntil = ProcessInfo.processInfo.systemUptime + seconds
     DispatchQueue.main.asyncAfter(deadline: .now() + seconds + 0.05) { [weak self] in
       guard let self, !self.activeDrag, ProcessInfo.processInfo.systemUptime >= self.holdUntil else { return }

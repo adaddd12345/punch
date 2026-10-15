@@ -85,6 +85,12 @@ struct PopoverView: View {
 
   private var labels: LabelLevel { controller.settings.labelLevel }
 
+  /// Take Control: this popup drives another Mac (its controller is a mirror).
+  private var takeover: TakeoverSession? {
+    guard controller.isMirror, let s = TakeControl.shared.session, s.mirror === controller else { return nil }
+    return s
+  }
+
   /// The "Updated to …" capsule (and its band) is up.
   private var bandShown: Bool { visible && updates.justUpdatedTo != nil }
 
@@ -119,7 +125,11 @@ struct PopoverView: View {
   }
 
   /// Muted apps What's Playing doesn't already show (muted, with its unmute).
-  private var mutedNotice: some View {
+  @ViewBuilder private var mutedNotice: some View {
+    if !controller.isMirror { localMutedNotice }
+  }
+
+  private var localMutedNotice: some View {
     let s = controller.settings
     let mini = size == .mini
     return MutedNotice(live: controller.live,
@@ -131,34 +141,50 @@ struct PopoverView: View {
   private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
       let isClassicMini = !controller.settings.bento && size == .mini
+      // Take Control: who this popup is driving, always on top (and Switch Back).
+      if let t = takeover {
+        TakeoverBanner(session: t)
+      } else if !controller.isMirror {
+        TakeoverNotice(take: TakeControl.shared)
+      }
       // Classic Mini: the Mac's own volume first. Everywhere else it's a block
       // in BentoView, placed by the layout order (default: under the EQ).
       if isClassicMini {
-        macSlot
-        // In your ears: the output, and every playing app behind a chevron.
-        earsSlot
+        gated {
+          VStack(alignment: .leading, spacing: 8) {
+            macSlot
+            // In your ears: the output, and every playing app behind a chevron.
+            earsSlot
+          }
+        }
       }
-      // Banners sit above every block, full width.
-      statusBanner
-      NowPlayingNote(controller: controller, mini: size == .mini)
+      // Banners sit above every block, full width (this Mac's only).
+      if !controller.isMirror {
+        statusBanner
+        NowPlayingNote(controller: controller, mini: size == .mini)
+      }
       if isClassicMini {
-        classicMini
+        gated { classicMini }
       } else {
-        if size != .mini { driverSection }
+        if size != .mini && !controller.isMirror { driverSection }
         // One BentoView at every size, so ⌘1/2/3 resizes its tiles in place.
         // Classic Full and Compact are the same blocks, flat (stripped back).
         // Taller than the space it hangs in: the blocks scroll, the footer stays.
         OverflowScroll {
-          BentoView(controller: controller, meters: meters, editor: $editor, size: size,
-                    heroIcons: AnyView(size == .mini
-                      ? windowTools(words: false, mini: true, height: 32, capsule: true)
-                      : windowTools(words: size == .full && labels == .full)),
-                    // Where words would squeeze the preset's name to "…" (BentoView.playingFull).
-                    heroIconsTight: size == .full && labels == .full ? AnyView(windowTools(words: false)) : nil,
-                    flat: !controller.settings.bento,
-                    macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
-                    remoteBlock: AnyView(RemoteMacsBlock(directory: RemoteControl.shared.directory, size: size)),
-                    reshuffle: reshuffle)
+          gated {
+            BentoView(controller: controller, meters: meters, editor: $editor, size: size,
+                      heroIcons: AnyView(size == .mini
+                        ? windowTools(words: false, mini: true, height: 32, capsule: true)
+                        : windowTools(words: size == .full && labels == .full)),
+                      // Where words would squeeze the preset's name to "…" (BentoView.playingFull).
+                      heroIconsTight: size == .full && labels == .full ? AnyView(windowTools(words: false)) : nil,
+                      flat: !controller.settings.bento,
+                      macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
+                      // Taking control of one Mac: no tiles for others (Switch Back first).
+                      remoteBlock: controller.isMirror ? nil
+                        : AnyView(RemoteMacsBlock(directory: RemoteControl.shared.directory, size: size)),
+                      reshuffle: reshuffle)
+          }
         }
       }
       // Under the stack, so a mute never pushes What's Playing down.
@@ -279,7 +305,8 @@ struct PopoverView: View {
       visible = true
       updateTaper = updates.justUpdatedTo != nil
       reshuffle.canStart = { [weak controller] in
-        guard let c = controller else { return false }
+        // Take Control: the layout is this Mac's; rearrange it from its own popup.
+        guard let c = controller, !c.isMirror else { return false }
         return c.settings.viewSize != .mini || role == .launchWindow
       }
       if let w = window.window { reshuffle.attach(w) }
@@ -305,8 +332,8 @@ struct PopoverView: View {
         }
       }
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
-      NowPlaying.shared.attach(controller)
-      PlayingApps.shared.attach(controller.live)
+      NowPlaying.shared.attach(home)
+      PlayingApps.shared.attach(home.live)
       NowPlaying.shared.windowAppeared()
       RemoteControl.shared.popupShown(true)
       latencyLab.startMonitoring()
@@ -331,6 +358,14 @@ struct PopoverView: View {
       controller.dj.held = []
     }
   }
+
+  /// Take Control: locked and dimmed while the other Mac can't hear them.
+  @ViewBuilder private func gated<V: View>(@ViewBuilder _ content: () -> V) -> some View {
+    if let t = takeover { TakeoverGate(session: t) { content() } } else { content() }
+  }
+
+  /// The Mac this popup belongs to (the mirror's owner for Take Control).
+  private var home: AudioController { controller.isMirror ? (TakeControl.shared.localController ?? controller) : controller }
 
   private func showBeatsDrawer() {
     // Under the popup (lifted on a bottom Dock) like DJ and Live whenever it
@@ -719,7 +754,53 @@ struct PopoverView: View {
     controller.inputs.first(where: { $0.id == controller.currentInputID })?.name ?? "None"
   }
 
-  private var footer: some View {
+  @ViewBuilder private var footer: some View {
+    if controller.isMirror { takeoverFooter } else { localFooter }
+  }
+
+  /// Take Control: what only works here (DJ, Beats, Live Channels, rearranging) is off.
+  private var takeoverFooter: some View {
+    HStack(spacing: 8) {
+      Text("DJ, Beats, Live Channels and rearranging stay on this Mac.")
+        .font(.system(size: 10))
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
+        .fixedSize(horizontal: false, vertical: true)
+      Spacer(minLength: 4)
+      Menu {
+        Button("Connect Another Mac…") { withAnimation { showRemote = true } }
+        Button("Switch Back to This Mac") { TakeControl.shared.switchBack() }
+        Divider()
+        // Sound options of the Mac being controlled.
+        Toggle("Ear Protector (duck sudden loud blasts)", isOn: Binding(get: { controller.settings.earProtector },
+                                                                        set: { controller.settings.earProtector = $0 }))
+        Toggle("Fair Level (even out loudness between apps)", isOn: Binding(get: { controller.settings.fairLevel },
+                                                                            set: { controller.settings.fairLevel = $0 }))
+        Picker("Center Lock", selection: Binding(get: { controller.settings.centerLock },
+                                                  set: { controller.settings.centerLock = $0 })) {
+          ForEach(CenterLock.allCases) { Text($0.title).tag($0) }
+        }
+        Toggle("Studio Ears", isOn: Binding(get: { controller.settings.studioEars },
+                                            set: { controller.settings.studioEars = $0 }))
+        SoundLikeMenu(controller: controller)
+        Button("My Sounds…") { withAnimation { showMySounds = true } }
+        Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
+        Divider()
+        Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
+      } label: {
+        Image(nsImage: MenuBarIcon.menuGlyph)
+          .renderingMode(.template)
+          .foregroundStyle(.secondary)
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .help("Options for the Mac you're controlling")
+      .accessibilityLabel("More")
+    }
+  }
+
+  private var localFooter: some View {
     HStack(spacing: 8) {
       LiveChannelsButton(model: controller.live, expanded: $showLive)
       Button {
@@ -1066,6 +1147,18 @@ private struct MiniDial<Accessory: View>: View {
         .opacity(dimmed ? 0.45 : 1)
         .accessibilityLabel(title)
         .accessibilityValue(f.0 + f.1 + f.2)
+    }
+  }
+}
+
+/// Take Control ended by itself (the Mac was gone, or unpaired): said once, here.
+private struct TakeoverNotice: View {
+  @ObservedObject var take: TakeControl
+
+  var body: some View {
+    if let n = take.notice {
+      Banner(symbol: "laptopcomputer", tint: .orange, text: n,
+             action: ("OK", { withAnimation(.easeOut(duration: 0.15)) { take.notice = nil } }), secondary: nil)
     }
   }
 }

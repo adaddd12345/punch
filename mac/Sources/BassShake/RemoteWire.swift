@@ -11,8 +11,9 @@ import Foundation
 enum RemoteWire {
   /// Protocol major version. A peer on another major is refused with a
   /// message naming its app version, never half-understood.
-  static let version = Int(ProcessInfo.processInfo.environment["BASSSHAKE_REMOTE_TEST_VERSION"] ?? "") ?? 1
-  /// Largest frame either side accepts (a state snapshot is ~1 KB).
+  /// 2: Take Control (full sound snapshot in `state`, live sound edits).
+  static let version = Int(ProcessInfo.processInfo.environment["BASSSHAKE_REMOTE_TEST_VERSION"] ?? "") ?? 2
+  /// Largest frame either side accepts (a v2 snapshot is a few KB, more with many My Sounds).
   static let maxFrame = 256 * 1024
   /// Bonjour type (also in Info.plist NSBonjourServices). The loopback test
   /// sets BASSSHAKE_REMOTE_SERVICE so it never meets a real copy.
@@ -120,6 +121,22 @@ struct RemoteState: Codable, Equatable {
   /// Play/pause and next can reach the app (a script or the media key).
   var canPlayPause = false
 
+  // v2 (Take Control): the whole sound, so the controller's popup can mirror it.
+  /// The sound settings by field name, each value its own JSON text (app-side
+  /// list: TakeControl.swift `SoundField`). Unknown names are ignored.
+  var sound: [String: String]? = nil
+  /// Transport type per output (same order as `outputs`), for icons.
+  var outputKinds: [UInt32] = []
+  /// The output has a mute control (else mute toggles volume 0).
+  var hasMute = false
+  /// Sleep / Study timers, as seconds left when the snapshot was made.
+  var sleepLeft: Double? = nil
+  var sleepFinished = false
+  var studyLeft: Double? = nil
+  var studyOnBreak = false
+  var studyFocus: Int? = nil
+  var studyRest: Int? = nil
+
   init() {}
 
   // Tolerant, like Settings: a newer peer's extra or missing field never fails the frame.
@@ -143,6 +160,15 @@ struct RemoteState: Codable, Equatable {
     playingApp = (try? c.decodeIfPresent(String.self, forKey: .playingApp)) ?? nil
     playing = (try? c.decodeIfPresent(Bool.self, forKey: .playing)) ?? d.playing
     canPlayPause = (try? c.decodeIfPresent(Bool.self, forKey: .canPlayPause)) ?? d.canPlayPause
+    sound = (try? c.decodeIfPresent([String: String].self, forKey: .sound)) ?? nil
+    outputKinds = (try? c.decodeIfPresent([UInt32].self, forKey: .outputKinds)) ?? d.outputKinds
+    hasMute = (try? c.decodeIfPresent(Bool.self, forKey: .hasMute)) ?? d.hasMute
+    sleepLeft = (try? c.decodeIfPresent(Double.self, forKey: .sleepLeft)) ?? nil
+    sleepFinished = (try? c.decodeIfPresent(Bool.self, forKey: .sleepFinished)) ?? d.sleepFinished
+    studyLeft = (try? c.decodeIfPresent(Double.self, forKey: .studyLeft)) ?? nil
+    studyOnBreak = (try? c.decodeIfPresent(Bool.self, forKey: .studyOnBreak)) ?? d.studyOnBreak
+    studyFocus = (try? c.decodeIfPresent(Int.self, forKey: .studyFocus)) ?? nil
+    studyRest = (try? c.decodeIfPresent(Int.self, forKey: .studyRest)) ?? nil
   }
 }
 
@@ -150,10 +176,25 @@ struct RemoteState: Codable, Equatable {
 struct RemoteCommand: Codable, Equatable {
   enum Name: String, Codable, CaseIterable {
     case setVolume, toggleMute, playPause, next, setPreset, setBoost, setMode, setOutput, toggleEnabled
+    // v2, Take Control:
+    /// A drag in flight: heard at once on the target (its LiveEdit preview), not saved.
+    case soundPreview
+    /// The edit's end (or a click): written to its settings once, ending any preview.
+    case soundCommit
+    /// A drag let go where it started: the preview ends, nothing is written.
+    case soundCancel
+    /// A My Sounds preset by id (`str`), so a name shared with a built-in can't mix them up.
+    case applyUserPreset
+    /// Original Sound (A/B): `num` 1 on, 0 off.
+    case setBypass
+    /// Sleep timer minutes (`num`), Study plan "focus/rest" (`str`), and their stops.
+    case setSleepMinutes, startStudy, stopStudy, wakeFromSleep
   }
   var name: String
   var num: Double? = nil
   var str: String? = nil
+  /// soundPreview / soundCommit: changed sound fields, by name, as JSON text.
+  var sound: [String: String]? = nil
 
   var known: Name? { Name(rawValue: name) }
 
@@ -166,6 +207,15 @@ struct RemoteCommand: Codable, Equatable {
   static func setMode(_ m: String) -> Self { .init(name: Name.setMode.rawValue, str: m) }
   static func setOutput(_ n: String) -> Self { .init(name: Name.setOutput.rawValue, str: n) }
   static let toggleEnabled = Self(name: Name.toggleEnabled.rawValue)
+  static func soundPreview(_ f: [String: String]) -> Self { .init(name: Name.soundPreview.rawValue, sound: f) }
+  static func soundCommit(_ f: [String: String]) -> Self { .init(name: Name.soundCommit.rawValue, sound: f) }
+  static let soundCancel = Self(name: Name.soundCancel.rawValue)
+  static func applyUserPreset(_ id: String) -> Self { .init(name: Name.applyUserPreset.rawValue, str: id) }
+  static func setBypass(_ on: Bool) -> Self { .init(name: Name.setBypass.rawValue, num: on ? 1 : 0) }
+  static func setSleepMinutes(_ m: Int) -> Self { .init(name: Name.setSleepMinutes.rawValue, num: Double(m)) }
+  static func startStudy(focus: Int, rest: Int) -> Self { .init(name: Name.startStudy.rawValue, str: "\(focus)/\(rest)") }
+  static let stopStudy = Self(name: Name.stopStudy.rawValue)
+  static let wakeFromSleep = Self(name: Name.wakeFromSleep.rawValue)
 }
 
 /// One message inside the encrypted channel.

@@ -135,7 +135,8 @@ C → T  seal(kCT){t:fin}    T → C  seal(kTC){t:fin}     (each proves its iden
 
 ## Messages (inside the box, JSON, versioned)
 
-- **Protocol major `RemoteWire.version = 1`.** A peer on another major gets
+- **Protocol major `RemoteWire.version = 2`** (2 added Take Control; a 1.x
+  peer is refused). A peer on another major gets
   `error{version}`. The tile and panel then say "Update The Bass Shaker on
   both Macs to the same version." Adding fields doesn't need a new major:
   `RemoteState` decodes tolerantly, and unknown message types and commands
@@ -158,6 +159,57 @@ C → T  seal(kCT){t:fin}    T → C  seal(kTC){t:fin}     (each proves its iden
   - The target sweeps sessions idle for more than 45 s.
 - **`bye{reason}`**: sent on close or revoke.
 
+## Take Control (protocol 2)
+
+"Take Control" (on a connected Mac's tile, and per paired Mac in ⋯ › Connect
+Another Mac…) makes the **whole popup** drive that Mac until **Switch Back**.
+Code: `TakeControl.swift`; hooks in `AudioController` (`isMirror`,
+`mirrorLink`, `mirrorApply`, `remotePreview`/`remoteCommit`) and `MacVolume`
+(`remote`, `mirror`).
+
+- **Architecture: a mirror controller, not a second set of views.** The popup
+  root (`TakeoverRoot`) renders the same `PopoverView` with a second
+  `AudioController(mirrorOf:)`. Rejected: a "sound target" protocol threaded
+  through every view (BentoView alone is ~2,500 lines of `controller.…`
+  bindings): far more invasive, and every new control would need both paths.
+  The mirror reuses every control as is. Its guards: it never bootstraps,
+  never calls the HAL, never runs the engine pipeline or saves settings;
+  `settings.didSet`, `pushParams`, `bypassed`, `select`, `setMode`, presets,
+  timers and the volume model route to `TakeoverSession` instead.
+- **What goes where.** `SoundField.all` names the sound fields (EQ bands,
+  preset/edited, Strength, Boost, Limit, My Sounds, character, Bass
+  character/amount, Loudness, Night Guard/Allow, Late Night Haze, noise,
+  Studio Ears, Sound Like, Ear Protector, Fair Level, Center Lock; mode and
+  sleep minutes shown only). The mirror's settings are this Mac's settings
+  with those fields from the other Mac. A write to a sound field goes there;
+  a write to anything else (look, size, switches) goes to this Mac's own
+  settings. What's Playing is the other Mac's (in the banner); this Mac's
+  is hidden in the mirror and never saved off.
+- **Wire.** `state.sound` is a `[name: JSON text]` map of `SoundField.all`
+  (plus outputs' transport kinds, real mute, Sleep/Study seconds left).
+  Edits use the same LiveEdit model as local drags:
+  - `soundPreview{sound}` (≤ 30 Hz, latest wins): the target's
+    `preview("remote.<fp>")`, heard at once, not saved;
+  - `soundCommit{sound}`: `endPreview` plus one settings write (one save).
+    Writes in one turn coalesce (a node edit is one commit, not four);
+  - `soundCancel`: a drag let go where it started.
+  - `applyUserPreset{id}`, `setBypass`, `setSleepMinutes`, `startStudy
+    "25/5"`, `stopStudy`, `wakeFromSleep`; the v1 commands for the rest.
+  - A controller that drops mid-drag has its preview ended on the target.
+- **No echo.** Snapshots wait while an edit is in flight (a preview, an
+  unacked command, a pending commit) and for 250 ms after the last ack; then
+  the latest one is shown. Volume holds its own drag (0.6 s).
+- **Persistence and exits.** `Settings.remoteTakeover` (peer fingerprint).
+  Closing the popup, clicking off, relaunch and sleep keep it. Only Switch
+  Back, unpairing here or there (`notPaired` / `revoked`), a changed key or
+  version, or the Mac being gone for **2 minutes of uptime** end it; the last
+  ones leave a one-line notice on this Mac's popup. While the link is down
+  the popup stays on that Mac, dimmed and locked, with "Reconnecting to …"
+  and Try Now: never quietly back on this Mac's sound.
+- **Not remote** (hidden in Take Control; the footer says so): DJ, Beats,
+  Live Channels, rearranging, Check & Fix, Hearing Fit, mic and per-device
+  options. The ⋯ menu keeps the other Mac's sound options and Switch Back.
+
 ## Where commands land on the target (main thread; HAL stays off main)
 
 | Command | Path |
@@ -169,6 +221,9 @@ C → T  seal(kCT){t:fin}    T → C  seal(kTC){t:fin}     (each proves its iden
 | setMode | `AudioController.setMode` |
 | setOutput | `AudioController.select(device:)` (HAL call on `audioQueue`) |
 | toggleEnabled | `AudioController.toggle()` |
+| soundPreview / soundCommit / soundCancel | `AudioController.remotePreview` / `remoteCommit` (LiveEdit, one save) |
+| applyUserPreset, setBypass | `apply(userPreset:)`, `bypassed` |
+| setSleepMinutes, startStudy, stopStudy, wakeFromSleep | the same `AudioController` timer calls |
 
 **What's Playing on the target.** If the target's popup is open, the title
 comes from What's Playing's lead entry. Otherwise it is the first app Live
@@ -227,3 +282,15 @@ remotely.
      toggleMute ×2, and toggleEnabled ×2, each confirmed by a state push.
    - playPause and next were refused, with the Accessibility line, because
      the test bundle isn't trusted. No prompt appeared.
+3. **Take Control loopback** (two processes: the real app as the target, a
+   driver hosting the real popup and `TakeControl` as the controller). Pair,
+   Take Control, then through the views' own calls: an EQ node drag (19
+   preview frames, one commit), Strength, Boost and Bass amount drags,
+   Limit, a built-in preset, a My Sound saved and applied there (not here),
+   Bass Punch, Loudness, Night Guard and Allow, Late Night and Haze, Study
+   25/5, Sleep 30 min, A/B, power, the output picker, a Mac Volume drag and
+   mute. This Mac's sound never changed; its size change stayed here. Popup
+   closed and reopened: still Take Control (saved). Target killed:
+   Reconnecting…, locked; back when it restarted. Switch Back: this Mac's
+   sound as before. Target killed again: back here with the notice 120 s
+   later. A 1.x peer is refused with `version`.

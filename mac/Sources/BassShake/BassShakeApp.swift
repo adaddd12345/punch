@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       controller.bootstrap()
       // Other Macs: starts nothing unless one of its switches is on.
       RemoteControl.shared.attach(controller)
+      TakeControl.shared.attach(controller)
     }
     // Start auto-updates only once the UI is up, and never block on it.
     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [updates] in updates.start() }
@@ -253,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       self?.closeIfUnpinned()
     }
 
-    let host = NSHostingController(rootView: PopoverView(controller: controller).environmentObject(updates))
+    let host = NSHostingController(rootView: TakeoverRoot(local: controller).environmentObject(updates))
     host.sizingOptions = [.preferredContentSize]
     popover.contentViewController = host
     LiveDrawer.shared.anchorView = host.view
@@ -635,7 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       if event.keyCode == 53, Reshuffle.anyOn { return event }
       if event.keyCode == 53, !self.controller.pinned { self.closePopover(yieldFocus: true); return nil }
       if cmd, event.charactersIgnoringModifiers == "w" { self.closePopover(yieldFocus: true); return nil }
-      if cmd, event.charactersIgnoringModifiers == "z" { self.controller.undo(); return nil }
+      if cmd, event.charactersIgnoringModifiers == "z" { (TakeControl.shared.active ?? self.controller).undo(); return nil }
       return event
     }) { outsideClickMonitors.append(k) }
     if let l = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
@@ -841,7 +842,7 @@ struct MainWindowView: View {
       .frame(width: 360, alignment: .leading)
       .background(Color.primary.opacity(0.04))
       Divider()
-      PopoverView(controller: controller, ownsDrawer: false)
+      TakeoverRoot(local: controller, ownsDrawer: false)
     }
   }
 }

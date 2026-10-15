@@ -101,7 +101,11 @@ final class AudioController: ObservableObject {
 
   /// Instant A/B: the tap keeps running, the engine passes audio untouched.
   @Published var bypassed = false {
-    didSet { if bypassed != oldValue { pushParams() } }
+    didSet {
+      guard bypassed != oldValue else { return }
+      if isMirror { if !mirrorQuiet { mirrorLink?.mirrorSend(.setBypass(bypassed)) }; return }
+      pushParams()
+    }
   }
   /// Output device volume (0...1) for Auto Loudness; not persisted. Not
   /// @Published: it changes on every volume step and no view reads it.
@@ -119,6 +123,12 @@ final class AudioController: ObservableObject {
   @Published var settings: Settings {
     didSet {
       guard settings != oldValue else { return }
+      // Take Control: this copy only shows another Mac's sound; edits go there.
+      if isMirror {
+        if !previews.isEmpty { refreshLiveEdit() }
+        if !mirrorQuiet { mirrorLink?.mirrorSettingsChanged(from: oldValue) }
+        return
+      }
       if settings.enabled != oldValue.enabled {
         // Fresh start each time: no stale A/B or finished sleep fade (which
         // would otherwise leave the output silent after off/on).
@@ -182,7 +192,16 @@ final class AudioController: ObservableObject {
   /// `log stream --predicate 'subsystem == "app.bassshake.BassShake"'`
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "audio")
 
+  /// Take Control (TakeControl.swift): a copy that drives another Mac. It
+  /// never touches the HAL, the engine pipeline or saved settings; its edits
+  /// go to `mirrorLink`, and snapshots from that Mac land via `mirrorApply`.
+  let isMirror: Bool
+  weak var mirrorLink: MirrorLink?
+  /// Main only: set while a snapshot from the other Mac is being applied.
+  private var mirrorQuiet = false
+
   init() {
+    isMirror = false
     engine = punch_engine_create()
     curveEngine = punch_engine_create()
     punch_engine_prepare(curveEngine, 48_000, 2, 512)
@@ -197,6 +216,25 @@ final class AudioController: ObservableObject {
     // hung at launch with no UI). All system work happens in bootstrap(),
     // after launch, with HAL calls on the audio queue.
     log.notice("controller init")
+  }
+
+  /// Take Control's copy: starts from this Mac's settings (its look and
+  /// layout) and is never bootstrapped.
+  init(mirrorOf local: AudioController) {
+    isMirror = true
+    engine = punch_engine_create()
+    curveEngine = punch_engine_create()
+    punch_engine_prepare(curveEngine, 48_000, 2, 512)
+    settings = local.settings
+    needsOnboarding = false
+  }
+
+  /// Only a mirror goes away (Switch Back); its engines never reached the audio queue.
+  deinit {
+    if isMirror {
+      punch_engine_destroy(engine)
+      punch_engine_destroy(curveEngine)
+    }
   }
 
   private var bootstrapped = false
@@ -266,6 +304,9 @@ final class AudioController: ObservableObject {
 
   func toggle() { settings.enabled.toggle() }
 
+  /// The controller whose Mac this is (the mirror's owner is this Mac's own).
+  var isLocal: Bool { !isMirror }
+
   // MARK: Undo (⌘Z): the sound, not the switches
 
   private struct SoundSnapshot {
@@ -299,6 +340,14 @@ final class AudioController: ObservableObject {
   }
 
   func apply(preset: Preset) {
+    if isMirror {
+      mirrorLink?.mirrorSend(.setPreset(preset.name))
+      mirrorLocally { s in
+        s.mode = .off; s.presetName = preset.name; s.userPresetID = nil; s.editedFrom = nil
+        s.bass = preset.bass; s.character = preset.character; s.bands = EQBand.normalized(preset.bands())
+      }
+      return
+    }
     pushUndo()
     leaveModeQuietly()
     settings.presetName = preset.name
@@ -312,6 +361,14 @@ final class AudioController: ObservableObject {
   // MARK: - User presets
 
   func apply(userPreset p: UserPreset) {
+    if isMirror {
+      mirrorLink?.mirrorSend(.applyUserPreset(p.id.uuidString))
+      mirrorLocally { s in
+        s.mode = .off; s.presetName = nil; s.userPresetID = p.id; s.editedFrom = nil
+        s.bass = p.bass; s.boostDb = p.boostDb; s.character = p.character; s.bands = EQBand.normalized(p.bands)
+      }
+      return
+    }
     pushUndo()
     settings.presetName = nil
     settings.userPresetID = p.id
@@ -390,6 +447,7 @@ final class AudioController: ObservableObject {
   }
 
   func pollMeters() -> PunchMeters {
+    if isMirror { return PunchMeters() }
     let m = punch_take_meters(engine)
     checkChannels(m)
     // Whole dB only (the chip shows "−N dB"), so it publishes rarely.
@@ -493,7 +551,8 @@ final class AudioController: ObservableObject {
 
   /// Drains the engine's post-processing mono feed (UI thread).
   func readAnalyzer(_ buf: inout [Float]) -> Int {
-    buf.withUnsafeMutableBufferPointer { Int(punch_read_analyzer(engine, $0.baseAddress, $0.count)) }
+    if isMirror { return 0 }
+    return buf.withUnsafeMutableBufferPointer { Int(punch_read_analyzer(engine, $0.baseAddress, $0.count)) }
   }
 
   // MARK: - Per-device sound
@@ -521,7 +580,7 @@ final class AudioController: ObservableObject {
   /// starts at 0 dB Boost: +12 dB set for quiet laptop speakers must not
   /// land on a new pair of headphones.
   private func deviceChanged(from old: AudioObjectID) {
-    guard settings.perDevice else { return }
+    guard !isMirror, settings.perDevice else { return }
     // Only on a real switch (not the first device found at launch). Only a
     // positive Boost is risky; a cut stays. Modes don't switch sounds, but
     // the Boost rule still applies in them.
@@ -593,6 +652,7 @@ final class AudioController: ObservableObject {
 
   /// Everything back to first-run defaults (presets included).
   func resetAllSettings() {
+    guard !isMirror else { return }
     UserDefaults.standard.removeObject(forKey: Settings.key)
     settings = Settings()
   }
@@ -698,6 +758,11 @@ final class AudioController: ObservableObject {
 
   func setMode(_ mode: ListeningMode) {
     guard mode != settings.mode else { return }
+    if isMirror {
+      mirrorLink?.mirrorSend(.setMode(mode.rawValue))
+      mirrorLocally { $0.mode = mode }
+      return
+    }
     var s = settings
     if s.mode == .off {
       s.beforeMode = .init(bands: morphTarget ?? s.bands, bass: s.bass, character: s.character,
@@ -754,6 +819,11 @@ final class AudioController: ObservableObject {
   }
 
   func setSleepMinutes(_ m: Int) {
+    if isMirror {
+      mirrorLink?.mirrorSend(.setSleepMinutes(m))
+      mirrorLocally { $0.sleepMinutes = m }
+      return
+    }
     settings.sleepMinutes = m
     if settings.mode == .sleep {
       stopSleepTimer()
@@ -775,6 +845,7 @@ final class AudioController: ObservableObject {
   }
 
   func stopSleepTimer() {
+    if isMirror { return }
     sleepEndsAt = nil
     sleepStartedAt = nil
     sleepFinished = false
@@ -788,6 +859,7 @@ final class AudioController: ObservableObject {
   /// Restores sound after the sleep timer ran out.
   func wakeFromSleep() {
     guard sleepFinished || sleepEndsAt != nil else { return }
+    if isMirror { mirrorLink?.mirrorSend(.wakeFromSleep); return }
     stopSleepTimer()
     if settings.mode == .sleep && settings.sleepMinutes > 0 { startSleepTimer() }
   }
@@ -802,6 +874,14 @@ final class AudioController: ObservableObject {
   }
 
   func startPomodoro(_ plan: (focus: Int, rest: Int)) {
+    if isMirror {
+      // The other Mac keeps the clock (and chimes); its snapshots move this one.
+      mirrorLink?.mirrorSend(.startStudy(focus: plan.focus, rest: plan.rest))
+      pomodoroPlan = plan
+      pomodoroOnBreak = false
+      pomodoroEndsAt = Date().addingTimeInterval(Double(plan.focus) * 60)
+      return
+    }
     pomodoroPlan = plan
     pomodoroOnBreak = false
     pomodoroEndsAt = Date().addingTimeInterval(Double(plan.focus) * 60)
@@ -809,6 +889,7 @@ final class AudioController: ObservableObject {
   }
 
   func stopPomodoro() {
+    if isMirror { mirrorLink?.mirrorSend(.stopStudy) }
     pomodoroPlan = nil
     pomodoroEndsAt = nil
     pomodoroOnBreak = false
@@ -863,6 +944,8 @@ final class AudioController: ObservableObject {
   /// Settings take the target at once (one popup render); the glide itself
   /// is an in-flight edit (LiveEdit.swift), so only the curve redraws per frame.
   private func morph(to target: [EQBand], duration: Double = 0.35) {
+    // A glide here would stream preview frames to the other Mac: set it once.
+    if isMirror { settings.bands = EQBand.normalized(target); return }
     let start = shownSettings.bands   // mid-glide: from where it is now
     morphTimer?.invalidate()
     morphTimer = nil
@@ -906,6 +989,13 @@ final class AudioController: ObservableObject {
   }
 
   func select(device: OutputDevice) {
+    if isMirror {
+      mirrorLink?.mirrorSend(.setOutput(device.name))
+      mirrorQuiet = true
+      currentDeviceID = device.id
+      mirrorQuiet = false
+      return
+    }
     // Following the system default keeps us in step with the Sound menu,
     // Control Center and AirPods auto-switching.
     audioQueue.async { try? Devices.setDefaultOutput(device.id) }
@@ -952,6 +1042,7 @@ final class AudioController: ObservableObject {
   /// Sound pane, whose input meter opens it). `auto` (after wake) only does
   /// the safe parts and stays quiet unless it fixed something.
   func checkAndFix(auto: Bool = false) {
+    guard !isMirror else { return }
     guard !doctorRunning else { return }
     doctorRunning = true
     let balanceOff = balanceIsOff
@@ -1088,6 +1179,7 @@ final class AudioController: ObservableObject {
   /// land, at most one engine update per display frame (~16 ms), and it
   /// carries the latest settings (plus any edit in flight).
   func pushParams() {
+    if isMirror { mirrorLink?.mirrorLiveChanged(); return }
     guard !pushScheduled else { return }
     pushScheduled = true
     let wait = max(0, lastPushAt + Self.pushInterval - ProcessInfo.processInfo.systemUptime)
@@ -1847,6 +1939,7 @@ final class AudioController: ObservableObject {
 
   /// Mutes the Mac's output (Ear Protector banner's Mute button).
   func muteOutput() {
+    guard !isMirror else { return }
     audioQueue.async {
       let id = Devices.defaultOutput()
       let mute = AudioObjectPropertyAddress.output(kAudioDevicePropertyMute)
@@ -1994,3 +2087,89 @@ final class AtomicFlag {
   func store(_ v: Bool) { lock.lock(); value = v; lock.unlock() }
   func load() -> Bool { lock.lock(); defer { lock.unlock() }; return value }
 }
+
+// MARK: - Take Control mirror (TakeControl.swift)
+
+/// Where a mirror's edits go (TakeoverSession). Main thread.
+protocol MirrorLink: AnyObject {
+  /// Settings were written (a click, a commit at a drag's end).
+  func mirrorSettingsChanged(from old: Settings)
+  /// An edit in flight started, moved or ended (LiveEdit preview / endPreview).
+  func mirrorLiveChanged()
+  /// A command with its own path on the other Mac (mode, output, preset, A/B, timers).
+  func mirrorSend(_ cmd: RemoteCommand)
+}
+
+/// One snapshot of the other Mac, as the mirror shows it.
+struct MirrorSnapshot {
+  var settings: Settings
+  var devices: [OutputDevice]
+  var currentID: AudioObjectID
+  var enabled: Bool
+  var bypassed: Bool
+  var sleepEndsAt: Date?
+  var sleepFinished: Bool
+  var studyEndsAt: Date?
+  var studyOnBreak: Bool
+  var studyPlan: (focus: Int, rest: Int)?
+}
+
+extension AudioController {
+  /// Shows what the other Mac reported, without sending anything back.
+  func mirrorApply(_ m: MirrorSnapshot) {
+    guard isMirror else { return }
+    mirrorQuiet = true
+    defer { mirrorQuiet = false }
+    if settings != m.settings { settings = m.settings }
+    if devices != m.devices { devices = m.devices }
+    if currentDeviceID != m.currentID { currentDeviceID = m.currentID }
+    let st: Status = m.enabled ? .running(device: m.devices.first { $0.id == m.currentID }?.name ?? "", sampleRate: 0) : .off
+    if status != st { status = st }
+    if bypassed != m.bypassed { bypassed = m.bypassed }
+    // Timers drift by the trip's length: move them only for a real change.
+    func moved(_ a: Date?, _ b: Date?) -> Bool {
+      switch (a, b) {
+      case (nil, nil): return false
+      case let (x?, y?): return abs(x.timeIntervalSince(y)) > 3
+      default: return true
+      }
+    }
+    if moved(sleepEndsAt, m.sleepEndsAt) { sleepEndsAt = m.sleepEndsAt }
+    if sleepFinished != m.sleepFinished { sleepFinished = m.sleepFinished }
+    if moved(pomodoroEndsAt, m.studyEndsAt) { pomodoroEndsAt = m.studyEndsAt }
+    if pomodoroOnBreak != m.studyOnBreak { pomodoroOnBreak = m.studyOnBreak }
+    if pomodoroPlan?.focus != m.studyPlan?.focus || pomodoroPlan?.rest != m.studyPlan?.rest { pomodoroPlan = m.studyPlan }
+  }
+
+  /// An optimistic change for a command already sent (no edit goes out for it).
+  fileprivate func mirrorLocally(_ change: (inout Settings) -> Void) {
+    var s = settings
+    change(&s)
+    mirrorQuiet = true
+    settings = s
+    mirrorQuiet = false
+  }
+
+  // MARK: The controlled Mac's side
+
+  /// The in-flight edit key for one controlling Mac.
+  static func remoteEditKey(_ fingerprint: String) -> String { "remote.\(fingerprint)" }
+
+  /// A controlling Mac's live edit (its drag): heard here at once, not saved.
+  func remotePreview(_ fingerprint: String, _ change: @escaping (inout Settings) -> Void) {
+    stopMorph()
+    preview(Self.remoteEditKey(fingerprint), change)
+  }
+
+  /// Its edit landed (or was dropped with `change` nil): one settings write, one save.
+  func remoteCommit(_ fingerprint: String, _ change: ((inout Settings) -> Void)?) {
+    if change != nil { stopMorph() }
+    endPreview(Self.remoteEditKey(fingerprint)) {
+      guard let change else { return }
+      var s = settings
+      change(&s)
+      if s != settings { settings = s }
+    }
+  }
+}
+

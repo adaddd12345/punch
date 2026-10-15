@@ -41,6 +41,11 @@ struct RemoteMacTile: View {
         // Only live data: a stale song with a play button would mislead.
         if size == .full, live, let st = s, st.playingTitle != nil || st.canPlayPause { playingRow(st) }
         chips
+        // Take Control: the whole popup drives this Mac until Switch Back.
+        if live && size != .mini {
+          TakeControlButton(id: model.id, name: model.name, compact: true)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
         if let n = model.note {
           Text(n)
             .font(.system(size: 10, weight: .medium))
@@ -552,6 +557,9 @@ struct RemotePanelView: View {
               Text(role(p)).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
+            if p.iControl, remote.models[p.id]?.connected == true {
+              TakeControlButton(id: p.id, name: p.name, compact: true)
+            }
             Button("Revoke") { remote.revoke(p.id) }
               .controlSize(.small)
               .help("Forget \(p.name): it can't control this Mac, and its tile goes. Pair again any time.")

@@ -673,6 +673,9 @@ struct Settings: Codable, Equatable {
   var remoteControl = false
   /// Macs paired either way (public identity keys only; see Remote.swift).
   var remotePeers: [RemotePeer] = []
+  /// Take Control: the paired Mac (fingerprint) the whole popup drives until
+  /// Switch Back; nil drives this Mac. Kept across relaunch, sleep and close.
+  var remoteTakeover: String? = nil
 
   /// Whether the menu-bar icon is shown: never hidden unless the Dock icon is on.
   var menuBarIconShown: Bool { showInMenuBar || !showInDock }
@@ -776,6 +779,7 @@ struct Settings: Codable, Equatable {
     remoteAllow = (try? c.decodeIfPresent(Bool.self, forKey: .remoteAllow)) ?? d.remoteAllow
     remoteControl = (try? c.decodeIfPresent(Bool.self, forKey: .remoteControl)) ?? d.remoteControl
     remotePeers = ((try? c.decodeIfPresent([Lossy<RemotePeer>].self, forKey: .remotePeers)) ?? nil)?.compactMap(\.value) ?? []
+    remoteTakeover = (try? c.decodeIfPresent(String.self, forKey: .remoteTakeover)) ?? nil
   }
 
   static func load() -> Settings {
