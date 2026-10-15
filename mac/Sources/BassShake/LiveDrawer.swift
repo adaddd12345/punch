@@ -89,8 +89,10 @@ final class LiveDrawer {
   }
 
   /// Shows any content in the drawer (Live Channels, DJ pads), replacing
-  /// what was there.
-  func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil) {
+  /// what was there. `height`: content of a known, fixed height (DJ, Beats)
+  /// sizes the panel first, so under vs beside is decided on the real size
+  /// (no lift-then-move when it turns out not to fit).
+  func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil, height: CGFloat? = nil) {
     guard let host else { return }
     self.side = side || sideOnly
     if panel == nil {
@@ -106,7 +108,10 @@ final class LiveDrawer {
       panel = p
       // Keep the top edge pinned under the popover as rows come and go.
       resizeObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: p,
-                                                              queue: .main) { [weak self] _ in self?.reposition() }
+                                                              queue: .main) { [weak self] _ in
+        guard let self, !self.presizing else { return }
+        self.reposition()
+      }
     }
     guard let panel else { return }
     // One hosting view for the panel's whole life: only its content swaps.
@@ -126,6 +131,11 @@ final class LiveDrawer {
       panel.contentView = hv
       hostingView = hv
     }
+    if let height, abs(panel.frame.width - w) > 0.5 || abs(panel.frame.height - height) > 0.5 {
+      presizing = true
+      panel.setContentSize(NSSize(width: ceil(w), height: ceil(height)))
+      presizing = false
+    }
     panel.level = host.level
     if panel.parent !== host { host.addChildWindow(panel, ordered: .above) }
     reposition(decide: true)
@@ -137,6 +147,8 @@ final class LiveDrawer {
     }
   }
 
+  /// Sizing the panel ahead of a show: its resize doesn't reposition (the show decides next).
+  private var presizing = false
   private let drawerContent = DrawerContent()
   private var hostingView: NSHostingView<DrawerRoot>?
   private var pendingSize: CGSize?

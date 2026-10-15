@@ -1,16 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// The DJ deck, a fixed-height bento in a calm, neutral language: plain
-/// tiles, one accent per pad that fills the tile only while it's on.
+/// The DJ deck, a fixed-height bento in the drawers' shared language
+/// (`Drawer`, as Beats): colour blocks with a title and one-line detail
+/// top-left; a pad goes to its deep tone, with white text, while it's on.
 ///
 ///   DJ  [ Trap | Lofi | Melodic ]            Reset
-///   [   Low    |    Mid    |    High   ]      isolator
+///   [ ▪▫▫ Low  |  ▫▪▫ Mid  |  ▫▫▪ High ]      isolator
 ///   ┌───────────────┐ ┌────────────┐
-///   │ ◦         •   │ │ Title   •  │
-///   │               │ │ detail     │
-///   │ Title         │ └────────────┘
-///   │ detail        │ ┌────────────┐
+///   │ Title       • │ │ Title   •  │
+///   │ detail        │ │ detail     │
+///   │               │ └────────────┘
+///   │ ◦             │ ┌────────────┐
 ///   └───────────────┘ │ Title   •  │ …
 ///   [ Filter  LP ───●─── HP  • ]
 ///
@@ -24,14 +25,15 @@ struct DJView: View {
   private var dj: DJState { controller.dj }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: Drawer.gap) {
       header
       IsolatorBar(controller: controller, deck: deck)
       grid
         .frame(height: DJLayout.gridHeight)
       filterRow
     }
-    .padding(12)
+    .padding(Drawer.padding)
+    .frame(height: Drawer.height, alignment: .top)
     .background(HostWindowReader { w in deck.window = w })
     .onAppear {
       deck.controller = controller
@@ -51,7 +53,7 @@ struct DJView: View {
   private var header: some View {
     HStack(spacing: 10) {
       Text("DJ")
-        .font(.system(size: 13, weight: .semibold))
+        .font(Drawer.headerFont)
         .foregroundStyle(.primary)
       pageControl
       Spacer(minLength: 0)
@@ -71,7 +73,7 @@ struct DJView: View {
       .accessibilityHidden(!dj.anyActive)
       .help("Turn every pad and the filter off")
     }
-    .frame(height: 24)
+    .frame(height: Drawer.headerHeight)
   }
 
   /// Trap | Lofi | Melodic as one plain segmented control.
@@ -97,7 +99,7 @@ struct DJView: View {
         Text(v.title)
           .font(.system(size: 11, weight: selected ? .semibold : .medium))
         if let p = live {
-          Circle().fill(p.accent).frame(width: 5, height: 5)
+          RoundedRectangle(cornerRadius: 1.5, style: .continuous).fill(p.accent).frame(width: 5, height: 5)
         }
       }
       .padding(.horizontal, 10)
@@ -125,7 +127,7 @@ struct DJView: View {
   private var grid: some View {
     let v = deck.page
     return GeometryReader { g in
-      let gap: CGFloat = 8
+      let gap = Drawer.gap
       let heroW = ((g.size.width - gap) * 0.54).rounded()
       let smallH = (g.size.height - gap) / 2
       HStack(spacing: gap) {
@@ -148,8 +150,7 @@ struct DJView: View {
   // MARK: Filter
 
   private var filterRow: some View {
-    return BentoTile(tint: .frost, padding: 0, radius: DJLayout.barRadius) {
-      HStack(spacing: 8) {
+    return HStack(spacing: 8) {
         DJFilterSlider(controller: controller, filter: dj.filter, pinned: dj.filterPinned)
         Text("HP").font(.system(size: 10, weight: .medium)).foregroundStyle(DJStyle.faint)
         Button {
@@ -166,8 +167,8 @@ struct DJView: View {
       }
       .padding(.leading, 12)
       .padding(.trailing, 4)
-      .frame(height: 32)
-    }
+      .frame(height: Drawer.barHeight)
+      .background(DrawerSurface())
   }
 }
 
@@ -185,7 +186,7 @@ private struct DJFilterSlider: View {
     let f = live ?? filter
     let active = abs(f) > 0.01 || pinned
     Text("Filter")
-      .font(.system(size: 12, weight: .semibold))
+      .font(Drawer.barFont)
       .foregroundStyle(active ? DJStyle.filterAccent : DJStyle.ink)
       .frame(width: 42, alignment: .leading)
     Text("LP").font(.system(size: 10, weight: .medium)).foregroundStyle(DJStyle.faint)
@@ -214,11 +215,13 @@ private struct DJFilterSlider: View {
 }
 
 enum DJLayout {
-  static let isolatorHeight: CGFloat = 34
-  static let gridHeight: CGFloat = 120
+  static let isolatorHeight = Drawer.barHeight
+  /// What's left of the drawer's fixed height for the pads.
+  static let gridHeight = Drawer.height - 2 * Drawer.padding - Drawer.headerHeight - 2 * Drawer.barHeight
+    - 3 * Drawer.gap
   /// The isolator and filter bars.
-  static let barRadius: CGFloat = 10
-  static let segmentRadius: CGFloat = 8
+  static let barRadius = Drawer.radius
+  static let segmentRadius = Drawer.innerRadius + 2
 }
 
 /// The drawer's few colours: neutral surfaces, one accent per pad.
@@ -235,7 +238,12 @@ enum DJStyle {
   /// A killed isolator band.
   static let killRGB = (0.77, 0.19, 0.18)
   static let kill = Color(red: killRGB.0, green: killRGB.1, blue: killRGB.2)
-  static let filterAccent = Color(red: 0.05, green: 0.55, blue: 0.68)
+  /// The filter's accent: a deep teal in light, a lighter one in dark (text 4.5:1 or better on the bar).
+  static let filterAccent = Color(nsColor: NSColor(name: nil) { a in
+    a.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+      ? NSColor(srgbRed: 0.38, green: 0.80, blue: 0.90, alpha: 1)
+      : NSColor(srgbRed: 0.03, green: 0.45, blue: 0.56, alpha: 1)
+  })
 }
 
 extension DJState.Pad {
@@ -290,8 +298,22 @@ extension DJState.Pad {
     }
   }
 
-  /// The pad's one accent: a deep hue that carries white text (title and
-  /// detail at least 4.5:1).
+  /// The pad's colour block at rest (near-black text).
+  var hue: BlockHue {
+    switch self {
+    case .roll: return .pink
+    case .tapeStop, .chipmunk: return .marigold
+    case .drive, .screw: return .violet
+    case .lofi: return .coral
+    case .crush: return .mint
+    case .echo: return .teal
+    case .pump: return .sky
+    case .low, .mid, .high: return .coral
+    }
+  }
+
+  /// The pad's one accent, its "on" tone: a deep hue that carries white text
+  /// (title and detail at least 4.5:1).
   var accent: Color { Color(red: rgb.0, green: rgb.1, blue: rgb.2) }
 
   /// The "on" fill: the accent, or a darker one with Increase Contrast.
@@ -501,23 +523,24 @@ private struct IsolatorBar: View {
   var body: some View {
     GeometryReader { g in
       let segW = g.size.width / 3
-      BentoTile(tint: .frost, padding: 0, radius: DJLayout.barRadius, clipped: true) {
-        ZStack {
+      ZStack {
+          DrawerSurface()
           // Kill fills.
           HStack(spacing: 0) {
             ForEach(Self.bands) { b in
-              Rectangle().fill(dj.isOn(b) ? DJStyle.kill : Color.clear)
+              Rectangle().fill(dj.isOn(b) ? b.fill(contrast) : Color.clear)
             }
           }
 
-          // Hairline dividers (hidden beside a killed band).
-          ForEach(1..<3) { i in
+          // Dividers only with Increase Contrast (the pixel cells and labels
+          // already separate the bands); hidden beside a killed band.
+          if contrast == .increased { ForEach(1..<3) { i in
             Rectangle()
               .fill(Color.primary.opacity(contrast == .increased ? 0.4 : 0.12))
               .frame(width: contrast == .increased ? 1 : 0.5, height: DJLayout.isolatorHeight - 14)
               .position(x: segW * CGFloat(i), y: DJLayout.isolatorHeight / 2)
               .opacity(dj.isOn(Self.bands[i - 1]) || dj.isOn(Self.bands[i]) ? 0 : 1)
-          }
+          } }
 
           // Labels: also the three VoiceOver toggles.
           HStack(spacing: 0) {
@@ -528,7 +551,7 @@ private struct IsolatorBar: View {
           }
         }
         .frame(height: DJLayout.isolatorHeight)
-      }
+        .clipShape(RoundedRectangle(cornerRadius: DJLayout.barRadius, style: .continuous))
       .contentShape(RoundedRectangle(cornerRadius: DJLayout.barRadius, style: .continuous))
       .gesture(drag(segW: segW))
       // Pins sit above the gesture (their own clicks win).
@@ -550,9 +573,14 @@ private struct IsolatorBar: View {
   private func segmentLabel(_ b: DJState.Pad, index: Int) -> some View {
     let on = dj.isOn(b)
     let pinned = dj.pinned.contains(b)
-    return Text(b.name)
-      .font(.system(size: 12, weight: .semibold))
-      .foregroundStyle(on ? Color.white : DJStyle.ink)
+    // Three small cells place the band in the spectrum (low, mid, high).
+    return HStack(spacing: 6) {
+      PixelCells(cells: (0..<3).map { $0 == index ? .on : .off }, columns: 3, size: 4, gap: 1.5,
+                 ink: on ? Color.white : DJStyle.ink, offOpacity: on ? 0.4 : 0.22)
+      Text(b.name)
+        .font(Drawer.barFont)
+        .foregroundStyle(on ? Color.white : DJStyle.ink)
+    }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .contentShape(Rectangle())
       .accessibilityElement()
@@ -609,9 +637,9 @@ private struct IsolatorBar: View {
 
 // MARK: - Effect tile
 
-/// One effect pad as a plain bento tile: title, one-line detail, a pin. At
-/// rest only its symbol carries the accent; on, the tile fills with it.
-/// Hold anywhere on the tile for a hit; Option-click toggles the pin.
+/// One effect pad as a colour block: title, one-line detail, a pin. At rest
+/// the block is its hue's light tone (near-black text); on, its deep accent
+/// (white text). Hold anywhere on the tile for a hit; Option-click pins.
 private struct DJPadTile: View {
   @ObservedObject var controller: AudioController
   let pad: DJState.Pad
@@ -620,19 +648,18 @@ private struct DJPadTile: View {
   @State private var pressing = false
   @State private var optionPress = false
   @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     let dj = controller.dj
     let on = dj.isOn(pad)
     let pinned = dj.pinned.contains(pad)
-    let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
-    BentoTile(tint: .frost, padding: 0, clipped: true) {
-      content(on: on)
-        .padding(hero ? 14 : 10)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background { if on { pad.fill(contrast) } }
-    }
-    .frame(maxHeight: .infinity)
+    let shape = RoundedRectangle(cornerRadius: Drawer.radius, style: .continuous)
+    content(on: on)
+      .padding(hero ? 12 : 10)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .background(on ? pad.fill(contrast) : pad.hue.block(scheme, contrast))
+      .clipShape(shape)
     .contentShape(shape)
     .gesture(DragGesture(minimumDistance: 0)
       .onChanged { _ in
@@ -653,10 +680,10 @@ private struct DJPadTile: View {
     .overlay(alignment: .topTrailing) {
       Button { DJActions.togglePin(pad, controller) } label: {
         DartGlyph(pinned: pinned, size: hero ? 12 : 11)
-          .foregroundStyle(on ? Color.white.opacity(pinned ? 1 : 0.75) : DJStyle.faint)
+          .foregroundStyle(on ? Color.white.opacity(pinned ? 1 : 0.75) : Drawer.ink.opacity(pinned ? 1 : 0.7))
       }
       .buttonStyle(PinButtonStyle(minSize: 24))
-      .padding(hero ? 8 : 4)
+      .padding(4)
       .help(pinned ? "Unpin \(pad.name)" : "Pin \(pad.name) on")
       .accessibilityHidden(true)
     }
@@ -673,27 +700,28 @@ private struct DJPadTile: View {
   }
 
   @ViewBuilder private func content(on: Bool) -> some View {
-    let titleSize: CGFloat = hero ? 24 : 15
-    VStack(alignment: .leading, spacing: hero ? 3 : 1) {
-      if hero {
-        Image(systemName: pad.symbol)
-          .font(.system(size: 14, weight: .medium))
-          .foregroundStyle(on ? Color.white : pad.accent)
-          .frame(height: 18)
-        Spacer(minLength: 0)
-      }
+    let ink = on ? Color.white : Drawer.ink
+    VStack(alignment: .leading, spacing: 1) {
       Text(pad.name)
-        .font(.system(size: titleSize, weight: .semibold))
-        .tracking(hero ? -0.4 : -0.1)
-        .foregroundStyle(on ? Color.white : DJStyle.ink)
+        .font(hero ? Drawer.heroTitleFont : Drawer.titleFont)
+        .tracking(hero ? -0.4 : 0)
+        .foregroundStyle(ink)
         .lineLimit(1)
         .minimumScaleFactor(0.75)
-        .padding(.trailing, hero ? 0 : 20)   // clear of the pin
+        .padding(.trailing, 20)   // clear of the pin
       Text(pad.detail)
-        .font(.system(size: hero ? 12 : 11, weight: .regular))
-        .foregroundStyle(on ? Color.white.opacity(contrast == .increased ? 1 : 0.9) : DJStyle.faint)
+        .font(Drawer.detailFont)
+        .foregroundStyle(on ? Color.white.opacity(contrast == .increased ? 1 : 0.9) : Drawer.detailInk(contrast))
         .lineLimit(1)
         .minimumScaleFactor(0.85)
+      if hero {
+        Spacer(minLength: 0)
+        Image(systemName: pad.symbol)
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(on ? Color.white : Drawer.detailInk(contrast))
+          .frame(height: 18)
+          .accessibilityHidden(true)
+      }
     }
   }
 }

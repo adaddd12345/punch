@@ -590,8 +590,10 @@ struct Settings: Codable, Equatable {
   /// Popover size: everything, compact, or just the sliders.
   var viewSize: ViewSize = .full
   var labelLevel: LabelLevel = .full
-  /// Beats drawer: under the popup (false) or a slim card beside it (true).
-  var beatsSide = false
+  /// Beats drawer under the popup: stems as a 2×2 grid of tiles (true) or
+  /// rows (false). Where the tray goes is decided by room, not by this.
+  /// (Replaces `beatsSide`, which forced the tray beside the popup.)
+  var beatsGrid = false
   /// Bento layout: the main block as pastel tiles instead of the classic stack.
   var bento = false
   /// Tutorial Mode (⋯ › Presets & Settings): a small card by the pointer saying what each control does. Key kept from "Pointer Hints".
@@ -731,7 +733,7 @@ struct Settings: Codable, Equatable {
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
     labelLevel = (try? c.decodeIfPresent(LabelLevel.self, forKey: .labelLevel)) ?? d.labelLevel
-    beatsSide = (try? c.decodeIfPresent(Bool.self, forKey: .beatsSide)) ?? d.beatsSide
+    beatsGrid = (try? c.decodeIfPresent(Bool.self, forKey: .beatsGrid)) ?? d.beatsGrid
     bento = (try? c.decodeIfPresent(Bool.self, forKey: .bento)) ?? d.bento
     pointerHints = (try? c.decodeIfPresent(Bool.self, forKey: .pointerHints)) ?? d.pointerHints
     showNowPlaying = (try? c.decodeIfPresent(Bool.self, forKey: .showNowPlaying)) ?? d.showNowPlaying
