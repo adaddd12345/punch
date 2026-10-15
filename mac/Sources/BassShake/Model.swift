@@ -794,6 +794,9 @@ struct Settings: Codable, Equatable {
   /// What's Playing art (⋯ › Look › Artwork Style): the plain cover, or Vinyl
   /// Peek (a sleeve with a record peeking out that turns while it plays).
   var artworkStyle: ArtworkStyle = .cover
+  /// What's Playing's mute as a small coloured isometric speaker (⋯ › Look ›
+  /// Isometric Mute Button). Off: the flat speaker disc.
+  var isoMuteButton = false
   /// Bass character (Distort / Punch) and its amount (0...1).
   var bassCharacter: BassCharacter = .off
   var bassAmount: Double = 0.6
@@ -912,6 +915,7 @@ struct Settings: Codable, Equatable {
     playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
     artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
+    isoMuteButton = (try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton)) ?? d.isoMuteButton
     bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
     bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount
     lateNightHaze = (try? c.decodeIfPresent(Double.self, forKey: .lateNightHaze)) ?? d.lateNightHaze

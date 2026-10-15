@@ -82,6 +82,7 @@ struct PopoverView: View {
     // Power Saver for everything inside; animation pauses while the window is covered.
     .drawBudgetRoot()
     .environment(\.artworkStyle, controller.settings.artworkStyle)
+    .environment(\.isoMuteButton, controller.settings.isoMuteButton)
   }
 
   private var labels: LabelLevel { controller.settings.labelLevel }
@@ -948,6 +949,9 @@ struct PopoverView: View {
                                                       set: { controller.settings.artworkStyle = $0 })) {
             ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
           }
+          // What's Playing's mute as a little coloured speaker cabinet (off: the flat disc).
+          Toggle("Isometric Mute Button", isOn: Binding(get: { controller.settings.isoMuteButton },
+                                                        set: { controller.settings.isoMuteButton = $0 }))
           // What's drawn behind the EQ curve: the scope (time), the
           // analyser (frequency, on the EQ's own axis), or nothing.
           Picker("EQ Visual", selection: Binding(get: { controller.settings.eqVisual },

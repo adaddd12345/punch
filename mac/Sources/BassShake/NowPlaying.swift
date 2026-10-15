@@ -564,7 +564,10 @@ final class NowPlaying: ObservableObject {
     if heroID == nil {
       heroID = ranked.first(where: playingIDs.contains)
       challenger = nil
-    } else if let h = heroID, let best = ranked.first(where: { $0 != h }), db(best) >= db(h) + Self.swapDb {
+    } else if let h = heroID, let best = ranked.first(where: { $0 != h && playingIDs.contains($0) }),
+              db(best) >= db(h) + Self.swapDb {
+      // Only an app that is playing now can take over (a paused one in its grace period,
+      // still loud in the 3 s average, must not stand in front of a louder player).
       if let c = challenger, c.id == best {
         if now - c.since >= Self.swapSeconds { heroID = best; challenger = nil }
       } else {

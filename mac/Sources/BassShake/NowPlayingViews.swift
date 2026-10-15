@@ -151,13 +151,19 @@ struct NowPlayingControls: View {
   var primary: CGFloat = 40
   /// Mute and Next beside it.
   var extras: Bool = true
+  /// ⋯ › Look › Isometric Mute Button.
+  @Environment(\.isoMuteButton) private var isoMute
 
   var body: some View {
     let route = model.route(app)
     HStack(spacing: 8) {
       // Hidden while a note shows, to give it room; Play stays put (trailing).
       if extras && route != .mute && model.notice == nil {
-        MuteButton(model: model, app: app, compact: false)
+        if isoMute {
+          IsoMuteButton(model: model, app: app, tint: tint)
+        } else {
+          MuteButton(model: model, app: app, compact: false)
+        }
       }
       PrimaryButton(model: model, app: app, size: primary, glyph: (primary * CGFloat(0.4)).rounded(), fill: tint)
       if extras && route == .script {
