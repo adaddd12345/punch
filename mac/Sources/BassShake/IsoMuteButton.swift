@@ -1,16 +1,19 @@
 import AppKit
 import SwiftUI
 
-// What's Playing's mute as a small coloured isometric speaker (⋯ › Look ›
-// Isometric Mute Button; off keeps the flat disc). A cabinet on a terracotta
-// plinth, its shell in a pastel of the hero's tint (mint while the app is off),
-// a cream bezel round the driver, a red tab hinged on top.
+// What's Playing's mute as the "pause shield" (⋯ › Look › Isometric Mute Button;
+// off keeps the flat disc). It rhymes with the round play/pause dish beside it:
+// a round, shallow shield standing on a low puck, drawn in the splash salt
+// shaker's language (same 30° orthographic camera, near-white planes in a few
+// greys lit from screen-left, a navy hairline silhouette, a soft floor shadow).
+// Colour is only a hint: one ring and the boss's glow in the hero tint's hue
+// (the brand cyan while the app is off), and a coral bar when muted.
 //
-// Playing: the cone sits a little proud and moves with the app's level, and up
-// to three soft crescents come off it. Muted: one ~260 ms mechanical motion: the
-// crescents fold away, the cone sinks back and the red tab flips up (with a
-// small hinge overshoot). Hover turns the cabinet a little towards you and
-// lifts it; a press sinks it.
+// Playing: the boss glows and the ring breathes with the app's level, and a
+// faint floor ring (the splash's sound ripple) swells with it. Muted: one
+// ~250 ms motion: the shield settles back on its foot towards the flat dish,
+// the colour drains and a coral bar draws across the face. Hover turns it a
+// little towards you and lifts it; a press sinks it.
 //
 // CPU: only the tiny art view observes the app's `AppLevel` (≤ 10 Hz, only when
 // a bar moved visibly, only while the popup shows). Reduce Motion: the two
@@ -18,7 +21,6 @@ import SwiftUI
 
 private struct IsoMuteKey: EnvironmentKey { static let defaultValue = false }
 private struct IsoMuteHoverKey: EnvironmentKey { static let defaultValue = false }
-private struct IsoMutePressKey: EnvironmentKey { static let defaultValue = false }
 
 extension EnvironmentValues {
   /// ⋯ › Look › Isometric Mute Button (set by PopoverView).
@@ -30,26 +32,22 @@ extension EnvironmentValues {
     get { self[IsoMuteHoverKey.self] }
     set { self[IsoMuteHoverKey.self] = newValue }
   }
-  fileprivate var isoMutePressed: Bool {
-    get { self[IsoMutePressKey.self] }
-    set { self[IsoMutePressKey.self] = newValue }
-  }
 }
 
-/// The hero's mute, drawn as the speaker. Same action, label and hint as MuteButton.
+/// The hero's mute, drawn as the pause shield. Same action, label and hint as MuteButton.
 struct IsoMuteButton: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
-  /// The hero's transport tint (its hue colours the cabinet); nil while off.
+  /// The hero's transport tint (its hue colours the ring); nil while off.
   let tint: Color?
 
-  static let size: CGFloat = 36
+  static let size: CGFloat = 44
 
   var body: some View {
     let muted = model.isMuted(app.id)
     Button { model.toggleMute(app) } label: {
       IsoMuteArt(level: NowLevels.shared.meter(for: app.id), muted: muted,
-                 lit: !muted && model.isPlaying(app), palette: IsoMutePalette(tint: tint))
+                 lit: !muted && model.isPlaying(app), hue: PauseShieldArtwork.hue(of: tint))
         .frame(width: Self.size, height: Self.size)
         .contentShape(Rectangle())
     }
@@ -60,7 +58,7 @@ struct IsoMuteButton: View {
   }
 }
 
-/// Hover lifts 1 pt and turns the cabinet; a press sinks it. Hit area: the frame.
+/// Hover lifts 1 pt and turns the shield; a press sinks it. Hit area: the frame.
 private struct IsoMuteStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View { Plate(configuration: configuration) }
 
@@ -75,9 +73,8 @@ private struct IsoMuteStyle: ButtonStyle {
       let pressed = configuration.isPressed
       configuration.label
         .environment(\.isoMuteHover, motion && hovered)
-        .environment(\.isoMutePressed, motion && pressed)
         .scaleEffect(motion && pressed ? 0.94 : 1, anchor: .bottom)
-        .offset(y: motion && hovered && !pressed ? -1 : 0)
+        .offset(y: motion && hovered && !pressed ? -FooterMotion.lift : 0)
         .onHover { hovered = $0 }
         .animation(motion ? FooterMotion.spring : nil, value: hovered)
         .animation(motion ? .spring(response: 0.2, dampingFraction: 0.65) : nil, value: pressed)
@@ -88,33 +85,30 @@ private struct IsoMuteStyle: ButtonStyle {
 private struct IsoMuteArt: View {
   @ObservedObject var level: AppLevel
   let muted: Bool
-  /// Heard right now (playing, not muted): the cone moves and crescents show.
+  /// Heard right now (playing, not muted): the boss glows and the ring breathes.
   let lit: Bool
-  let palette: IsoMutePalette
+  let hue: Double
   @Environment(\.colorScheme) private var scheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.isoMuteHover) private var hover
-  @Environment(\.isoMutePressed) private var pressed
 
   var body: some View {
     let motion = !reduceMotion && !powerSaver
     let still = !motion || !level.metered
-    let loud: CGFloat = !lit ? 0 : (still ? 0.62 : (level.bars.max() ?? 0))
+    let loud: CGFloat = !lit ? 0 : (still ? 0.55 : (level.bars.max() ?? 0))
     let dark = scheme == .dark
     if motion {
-      IsoMuteCanvas(mute: muted ? 1 : 0, level: loud, turn: hover ? 1 : 0, press: pressed ? 1 : 0,
-                    lit: lit, dark: dark, palette: palette)
-        .animation(.linear(duration: 0.26), value: muted)
-        .animation(.easeOut(duration: 0.12), value: loud)
+      PauseShieldArtwork(mute: muted ? 1 : 0, level: loud, turn: hover ? 1 : 0, lit: lit, dark: dark, hue: hue)
+        .animation(.linear(duration: 0.25), value: muted)
+        .animation(.easeOut(duration: 0.14), value: loud)
         .animation(FooterMotion.spring, value: hover)
-        .animation(.spring(response: 0.2, dampingFraction: 0.65), value: pressed)
     } else {
       // Reduce Motion: the two states cross-fade. Power Saver: they swap.
       ZStack {
-        IsoMuteCanvas(mute: 0, level: loud, turn: 0, press: 0, lit: lit, dark: dark, palette: palette)
+        PauseShieldArtwork(mute: 0, level: loud, turn: 0, lit: lit, dark: dark, hue: hue)
           .opacity(muted ? 0 : 1)
-        IsoMuteCanvas(mute: 1, level: 0, turn: 0, press: 0, lit: false, dark: dark, palette: palette)
+        PauseShieldArtwork(mute: 1, level: 0, turn: 0, lit: false, dark: dark, hue: hue)
           .opacity(muted ? 1 : 0)
       }
       .animation(powerSaver ? nil : .easeOut(duration: 0.2), value: muted)
@@ -122,339 +116,305 @@ private struct IsoMuteArt: View {
   }
 }
 
-// MARK: - Palette
+// MARK: - Artwork
 
-/// Tokens: the shell's four tones from the tint's hue, the reference's warm
-/// cream, terracotta and red, and one warm outline ink.
-struct IsoMutePalette: Equatable {
-  let hue: Double
-
-  init(tint: Color?) {
-    var h = 0.43   // mint
-    if let tint, let c = NSColor(tint).usingColorSpace(.sRGB), c.saturationComponent > 0.12 {
-      h = Double(c.hueComponent)
-    }
-    hue = h
-  }
-
-  func shell(_ b: Double, _ s: Double = 0.34) -> Color { Color(hue: hue, saturation: s, brightness: b) }
-  static func hex(_ v: UInt32) -> Color {
-    Color(red: Double((v >> 16) & 255) / 255, green: Double((v >> 8) & 255) / 255, blue: Double(v & 255) / 255)
-  }
-  static let ink = hex(0x3A2E29)
-  static let cream = hex(0xF7EFE3), creamShade = hex(0xE6D7C2)
-  static let terraTop = hex(0xE9B497), terraFront = hex(0xD69A7C), terraSide = hex(0xBF8166)
-  static let red = hex(0xE0584E), redShade = hex(0xB9433B), redLight = hex(0xF07C70)
-  static let brass = hex(0xE7B85A), brassShade = hex(0xB98B33)
-  static let cone = hex(0x4C3F3A), coneLight = hex(0x75635A), roll = hex(0x6A5A52)
-}
-
-// MARK: - Drawing
-
-private struct V {
-  var x: CGFloat, y: CGFloat, z: CGFloat
-  init(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) { self.x = x; self.y = y; self.z = z }
-  static func + (a: V, b: V) -> V { V(a.x + b.x, a.y + b.y, a.z + b.z) }
-  static func - (a: V, b: V) -> V { V(a.x - b.x, a.y - b.y, a.z - b.z) }
-  static func * (a: V, s: CGFloat) -> V { V(a.x * s, a.y * s, a.z * s) }
-  static prefix func - (a: V) -> V { V(-a.x, -a.y, -a.z) }
-}
-
-/// Orthographic camera: turned `az` about z, looking down at 30°.
-private struct Cam {
-  var k: CGFloat = 1, ox: CGFloat = 0, oy: CGFloat = 0
-  let az: CGFloat
-  static let ce = cos(CGFloat.pi / 6), se = sin(CGFloat.pi / 6)
-
-  func rot(_ v: V) -> V { V(v.x * cos(az) - v.y * sin(az), v.x * sin(az) + v.y * cos(az), v.z) }
-  func p(_ v: V) -> CGPoint {
-    let r = rot(v)
-    return CGPoint(x: ox + k * r.x, y: oy + k * (-r.z * Self.ce - r.y * Self.se))
-  }
-  /// > 0: a surface with normal n faces the viewer.
-  func facing(_ n: V) -> CGFloat { let r = rot(n); return -r.y * Self.ce + r.z * Self.se }
-  func circle(_ c: V, _ r: CGFloat, n: Int = 40) -> [CGPoint] {
-    // In the cabinet's front plane (x across, z up).
-    (0..<n).map { i in
-      let t = 2 * .pi * CGFloat(i) / CGFloat(n)
-      return p(c + V(r * cos(t), 0, r * sin(t)))
-    }
-  }
-}
-
-private func poly(_ pts: [CGPoint], close: Bool = true) -> Path {
-  var p = Path()
-  guard let f = pts.first else { return p }
-  p.move(to: f)
-  for q in pts.dropFirst() { p.addLine(to: q) }
-  if close { p.closeSubpath() }
-  return p
-}
-
-private func hull(_ pts: [CGPoint]) -> [CGPoint] {
-  let s = pts.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
-  guard s.count > 2 else { return s }
-  func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
-  var lo: [CGPoint] = [], up: [CGPoint] = []
-  for p in s { while lo.count >= 2 && cross(lo[lo.count - 2], lo[lo.count - 1], p) <= 0 { lo.removeLast() }; lo.append(p) }
-  for p in s.reversed() { while up.count >= 2 && cross(up[up.count - 2], up[up.count - 1], p) <= 0 { up.removeLast() }; up.append(p) }
-  return Array(lo.dropLast() + up.dropLast())
-}
-
-private func clamp01(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
-private func smooth(_ a: CGFloat, _ b: CGFloat, _ x: CGFloat) -> CGFloat {
-  let t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t)
-}
-
-private struct IsoMuteCanvas: View, Animatable {
+/// The shield at one pose: `mute` 0…1 (the settle), `level` 0…1 (the app's level
+/// while heard), `turn` 0…1 (hover). Pure drawing: no observers, no state.
+struct PauseShieldArtwork: View, Animatable {
   var mute: CGFloat
   var level: CGFloat
   var turn: CGFloat
-  var press: CGFloat
   let lit: Bool
   let dark: Bool
-  let palette: IsoMutePalette
+  /// The colour hint's hue (0…1).
+  let hue: Double
 
-  var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
-    get { AnimatablePair(AnimatablePair(mute, level), AnimatablePair(turn, press)) }
-    set { mute = newValue.first.first; level = newValue.first.second; turn = newValue.second.first; press = newValue.second.second }
+  var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+    get { AnimatablePair(mute, AnimatablePair(level, turn)) }
+    set { mute = newValue.first; level = newValue.second.first; turn = newValue.second.second }
   }
 
-  /// The rest pose's on-screen box at scale 1 (tab up and crescents out included).
-  static let rest: CGRect = {
-    let p = IsoMutePainter(mute: 0, level: 1, turn: 0, press: 0, lit: true, dark: false, palette: IsoMutePalette(tint: nil))
-    let q = IsoMutePainter(mute: 1, level: 0, turn: 0, press: 0, lit: false, dark: false, palette: IsoMutePalette(tint: nil))
-    return p.bounds().union(q.bounds())
-  }()
+  /// The tint's hue when it has some colour; the splash shaker's cyan otherwise.
+  static func hue(of tint: Color?) -> Double {
+    if let tint, let c = NSColor(tint).usingColorSpace(.sRGB), c.saturationComponent > 0.12 {
+      return Double(c.hueComponent)
+    }
+    return 0.54
+  }
+
+  /// Every pose's on-screen box at scale 1, so the figure never jumps between states.
+  static let rest: CGRect = ShieldPainter.bounds()
 
   var body: some View {
     Canvas { ctx, size in
       let box = Self.rest
-      let k = min((size.width - 1.5) / box.width, (size.height - 1.5) / box.height)
-      let painter = IsoMutePainter(mute: mute, level: level, turn: turn, press: press, lit: lit, dark: dark, palette: palette)
-      painter.draw(&ctx, k: k, ox: size.width / 2 - box.midX * k, oy: size.height / 2 - box.midY * k)
+      let k = min((size.width - 1) / box.width, (size.height - 1) / box.height)
+      let painter = ShieldPainter(mute: mute, level: level, turn: turn, lit: lit,
+                                  pal: ShieldPalette(dark: dark, hue: hue))
+      painter.draw(&ctx, Iso(k: k, ox: size.width / 2 - box.midX * k, oy: size.height / 2 - box.midY * k))
     }
     .accessibilityHidden(true)
   }
 }
 
-private struct IsoMutePainter {
-  let mute: CGFloat, level: CGFloat, turn: CGFloat, press: CGFloat
-  let lit: Bool, dark: Bool
-  let palette: IsoMutePalette
+// MARK: - Palette
 
-  // Model (units): cabinet x ±7, y ±5.8 (front at −y), z 0…16; plinth under it.
-  static let cw: CGFloat = 7, cd: CGFloat = 5.6, ch: CGFloat = 16
-  static let driver = V(0, -cd, 9.4)
-  static let restAz = CGFloat(38) * .pi / 180
-  static let turnAz = CGFloat(-14) * .pi / 180
+/// The splash shaker's tokens (TrophyPalette), plus the hint colours.
+private struct ShieldPalette {
+  let dark: Bool
+  let paper, top, hi, mid, lo, faint: Color
+  let shades: [Color]   // darkest … lightest
+  /// The hint: a ring and the boss's glow.
+  let tint, glow: Color
+  let off: Color
 
-  var cam: Cam { Cam(az: Self.restAz + turn * Self.turnAz) }
+  init(dark: Bool, hue: Double) {
+    self.dark = dark
+    if dark {
+      paper = hex(0x2a2d33); top = hex(0x5a5f69)
+      shades = [hex(0x2b2e35), hex(0x353840), hex(0x41454e), hex(0x4f5460)]
+      hi = Color(red: 0.80, green: 0.87, blue: 0.98)
+      mid = hex(0x76767c); lo = hex(0x5c6068); faint = hex(0x464a52)
+      tint = Color(hue: hue, saturation: 0.50, brightness: 0.96)
+      glow = Color(hue: hue, saturation: 0.45, brightness: 1.0)
+      off = hex(0xF0876A)
+    } else {
+      paper = hex(0xfbfbfa); top = hex(0xfdfdfc)
+      shades = [hex(0xdcdcd9), hex(0xe5e5e2), hex(0xededea), hex(0xf4f4f1)]
+      hi = Color(red: 0.13, green: 0.17, blue: 0.27)
+      mid = hex(0x8a8a8f); lo = hex(0xb4b4b8); faint = hex(0xd0d0d3)
+      tint = Color(hue: hue, saturation: 0.62, brightness: 0.84)
+      glow = Color(hue: hue, saturation: 0.55, brightness: 0.95)
+      off = hex(0xE2603F)
+    }
+  }
+}
 
-  func bounds() -> CGRect {
-    var g = cam
-    g.k = 1
+private func hex(_ v: UInt32) -> Color {
+  Color(red: Double((v >> 16) & 0xff) / 255, green: Double((v >> 8) & 0xff) / 255, blue: Double(v & 0xff) / 255)
+}
+
+// MARK: - Projection (the shaker's camera: azimuth 45°, elevation 30°, orthographic)
+
+/// X points at the viewer along the floor, Y to screen-left, Z up.
+private struct Iso {
+  var k: CGFloat, ox: CGFloat, oy: CGFloat
+  static let sE: CGFloat = 0.5, cE: CGFloat = 0.8660254
+  static let view = V3(cE, 0, sE)
+
+  func p(_ v: V3) -> CGPoint { CGPoint(x: ox - v.y * k, y: oy + (v.x * Iso.sE - v.z * Iso.cE) * k) }
+  func circle(_ c: V3, _ e1: V3, _ e2: V3, _ r: CGFloat, n: Int = 48) -> [CGPoint] {
+    (0..<n).map { i in
+      let t = 2 * .pi * CGFloat(i) / CGFloat(n)
+      return p(c + e1 * (r * cos(t)) + e2 * (r * sin(t)))
+    }
+  }
+  /// A floor-parallel ellipse at height z.
+  func ellipse(_ r: CGFloat, _ z: CGFloat) -> Path {
+    let o = p(V3(0, 0, z))
+    return Path(ellipseIn: CGRect(x: o.x - r * k, y: o.y - r * k * Iso.sE, width: 2 * r * k, height: 2 * r * k * Iso.sE))
+  }
+}
+
+private struct V3 {
+  var x: CGFloat, y: CGFloat, z: CGFloat
+  init(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) { self.x = x; self.y = y; self.z = z }
+  static func + (a: V3, b: V3) -> V3 { V3(a.x + b.x, a.y + b.y, a.z + b.z) }
+  static func - (a: V3, b: V3) -> V3 { V3(a.x - b.x, a.y - b.y, a.z - b.z) }
+  static func * (a: V3, s: CGFloat) -> V3 { V3(a.x * s, a.y * s, a.z * s) }
+  func dot(_ b: V3) -> CGFloat { x * b.x + y * b.y + z * b.z }
+  static let up = V3(0, 0, 1)
+}
+
+private func poly(_ pts: [CGPoint], close: Bool = true) -> Path {
+  var path = Path()
+  guard let f = pts.first else { return path }
+  path.move(to: f)
+  for q in pts.dropFirst() { path.addLine(to: q) }
+  if close { path.closeSubpath() }
+  return path
+}
+
+private func hull(_ pts: [CGPoint]) -> [CGPoint] {
+  let s = pts.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+  if s.count < 3 { return s }
+  func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat { (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) }
+  var lower: [CGPoint] = [], upper: [CGPoint] = []
+  for q in s {
+    while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], q) <= 0 { lower.removeLast() }
+    lower.append(q)
+  }
+  for q in s.reversed() {
+    while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], q) <= 0 { upper.removeLast() }
+    upper.append(q)
+  }
+  return Array(lower.dropLast() + upper.dropLast())
+}
+
+private func clamp01(_ x: CGFloat) -> CGFloat { min(1, max(0, x)) }
+private func smooth(_ a: CGFloat, _ b: CGFloat, _ x: CGFloat) -> CGFloat {
+  let u = clamp01((x - a) / (b - a)); return u * u * (3 - 2 * u)
+}
+
+// MARK: - Painter
+
+private struct ShieldPainter {
+  let mute: CGFloat, level: CGFloat, turn: CGFloat
+  let lit: Bool
+  let pal: ShieldPalette
+
+  // Model (units). The puck, the shield standing on it, the floor ring.
+  static let puckR: CGFloat = 9.5, puckH: CGFloat = 2.6
+  static let R: CGFloat = 11, T: CGFloat = 2.2
+  static let rimIn: CGFloat = 8.6, ringR: CGFloat = 5.8, bossR: CGFloat = 2.4
+  /// Faces a touch towards the light at rest (as the shaker's speaker does); hover turns it to you.
+  static let restAz: CGFloat = 20 * .pi / 180, hoverAz: CGFloat = 6 * .pi / 180
+  /// Muted: settles back on its foot towards the flat dish.
+  static let settle: CGFloat = 32 * .pi / 180
+
+  /// The settle angle: an ease with a small rebound at the end.
+  var tilt: CGFloat {
+    let u = clamp01(mute)
+    let c1: CGFloat = 1.5, c3 = c1 + 1
+    return Self.settle * (1 + c3 * pow(u - 1, 3) + c1 * pow(u - 1, 2))
+  }
+
+  struct Frame { var n: V3, u: V3, v: V3, c: V3 }
+
+  /// The shield's frame: n out of the face, u across it (screen-right-ish), v up it, c its centre.
+  static func frame(az: CGFloat, tilt: CGFloat) -> Frame {
+    let n0 = V3(cos(az), sin(az), 0)
+    let u = V3(n0.y, -n0.x, 0)
+    let n = n0 * cos(tilt) + V3.up * sin(tilt)
+    let v = V3.up * cos(tilt) - n0 * sin(tilt)
+    let foot = n0 * 1.2 + V3.up * puckH
+    return Frame(n: n, u: u, v: v, c: foot + v * R)
+  }
+
+  static func bounds() -> CGRect {
+    let g = Iso(k: 1, ox: 0, oy: 0)
     var pts: [CGPoint] = []
-    for x in [-8.6, 8.6] as [CGFloat] { for y in [-7.2, 7.2] as [CGFloat] { for z in [-2.2, Self.ch] as [CGFloat] { pts.append(g.p(V(x, y, z))) } } }
-    pts += tabCorners(angle: tabAngle).flatMap { $0 }.map(g.p)
-    pts += arcs(g).flatMap(\.outer)
+    for az in [restAz, hoverAz] {
+      for t in [0, settle * 1.08] as [CGFloat] {
+        let f = frame(az: az, tilt: t)
+        pts += g.circle(f.c + f.n * (T / 2 + 0.6), f.u, f.v, R, n: 32)
+        pts += g.circle(f.c - f.n * (T / 2), f.u, f.v, R, n: 32)
+      }
+    }
+    for r: CGFloat in [puckR, 13.5] {
+      pts += [g.p(V3(r, 0, 0)), g.p(V3(-r, 0, 0)), g.p(V3(0, r, 0)), g.p(V3(0, -r, 0))]
+    }
     let xs = pts.map(\.x), ys = pts.map(\.y)
     return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
   }
 
-  // MARK: Pose
+  func draw(_ ctx: inout GraphicsContext, _ g: Iso) {
+    let k = g.k
+    let lw = max(0.6, k * 0.62)
+    let az = Self.restAz + (Self.hoverAz - Self.restAz) * turn
+    let f = Self.frame(az: az, tilt: tilt)
+    let heard = lit ? level : 0
+    let colour = 1 - smooth(0, 0.6, mute)   // the hint drains as it settles
 
-  /// Folding of the crescents (first half of the mute motion).
-  var fold: CGFloat { smooth(0, 0.5, mute) }
-  /// The tab: flat (0) to upright (π/2), with a little hinge overshoot.
-  var tabAngle: CGFloat {
-    let u = smooth(0.22, 1, mute)
-    let c1: CGFloat = 1.9, c3 = c1 + 1
-    let back = 1 + c3 * pow(u - 1, 3) + c1 * pow(u - 1, 2)
-    return back * .pi / 2
-  }
-  /// The cone's travel out of the cabinet (units): proud with the level, back when muted.
-  var excursion: CGFloat {
-    let play: CGFloat = lit ? 0.25 + 1.0 * level : 0
-    return play + (-0.9 - play) * smooth(0, 0.55, mute) - 0.6 * press
-  }
+    // Soft floor shadow, as under the shaker.
+    let o = g.p(V3(0, 0, -0.4))
+    let sr = 12.5 * k
+    ctx.fill(Path(ellipseIn: CGRect(x: o.x - sr, y: o.y - sr * Iso.sE, width: 2 * sr, height: 2 * sr * Iso.sE)),
+             with: .radialGradient(Gradient(colors: [Color.black.opacity(pal.dark ? 0.30 : 0.22), Color.black.opacity(0)]),
+                                   center: o, startRadius: 0, endRadius: sr))
 
-  struct Arc { var outer: [CGPoint]; var inner: [CGPoint]; var alpha: CGFloat }
-
-  /// Up to three crescents round the driver's projected axis (screen space, so they
-  /// read at 36 pt however the cabinet is turned), farthest last.
-  func arcs(_ g: Cam) -> [Arc] {
-    guard lit || mute > 0 else { return [] }
-    let f = 1 - fold
-    guard f > 0.01 else { return [] }
-    let n = V(0, -1, 0)
-    let c = g.p(Self.driver + n * excursion)
-    let d = g.p(Self.driver + n * (excursion + 1))
-    // The projected axis, eased towards horizontal so the sound goes out to the side.
-    let axis = atan2((d.y - c.y) * 0.35, d.x - c.x)
-    let radii: [CGFloat] = [7.4, 10.2, 13.0]
-    var out: [Arc] = []
-    for (i, r) in radii.enumerated() {
-      var a = clamp01((level - CGFloat(i) * 0.26) / 0.3)
-      if i == 0 { a = max(a, 0.55) }
-      if !lit { a = i == 0 ? 0.55 : 0 }
-      a *= f
-      guard a > 0.02 else { continue }
-      let span = (CGFloat(24) + CGFloat(14) * a) * .pi / 180
-      let t0 = 2.6 * (0.5 + 0.5 * a)
-      let rr = r * (0.8 + 0.2 * f)
-      let steps = 16
-      var o: [CGPoint] = [], inn: [CGPoint] = []
-      for s in 0...steps {
-        let phi = -span + 2 * span * CGFloat(s) / CGFloat(steps)
-        let taper = cos(phi / span * .pi / 2)
-        let t = t0 * (0.12 + 0.88 * taper)
-        let th = axis + phi
-        o.append(CGPoint(x: c.x + g.k * rr * cos(th), y: c.y + g.k * rr * sin(th)))
-        inn.append(CGPoint(x: c.x + g.k * (rr - t) * cos(th), y: c.y + g.k * (rr - t) * sin(th)))
-      }
-      out.append(Arc(outer: o, inner: inn, alpha: min(1, 0.25 + a * 1.4)))
-    }
-    return out
-  }
-
-  /// The tab's two faces (front = the X face, back), each four corners.
-  func tabCorners(angle a: CGFloat) -> [[V]] {
-    let hinge = V(0, Self.cd - 1.0, Self.ch)
-    let d = V(0, -cos(a), sin(a))
-    let nf = V(0, -sin(a), -cos(a))   // the X face's normal (down while flat)
-    let len: CGFloat = 6.0, w: CGFloat = 3.1, th: CGFloat = 0.7
-    let front = [hinge + V(-w, 0, 0), hinge + V(w, 0, 0), hinge + V(w, 0, 0) + d * len, hinge + V(-w, 0, 0) + d * len]
-    let back = front.map { $0 - nf * th }
-    return [front, back]
-  }
-
-  // MARK: Paint
-
-  func draw(_ ctx: inout GraphicsContext, k: CGFloat, ox: CGFloat, oy: CGFloat) {
-    var g = cam
-    g.k = k; g.ox = ox; g.oy = oy
-    let lw = max(0.7, k * 0.72)
-    let ink = IsoMutePalette.ink
-    func face(_ pts: [V], _ fill: Color, _ c: inout GraphicsContext) {
-      let p = poly(pts.map(g.p))
-      c.fill(p, with: .color(fill))
-      c.stroke(p, with: .color(ink), style: StrokeStyle(lineWidth: lw, lineJoin: .round))
-    }
-    func box(_ lo: V, _ hi: V, top: Color, front: Color, side: Color, back: Color, _ c: inout GraphicsContext) {
-      let x0 = lo.x, x1 = hi.x, y0 = lo.y, y1 = hi.y, z0 = lo.z, z1 = hi.z
-      let faces: [(V, [V], Color)] = [
-        (V(0, -1, 0), [V(x0, y0, z0), V(x1, y0, z0), V(x1, y0, z1), V(x0, y0, z1)], front),
-        (V(1, 0, 0), [V(x1, y0, z0), V(x1, y1, z0), V(x1, y1, z1), V(x1, y0, z1)], side),
-        (V(-1, 0, 0), [V(x0, y0, z0), V(x0, y1, z0), V(x0, y1, z1), V(x0, y0, z1)], side),
-        (V(0, 1, 0), [V(x0, y1, z0), V(x1, y1, z0), V(x1, y1, z1), V(x0, y1, z1)], back),
-      ]
-      for f in faces where g.facing(f.0) > 0 { face(f.1, f.2, &c) }
-      face([V(x0, y0, z1), V(x1, y0, z1), V(x1, y1, z1), V(x0, y1, z1)], top, &c)
+    // The sound ripple: one faint floor ring that swells with the level.
+    if heard > 0.02 {
+      let r = 10.8 + 2.6 * heard
+      ctx.stroke(g.ellipse(r, 0), with: .color(pal.tint.opacity(Double((0.25 + 0.5 * heard) * colour))),
+                 lineWidth: max(0.6, k * 0.55))
     }
 
-    // Soft halo under the plinth.
+    // The puck: a short cylinder, side lit from the left, a groove on the top.
+    let L = V3(0, Self.puckR, Self.puckH / 2), Rt = V3(0, -Self.puckR, Self.puckH / 2)
+    let ring0 = g.circle(V3(0, 0, 0), V3(1, 0, 0), V3(0, 1, 0), Self.puckR, n: 48)
+    let ring1 = g.circle(V3(0, 0, Self.puckH), V3(1, 0, 0), V3(0, 1, 0), Self.puckR, n: 48)
+    let puck = poly(hull(ring0 + ring1))
+    ctx.fill(puck, with: .linearGradient(Gradient(colors: [pal.shades[3], pal.shades[2], pal.shades[1], pal.shades[0]]),
+                                         startPoint: g.p(L), endPoint: g.p(Rt)))
+    ctx.fill(g.ellipse(Self.puckR, Self.puckH), with: .color(pal.top))
+    ctx.stroke(g.ellipse(Self.puckR - 1.6, Self.puckH), with: .color(pal.faint), lineWidth: lw * 0.8)
+    ctx.stroke(g.ellipse(Self.puckR, Self.puckH), with: .color(pal.lo), lineWidth: lw)
+    ctx.stroke(puck, with: .color(pal.hi), lineWidth: lw)
+
+    // Where the shield meets the puck: a small soft contact shadow.
     ctx.drawLayer { l in
-      l.addFilter(.blur(radius: k * 1.1))
-      let pts = [V(-8.8, -7.4, -2.2), V(8.8, -7.4, -2.2), V(8.8, 7.4, -2.2), V(-8.8, 7.4, -2.2)].map(g.p)
-      l.fill(poly(pts.map { CGPoint(x: $0.x + k * 0.4, y: $0.y + k * 1.1) }),
-             with: .color(Color.black.opacity(dark ? 0.42 : 0.2)))
+      l.addFilter(.blur(radius: k * 0.7))
+      let foot = g.p(f.c - f.v * Self.R)
+      let w = 4.2 * k, h = 1.3 * k
+      l.fill(Path(ellipseIn: CGRect(x: foot.x - w, y: foot.y - h * 0.6, width: 2 * w, height: 2 * h)),
+             with: .color(Color.black.opacity(pal.dark ? 0.4 : 0.18)))
     }
 
-    // Plinth and cabinet.
-    box(V(-8.6, -7.2, -2.2), V(8.6, 7.2, 0), top: IsoMutePalette.terraTop, front: IsoMutePalette.terraFront,
-        side: IsoMutePalette.terraSide, back: IsoMutePalette.terraSide, &ctx)
-    let s = palette
-    let cw = Self.cw, cd = Self.cd, ch = Self.ch
-    box(V(-cw, -cd, 0), V(cw, cd, ch), top: s.shell(0.95, 0.24), front: s.shell(0.86, 0.36),
-        side: s.shell(0.74, 0.40), back: s.shell(0.66, 0.42), &ctx)
+    // The shield: an edge band (the side, lit from the left), then the face.
+    let front = f.c + f.n * (Self.T / 2), back = f.c - f.n * (Self.T / 2)
+    let faceRing = g.circle(front, f.u, f.v, Self.R)
+    let sil = poly(hull(faceRing + g.circle(back, f.u, f.v, Self.R)))
+    let face = poly(faceRing)
+    let left = g.p(f.c - f.u * Self.R), right = g.p(f.c + f.u * Self.R)
+    ctx.fill(sil, with: .color(pal.paper))
+    ctx.fill(sil, with: .linearGradient(Gradient(colors: [pal.shades[2], pal.shades[1], pal.shades[0]]),
+                                        startPoint: left, endPoint: right))
+    // Face: the rim catches the light (upper-left), the shallow dish inside shades the other way.
+    ctx.fill(face, with: .linearGradient(Gradient(colors: [pal.top, pal.shades[3], pal.shades[2]]),
+                                         startPoint: g.p(f.c - f.u * Self.R + f.v * Self.R), endPoint: g.p(f.c + f.u * Self.R - f.v * Self.R)))
+    let dishC = front - f.n * 0.35
+    let dish = poly(g.circle(dishC, f.u, f.v, Self.rimIn))
+    ctx.fill(dish, with: .linearGradient(Gradient(colors: [pal.shades[2], pal.shades[3], pal.top]),
+                                         startPoint: g.p(dishC - f.u * Self.rimIn + f.v * Self.rimIn),
+                                         endPoint: g.p(dishC + f.u * Self.rimIn - f.v * Self.rimIn)))
+    // A whisper of the hint across the dish, as the shaker's glass carries its accent.
+    ctx.fill(dish, with: .color(pal.tint.opacity(Double((pal.dark ? 0.10 : 0.07) * colour))))
+    ctx.stroke(dish, with: .color(pal.mid), lineWidth: lw * 0.8)
 
-    // Top: a bevel groove inset round the lid.
-    let gi: CGFloat = 1.1
-    ctx.stroke(poly([V(-cw + gi, -cd + gi, ch), V(cw - gi, -cd + gi, ch), V(cw - gi, cd - gi, ch), V(-cw + gi, cd - gi, ch)].map(g.p)),
-               with: .color(ink.opacity(0.35)), lineWidth: lw * 0.6)
+    // The colour ring: breathes with the level while heard, greys out when muted.
+    let ringP = poly(g.circle(dishC, f.u, f.v, Self.ringR))
+    let ringW = k * (0.9 + 0.5 * heard)
+    ctx.stroke(ringP, with: .color(pal.faint), lineWidth: ringW)
+    ctx.stroke(ringP, with: .color(pal.tint.opacity(Double((0.7 + 0.3 * heard) * colour))), lineWidth: ringW)
 
-    // Front: the baffle groove, four screws, the port.
-    let fy = -cd
-    ctx.stroke(poly([V(-cw + 0.9, fy, 0.9), V(cw - 0.9, fy, 0.9), V(cw - 0.9, fy, ch - 0.9), V(-cw + 0.9, fy, ch - 0.9)].map(g.p)),
-               with: .color(ink.opacity(0.32)), lineWidth: lw * 0.6)
-    for (x, z) in [(-5.6, 14.7), (5.6, 14.7), (-5.6, 1.6), (5.6, 1.6)] as [(CGFloat, CGFloat)] {
-      let pts = g.circle(V(x, fy, z), 0.55, n: 12)
-      ctx.fill(poly(pts), with: .color(IsoMutePalette.cream))
-      ctx.stroke(poly(pts), with: .color(ink), lineWidth: lw * 0.55)
+    // The boss: the one lit part, with a soft halo that swells with the level.
+    let bossC = dishC + f.n * 0.7
+    let ctr = g.p(bossC)
+    let hr = (3.2 + 3.2 * heard) * k
+    let ha = Double(((pal.dark ? 0.30 : 0.20) + 0.45 * heard) * colour * (lit ? 1 : 0.6))
+    ctx.fill(Path(ellipseIn: CGRect(x: ctr.x - hr, y: ctr.y - hr, width: 2 * hr, height: 2 * hr)),
+             with: .radialGradient(Gradient(colors: [pal.glow.opacity(ha), pal.glow.opacity(0)]),
+                                   center: ctr, startRadius: 0, endRadius: hr))
+    let boss = poly(g.circle(bossC, f.u, f.v, Self.bossR, n: 28))
+    ctx.fill(boss, with: .linearGradient(Gradient(colors: [pal.top, pal.shades[1]]),
+                                         startPoint: g.p(bossC - f.u * Self.bossR + f.v * Self.bossR),
+                                         endPoint: g.p(bossC + f.u * Self.bossR - f.v * Self.bossR)))
+    ctx.stroke(boss, with: .color(pal.mid), lineWidth: lw * 0.8)
+    let dot = poly(g.circle(bossC + f.n * 0.1, f.u, f.v, 0.9, n: 16))
+    ctx.fill(dot, with: .color(pal.glow.opacity(Double((0.35 + 0.65 * heard) * colour))))
+
+    // The glint: the shaker's highlight line, on the rim's upper-left; a little brighter when loud.
+    let ga: CGFloat = 2.05, gb: CGFloat = 2.75
+    let glint = (0...12).map { i -> CGPoint in
+      let t = ga + (gb - ga) * CGFloat(i) / 12
+      return g.p(front + f.u * (9.8 * cos(t)) + f.v * (9.8 * sin(t)))
     }
-    var port: [CGPoint] = []
-    for i in 0...10 { let t = -CGFloat.pi / 2 + .pi * CGFloat(i) / 10; port.append(g.p(V(2.0 + 0.6 * cos(t), fy, 1.75 + 0.6 * sin(t)))) }
-    for i in 0...10 { let t = CGFloat.pi / 2 + .pi * CGFloat(i) / 10; port.append(g.p(V(-2.0 + 0.6 * cos(t), fy, 1.75 + 0.6 * sin(t)))) }
-    ctx.fill(poly(port), with: .color(IsoMutePalette.cone))
-    ctx.stroke(poly(port), with: .color(ink), lineWidth: lw * 0.6)
+    ctx.stroke(poly(glint, close: false), with: .color(pal.hi.opacity(Double(0.16 + 0.18 * heard))),
+               style: StrokeStyle(lineWidth: max(0.8, k * 0.85), lineCap: .round))
 
-    // Driver: cream bezel, the rubber roll, the cone (moves on its axis), the dust cap.
-    let n = V(0, -1, 0)
-    let e = excursion
-    let c0 = Self.driver
-    let bezelO = g.circle(c0 + n * 0.25, 5.3), bezelI = g.circle(c0 + n * 0.25, 4.35)
-    var bezel = poly(bezelO); bezel.addPath(poly(bezelI))
-    ctx.fill(bezel, with: .color(IsoMutePalette.cream), style: FillStyle(eoFill: true))
-    ctx.fill(poly(bezelI), with: .color(IsoMutePalette.cone))
-    ctx.stroke(poly(bezelO), with: .color(ink), lineWidth: lw)
-    let roll = c0 + n * (0.15 + 0.55 * e)
-    ctx.fill(poly(g.circle(roll, 4.15)), with: .color(IsoMutePalette.roll))
-    let coneC = c0 + n * e
-    let coneP = poly(g.circle(coneC, 3.35))
-    let hi = g.p(coneC + V(-1.6, 0, 1.6)), lo = g.p(coneC + V(1.8, 0, -1.8))
-    ctx.fill(coneP, with: .linearGradient(Gradient(colors: [IsoMutePalette.cone, IsoMutePalette.coneLight]), startPoint: hi, endPoint: lo))
-    ctx.stroke(coneP, with: .color(ink.opacity(0.85)), lineWidth: lw * 0.6)
-    ctx.stroke(poly(bezelI), with: .color(ink), lineWidth: lw * 0.75)
-    let capC = c0 + n * (e + 0.5)
-    let capP = poly(g.circle(capC, 1.55, n: 24))
-    let lift = clamp01(0.35 + 0.65 * (lit ? level : 0) * (1 - mute))
-    ctx.fill(capP, with: .linearGradient(Gradient(colors: [IsoMutePalette.cream, s.shell(0.78 + 0.1 * lift, 0.32)]),
-                                         startPoint: g.p(capC + V(-1.2, 0, 1.2)), endPoint: g.p(capC + V(1.2, 0, -1.2))))
-    ctx.stroke(capP, with: .color(ink), lineWidth: lw * 0.7)
-    ctx.fill(poly(g.circle(capC + V(-0.55, -0.05, 0.55), 0.42, n: 12)), with: .color(Color.white.opacity(0.55 + 0.4 * lift)))
+    ctx.stroke(face, with: .color(pal.mid), lineWidth: lw * 0.9)
+    ctx.stroke(sil, with: .color(pal.hi), style: StrokeStyle(lineWidth: lw, lineJoin: .round))
 
-    // The red tab and its brass hinge.
-    let tc = tabCorners(angle: tabAngle)
-    let a = tabAngle
-    let nf = V(0, -sin(a), -cos(a))
-    let frontShows = g.facing(nf) > 0
-    let rim = poly(hull((tc[0] + tc[1]).map(g.p)))
-    ctx.fill(rim, with: .color(IsoMutePalette.redShade))
-    ctx.stroke(rim, with: .color(ink), style: StrokeStyle(lineWidth: lw, lineJoin: .round))
-    let shown = frontShows ? tc[0] : tc[1]
-    let faceP = poly(shown.map(g.p))
-    ctx.fill(faceP, with: .linearGradient(Gradient(colors: [IsoMutePalette.redLight, IsoMutePalette.red]),
-                                          startPoint: g.p(shown[2]), endPoint: g.p(shown[0])))
-    ctx.stroke(faceP, with: .color(ink), style: StrokeStyle(lineWidth: lw * 0.8, lineJoin: .round))
-    if frontShows {
-      // A cream X on the face that turns to you.
-      let m = (shown[0] + shown[1] + shown[2] + shown[3]) * 0.25
-      let ax = (shown[1] - shown[0]) * (1 / 6.2), ay = (shown[3] - shown[0]) * (1 / 6.0)
-      let r: CGFloat = 1.6
-      var x = Path()
-      x.move(to: g.p(m - ax * r - ay * r)); x.addLine(to: g.p(m + ax * r + ay * r))
-      x.move(to: g.p(m + ax * r - ay * r)); x.addLine(to: g.p(m - ax * r + ay * r))
-      ctx.stroke(x, with: .color(IsoMutePalette.cream.opacity(Double(smooth(0.4, 0.75, mute)))),
-                 style: StrokeStyle(lineWidth: max(1, k * 0.95), lineCap: .round))
-    }
-    let h0 = g.p(V(-1.7, cd - 1.0, ch + 0.35)), h1 = g.p(V(1.7, cd - 1.0, ch + 0.35))
-    var hinge = Path(); hinge.move(to: h0); hinge.addLine(to: h1)
-    ctx.stroke(hinge, with: .color(ink), style: StrokeStyle(lineWidth: k * 1.25 + lw, lineCap: .round))
-    ctx.stroke(hinge, with: .linearGradient(Gradient(colors: [IsoMutePalette.brass, IsoMutePalette.brassShade]),
-                                            startPoint: CGPoint(x: h0.x, y: h0.y - k * 0.6), endPoint: CGPoint(x: h0.x, y: h0.y + k * 0.6)),
-               style: StrokeStyle(lineWidth: k * 1.25, lineCap: .round))
-
-    // The crescents, farthest first.
-    for arc in arcs(g).reversed() {
-      let o = arc.outer, i = arc.inner
-      let p = poly(o + i.reversed())
-      ctx.drawLayer { l in
-        l.opacity = Double(arc.alpha)
-        l.fill(p, with: .linearGradient(Gradient(colors: [s.shell(1.0, 0.42), s.shell(0.84, 0.70)]),
-                                        startPoint: o.last!, endPoint: o.first!))
-        l.stroke(p, with: .color(ink), style: StrokeStyle(lineWidth: lw * 0.75, lineJoin: .round))
-      }
+    // Muted: a coral bar draws across the face (upper-left to lower-right, as the slash on the flat mute), on a paper halo.
+    let draw = smooth(0.35, 1, mute)
+    if draw > 0.01 {
+      let a = dishC + f.n * 0.9 - f.u * 6.0 + f.v * 6.0
+      let b = dishC + f.n * 0.9 + f.u * 6.0 - f.v * 6.0
+      let e = a + (b - a) * draw
+      var bar = Path(); bar.move(to: g.p(a)); bar.addLine(to: g.p(e))
+      ctx.stroke(bar, with: .color(pal.paper), style: StrokeStyle(lineWidth: k * 2.6, lineCap: .round))
+      ctx.stroke(bar, with: .color(pal.off), style: StrokeStyle(lineWidth: k * 1.4, lineCap: .round))
     }
   }
 }

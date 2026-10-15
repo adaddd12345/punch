@@ -962,7 +962,7 @@ struct PopoverView: View {
                                                       set: { controller.settings.artworkStyle = $0 })) {
             ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
           }
-          // What's Playing's mute as a little coloured speaker cabinet (off: the flat disc).
+          // What's Playing's mute as the isometric pause shield (off: the flat disc).
           Toggle("Isometric Mute Button", isOn: Binding(get: { controller.settings.isoMuteButton },
                                                         set: { controller.settings.isoMuteButton = $0 }))
           // What's drawn behind the EQ curve: the scope (time), the
