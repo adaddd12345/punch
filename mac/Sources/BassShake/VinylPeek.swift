@@ -555,6 +555,9 @@ struct VinylPeekArt: View {
   /// Not paused: the record stands out of the sleeve (paused: tucked part-way in).
   let out: Bool
   @State private var palette: (id: ObjectIdentifier, value: ArtPalette)?
+  /// First frame lands in place and fades in; only later changes slide.
+  @State private var settled = false
+  @State private var slides = false
   @Environment(\.colorScheme) private var scheme
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.drawPaused) private var drawPaused
@@ -590,8 +593,14 @@ struct VinylPeekArt: View {
         .offset(y: g.sleeveRect.minY)
     }
     .frame(width: size, height: size, alignment: .topLeading)
-    .animation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.82), value: out)
-    .onAppear { fetch() }
+    .animation(reduceMotion || !slides ? nil : .spring(response: 0.55, dampingFraction: 0.82), value: out)
+    .opacity(settled ? 1 : 0)
+    .onAppear {
+      fetch()
+      withAnimation(.easeOut(duration: 0.2)) { settled = true }
+      // State that lands just after opening snaps too, rather than sliding in.
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { slides = true }
+    }
     .onChange(of: id) { _, _ in fetch() }
   }
 

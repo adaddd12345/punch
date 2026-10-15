@@ -351,7 +351,7 @@ extension AnyTransition {
   /// (its art flies on via NowMorph): a fading tile would show its title twice,
   /// once in it and once where it went. Reduce Motion: fades in.
   static func nowTile(reduceMotion: Bool) -> AnyTransition {
-    .asymmetric(insertion: reduceMotion ? .opacity : .scale(scale: 0.86, anchor: .top).combined(with: .opacity),
+    .asymmetric(insertion: .opacity,
                 removal: .identity)
   }
 }
