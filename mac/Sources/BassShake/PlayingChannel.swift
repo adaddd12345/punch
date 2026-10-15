@@ -52,6 +52,7 @@ struct PlayingChannelMini<Chip: View>: View {
   @ObservedObject private var stack = NowStack.shared
   @State private var hover = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.artworkStyle) private var artStyle
 
   var body: some View {
     let text = model.describe(stack.entry(for: app))
@@ -103,7 +104,7 @@ struct PlayingChannelMini<Chip: View>: View {
     }
     // Paused or muted shows its glyph all the time, so the state reads at a glance.
     let showGlyph = hover || muted || (!muteGlyph && !playing)
-    let shape = RoundedRectangle(cornerRadius: art * 0.22, style: .continuous)
+    let shape = artStyle.plate(art)
     let hint = locked
       ? PointerHint(app.name, does: "Pausing needs Accessibility; this opens \(app.name) instead.")
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
@@ -112,8 +113,9 @@ struct PlayingChannelMini<Chip: View>: View {
     // A locked key route opens the app, never the Accessibility screen from Mini
     // (an app with undecided Automation may still get macOS's Automation prompt).
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
-      NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: art)
-        .overlay {
+      NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: art,
+             spinning: model.barsLit(stack.entry(for: app)), paused: !playing)
+        .onSleeve(size: art) {
           if showGlyph {
             ZStack {
               shape.fill(muted ? Color.orange.opacity(0.85) : Color.black.opacity(0.42))
@@ -124,7 +126,7 @@ struct PlayingChannelMini<Chip: View>: View {
             .transition(.opacity)
           }
         }
-        .contentShape(shape)
+        .contentShape(RoundedRectangle(cornerRadius: art * 0.22, style: .continuous))
     }
     .buttonStyle(BentoPressStyle())
     .fixedSize()

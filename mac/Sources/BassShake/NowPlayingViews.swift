@@ -94,7 +94,8 @@ struct NowPlayingHeadline: View {
                        _ note: (id: String, text: String, settings: Bool)?,
                        loading: Bool) -> some View {
       HStack(alignment: .center, spacing: 8) {
-        NowArt(artwork: text.artwork, favicon: text.favicon, icon: model.icon(app), size: art)
+        NowArt(artwork: text.artwork, favicon: text.favicon, icon: model.icon(app), size: art,
+               spinning: model.barsLit(entry), paused: text.paused)
           .nowPlayingBars(model, entry, art: art, hidden: loading)
           .loadingArt(loading, size: art)
           .modifier(NowMorph(id: entry.id))
@@ -282,17 +283,35 @@ private struct NextButton: View {
 
 /// Cover art (or a tab's still), else the tab's site icon on a neutral tile,
 /// else just the app's icon. Never a badge: with art or a site icon, the app's
-/// icon leads the words instead (NowSubtitle).
+/// icon leads the words instead (NowSubtitle). With ⋯ › Look › Artwork Style
+/// set to Vinyl Peek, the same art as a sleeve with a record (VinylPeek.swift).
 struct NowArt: View {
   let artwork: NSImage?
   var favicon: NSImage? = nil
   let icon: NSImage
   let size: CGFloat
+  /// Vinyl Peek: heard right now (the record turns).
+  var spinning = false
+  /// Vinyl Peek: paused (the record tucks back into the sleeve).
+  var paused = false
+  /// Overrides the setting (the drawer's overlapped covers stay plain).
+  var style: ArtworkStyle? = nil
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.artworkStyle) private var setting
 
   var body: some View {
+    if (style ?? setting).resolved(for: size) == .vinyl {
+      VinylPeekArt(artwork: artwork, favicon: favicon, icon: icon, size: size,
+                   spinning: spinning, out: !paused)
+        .accessibilityHidden(true)
+    } else {
+      cover
+    }
+  }
+
+  private var cover: some View {
     let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
-    ZStack {
+    return ZStack {
       if let artwork {
         Image(nsImage: artwork)
           .resizable()

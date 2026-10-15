@@ -81,8 +81,11 @@ struct NowPlayingBars: View {
   let art: CGFloat
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.artworkStyle) private var style
 
   var body: some View {
+    // Sized for what it sits on: the cover, or Vinyl Peek's smaller sleeve.
+    let art = style.resolved(for: self.art) == .vinyl ? VinylGeometry(size: self.art).sleeve : self.art
     let width: CGFloat = art < 30 ? 1.5 : 2
     let tall: CGFloat = art >= 44 ? 10 : (art >= 30 ? 8 : 6)
     let flat = width
@@ -113,7 +116,8 @@ struct NowPlayingBars: View {
 extension View {
   /// The playing bars over this art when the entry's sound is known.
   func nowPlayingBars(_ model: NowPlaying, _ e: NowEntry, art: CGFloat, hidden: Bool = false) -> some View {
-    overlay(alignment: .bottomTrailing) {
+    // On the cover's corner; with Vinyl Peek, the sleeve's (never on the record).
+    onSleeve(size: art, alignment: .bottomTrailing) {
       if model.showsBars(e) && !hidden {
         NowPlayingBars(level: NowLevels.shared.meter(for: e.app.id), lit: model.barsLit(e), art: art)
           .transition(.opacity)

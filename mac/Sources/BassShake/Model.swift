@@ -679,6 +679,9 @@ struct Settings: Codable, Equatable {
   /// The menu-bar icon carries the Mac's volume: a stack of 10 pills beside the
   /// shaker, a slash while muted or at 0 (⋯ › Look).
   var menuBarVolume = true
+  /// What's Playing art (⋯ › Look › Artwork Style): the plain cover, or Vinyl
+  /// Peek (a sleeve with a record peeking out that turns while it plays).
+  var artworkStyle: ArtworkStyle = .cover
   /// Bass character (Distort / Punch) and its amount (0...1).
   var bassCharacter: BassCharacter = .off
   var bassAmount: Double = 0.6
@@ -795,6 +798,7 @@ struct Settings: Codable, Equatable {
     showPlayingChannel = (try? c.decodeIfPresent(Bool.self, forKey: .showPlayingChannel)) ?? d.showPlayingChannel
     playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
+    artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
     bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
     bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount
     lateNightHaze = (try? c.decodeIfPresent(Double.self, forKey: .lateNightHaze)) ?? d.lateNightHaze
