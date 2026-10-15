@@ -810,6 +810,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   /// Mute, or (no mute control) 0 and back, like the popup's speaker.
   @objc private func menuMuteMac() { controller.macVolume.toggleMute() }
   @objc private func menuFix() {
+    // Always this Mac: out of Take Control too, so the popup shows what it found.
+    TakeControl.shared.switchBack()
     controller.checkAndFix()
     if !popover.isShown { togglePopover(nil) }   // show what it found
   }

@@ -154,9 +154,9 @@ C → T  seal(kCT){t:fin}    T → C  seal(kTC){t:fin}     (each proves its iden
   to settings, Mac Volume, devices, bypass, Live Channels and What's Playing,
   and coalesces changes to at most 10 Hz. Each session only gets a snapshot
   that differs from its last one.
-- **`ping`/`pong`** every 10 s:
-  - The controller drops a session after 30 s of silence.
-  - The target sweeps sessions idle for more than 45 s.
+- **`ping`/`pong`** every 3 s (a peer that dies without `bye` is noticed fast):
+  - The controller drops a session after 9 s of silence.
+  - The target sweeps sessions idle for more than 20 s (a dead controller's live edit stops).
 - **`bye{reason}`**: sent on close or revoke.
 
 ## Take Control (protocol 2)
@@ -202,10 +202,10 @@ Code: `TakeControl.swift`; hooks in `AudioController` (`isMirror`,
 - **Persistence and exits.** `Settings.remoteTakeover` (peer fingerprint).
   Closing the popup, clicking off, relaunch and sleep keep it. Only Switch
   Back, unpairing here or there (`notPaired` / `revoked`), a changed key or
-  version, or the Mac being gone for **2 minutes of uptime** end it; the last
+  version, or the Mac being gone for **10 s of uptime** end it; the last
   ones leave a one-line notice on this Mac's popup. While the link is down
-  the popup stays on that Mac, dimmed and locked, with "Reconnecting to …"
-  and Try Now: never quietly back on this Mac's sound.
+  the popup stays on that Mac (up to those 10 s), dimmed and locked, with "Reconnecting to …"
+  and Try Now. Check & Fix (status menu, or ⋯ › Check & Fix This Mac's Sound) and Quit always act on this Mac and Switch Back first.
 - **Not remote** (hidden in Take Control; the footer says so): DJ, Beats,
   Live Channels, rearranging, Check & Fix, Hearing Fit, mic and per-device
   options. The ⋯ menu keeps the other Mac's sound options and Switch Back.
@@ -292,5 +292,5 @@ remotely.
    mute. This Mac's sound never changed; its size change stayed here. Popup
    closed and reopened: still Take Control (saved). Target killed:
    Reconnecting…, locked; back when it restarted. Switch Back: this Mac's
-   sound as before. Target killed again: back here with the notice 120 s
+   sound as before. Target killed again: back here with the notice ~10-20 s
    later. A 1.x peer is refused with `version`.
