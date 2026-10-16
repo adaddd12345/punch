@@ -1,15 +1,15 @@
 import AppKit
 import SwiftUI
 
-// The popup's footer (Live, DJ, Beats, Check & Fix, the ⋯ shaker, Quit) in small bento
-// groups (docs/research/32): status and modes on the left, tools on the right, Quit alone
-// at the far right. Capsules 30 tall; buttons 24 tall, 3 pt inside, so their plates are
-// concentric (radius 12). Space between groups, no rules. Hover fades in the plate, a
-// press sinks it a little; the three drawn glyphs (Check & Fix's magnifier, the ⋯
-// shaker, Quit's speaker) turn 24° on their axis and the DJ dial turns like a knob. No
-// lift inside a group (it would break the inset). Once per hover, one spring.
-// Reduce Motion: the plate only. Power Saver: the plate only, without animation.
-// Layout and hit areas never change: every effect is render-only.
+// The popup's footer (Live, DJ, Beats, Check & Fix, settings, Quit) on one shelf set into
+// the popup's bottom edge (docs/research/32): a full-width recessed capsule 36 tall, 6 pt
+// in from the popup's edges, so it reads as the dock of the same object rather than three
+// more floating pills. Groups inside are spacing only (status and modes left, tools right),
+// with one short inset rule before Quit. Buttons 24 tall, 6 pt inside, so their plates are
+// concentric (radius 18 − 6 = 12). Glyphs are small extruded solids (FooterSolids.swift).
+// Hover fades in the plate, a press sinks it a little, the solids tilt and turn. Once per
+// hover, one spring. Reduce Motion: the plate only. Power Saver: the plate only, without
+// animation. Layout and hit areas never change: every effect is render-only.
 
 enum FooterMotion {
   /// The one spring for hover, press and the glyph gestures.
@@ -19,18 +19,20 @@ enum FooterMotion {
   static let turn: Double = 24
 }
 
-/// The footer's bento numbers.
+/// The footer shelf's numbers.
 enum FooterBento {
-  /// A group's capsule (radius 15, next to the tiles' 14).
-  static let height: CGFloat = 30
-  /// Buttons sit this far inside their group, so their radius is 15 − 3 = 12.
-  static let inset: CGFloat = 3
+  /// The shelf's capsule (radius 18: concentric with the popup's corner, 6 pt in).
+  static let height: CGFloat = 36
+  /// Buttons sit this far inside the shelf, so their radius is 18 − 6 = 12.
+  static let inset: CGFloat = 6
+  /// How far the shelf reaches past the content's 12 pt padding toward the popup's edges.
+  static let bleed: CGFloat = 6
   /// An inner button's height (icon-only buttons are this square: a circle).
   static let button: CGFloat = 24
   /// Between buttons in a group.
   static let gap: CGFloat = 2
-  /// Between groups (the tile gutter).
-  static let groupGap: CGFloat = 8
+  /// Either side of the inset rule between groups.
+  static let groupGap: CGFloat = 6
   /// Between the blocks and the footer (or the Dock header): the blocks' edge
   /// and this gap do the old hairline's job.
   static let edgeGap: CGFloat = 10
@@ -41,6 +43,8 @@ enum FooterBento {
 enum FooterSurface { case glass, bento, flat }
 
 private struct FooterHoverKey: EnvironmentKey { static let defaultValue = false }
+private struct FooterLitKey: EnvironmentKey { static let defaultValue = false }
+private struct FooterTintKey: EnvironmentKey { static let defaultValue: Color? = nil }
 private struct FooterSurfaceKey: EnvironmentKey { static let defaultValue = FooterSurface.bento }
 
 extension EnvironmentValues {
@@ -49,52 +53,97 @@ extension EnvironmentValues {
     get { self[FooterHoverKey.self] }
     set { self[FooterHoverKey.self] = newValue }
   }
-  /// How the footer's groups are drawn.
+  /// The footer control around this view is hovered or pressed (full ink).
+  var footerLit: Bool {
+    get { self[FooterLitKey.self] }
+    set { self[FooterLitKey.self] = newValue }
+  }
+  /// The footer control's ink, when it isn't the scheme's own (Quit: red under the pointer).
+  var footerTint: Color? {
+    get { self[FooterTintKey.self] }
+    set { self[FooterTintKey.self] = newValue }
+  }
+  /// How the footer's shelf is drawn.
   var footerSurface: FooterSurface {
     get { self[FooterSurfaceKey.self] }
     set { self[FooterSurfaceKey.self] = newValue }
   }
 }
 
-/// One bento group: a capsule holding a few footer buttons.
+/// One group on the shelf: spacing only, no container of its own.
 struct FooterGroup<Content: View>: View {
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    HStack(spacing: FooterBento.gap) { content() }
+  }
+}
+
+/// The short inset rule between groups (never the shelf's full height).
+struct FooterRule: View {
+  var body: some View {
+    Capsule().fill(Color.primary.opacity(0.12))
+      .frame(width: 1, height: 14)
+      .padding(.horizontal, FooterBento.groupGap - FooterBento.gap)
+      .accessibilityHidden(true)
+  }
+}
+
+/// The footer's one container: a recessed capsule along the popup's bottom edge (or its
+/// top, for the Dock header), 6 pt in from the popup's sides, so its ends sit concentric
+/// with the popup's corners. It reaches past the content's padding without changing the
+/// layout: the row still takes its old 30 pt.
+struct FooterShelf<Content: View>: View {
+  var edge: VerticalEdge = .bottom
   @ViewBuilder let content: () -> Content
   @Environment(\.footerSurface) private var surface
 
   var body: some View {
-    HStack(spacing: FooterBento.gap) { content() }
-      .padding(FooterBento.inset)
+    HStack(spacing: 0) { content() }
+      .padding(.horizontal, FooterBento.inset)
       .frame(height: FooterBento.height)
-      .background {
-        switch surface {
-        case .glass: Color.clear
-        case .bento: BentoFill(tint: .graphite, look: .base, radius: FooterBento.height / 2)
-        case .flat: Capsule().fill(Color.primary.opacity(0.05))
-        }
-      }
-      .modifier(FooterGroupGlass(on: surface == .glass))
+      .background { FooterShelfFill(surface: surface) }
+      .modifier(FooterShelfGlass(on: surface == .glass))
+      .padding(.horizontal, -FooterBento.bleed)
+      .padding(edge == .bottom ? .bottom : .top, -FooterBento.bleed)
   }
 }
 
-/// The group's glass (macOS 26): interactive, and never on the buttons inside (no
-/// glass on glass). Off: no glass effect at all (the buttons only lose a hover).
-private struct FooterGroupGlass: ViewModifier {
-  let on: Bool
-  func body(content: Content) -> some View {
-    if #available(macOS 26, *), on {
-      content.glassEffect(.regular.interactive(), in: Capsule())
-    } else {
-      content
+/// A shade darker than the popup with a lip that catches the light at the bottom
+/// (recessed, where the tiles are raised). Classic: a faint flat band.
+private struct FooterShelfFill: View {
+  let surface: FooterSurface
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.colorSchemeContrast) private var contrast
+
+  var body: some View {
+    let dark = scheme == .dark
+    let more = contrast == .increased ? 1.6 : 1
+    switch surface {
+    case .glass:
+      Color.clear
+    case .bento:
+      Capsule().fill(Color.black.opacity((dark ? 0.2 : 0.045) * more))
+        .overlay {
+          Capsule().strokeBorder(LinearGradient(colors: [Color.black.opacity(dark ? 0.32 : 0.07),
+                                                         Color.white.opacity(dark ? 0.08 : 0.6)],
+                                                startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
+        }
+        .allowsHitTesting(false)
+    case .flat:
+      Capsule().fill(Color.primary.opacity(0.04 * more)).allowsHitTesting(false)
     }
   }
 }
 
-/// Around a row of groups: one glass sampling pass (macOS 26). Its spacing stays
-/// well under the 8 pt gap, so resting groups never merge.
-struct FooterGlassRow: ViewModifier {
+/// The shelf's glass (macOS 26): one container, tinted a shade darker so it reads as the
+/// dock rather than another tile, and never on the buttons inside (no glass on glass).
+private struct FooterShelfGlass: ViewModifier {
+  let on: Bool
+  @Environment(\.colorScheme) private var scheme
   func body(content: Content) -> some View {
-    if #available(macOS 26, *) {
-      GlassEffectContainer(spacing: FooterBento.gap) { content }
+    if #available(macOS 26, *), on {
+      content.glassEffect(.regular.tint(Color.black.opacity(scheme == .dark ? 0.16 : 0.04)), in: Capsule())
     } else {
       content
     }
@@ -132,6 +181,8 @@ private struct FooterButtonBody: View {
       .foregroundStyle(chip ? AnyShapeStyle(.primary)
                        : danger && lit ? AnyShapeStyle(Color.red) : AnyShapeStyle(lit ? .primary : .secondary))
       .environment(\.footerHover, motion && enabled && hovered)
+      .environment(\.footerLit, chip || lit)
+      .environment(\.footerTint, danger && lit ? Color.red : nil)
       .background {
         if danger && lit { Capsule().fill(Color.red.opacity(pressed ? 0.22 : 0.14)).allowsHitTesting(false) }
         else { FooterPlate(opacity: lit ? (pressed ? 0.13 : 0.07) : 0) }
@@ -157,44 +208,10 @@ private struct FooterPlate: View {
   }
 }
 
-extension View {
-  /// A glyph's one hover gesture: turned `degrees` about `anchor` while its control is hovered.
-  func footerGesture(degrees: Double, anchor: UnitPoint = .center) -> some View {
-    modifier(FooterGesture(degrees: degrees, anchor: anchor))
-  }
-}
-
-private struct FooterGesture: ViewModifier {
-  let degrees: Double
-  let anchor: UnitPoint
-  @Environment(\.footerHover) private var hover
-
-  func body(content: Content) -> some View {
-    content
-      .rotationEffect(.degrees(hover ? degrees : 0), anchor: anchor)
-      .animation(FooterMotion.spring, value: hover)
-  }
-}
-
-/// A footer button's drawn glyph (16 pt) that turns on its axis while its control is
-/// hovered, like the ⋯ shaker. Plate and press come from FooterButtonStyle, and
-/// `footerHover` is already off under Reduce Motion and Power Saver (plate only).
-struct FooterTurningGlyph: View {
-  let kind: FooterGlyph.Kind
-  @Environment(\.footerHover) private var hover
-
-  var body: some View {
-    FooterGlyph(kind: kind, angle: hover ? FooterMotion.turn : 0)
-      .modifier(FooterInk(lit: hover))
-      .frame(width: FooterBlank.size, height: FooterBlank.size)
-      .animation(FooterMotion.spring, value: hover)
-  }
-}
-
-/// The ⋯ menu as the launch trophy's shaker-speaker. The Menu keeps a plain, invisible
-/// label the size of the 24 pt button (its own click handling is untouched); the drawn
-/// shaker sits over it and never takes a click. Hover turns it 24° on its axis, like a
-/// slice of the trophy's spin; it sinks a little while its menu is open.
+/// The settings menu as an extruded cog. The Menu keeps a plain, invisible label the size
+/// of the 24 pt button (its own click handling is untouched); the drawn cog sits over it
+/// and never takes a click. Hover tilts it and turns it half a tooth; it sinks a little
+/// while its menu is open.
 struct FooterShakerMenu<Content: View>: View {
   let help: String
   @ViewBuilder let content: () -> Content
@@ -218,18 +235,13 @@ struct FooterShakerMenu<Content: View>: View {
     .fixedSize()
     .frame(width: FooterBento.button, height: FooterBento.button)
     .overlay {
-      // A flat settings cog; hover turns it a notch.
-      Image(systemName: "gearshape")
-        .font(.system(size: 12.5, weight: .semibold))
-        .rotationEffect(.degrees(motion && hovered && !open ? 30 : 0))
-        .frame(width: Self.size, height: Self.size)
-        .foregroundStyle(lit ? .primary : .secondary)
+      // An extruded cog; hover tilts it and turns it half a tooth.
+      FooterSolid(kind: .gear, lit: lit, moving: motion && hovered && !open)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)
         .allowsHitTesting(false)
         .animation(powerSaver ? nil : (motion ? FooterMotion.spring : .easeOut(duration: 0.15)), value: lit)
-        .animation(motion ? FooterMotion.spring : nil, value: hovered)
         .animation(motion ? FooterMotion.spring : nil, value: open)
     }
     .onHover { hovered = $0 }
@@ -246,40 +258,8 @@ struct FooterShakerMenu<Content: View>: View {
 
 }
 
-/// The DJ knob: fixed tick marks around a knob whose pointer turns a notch on hover.
-struct FooterKnob: View {
-  /// SF Symbols' semibold stroke at 12 pt, so the knob sits flush with its neighbours.
-  private let w: CGFloat = 1.3
-
-  var body: some View {
-    ZStack {
-      ForEach([-60.0, 0, 60], id: \.self) { a in
-        Capsule().frame(width: w, height: 2.2)
-          .offset(y: -6.9)
-          .rotationEffect(.degrees(a))
-      }
-      ZStack {
-        Circle().strokeBorder(lineWidth: w).frame(width: 9.4, height: 9.4)
-        Capsule().frame(width: w, height: 3).offset(y: -1.9)
-      }
-      .footerGesture(degrees: 30)
-    }
-    .frame(width: 16, height: 16)
-  }
-}
-
-/// The drawn glyphs' ink as a plain colour: a Canvas filling with `.foreground` draws
-/// nothing inside Liquid Glass (its vibrant label style doesn't resolve there).
-struct FooterInk: ViewModifier {
-  let lit: Bool
-  @Environment(\.colorScheme) private var scheme
-  func body(content: Content) -> some View {
-    content.foregroundStyle(Color(white: scheme == .dark ? 1 : 0).opacity(lit ? 0.88 : 0.6))
-  }
-}
-
 /// The drawn glyphs' size, and the ⋯ Menu's clear label (a borderless menu button shows
-/// only an image or text, so the shaker is drawn over it instead).
+/// only an image or text, so the cog is drawn over it instead).
 private enum FooterBlank {
   static let size: CGFloat = 16
   /// The Menu's label at the button's full 24 pt, so all of the circle clicks.
