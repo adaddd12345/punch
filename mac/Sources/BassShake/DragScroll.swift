@@ -284,6 +284,14 @@ final class DragScrollProbeView: NSView {
 
   private func handle(_ event: NSEvent) -> NSEvent? {
     guard let sv = scrollView, let w = window, event.window === w, w.isVisible else { return event }
+    // Local monitors run before SwiftUI hit testing. Disabling the preset
+    // controls does not stop this monitor from claiming a rearrange drag or
+    // moving its release far away. Drop any earlier press/momentum as well.
+    if Reshuffle.anyOn {
+      resetInteraction()
+      DragScrollGate.clear()
+      return event
+    }
     switch event.type {
     case .leftMouseDown: return mouseDown(event, sv)
     case .leftMouseDragged: return mouseDragged(event, sv)

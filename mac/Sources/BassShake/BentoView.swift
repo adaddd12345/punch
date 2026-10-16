@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import os
 
 /// The Bento layout of the main block: translucent tiles on the 8 pt grid,
 /// one big number or word per tile. Same controls as the classic stack
@@ -258,6 +259,11 @@ struct BentoView: View {
 
   // MARK: - Reorder
 
+  /// Only section IDs and geometry, never playing titles or user content.
+  /// Two events per drag make a live-only lost drop diagnosable without a
+  /// per-frame trace or changing the audio session.
+  private static let reorderLog = Logger(subsystem: "app.bassshake.BassShake", category: "rearrange")
+
   /// A block being dragged in reshuffle mode. Everything here is frozen when
   /// the drag begins; only `translation` and `target` change, and only from
   /// the pointer (never from layout).
@@ -300,6 +306,8 @@ struct BentoView: View {
       let shown = blockKeys.filter { blockShown($0) }
       let heights = reshuffle.heights
       guard let i = ReshuffleSlot.visible(shown, key: key, heights: heights).firstIndex(of: key) else { return }
+      let sizes = shown.map { "\($0)=\(heights[$0] ?? -1)" }.joined(separator: ",")
+      Self.reorderLog.notice("Begin \(key, privacy: .public), slot \(i), sizes \(sizes, privacy: .public)")
       d = BlockDrag(key: key, start: shown, heights: heights, target: i)
       reshuffle.dragging = true
       reshuffle.cancelDrag = { cancelDrag() }
@@ -339,6 +347,7 @@ struct BentoView: View {
   /// The order is committed only here, on release.
   private func dropBlock() {
     guard let d = drag else { return }
+    Self.reorderLog.notice("Drop \(d.key, privacy: .public), travel \(Double(d.dy)), slot \(d.target), changed \(d.order != d.start), cancelled \(d.cancelled)")
     reshuffle.dragging = false
     reshuffle.autoScroll.end()
     reshuffle.cancelDrag = nil

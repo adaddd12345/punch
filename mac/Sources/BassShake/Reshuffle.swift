@@ -31,7 +31,8 @@ final class Reshuffle: ObservableObject {
   var hovered: String?
   /// The pointer is over the Done capsule.
   var overDone = false
-  /// Each shown block's height, from layout (plain: never redraws).
+  /// Latest layout height per section (plain: never redraws). Membership comes
+  /// from BentoView.blockShown, not from a view's appearance/disappearance.
   var heights: [String: CGFloat] = [:]
   /// May a hold start now (full popup, nothing else open)?
   var canStart: () -> Bool = { false }
@@ -62,6 +63,11 @@ final class Reshuffle: ObservableObject {
 
   func hover(_ key: String, _ inside: Bool) {
     if inside { hovered = key } else if hovered == key { hovered = nil }
+  }
+
+  func measure(_ key: String, height: CGFloat) {
+    guard height.isFinite, height >= 0 else { return }
+    heights[key] = height
   }
 
   /// Some popup is rearranging: Esc ends that instead of closing the popover.
@@ -220,14 +226,14 @@ struct ReshuffleBlock: ViewModifier {
     content
       // Controls inside stop responding while blocks move.
       .allowsHitTesting(!on)
-      .background {
-        GeometryReader { g in
-          Color.clear
-            .onAppear { model.heights[key] = g.size.height }
-            .onChange(of: g.size.height) { _, h in model.heights[key] = h }
-            .onDisappear { model.heights[key] = nil; model.hover(key, false) }
-        }
+      .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
+        model.measure(key, height: h)
       }
+      // An outgoing instance can disappear after its replacement measured the
+      // same section. Never erase that measurement: a drag freezes this map,
+      // and missing neighbours would leave the lifted card with no drop slots.
+      // Empty content still reports zero; hidden sections are filtered by the caller.
+      .onDisappear { model.hover(key, false) }
       // Lifted: an opaque card, so nothing under it shows through.
       .background {
         if lifted { shape.fill(Color(nsColor: .windowBackgroundColor)) }
@@ -259,7 +265,11 @@ struct ReshuffleBlock: ViewModifier {
       .gesture(
         DragGesture(minimumDistance: 1, coordinateSpace: .global)
           .onChanged { onDrag($0.translation.height) }
-          .onEnded { _ in onDrop() },
+          .onEnded {
+            // The release can be farther along than the last delivered move.
+            onDrag($0.translation.height)
+            onDrop()
+          },
         including: on ? .gesture : .subviews)
       .accessibilityActions {
         if on {
