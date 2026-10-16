@@ -201,7 +201,7 @@ struct PopoverView: View {
       mutedNotice
       // Wall Street's market panel, its own row above the footer (or at the bottom).
       if size != .mini { marketPanel }
-      // No hairline: the blocks' edge and a 10 pt gap set the footer apart.
+      // No hairline: the shelf's own tone and a 10 pt gap set the footer apart.
       if size != .mini && !dockHeaderShown {
         footer
           .padding(.top, FooterBento.edgeGap - 8)
@@ -787,12 +787,13 @@ struct PopoverView: View {
 
   /// Take Control: what only works here (DJ, Beats, Live Channels, rearranging) is off.
   private var takeoverFooter: some View {
-    HStack(spacing: 8) {
+    FooterShelf {
       Text("DJ, Beats, Live Channels and rearranging stay on this Mac.")
         .font(.system(size: 10))
         .foregroundStyle(.secondary)
         .lineLimit(2)
         .fixedSize(horizontal: false, vertical: true)
+        .padding(.leading, 8)
       Spacer(minLength: 4)
       FooterShakerMenu(help: "Options for the Mac you're controlling") {
         Button("Connect Another Mac…") { withAnimation { showRemote = true } }
@@ -821,6 +822,7 @@ struct PopoverView: View {
         Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
       }
     }
+    .environment(\.footerSurface, footerSurface)
   }
 
   /// Wall Street: the market terminal (quotes, headlines) as a contained panel, inset
@@ -835,7 +837,7 @@ struct PopoverView: View {
     }
   }
 
-  /// How the footer's groups are drawn: glass like the tiles (macOS 26, Liquid Glass
+  /// How the footer's shelf is drawn: glass like the tiles (macOS 26, Liquid Glass
   /// on, not Power Saver / Reduce Transparency), else the tiles' fill or Classic's.
   private var footerSurface: FooterSurface {
     let s = controller.settings
@@ -850,39 +852,40 @@ struct PopoverView: View {
       && !controller.isMirror && size != .mini
   }
 
+  /// One shelf along the bottom edge: status and modes, then tools, a short rule, Quit.
   private var localFooter: some View {
-    HStack(spacing: FooterBento.groupGap) {
+    FooterShelf {
       statusGroup
-      Spacer(minLength: 0)
+      Spacer(minLength: FooterBento.groupGap)
       if labels == .full, case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
           .font(.system(size: 9, weight: .medium, design: .rounded))
           .foregroundStyle(.tertiary)
+          .padding(.trailing, FooterBento.groupGap)
       }
       toolsGroup
+      FooterRule()
       powerGroup
     }
-    .modifier(FooterGlassRow())
     .environment(\.footerSurface, footerSurface)
   }
 
   /// Opened from the Dock: the app's icon and name on the left, the footer's groups on
   /// the right (no Quit: it is in ⋯) with ⋯ in the top-right corner. Its ✕ (on hover) brings the footer back.
   private var dockHeader: some View {
-    HStack(spacing: 0) {
+    // The same shelf as the footer, set into the top edge instead.
+    FooterShelf(edge: .top) {
       DockHeaderTitle(hovered: headerHovered) { controller.settings.dockHeader = false }
+        .padding(.leading, 2)
         .layoutPriority(1)
       Spacer(minLength: FooterBento.groupGap)
       // Quit lives in ⋯ here, so ⋯ (settings) holds the top-right corner.
-      HStack(spacing: FooterBento.groupGap) {
-        statusGroup
-        toolsGroup
-      }
+      statusGroup
+      FooterRule()
+      toolsGroup
     }
-    .frame(height: FooterBento.height)
     .contentShape(Rectangle())
     .onHover { headerHovered = $0 }
-    .modifier(FooterGlassRow())
     .environment(\.footerSurface, footerSurface)
   }
 
@@ -894,8 +897,8 @@ struct PopoverView: View {
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
         HStack(spacing: 4) {
-          // A knob: hover turns the knob a notch; its tick marks stay put.
-          FooterKnob()
+          // A knob: hover turns its pointer a notch; its tick marks stay put.
+          FooterSolid(kind: .knob, tint: controller.dj.anyActive ? Color.white : nil)
           if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip(iconOnly: labels == .icons)
@@ -909,8 +912,12 @@ struct PopoverView: View {
         if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
       } label: {
         HStack(spacing: 4) {
-          Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16)
-            .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible && !controller.settings.powerSaver && !reduceMotion)
+          if beats.playing {
+            Image(systemName: "waveform").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16)
+              .symbolEffect(.variableColor.iterative, isActive: visible && !controller.settings.powerSaver && !reduceMotion)
+          } else {
+            FooterSolid(kind: .grid)
+          }
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip(iconOnly: labels == .icons)
@@ -934,10 +941,7 @@ struct PopoverView: View {
             Image(systemName: "hourglass").font(.system(size: 11, weight: .semibold))
               .frame(width: 16, height: 16)
           } else {
-            Image(systemName: "waveform.badge.magnifyingglass")
-              .font(.system(size: 12, weight: .semibold))
-              .frame(width: 16, height: 16)
-              .footerGesture(degrees: -8)
+            FooterSolid(kind: .check)
           }
         }
       }
@@ -1158,13 +1162,13 @@ struct PopoverView: View {
     }
   }
 
-  /// Quit, alone: it ends the whole app, so it never shares a group with menus.
+  /// Quit, past a rule: it ends the whole app, so it never shares a group with menus.
   private var powerGroup: some View {
     FooterGroup {
-      // The word with full labels; otherwise a flat power glyph. Red under the pointer.
+      // The word with full labels; otherwise an extruded power ring. Red under the pointer.
       Button { NSApp.terminate(nil) } label: {
         if labels == .full { Text("Quit").fixedSize().padding(.horizontal, 8) }
-        else { Image(systemName: "power").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16) }
+        else { FooterSolid(kind: .power) }
       }
       .accessibilityLabel("Quit")
       .buttonStyle(FooterButtonStyle(danger: true))
