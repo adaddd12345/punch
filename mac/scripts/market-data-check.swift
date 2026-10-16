@@ -1,5 +1,32 @@
 import Foundation
 
+private final class FeedProtocol: URLProtocol {
+  private static let lock = NSLock()
+  private static var requested: [URL] = []
+  private static var limited = true
+  static var urls: [URL] {
+    lock.lock(); defer { lock.unlock() }
+    return requested
+  }
+  static func recover() { lock.lock(); limited = false; lock.unlock() }
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    let url = request.url!
+    Self.lock.lock()
+    Self.requested.append(url)
+    let rateLimited = Self.limited && url.host == "www.techmeme.com"
+    Self.lock.unlock()
+    let response = HTTPURLResponse(url: url, statusCode: rateLimited ? 429 : 200,
+                                   httpVersion: "HTTP/1.1", headerFields: rateLimited ? ["Retry-After": "7200"] : [:])!
+    let body = "<rss><channel><item><title>\(url.lastPathComponent) reporting</title><link>\(url.absoluteString)</link></item></channel></rss>"
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: Data(body.utf8))
+    client?.urlProtocolDidFinishLoading(self)
+  }
+  override func stopLoading() {}
+}
+
 // Regression checks against the production parser and cache, without starting
 // the app, changing preferences, making network requests, or touching audio.
 // Run: mac/scripts/market-data-check.sh
@@ -110,11 +137,64 @@ struct MarketDataCheck {
     let followup = Headline(title: "Central bank holds interest rates", source: "BBC BUSINESS", url: URL(string: "https://example.com/holds")!)
     check(HeadlineFilter.unique([headlines[0], followup]).count == 2, "Keep follow-up reporting with a different outcome")
     check(HeadlineFilter.unique([headlines[0], headlines[0]]).count == 1, "Drop the same story repeated")
+    var cachedCopy = headlines[0]
+    cachedCopy.stale = true
+    var refreshedCopy = headlines[0]
+    refreshedCopy.publishedAt = received
+    refreshedCopy.fetchedAt = received
+    let refreshed = HeadlineFilter.unique([cachedCopy, followup, refreshedCopy])
+    check(refreshed.count == 2 && refreshed[0] == refreshedCopy && refreshed[1] == followup,
+          "A fresh duplicate replaces its cached copy without moving another story")
     market.applyNewsBatch(["BBC BUSINESS": headlines], failedSources: [])
     market.applyNewsBatch([:], failedSources: ["BBC BUSINESS"])
     check(market.headlines.count == 2 && market.isHeadlineStale(market.headlines[0], now: received), "Retain and label a failed feed's old stories")
     market.applyNewsBatch(["BBC BUSINESS": []], failedSources: [])
     check(market.headlines.isEmpty, "A valid empty feed replaces old stories")
+
+    check(MarketData.retryDate("7200", now: received) == received.addingTimeInterval(7200),
+          "Respect a source retry delay longer than one hour")
+    check(MarketData.retryDate("Fri, 16 Oct 2026 12:00:00 GMT", now: received)
+          == Date(timeIntervalSince1970: 1_792_152_000), "Accept HTTP-date Retry-After")
+    check(MarketData.retryDate("Fri, 16 Oct 2026 09:00:00 GMT", now: received) == received,
+          "A past Retry-After date adds no delay")
+    check(MarketData.retryDate("-1", now: received) == nil && MarketData.retryDate("inf", now: received) == nil,
+          "Reject malformed Retry-After values")
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [FeedProtocol.self]
+    let session = URLSession(configuration: configuration)
+    let scheduled = MarketData(session: session)
+    var deliveries = 0
+    let observer = NotificationCenter.default.addObserver(forName: MarketData.changed, object: nil, queue: .main) { note in
+      if let source = note.object as? MarketData, source === scheduled { deliveries += 1 }
+    }
+    defer { NotificationCenter.default.removeObserver(observer); session.invalidateAndCancel() }
+    func waitForDeliveries(_ count: Int) {
+      let deadline = Date().addingTimeInterval(3)
+      while deliveries < count && Date() < deadline {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+      }
+      check(deliveries == count, "All stubbed feed results complete without external networking")
+    }
+    let started = Date()
+    scheduled.refresh([], now: started)
+    check(FeedProtocol.urls.isEmpty, "Disabled layers start no requests")
+    scheduled.refresh([.news], now: started)
+    scheduled.refresh([.news], now: started)
+    waitForDeliveries(3)
+    check(FeedProtocol.urls.count == 3, "Overlapping views cannot duplicate in-flight feed requests")
+    check(scheduled.failed.contains("news") && !scheduled.headlines.isEmpty,
+          "One rate-limited feed does not prevent healthy feeds from publishing stories")
+    scheduled.refresh([.news], now: started.addingTimeInterval(1900))
+    waitForDeliveries(5)
+    check(FeedProtocol.urls.filter { $0.host == "www.techmeme.com" }.count == 1,
+          "Keep the requested two-hour feed delay even after normal failure backoff expires")
+    check(FeedProtocol.urls.filter { $0.host == "feeds.bbci.co.uk" }.count == 4,
+          "Healthy feeds keep their own schedule while another feed is rate limited")
+    FeedProtocol.recover()
+    scheduled.refresh([.news], now: started.addingTimeInterval(7201))
+    waitForDeliveries(8)
+    check(!scheduled.failed.contains("news"), "A successful retry clears only the recovered feed failure")
 
     print("Market data regression checks passed (\(checks)); no network, app launch, preferences, or audio.")
   }

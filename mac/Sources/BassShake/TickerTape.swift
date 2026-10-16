@@ -449,6 +449,17 @@ private final class Strip {
       x += Double(s.layer.bounds.width) + gap
       if i == keys.count - 1 { loop = x - Self.lead }
     }
+    // Prices can lose digits or an OLD tag on refresh. The existing repeated
+    // tail may then be too short to cover the viewport at the loop seam.
+    while loop > 0, !keys.isEmpty, x - loop < Double(clip.bounds.width) + 30 {
+      let key = keys[slots.count % keys.count]
+      guard let layer = make(key) else { break }
+      if layer.superlayer !== band { band.addSublayer(layer) }
+      layer.isHidden = false
+      layer.position = CGPoint(x: x, y: clip.bounds.height / 2)
+      slots.append(Slot(layer: layer, key: key))
+      x += Double(layer.bounds.width) + gap
+    }
     anchorAt(anchor)
     slide()
   }
@@ -577,7 +588,8 @@ final class MarketPanelView: NSView {
   private let inspect = NSButton()
   private var hoveredKey: String?
   private var pointer: NSPoint?
-  private var press: (point: NSPoint, time: TimeInterval)?
+  private enum PressTarget { case quote(String), headline(URL) }
+  private var press: (point: NSPoint, time: TimeInterval, target: PressTarget?)?
   private var renderedNews: [String] = []
   private var hoverSettled: DispatchWorkItem?
   private var resumeAfterExit: DispatchWorkItem?
@@ -748,9 +760,10 @@ final class MarketPanelView: NSView {
     if showsNews {
       news.setFrame(CGRect(x: side, y: y, width: max(1, bounds.width - side * 2 - (showsQuotes ? 0 : 27)), height: MarketPanel.newsHeight))
     }
-    // Drawn for this scale and size: lay the strips out from the start.
-    quotes.fill(showsQuotes ? quoteKeys() : [], keep: false)
-    news.fill(showsNews ? newsKeys() : [], keep: false)
+    // Redraw for the new scale, width or palette without sending the reader
+    // back to the start. fill falls back to the start when its key is gone.
+    quotes.fill(showsQuotes ? quoteKeys() : [], keep: true)
+    news.fill(showsNews ? newsKeys() : [], keep: true)
     renderedNews = newsSignature()
     CATransaction.commit()
     syncMotion()
@@ -916,6 +929,14 @@ final class MarketPanelView: NSView {
     return (news.slot(at: p.x - news.clip.frame.minX)?.layer as? TextLayer)?.url
   }
 
+  private func pressTarget(at p: NSPoint) -> PressTarget? {
+    if showsQuotes, quotes.clip.frame.contains(p),
+       let key = quotes.slot(at: p.x - quotes.clip.frame.minX)?.key, data.quotes[key] != nil {
+      return .quote(key)
+    }
+    return headline(at: p).map(PressTarget.headline)
+  }
+
   private func hold(quotes q: Bool, news n: Bool) {
     guard q != quotes.held || n != news.held else { return }
     hoverSettled?.cancel()
@@ -1018,7 +1039,9 @@ final class MarketPanelView: NSView {
       news.setMoving(false)
     }
     updatePointer(p)
-    press = (p, event.timestamp)
+    // A quote or feed update can finish while the button is down. Honor the
+    // item the reader pressed, even if the new layout moves another under it.
+    press = (p, event.timestamp, pressTarget(at: p))
   }
 
   override func mouseDragged(with event: NSEvent) { press = nil }
@@ -1026,11 +1049,12 @@ final class MarketPanelView: NSView {
   override func mouseUp(with event: NSEvent) {
     defer { press = nil }
     let p = convert(event.locationInWindow, from: nil)
-    guard let press, !Reshuffle.anyOn, event.timestamp - press.time < 0.5,
+    guard let press, !Reshuffle.anyOn, bounds.contains(p), event.timestamp - press.time < 0.5,
           hypot(p.x - press.point.x, p.y - press.point.y) < 4 else { return }
-    if showsQuotes, quotes.clip.frame.contains(p),
-       let key = quotes.slot(at: p.x - quotes.clip.frame.minX)?.key, data.quotes[key] != nil {
-      onInspect(key)
-    } else if let url = headline(at: p) { NSWorkspace.shared.open(url) }
+    switch press.target {
+    case .quote(let key): onInspect(key)
+    case .headline(let url): NSWorkspace.shared.open(url)
+    case nil: break
+    }
   }
 }

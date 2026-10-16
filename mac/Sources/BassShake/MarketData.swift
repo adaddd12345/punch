@@ -148,7 +148,13 @@ final class MarketData {
   private static let cryptoEvery = 60.0
   private static let newsEvery = 900.0
 
-  private let session: URLSession = {
+  private let session: URLSession
+
+  init(session: URLSession? = nil) {
+    self.session = session ?? Self.makeSession()
+  }
+
+  private static func makeSession() -> URLSession {
     let c = URLSessionConfiguration.ephemeral
     c.httpCookieStorage = nil
     c.httpShouldSetCookies = false
@@ -158,11 +164,11 @@ final class MarketData {
     c.timeoutIntervalForResource = 15
     c.httpAdditionalHeaders = ["User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"]
     return URLSession(configuration: c)
-  }()
+  }
 
   /// Invoked by visible views only; creating or observing MarketData starts no requests.
-  func refresh(_ layers: Set<MarketLayer>) {
-    let now = Date().timeIntervalSinceReferenceDate
+  func refresh(_ layers: Set<MarketLayer>, now date: Date = Date()) {
+    let now = date.timeIntervalSinceReferenceDate
     func due(_ source: String, _ every: Double) -> Bool {
       let backoff = min(1_800, every * pow(2, Double(min(4, failures[source] ?? 0))))
       return !inFlight.contains(source) && now >= (retryAfter[source] ?? -.infinity)
@@ -170,7 +176,9 @@ final class MarketData {
     }
     if !layers.subtracting([.crypto, .news]).isEmpty, due("yahoo", Self.yahooEvery) { fetchYahoo(now) }
     if layers.contains(.crypto), due("crypto", Self.cryptoEvery) { fetchCrypto(now) }
-    if layers.contains(.news), due("news", Self.newsEvery) { fetchNews(now) }
+    if layers.contains(.news) {
+      for feed in Self.feeds where due("news:\(feed.source)", Self.newsEvery) { fetchNews(feed, now) }
+    }
   }
 
   func isStale(_ key: String, now: Date = Date()) -> Bool {
@@ -303,16 +311,36 @@ final class MarketData {
   }
 
   private func finish(_ source: String, success: Bool, response: URLResponse? = nil, apply: @escaping () -> Void) {
-    let retry = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+    let retry = Self.retryDate((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After"), now: Date())
     DispatchQueue.main.async {
       self.inFlight.remove(source)
       self.failures[source] = success ? 0 : (self.failures[source] ?? 0) + 1
-      if let retry, retry.isFinite, retry > 0 {
-        self.retryAfter[source] = Date().timeIntervalSinceReferenceDate + min(retry, 3_600)
+      if let retry {
+        self.retryAfter[source] = retry.timeIntervalSinceReferenceDate
       } else { self.retryAfter.removeValue(forKey: source) }
       apply()
       NotificationCenter.default.post(name: Self.changed, object: self)
     }
+  }
+
+  /// HTTP permits seconds or a date. Keep the source's requested wait intact;
+  /// retrying after an arbitrary shorter cap can prolong a rate-limit failure.
+  static func retryDate(_ value: String?, now: Date) -> Date? {
+    guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+    if value.utf8.allSatisfy({ (48...57).contains($0) }), let seconds = Double(value), seconds.isFinite {
+      let date = now.addingTimeInterval(seconds)
+      return date.timeIntervalSinceReferenceDate.isFinite ? date : nil
+    }
+    // IMF-fixdate plus the two older HTTP date forms accepted by recipients.
+    for format in ["EEE, dd MMM yyyy HH:mm:ss zzz", "EEEE, dd-MMM-yy HH:mm:ss zzz", "EEE MMM d HH:mm:ss yyyy"] {
+      let formatter = DateFormatter()
+      formatter.locale = Locale(identifier: "en_US_POSIX")
+      formatter.timeZone = TimeZone(secondsFromGMT: 0)
+      formatter.dateFormat = format
+      formatter.isLenient = false
+      if let date = formatter.date(from: value) { return max(date, now) }
+    }
+    return nil
   }
 
   private static func successful(_ response: URLResponse?, error: Error?) -> Bool {
@@ -361,26 +389,18 @@ final class MarketData {
     ("BBC BUSINESS", "https://feeds.bbci.co.uk/news/business/rss.xml"),
   ]
 
-  private func fetchNews(_ now: Double) {
-    start("news", now)
-    let group = DispatchGroup()
-    let lock = NSLock()
-    var fresh: [String: [Headline]] = [:]
-    var failed: Set<String> = []
-    for feed in Self.feeds {
-      guard let url = URL(string: feed.url) else { continue }
-      group.enter()
-      session.dataTask(with: url) { data, response, error in
-        let items = Self.successful(response, error: error) ? data.flatMap { Self.decodeRSS($0, source: feed.source, receivedAt: Date()) } : nil
-        lock.lock()
-        if let items { fresh[feed.source] = items } else { failed.insert(feed.source) }
-        lock.unlock()
-        group.leave()
-      }.resume()
-    }
-    group.notify(queue: .global(qos: .utility)) {
-      self.finish("news", success: !fresh.isEmpty) { self.applyNewsBatch(fresh, failedSources: failed) }
-    }
+  private func fetchNews(_ feed: (source: String, url: String), _ now: Double) {
+    guard let url = URL(string: feed.url) else { return }
+    let source = "news:\(feed.source)"
+    start(source, now)
+    session.dataTask(with: url) { data, response, error in
+      let items = Self.successful(response, error: error)
+        ? data.flatMap { Self.decodeRSS($0, source: feed.source, receivedAt: Date()) } : nil
+      self.finish(source, success: items != nil, response: response) {
+        self.applyNewsBatch(items.map { [feed.source: $0] } ?? [:],
+                            failedSources: items == nil ? [feed.source] : [])
+      }
+    }.resume()
   }
 
   /// Preview values have no invented market timestamp or history.
@@ -494,9 +514,20 @@ enum HeadlineFilter {
 
   /// Exact links or normalized exact titles only; follow-up reporting is useful.
   static func unique(_ list: [Headline]) -> [Headline] {
+    func normalizedTitle(_ headline: Headline) -> String {
+      headline.title.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+    // A failed feed can repeat a story another feed has just refreshed. Prefer
+    // that fresh copy at the cached story's position before deduplicating, so a
+    // stale first feed cannot hide a successful one or shuffle unrelated news.
+    let preferred = list.map { headline in
+      guard headline.stale else { return headline }
+      return list.first { !$0.stale && ($0.url == headline.url || normalizedTitle($0) == normalizedTitle(headline)) }
+        ?? headline
+    }
     var urls = Set<String>(), titles = Set<String>()
-    return list.filter { headline in
-      let title = headline.title.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    return preferred.filter { headline in
+      let title = normalizedTitle(headline)
       let url = headline.url.absoluteString
       guard !urls.contains(url), !titles.contains(title) else { return false }
       urls.insert(url); titles.insert(title)
