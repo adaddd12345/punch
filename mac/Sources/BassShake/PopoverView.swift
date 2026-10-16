@@ -12,7 +12,8 @@ struct PopoverView: View {
   @State private var editor: PresetEditor.Mode?
   @State private var showDrivers = false
   @State private var showLive = false
-  @State private var loginOn = LoginItem.isOn
+  /// Set by a settings-menu item; open(_:) shows it and clears this.
+  @State private var menuPanel: SettingsPanel?
   @State private var confirmReset = false
   @State private var splash = false
   /// "Connecting…" only once starting has taken a while (a normal start is
@@ -86,6 +87,35 @@ struct PopoverView: View {
     .drawBudgetRoot()
     .environment(\.artworkStyle, controller.settings.artworkStyle)
     .environment(\.isoPlayButton, controller.settings.isoMuteButton)
+    .onChange(of: menuPanel) { _, p in
+      guard let p else { return }
+      menuPanel = nil
+      open(p)
+    }
+  }
+
+  /// A settings-menu item's panel. Every item alike: rearranging ends (else Esc stays
+  /// swallowed by it) and the Live / DJ / Beats tray, its own window, shuts first
+  /// (else it stayed up beside a panel it has nothing to do with).
+  private func open(_ p: SettingsPanel) {
+    if p == .resetConfirm { confirmReset = true; return }
+    reshuffle.set(false)
+    showLive = false
+    showDJ = false
+    showBeats = false
+    if p == .drivers { controller.scanDrivers() }
+    withAnimation {
+      switch p {
+      case .remote: showRemote = true
+      case .mySounds: showMySounds = true
+      case .layout: showLayoutEditor = true
+      case .hearingFit: showHearingFit = true
+      case .micTest: showMicTest = true
+      case .latencyLab: showLatencyLab = true
+      case .drivers: showDrivers = true
+      case .resetConfirm: break
+      }
+    }
   }
 
   private var labels: LabelLevel { controller.settings.labelLevel }
@@ -777,10 +807,6 @@ struct PopoverView: View {
     }
   }
 
-  private var currentInputName: String {
-    controller.inputs.first(where: { $0.id == controller.currentInputID })?.name ?? "None"
-  }
-
   @ViewBuilder private var footer: some View {
     if controller.isMirror { takeoverFooter } else { localFooter }
   }
@@ -795,30 +821,7 @@ struct PopoverView: View {
         .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 4)
       FooterShakerMenu(help: "Options for the Mac you're controlling") {
-        Button("Connect Another Mac…") { withAnimation { showRemote = true } }
-        Button("Switch Back to This Mac") { TakeControl.shared.switchBack() }
-        Divider()
-        // Sound options of the Mac being controlled.
-        Toggle("Ear Protector (duck sudden loud blasts)", isOn: Binding(get: { controller.settings.earProtector },
-                                                                        set: { controller.settings.earProtector = $0 }))
-        Toggle("Fair Level (even out loudness between apps)", isOn: Binding(get: { controller.settings.fairLevel },
-                                                                            set: { controller.settings.fairLevel = $0 }))
-        Picker("Center Lock", selection: Binding(get: { controller.settings.centerLock },
-                                                  set: { controller.settings.centerLock = $0 })) {
-          ForEach(CenterLock.allCases) { Text($0.title).tag($0) }
-        }
-        Toggle("Studio Ears", isOn: Binding(get: { controller.settings.studioEars },
-                                            set: { controller.settings.studioEars = $0 }))
-        SoundLikeMenu(controller: controller)
-        Button("My Sounds…") { withAnimation { showMySounds = true } }
-        Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
-        Divider()
-        // Never sent to the other Mac: this Mac's own sound, shown back here.
-        Button("Check & Fix This Mac's Sound") {
-          TakeControl.shared.switchBack()
-          TakeControl.shared.localController?.checkAndFix()
-        }
-        Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
+        RemoteSettingsMenuContent(controller: controller, panel: $menuPanel)
       }
     }
   }
@@ -945,219 +948,8 @@ struct PopoverView: View {
       .buttonStyle(FooterButtonStyle())
       .accessibilityLabel("Check and fix sound issues")
       .pointerHint(Caption.checkAndFix())
-      FooterShakerMenu(help: "Updates, version and Quit") {
-        Button("Check & Fix Sound Issues") { controller.checkAndFix() }
-        Toggle("Check Automatically After Sleep", isOn: Binding(get: { controller.settings.autoFixAfterSleep },
-                                                               set: { controller.settings.autoFixAfterSleep = $0 }))
-        Divider()
-        Toggle("Ear Protector (duck sudden loud blasts)", isOn: Binding(get: { controller.settings.earProtector },
-                                                                        set: { controller.settings.earProtector = $0 }))
-        Toggle("Fair Level (even out loudness between apps)", isOn: Binding(get: { controller.settings.fairLevel },
-                                                                            set: { controller.settings.fairLevel = $0 }))
-        LightsOutMenu(controller: controller)
-        Button("Hearing Fit…") { withAnimation { showHearingFit = true } }
-        if controller.settings.hearing != nil {
-          Toggle("Hearing Fit On", isOn: Binding(get: { controller.settings.hearing?.enabled ?? false },
-                                                 set: { controller.settings.hearing?.enabled = $0 }))
-          Button("Remove Hearing Fit") { controller.settings.hearing = nil }
-        }
-        Picker("Center Lock", selection: Binding(get: { controller.settings.centerLock },
-                                                  set: { controller.settings.centerLock = $0 })) {
-          ForEach(CenterLock.allCases) { Text($0.title).tag($0) }
-        }
-        Menu("Sound") {
-          Toggle("AirPods HQ Guard (keep Bluetooth in stereo)", isOn: Binding(get: { controller.settings.hqGuard },
-                                                                              set: { controller.settings.hqGuard = $0 }))
-          Toggle("Remember Sound per Device", isOn: Binding(get: { controller.settings.perDevice },
-                                                             set: { controller.settings.perDevice = $0 }))
-          if let d = controller.currentDevice {
-            Toggle("No Processing on \(d.name)", isOn: Binding(get: { controller.currentDeviceBypassed },
-                                                               set: { controller.setBypassOnCurrentDevice($0) }))
-            Picker("Quiet Floor for \(d.name)", selection: Binding(get: { controller.currentQuietFloorDb },
-                                                                    set: { controller.setQuietFloor($0, uid: d.uid) })) {
-              ForEach(QuietFloor.choices, id: \.self) { db in
-                Text(db == 0 ? "Off" : "\(Int(db)) dB").tag(db)
-              }
-            }
-          }
-          Toggle("Balance Lock (keep left/right centered)", isOn: Binding(get: { controller.settings.balanceLock },
-                                                                          set: { controller.settings.balanceLock = $0
-                                                                                 if $0 { controller.centerBalance() } }))
-          Divider()
-          Menu("Microphone: \(currentInputName)") {
-            ForEach(controller.inputs) { d in
-              Button {
-                controller.selectInput(d)
-              } label: {
-                if d.id == controller.currentInputID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
-              }
-            }
-            Divider()
-            Button("Sound Settings…") { controller.openSoundSettings() }
-          }
-          Button("Mic Test…") { withAnimation { showMicTest = true } }
-          Button("Latency Lab… (Bluetooth delay for recording)") { withAnimation { showLatencyLab = true } }
-          Button("Find Old Audio Drivers…") {
-            controller.scanDrivers()
-            withAnimation { showDrivers = true }
-          }
-        }
-        Menu("Look") {
-          Toggle("Bento Layout", isOn: Binding(get: { controller.settings.bento },
-                                               set: { controller.settings.bento = $0 }))
-          // The Bento tiles in system Liquid Glass (macOS 26+). Power Saver and
-          // Reduce Transparency keep the classic frosted tiles.
-          if #available(macOS 26, *) {
-            Toggle("Liquid Glass", isOn: Binding(get: { controller.settings.liquidGlass },
-                                                 set: { controller.settings.liquidGlass = $0 }))
-              .disabled(!controller.settings.bento || controller.settings.powerSaver
-                        || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
-              .help("Off while Power Saver or Reduce Transparency is on")
-          }
-          Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
-                                                   set: { controller.settings.setBackground($0) })) {
-            ForEach(BackgroundStyle.allCases.filter { !$0.scene && !$0.morph }) { Text($0.title).tag($0) }
-            Section("Morphing") {
-              ForEach(BackgroundStyle.allCases.filter(\.morph)) { Text($0.title).tag($0) }
-            }
-            Section("Seasonal") {
-              ForEach(BackgroundStyle.allCases.filter(\.festive)) { Text($0.title).tag($0) }
-            }
-            Section("Themes") {
-              ForEach(BackgroundStyle.allCases.filter(\.theme)) { Text($0.title).tag($0) }
-            }
-          }
-          // The stock ticker (market panel), with any background, and which layers it
-          // carries (delayed, not for trading).
-          Menu("Ticker") {
-            Toggle("Show Stock Ticker", isOn: Binding(get: { controller.settings.showTicker },
-                                                      set: { controller.settings.setShowTickerByHand($0) }))
-            Divider()
-            ForEach(MarketLayer.allCases) { l in
-              Toggle(l.title, isOn: Binding(get: { controller.settings.tickerShows(l) },
-                                            set: { controller.settings.setTicker(l, $0) }))
-                .disabled(!controller.settings.showTicker)
-            }
-          }
-          // What's Playing art: the cover, or a sleeve with a record peeking out.
-          Picker("Artwork Style", selection: Binding(get: { controller.settings.artworkStyle },
-                                                      set: { controller.settings.artworkStyle = $0 })) {
-            ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
-          }
-          // What's Playing's play / pause as the isometric shield (off: the flat disc).
-          Toggle("Isometric Play Button", isOn: Binding(get: { controller.settings.isoMuteButton },
-                                                        set: { controller.settings.isoMuteButton = $0 }))
-          // What's drawn behind the EQ curve: the scope (time), the
-          // analyser (frequency, on the EQ's own axis), or nothing.
-          Picker("EQ Visual", selection: Binding(get: { controller.settings.eqVisual },
-                                                 set: { controller.settings.setEQVisualByHand($0) })) {
-            ForEach(EQVisual.allCases) { Text($0.title).tag($0) }
-          }
-          Picker("Scope Color", selection: Binding(get: { controller.settings.scopeColor },
-                                                    set: { controller.settings.scopeColor = $0 })) {
-            ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
-          }
-          Toggle("Fade In & Out", isOn: Binding(get: { controller.settings.fadeWindows },
-                                                set: { controller.settings.fadeWindows = $0 }))
-          // The 3D shaker in the Dock; a Dock click opens this popup.
-          Toggle("Show in Dock", isOn: Binding(get: { controller.settings.showInDock },
-                                               set: {
-                                                 controller.settings.showInDock = $0
-                                                 // The menu-bar icon may only be off while the Dock tile is on.
-                                                 if !$0 { controller.settings.showInMenuBar = true }
-                                               }))
-          // Opened from the Dock: the controls in a header at the top (its hover ✕ turns this off).
-          Toggle("Header When Opened from Dock", isOn: Binding(get: { controller.settings.dockHeader },
-                                                              set: { controller.settings.dockHeader = $0 }))
-            .disabled(!controller.settings.showInDock)
-          // Only hideable while the Dock icon is on, so the app can't get lost.
-          Toggle("Show in Menu Bar", isOn: Binding(get: { controller.settings.menuBarIconShown },
-                                                   set: { controller.settings.showInMenuBar = $0 }))
-            .disabled(!controller.settings.showInDock)
-            .help("Turn on Show in Dock first, so the app can always be found")
-          // Waves (or a slash) beside the menu-bar shaker; scrolling over it works either way.
-          Toggle("Volume on Menu Bar Icon", isOn: Binding(get: { controller.settings.menuBarVolume },
-                                                          set: { controller.settings.menuBarVolume = $0 }))
-            .disabled(!controller.settings.menuBarIconShown)
-        }
-        SoundLikeMenu(controller: controller)
-        Menu("Shortcuts") {
-          Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: Binding(get: { controller.settings.bypassHotkey },
-                                                                         set: { controller.settings.bypassHotkey = $0 }))
-          Text("Open/Close Anywhere: \(GlobalHotkey.openLabel)")
-          if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
-        }
-        // Remote control between Macs: both switches and pairing live in this one panel.
-        Button("Connect Another Mac…") { reshuffle.set(false); withAnimation { showRemote = true } }
-        Menu("Presets & Settings") {
-          Button("My Sounds…") { reshuffle.set(false); withAnimation { showMySounds = true } }
-          Button("Edit Layout…") { reshuffle.set(false); withAnimation { showLayoutEditor = true } }
-          Toggle("Show Mac Volume", isOn: Binding(get: { controller.settings.showMacVolume },
-                                                  set: { controller.settings.showMacVolume = $0 }))
-          // Lights Out's figures as a slim clock tile at the top (off by default).
-          Toggle("Show Live Time", isOn: Binding(get: { controller.settings.showLiveTime },
-                                                 set: { controller.settings.showLiveTime = $0 }))
-          // Stored as `pointerHints` so saved settings keep loading.
-          Toggle("Tutorial Mode", isOn: Binding(get: { controller.settings.pointerHints },
-                                                set: { controller.settings.pointerHints = $0 }))
-          // Off by default; the first time it's turned on, a one-time note explains it.
-          Toggle("Show What's Playing", isOn: Binding(get: { controller.settings.showNowPlaying },
-                                                      set: { controller.settings.showNowPlaying = $0 }))
-          // Off: apps only (icon, name, Playing / Paused / Muted); nothing is read from them.
-          Toggle("Song & Video Details", isOn: Binding(get: { controller.settings.playingDetails },
-                                                       set: { controller.settings.playingDetails = $0 }))
-            .help("Off: just each app's icon and name; no songs, tabs or covers.")
-          // Per-app Automation (AutomationGate): which apps What's Playing may script.
-          AppDetailsMenu(controller: controller)
-            .disabled(!controller.settings.playingDetails)
-          // Mini: the app you hear most leads (its icon plays and pauses).
-          Toggle("Show Playing App in Mini", isOn: Binding(get: { controller.settings.showPlayingChannel },
-                                                           set: { controller.settings.showPlayingChannel = $0 }))
-          // Was a mode tile; too subtle to earn a square. Same setting and sound.
-          Toggle("Studio Ears", isOn: Binding(get: { controller.settings.studioEars },
-                                              set: { controller.settings.studioEars = $0 }))
-            .help("Adds deep bass and crisp highs on top of any preset.")
-          // Drawing only: the sound, Fair Level and every meter's reading stay the same.
-          Toggle("Power Saver", isOn: Binding(get: { controller.settings.powerSaver },
-                                              set: { controller.settings.powerSaver = $0 }))
-            .help("Simpler visuals and slower meters; your sound is unchanged.")
-          // What's Playing's pause for apps with no script: the system media key
-          // when on (a locked button until Accessibility is allowed; its hover
-          // card explains, its click opens the pane), mute when off.
-          Toggle("Pause Any App with Media Keys", isOn: Binding(
-            get: { controller.settings.pauseRoute != .mute },
-            set: { on in controller.settings.pauseRoute = on ? .keys : .mute }))
-          Divider()
-          Button("Undo Sound Change (⌘Z)") { controller.undo() }.disabled(!controller.canUndo)
-          Divider()
-          Button("Export Presets…") { controller.exportPresets() }
-          Button("Import Presets…") { controller.importPresets() }
-          Divider()
-          Button("Reset All Settings…") { confirmReset = true }
-        }
-        Divider()
-        Button("Check for Updates…") { updates.checkNow() }
-        Menu("Update Options") {
-          Toggle("Check Automatically", isOn: Binding(get: { updates.automaticChecks }, set: { updates.automaticChecks = $0 }))
-          Toggle("Install Automatically", isOn: Binding(get: { updates.automaticDownloads }, set: { updates.automaticDownloads = $0 }))
-          if let err = updates.startError { Text("Updates unavailable: \(err)") }
-        }
-        Toggle("Open at Login", isOn: Binding(get: { loginOn }, set: { LoginItem.set($0); loginOn = LoginItem.isOn }))
-        if LoginItem.runningTranslocated {
-          Text("Move to Applications to open at login")
-        }
-        Divider()
-        Menu("Help") {
-          Button("Help") { Links.open(.help) }
-          Button("Report a Bug…") { controller.reportBug() }
-          Button("Copy Diagnostics") { controller.copyDiagnostics() }
-          Button("Privacy") { Links.open(.privacy) }
-          Divider()
-          Button("Uninstall…") { Uninstaller.run() }
-        }
-        Button("About The Bass Shaker (\(updates.currentVersion))") { AboutPanel.show() }
-        Divider()
-        Button("Quit The Bass Shaker") { NSApp.terminate(nil) }
+      FooterShakerMenu(help: "Settings") {
+        SettingsMenuContent(controller: controller, updates: updates, panel: $menuPanel)
       }
     }
   }
@@ -1327,7 +1119,7 @@ private struct Banner: View {
     .padding(.vertical, 12)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background {
-      let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+      let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
       shape.fill(.thinMaterial)
         .overlay(shape.fill(tint.opacity(contrast == .increased ? 0.22 : 0.10)))
         .overlay(shape.strokeBorder(tint.opacity(contrast == .increased ? 0.8 : 0.35), lineWidth: contrast == .increased ? 1 : 0.5))
@@ -1364,7 +1156,7 @@ final class MeterTicker {
   deinit { timer?.invalidate() }
 }
 
-/// ⋯ › Presets & Settings › App Details: one switch per app What's Playing
+/// Settings › What's Playing › App Details: one switch per app What's Playing
 /// has seen, with macOS's Automation state. Off reads nothing from that app.
 struct AppDetailsMenu: View {
   @ObservedObject var controller: AudioController
