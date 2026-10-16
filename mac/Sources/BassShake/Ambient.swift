@@ -76,7 +76,7 @@ private struct PopupBackdrop: ViewModifier {
       // An overlay takes no part in layout. Left out when the scene is a still frame
       // (Power Saver / Reduce Motion), where a frozen particle would sit on the text.
       .overlay {
-        if style.scene && !(powerSaver || reduceMotion) {
+        if style.scene && style != .wallStreet && !(powerSaver || reduceMotion) {
           FestiveForeground(style: style, clock: clock)
             .allowsHitTesting(false)
             .accessibilityHidden(true)

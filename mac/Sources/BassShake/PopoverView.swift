@@ -149,7 +149,6 @@ struct PopoverView: View {
       // Opened from the Dock: the footer's controls in a header (icon, name, groups).
       if dockHeaderShown {
         dockHeader
-          .overlay(alignment: .bottom) { tickerTape.offset(y: (FooterBento.edgeGap + TickerTape.height) / 2) }
           .padding(.bottom, FooterBento.edgeGap - 8)
       }
       // Take Control: who this popup is driving, always on top (and Switch Back).
@@ -200,11 +199,11 @@ struct PopoverView: View {
       }
       // Under the stack, so a mute never pushes What's Playing down.
       mutedNotice
+      // Wall Street's market panel, its own row above the footer (or at the bottom).
+      if size != .mini { marketPanel }
       // No hairline: the blocks' edge and a 10 pt gap set the footer apart.
-      // Wall Street's ticker tape runs in that gap (an overlay, so nothing moves).
       if size != .mini && !dockHeaderShown {
         footer
-          .overlay(alignment: .top) { tickerTape.offset(y: -(FooterBento.edgeGap + TickerTape.height) / 2) }
           .padding(.top, FooterBento.edgeGap - 8)
       }
     }
@@ -824,13 +823,14 @@ struct PopoverView: View {
     }
   }
 
-  /// Wall Street: a ticker tape in the gap between the blocks and the footer (or the
-  /// Dock header), edge to edge across the popup; never takes a click.
-  @ViewBuilder private var tickerTape: some View {
-    if controller.settings.backgroundStyle == .wallStreet {
-      TickerTape(controller: controller)
-        .frame(width: 360, height: TickerTape.height)
-        .allowsHitTesting(false)
+  /// Wall Street: the market terminal (quotes, headlines) as a contained panel, inset
+  /// from the tiles and the footer. Headlines open on click.
+  @ViewBuilder private var marketPanel: some View {
+    let layers = controller.settings.tickerLayers
+    if controller.settings.backgroundStyle == .wallStreet, !layers.isEmpty {
+      MarketPanel(layers: layers)
+        .frame(height: MarketPanel.height(layers))
+        .padding(.top, 2)
         .accessibilityHidden(true)
     }
   }
@@ -1024,6 +1024,15 @@ struct PopoverView: View {
             }
             Section("Themes") {
               ForEach(BackgroundStyle.allCases.filter(\.theme)) { Text($0.title).tag($0) }
+            }
+          }
+          // Wall Street's market panel: which layers it carries (delayed, not for trading).
+          if controller.settings.backgroundStyle == .wallStreet {
+            Menu("Ticker") {
+              ForEach(MarketLayer.allCases) { l in
+                Toggle(l.title, isOn: Binding(get: { controller.settings.tickerShows(l) },
+                                              set: { controller.settings.setTicker(l, $0) }))
+              }
             }
           }
           // What's Playing art: the cover, or a sleeve with a record peeking out.
