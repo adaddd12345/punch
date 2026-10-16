@@ -14,11 +14,31 @@ enum LoginItem {
       NSSound.beep()
     }
     if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
+    LoginItemState.shared.refresh()
   }
 
   /// A copy still running from Downloads (translocated) would register a
   /// throwaway path.
   static var runningTranslocated: Bool { Bundle.main.bundlePath.contains("/AppTranslocation/") }
+}
+
+/// Open at Login as a value menus can follow: re-read after every set (the gear
+/// menu and the right-click menu both set it) and whenever the app comes forward
+/// (System Settings may have changed it). A copy cached per view went stale.
+final class LoginItemState: ObservableObject {
+  static let shared = LoginItemState()
+  @Published private(set) var isOn = LoginItem.isOn
+  private var observer: NSObjectProtocol?
+
+  private init() {
+    observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                      object: nil, queue: .main) { [weak self] _ in self?.refresh() }
+  }
+
+  func refresh() {
+    let on = LoginItem.isOn
+    if on != isOn { isOn = on }
+  }
 }
 
 enum AboutPanel {
