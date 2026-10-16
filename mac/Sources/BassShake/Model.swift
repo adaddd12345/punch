@@ -546,7 +546,7 @@ extension Settings {
 }
 
 extension Settings {
-  /// Wall Street's market panel: the layers turned on.
+  /// The market panel: the layers turned on.
   var tickerLayers: Set<MarketLayer> {
     var s: Set<MarketLayer> = []
     if tickerIndices { s.insert(.indices) }
@@ -587,6 +587,20 @@ extension Settings {
       eqVisualBeforeTheme = nil
       if let v = EQVisual(rawValue: raw) { eqVisual = v }
     }
+    // Wall Street turns the stock ticker on; leaving it turns off what it turned on.
+    if new == .wallStreet, old != .wallStreet, !showTicker {
+      showTicker = true
+      tickerFromTheme = true
+    } else if old == .wallStreet, new != .wallStreet, tickerFromTheme {
+      showTicker = false
+      tickerFromTheme = false
+    }
+  }
+
+  /// ⋯ › Look › Ticker › Show Stock Ticker: the user's choice from now on, with any background.
+  mutating func setShowTickerByHand(_ on: Bool) {
+    showTicker = on
+    tickerFromTheme = false
   }
 
   /// EQ Visual picked in the menu: the user's choice from now on, with any theme.
@@ -754,7 +768,13 @@ struct Settings: Codable, Equatable {
   var backgroundStyle: BackgroundStyle = .system
   /// Wall Street turns EQ Visual to Spectrum the first time it's picked.
   var wallStreetSeen = false
-  /// Wall Street's market panel layers (⋯ › Look › Ticker).
+  /// The market panel (quotes, headlines) over any background (⋯ › Look › Ticker ›
+  /// Show Stock Ticker). Wall Street turns it on when picked.
+  var showTicker = false
+  /// Wall Street turned the ticker on (so leaving it turns it off again), until the
+  /// ticker is switched by hand.
+  var tickerFromTheme = false
+  /// The market panel's layers (⋯ › Look › Ticker).
   var tickerIndices = true
   var tickerStocks = true
   var tickerCrypto = true
@@ -981,6 +1001,10 @@ struct Settings: Codable, Equatable {
     remoteTakeover = (try? c.decodeIfPresent(String.self, forKey: .remoteTakeover)) ?? nil
     lightsOutGuard = (try? c.decodeIfPresent(OutputGuard.self, forKey: .lightsOutGuard)) ?? d.lightsOutGuard
     wallStreetSeen = (try? c.decodeIfPresent(Bool.self, forKey: .wallStreetSeen)) ?? d.wallStreetSeen
+    // Saved before the toggle existed: Wall Street showed the ticker, so it still does.
+    let themeTicker = backgroundStyle == .wallStreet
+    showTicker = (try? c.decodeIfPresent(Bool.self, forKey: .showTicker)) ?? themeTicker
+    tickerFromTheme = (try? c.decodeIfPresent(Bool.self, forKey: .tickerFromTheme)) ?? themeTicker
     tickerIndices = (try? c.decodeIfPresent(Bool.self, forKey: .tickerIndices)) ?? d.tickerIndices
     tickerStocks = (try? c.decodeIfPresent(Bool.self, forKey: .tickerStocks)) ?? d.tickerStocks
     tickerCrypto = (try? c.decodeIfPresent(Bool.self, forKey: .tickerCrypto)) ?? d.tickerCrypto

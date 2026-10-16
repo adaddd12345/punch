@@ -823,12 +823,13 @@ struct PopoverView: View {
     }
   }
 
-  /// Wall Street: the market terminal (quotes, headlines) as a contained panel, inset
-  /// from the tiles and the footer. Headlines open on click.
+  /// The stock ticker (any background; Wall Street turns it on): the market terminal
+  /// (quotes, headlines) as a contained panel, inset from the tiles and the footer.
+  /// Headlines open on click.
   @ViewBuilder private var marketPanel: some View {
     let layers = controller.settings.tickerLayers
-    if controller.settings.backgroundStyle == .wallStreet, !layers.isEmpty {
-      MarketPanel(layers: layers)
+    if controller.settings.showTicker, !layers.isEmpty {
+      MarketPanel(layers: layers, active: visible)
         .frame(height: MarketPanel.height(layers))
         .padding(.top, 2)
         .accessibilityHidden(true)
@@ -1026,13 +1027,16 @@ struct PopoverView: View {
               ForEach(BackgroundStyle.allCases.filter(\.theme)) { Text($0.title).tag($0) }
             }
           }
-          // Wall Street's market panel: which layers it carries (delayed, not for trading).
-          if controller.settings.backgroundStyle == .wallStreet {
-            Menu("Ticker") {
-              ForEach(MarketLayer.allCases) { l in
-                Toggle(l.title, isOn: Binding(get: { controller.settings.tickerShows(l) },
-                                              set: { controller.settings.setTicker(l, $0) }))
-              }
+          // The stock ticker (market panel), with any background, and which layers it
+          // carries (delayed, not for trading).
+          Menu("Ticker") {
+            Toggle("Show Stock Ticker", isOn: Binding(get: { controller.settings.showTicker },
+                                                      set: { controller.settings.setShowTickerByHand($0) }))
+            Divider()
+            ForEach(MarketLayer.allCases) { l in
+              Toggle(l.title, isOn: Binding(get: { controller.settings.tickerShows(l) },
+                                            set: { controller.settings.setTicker(l, $0) }))
+                .disabled(!controller.settings.showTicker)
             }
           }
           // What's Playing art: the cover, or a sleeve with a record peeking out.
