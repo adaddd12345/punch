@@ -934,7 +934,9 @@ struct PopoverView: View {
             Image(systemName: "hourglass").font(.system(size: 11, weight: .semibold))
               .frame(width: 16, height: 16)
           } else {
-            FooterTurningGlyph(kind: .check)
+            Image(systemName: "waveform.badge.magnifyingglass")
+              .font(.system(size: 12, weight: .semibold))
+              .footerGesture(degrees: -8)
           }
         }
       }
@@ -1149,13 +1151,13 @@ struct PopoverView: View {
   /// Quit, alone: it ends the whole app, so it never shares a group with menus.
   private var powerGroup: some View {
     FooterGroup {
-      // The word with full labels; otherwise the speaker-driver power glyph, which
-      // turns on hover like the shaker.
+      // The word with full labels; otherwise a flat power glyph. Red under the pointer.
       Button { NSApp.terminate(nil) } label: {
-        if labels == .full { Text("Quit").fixedSize().padding(.horizontal, 8) } else { FooterTurningGlyph(kind: .quit) }
+        if labels == .full { Text("Quit").fixedSize().padding(.horizontal, 8) }
+        else { Image(systemName: "power").font(.system(size: 12, weight: .bold)) }
       }
       .accessibilityLabel("Quit")
-      .buttonStyle(FooterButtonStyle())
+      .buttonStyle(FooterButtonStyle(danger: true))
       .font(.system(size: 11))
     }
   }

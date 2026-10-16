@@ -105,15 +105,18 @@ struct FooterGlassRow: ViewModifier {
 /// sizes itself (Live, DJ, Beats); otherwise a bare glyph in a 24 pt circle.
 struct FooterButtonStyle: ButtonStyle {
   var chip = false
+  /// Quit: red under the pointer.
+  var danger = false
 
   func makeBody(configuration: Configuration) -> some View {
-    FooterButtonBody(configuration: configuration, chip: chip)
+    FooterButtonBody(configuration: configuration, chip: chip, danger: danger)
   }
 }
 
 private struct FooterButtonBody: View {
   let configuration: ButtonStyle.Configuration
   let chip: Bool
+  let danger: Bool
   @State private var hovered = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
@@ -126,9 +129,13 @@ private struct FooterButtonBody: View {
     configuration.label
       .frame(minWidth: chip ? nil : FooterBento.button, minHeight: FooterBento.button)
       // A bare glyph rests quiet and comes up to full ink under the pointer.
-      .foregroundStyle(chip ? AnyShapeStyle(.primary) : AnyShapeStyle(lit ? .primary : .secondary))
+      .foregroundStyle(chip ? AnyShapeStyle(.primary)
+                       : danger && lit ? AnyShapeStyle(Color.red) : AnyShapeStyle(lit ? .primary : .secondary))
       .environment(\.footerHover, motion && enabled && hovered)
-      .background { FooterPlate(opacity: lit ? (pressed ? 0.13 : 0.07) : 0) }
+      .background {
+        if danger && lit { Capsule().fill(Color.red.opacity(pressed ? 0.22 : 0.14)).allowsHitTesting(false) }
+        else { FooterPlate(opacity: lit ? (pressed ? 0.13 : 0.07) : 0) }
+      }
       .scaleEffect(motion && pressed ? FooterMotion.pressScale : 1)
       .contentShape(Capsule())
       // Clicks like a 28 pt control without growing its group.
@@ -211,9 +218,12 @@ struct FooterShakerMenu<Content: View>: View {
     .fixedSize()
     .frame(width: FooterBento.button, height: FooterBento.button)
     .overlay {
-      ShakerGlyph(angle: motion && hovered && !open ? FooterMotion.turn : 0)
+      // A flat settings cog; hover turns it a notch.
+      Image(systemName: "gearshape")
+        .font(.system(size: 12.5, weight: .semibold))
+        .rotationEffect(.degrees(motion && hovered && !open ? 30 : 0))
         .frame(width: Self.size, height: Self.size)
-        .modifier(FooterInk(lit: lit))
+        .foregroundStyle(lit ? .primary : .secondary)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)
