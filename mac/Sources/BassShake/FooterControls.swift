@@ -248,20 +248,23 @@ struct FooterShakerMenu<Content: View>: View {
 
 /// The DJ knob: fixed tick marks around a knob whose pointer turns a notch on hover.
 struct FooterKnob: View {
+  /// SF Symbols' semibold stroke at 12 pt, so the knob sits flush with its neighbours.
+  private let w: CGFloat = 1.3
+
   var body: some View {
     ZStack {
       ForEach([-60.0, 0, 60], id: \.self) { a in
-        Capsule().frame(width: 1.6, height: 2.6)
-          .offset(y: -6.2)
+        Capsule().frame(width: w, height: 2.2)
+          .offset(y: -6.9)
           .rotationEffect(.degrees(a))
       }
       ZStack {
-        Circle().strokeBorder(lineWidth: 1.6).frame(width: 8.6, height: 8.6)
-        Capsule().frame(width: 1.6, height: 3.2).offset(y: -1.9)
+        Circle().strokeBorder(lineWidth: w).frame(width: 9.4, height: 9.4)
+        Capsule().frame(width: w, height: 3).offset(y: -1.9)
       }
       .footerGesture(degrees: 30)
     }
-    .frame(width: 14, height: 14)
+    .frame(width: 16, height: 16)
   }
 }
 

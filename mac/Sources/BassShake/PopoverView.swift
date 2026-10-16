@@ -909,7 +909,7 @@ struct PopoverView: View {
         if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
       } label: {
         HStack(spacing: 4) {
-          Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 12, weight: .semibold))
+          Image(systemName: beats.playing ? "waveform" : "square.grid.2x2").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16)
             .symbolEffect(.variableColor.iterative, isActive: beats.playing && visible && !controller.settings.powerSaver && !reduceMotion)
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
@@ -936,6 +936,7 @@ struct PopoverView: View {
           } else {
             Image(systemName: "waveform.badge.magnifyingglass")
               .font(.system(size: 12, weight: .semibold))
+              .frame(width: 16, height: 16)
               .footerGesture(degrees: -8)
           }
         }
@@ -1154,7 +1155,7 @@ struct PopoverView: View {
       // The word with full labels; otherwise a flat power glyph. Red under the pointer.
       Button { NSApp.terminate(nil) } label: {
         if labels == .full { Text("Quit").fixedSize().padding(.horizontal, 8) }
-        else { Image(systemName: "power").font(.system(size: 12, weight: .bold)) }
+        else { Image(systemName: "power").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16) }
       }
       .accessibilityLabel("Quit")
       .buttonStyle(FooterButtonStyle(danger: true))
