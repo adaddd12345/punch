@@ -479,8 +479,8 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   // Seasonal (vector snow, embers, gold flecks, petals over a wash; Festive.swift).
   // An older build that doesn't know these raw values falls back to System Grey.
   case frost, pumpkin, lunar, sakura
-  // Themes: Wall Street (trading-floor wash, drifting currency marks and a ticker
-  // tape of the app's own state; Festive.swift + TickerTape.swift).
+  // Themes: Wall Street (a terminal-black wash and a market panel of quotes and
+  // headlines; Festive.swift + TickerTape.swift + MarketData.swift).
   case wallStreet
   // Morphing: Freezing (new) and Ember (raw value kept, so a saved Ember still loads)
   // are animated mesh gradients, nothing but colour (MorphBackground.swift).
@@ -541,6 +541,31 @@ extension Settings {
     set {
       waveform = newValue != .off
       if newValue != .off { spectrum = newValue == .spectrum }
+    }
+  }
+}
+
+extension Settings {
+  /// Wall Street's market panel: the layers turned on.
+  var tickerLayers: Set<MarketLayer> {
+    var s: Set<MarketLayer> = []
+    if tickerIndices { s.insert(.indices) }
+    if tickerStocks { s.insert(.stocks) }
+    if tickerCrypto { s.insert(.crypto) }
+    if tickerFX { s.insert(.fx) }
+    if tickerNews { s.insert(.news) }
+    return s
+  }
+
+  func tickerShows(_ l: MarketLayer) -> Bool { tickerLayers.contains(l) }
+
+  mutating func setTicker(_ l: MarketLayer, _ on: Bool) {
+    switch l {
+    case .indices: tickerIndices = on
+    case .stocks: tickerStocks = on
+    case .crypto: tickerCrypto = on
+    case .fx: tickerFX = on
+    case .news: tickerNews = on
     }
   }
 }
@@ -729,6 +754,12 @@ struct Settings: Codable, Equatable {
   var backgroundStyle: BackgroundStyle = .system
   /// Wall Street turns EQ Visual to Spectrum the first time it's picked.
   var wallStreetSeen = false
+  /// Wall Street's market panel layers (⋯ › Look › Ticker).
+  var tickerIndices = true
+  var tickerStocks = true
+  var tickerCrypto = true
+  var tickerFX = false
+  var tickerNews = true
   /// The EQ Visual from before that (EQVisual raw value), put back on leaving
   /// Wall Street unless EQ Visual was changed by hand meanwhile.
   var eqVisualBeforeTheme: String? = nil
@@ -950,6 +981,11 @@ struct Settings: Codable, Equatable {
     remoteTakeover = (try? c.decodeIfPresent(String.self, forKey: .remoteTakeover)) ?? nil
     lightsOutGuard = (try? c.decodeIfPresent(OutputGuard.self, forKey: .lightsOutGuard)) ?? d.lightsOutGuard
     wallStreetSeen = (try? c.decodeIfPresent(Bool.self, forKey: .wallStreetSeen)) ?? d.wallStreetSeen
+    tickerIndices = (try? c.decodeIfPresent(Bool.self, forKey: .tickerIndices)) ?? d.tickerIndices
+    tickerStocks = (try? c.decodeIfPresent(Bool.self, forKey: .tickerStocks)) ?? d.tickerStocks
+    tickerCrypto = (try? c.decodeIfPresent(Bool.self, forKey: .tickerCrypto)) ?? d.tickerCrypto
+    tickerFX = (try? c.decodeIfPresent(Bool.self, forKey: .tickerFX)) ?? d.tickerFX
+    tickerNews = (try? c.decodeIfPresent(Bool.self, forKey: .tickerNews)) ?? d.tickerNews
     eqVisualBeforeTheme = (try? c.decodeIfPresent(String.self, forKey: .eqVisualBeforeTheme)) ?? nil
   }
 

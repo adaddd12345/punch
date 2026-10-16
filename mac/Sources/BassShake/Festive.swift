@@ -52,8 +52,8 @@ struct FestiveForeground: NSViewRepresentable {
 /// Links a popup's festive background (which owns the display link) to its foreground.
 final class FestiveClock {
   weak var front: FestiveView?
-  /// Wall Street's ticker tape (TickerTape.swift), moved on the same ticks.
-  weak var tape: TickerTapeView?
+  /// Wall Street's market panel (TickerTape.swift), moved on the same ticks.
+  weak var tape: MarketPanelView?
   /// The moment the background last drew.
   fileprivate var time = FestiveView.stillTime
   /// The background's display link is running (so the foreground's particles may show).
@@ -828,52 +828,14 @@ private enum Sakura {
 /// A trading floor after hours: deep green into navy with a warm gold glow low down,
 /// and a few currency marks rising slowly, very faint. In front, three or four a little
 /// brighter, each now and then ticking up with a small green ▲.
+/// Wall Street: a dark trading-terminal wash (black, a little amber and green); the
+/// market panel (TickerTape.swift) is the theme. No particles.
 private enum WallStreet {
-  struct Mark { let x, y, size, speed, sway, phase, alpha: Double; let symbol: Int; let gold: Bool }
-
-  static let symbols = ["$", "€", "£", "¥", "¢"]
-
-  static func marks(_ n: Int, seed: Int, size: ClosedRange<Double>, speed: ClosedRange<Double>,
-                    alpha: ClosedRange<Double>) -> [Mark] {
-    func pick(_ k: Int, _ range: ClosedRange<Double>, _ i: Int) -> Double {
-      range.lowerBound + (range.upperBound - range.lowerBound) * seeded(seed + k, i)
-    }
-    return (0..<n).map { i in
-      // Mostly dollars, the rest spread over the others.
-      let r = seeded(seed + 8, i)
-      let symbol = r < 0.4 ? 0 : 1 + Int((r - 0.4) / 0.6 * 4) % 4
-      return Mark(x: 0.05 + 0.90 * seeded(seed, i), y: seeded(seed + 1, i), size: pick(2, size, i),
-                  speed: pick(3, speed, i), sway: 2 + 5 * seeded(seed + 4, i), phase: seeded(seed + 5, i),
-                  alpha: pick(6, alpha, i), symbol: symbol, gold: seeded(seed + 7, i) < 0.6)
-    }
-  }
-
-  static let back = marks(13, seed: 211, size: 10...17, speed: 3...6, alpha: 0.55...1.0)
-  /// In front: few, small, and quicker past the text.
-  static let front = marks(4, seed: 241, size: 10...12, speed: 6...9, alpha: 0.9...1.0)
-
-  /// Each symbol as a vector outline (New York, the system serif), height 1, centred.
-  static let paths: [CGPath] = {
-    let base = NSFont.systemFont(ofSize: 100, weight: .semibold)
-    let font = (base.fontDescriptor.withDesign(.serif).flatMap { NSFont(descriptor: $0, size: 100) } ?? base) as CTFont
-    return symbols.map { s in
-      var chars = Array(s.utf16)
-      var glyphs = [CGGlyph](repeating: 0, count: chars.count)
-      guard CTFontGetGlyphsForCharacters(font, &chars, &glyphs, chars.count),
-            let raw = CTFontCreatePathForGlyph(font, glyphs[0], nil) else { return CGPath(rect: .zero, transform: nil) }
-      let box = raw.boundingBoxOfPath
-      let k = 1 / max(1, box.height)
-      // Glyph space is y-up; the scene is y-down.
-      var t = CGAffineTransform(scaleX: k, y: -k).translatedBy(x: -box.midX, y: -box.midY)
-      return raw.copy(using: &t) ?? raw
-    }
-  }()
-
   static let washesDark = [
-    Wash(x: 0.15, y: 0.10, r: 0.60, drift: 0.05, period: 97, squash: 0.75, colour: RGB(0.05, 0.42, 0.26), alpha: 0.42),
-    Wash(x: 0.92, y: 0.46, r: 0.55, drift: 0.06, period: 113, squash: 0.80, colour: RGB(0.08, 0.16, 0.48), alpha: 0.40),
-    Wash(x: 0.25, y: 0.66, r: 0.45, drift: 0.06, period: 89, squash: 0.70, colour: RGB(0.04, 0.30, 0.30), alpha: 0.26),
-    Wash(x: 0.78, y: 0.97, r: 0.42, drift: 0.05, period: 79, squash: 0.60, colour: RGB(0.95, 0.74, 0.36), alpha: 0.17),
+    Wash(x: 0.15, y: 0.10, r: 0.60, drift: 0.05, period: 97, squash: 0.75, colour: RGB(0.55, 0.30, 0.02), alpha: 0.22),
+    Wash(x: 0.92, y: 0.46, r: 0.55, drift: 0.06, period: 113, squash: 0.80, colour: RGB(0.03, 0.30, 0.14), alpha: 0.24),
+    Wash(x: 0.25, y: 0.66, r: 0.45, drift: 0.06, period: 89, squash: 0.70, colour: RGB(0.10, 0.10, 0.14), alpha: 0.30),
+    Wash(x: 0.78, y: 0.97, r: 0.42, drift: 0.05, period: 79, squash: 0.60, colour: RGB(0.95, 0.58, 0.10), alpha: 0.14),
   ]
   static let washesLight = [
     Wash(x: 0.15, y: 0.10, r: 0.60, drift: 0.05, period: 97, squash: 0.75, colour: RGB(0.55, 0.84, 0.66), alpha: 0.38),
@@ -883,55 +845,17 @@ private enum WallStreet {
   ]
 
   static func build(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {
-    scene.backgroundColor = (dark ? RGB(0.02, 0.06, 0.08) : RGB(0.93, 0.96, 0.95)).cg(0.56)
-    // Trading-floor green at the top into navy at the bottom.
+    scene.backgroundColor = (dark ? RGB(0.015, 0.015, 0.02) : RGB(0.95, 0.94, 0.91)).cg(dark ? 0.66 : 0.56)
+    // Terminal black (warm paper in light mode), a touch of amber at the top.
     let floor = CAGradientLayer()
     floor.frame = CGRect(origin: .zero, size: size)
-    floor.colors = dark ? [RGB(0.02, 0.20, 0.13).cg(0.50), RGB(0.03, 0.07, 0.20).cg(0.50)]
-                        : [RGB(0.80, 0.92, 0.85).cg(0.40), RGB(0.82, 0.86, 0.95).cg(0.40)]
+    floor.colors = dark ? [RGB(0.10, 0.06, 0.01).cg(0.50), RGB(0.01, 0.02, 0.03).cg(0.55)]
+                        : [RGB(0.99, 0.90, 0.74).cg(0.40), RGB(0.86, 0.90, 0.88).cg(0.40)]
     floor.startPoint = CGPoint(x: 0.2, y: 0)
     floor.endPoint = CGPoint(x: 0.8, y: 1)
     scene.addSublayer(floor)
     for (i, wash) in (dark ? washesDark : washesLight).enumerated() { wash.add(to: scene, a, size, phase: Double(i) * 0.33) }
-    for m in back { addMark(scene, a, m, size, dark, alpha: dark ? 0.20 : 0.24, ticks: false) }
   }
 
-  static func buildFront(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {
-    for m in front { addMark(scene, a, m, size, dark, alpha: dark ? 0.34 : 0.38, ticks: true) }
-  }
-
-  static func addMark(_ scene: CALayer, _ a: Animator, _ m: Mark, _ size: CGSize, _ dark: Bool, alpha: Double, ticks: Bool) {
-    let w = Double(size.width), h = Double(size.height)
-    let gold = dark ? RGB(0.98, 0.82, 0.46) : RGB(0.62, 0.46, 0.10)
-    let green = dark ? RGB(0.46, 0.90, 0.62) : RGB(0.08, 0.46, 0.26)
-    let colour = m.gold ? gold : green
-    let holder = CALayer()
-    holder.addSublayer(shape(Path(paths[m.symbol]), scale: m.size, fill: colour.cg()))
-    scene.addSublayer(holder)
-    let span = h + 30
-    var mv = Animator.Mover(layer: holder, x0: m.x * w, y0: span - 15, y1: -15, slant: 0, duration: span / m.speed,
-                            phase: m.y, sway: m.sway, swayPeriod: 19, swayPhase: m.phase)
-    // In low, fainter towards the top so the header stays clean. In front, unseen until
-    // clear of the footer and the ticker tape.
-    let k = alpha * m.alpha
-    mv.fade = ticks ? [(0, 0), (0.11, 0), (0.19, k), (0.85, 0.55 * k), (1, 0)]
-                    : [(0, 0), (0.06, k), (0.85, 0.55 * k), (1, 0)]
-    if ticks {
-      // A small green ▲ just above and right of the mark, rising as it fades.
-      let up = dark ? RGB(0.40, 0.92, 0.55) : RGB(0.05, 0.55, 0.25)
-      var tri = Path()
-      tri.move(to: CGPoint(x: 0, y: -1)); tri.addLine(to: CGPoint(x: 1, y: 0.7)); tri.addLine(to: CGPoint(x: -1, y: 0.7))
-      tri.closeSubpath()
-      let tick = shape(tri, scale: m.size * 0.22, fill: up.cg())
-      tick.opacity = 0
-      holder.addSublayer(tick)
-      mv.tick = tick
-      mv.tickBase = CGPoint(x: m.size * 0.55, y: -m.size * 0.45)
-      mv.tickPeriod = 7 + 6 * m.phase
-      mv.tickPhase = m.x
-      // Inside the mark's holder, so it fades with the mark.
-      mv.tickPeak = 1
-    }
-    a.movers.append(mv)
-  }
+  static func buildFront(_ scene: CALayer, _ a: Animator, _ size: CGSize, _ dark: Bool) {}
 }
