@@ -1323,7 +1323,7 @@ private struct Banner: View {
     .padding(.vertical, 12)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background {
-      let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+      let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
       shape.fill(.thinMaterial)
         .overlay(shape.fill(tint.opacity(contrast == .increased ? 0.22 : 0.10)))
         .overlay(shape.strokeBorder(tint.opacity(contrast == .increased ? 0.8 : 0.35), lineWidth: contrast == .increased ? 1 : 0.5))

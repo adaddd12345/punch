@@ -11,7 +11,7 @@ enum Drawer {
   /// Around the drawer's content.
   static let padding: CGFloat = 12
   /// Every tile and bar.
-  static let radius: CGFloat = 12
+  static let radius: CGFloat = BentoRadius.tile
   /// Controls inside a tile or bar (segments, buttons).
   static let innerRadius: CGFloat = 6
   /// The smallest hit area.

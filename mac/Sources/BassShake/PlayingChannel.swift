@@ -195,7 +195,7 @@ struct EarsStack: View {
   private var count: Int { playing.apps.count }
   /// Mini already shows the loudest app in its hero: the row waits for a second one.
   private var shown: Bool { !mini || count >= 2 }
-  private var chipShape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
+  private var chipShape: RoundedRectangle { RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous) }
   private var fill: Double { contrast == .increased ? 0.16 : 0.08 }
 
   /// Nothing at all while hidden (no empty slot, so the popup's 8 pt rhythm holds).
@@ -333,7 +333,7 @@ private struct EarsRows: View {
     .padding(.vertical, 4)
     .padding(.horizontal, 4)
     .background {
-      let shape = RoundedRectangle(cornerRadius: bento ? BentoRadius.tile : 8, style: .continuous)
+      let shape = RoundedRectangle(cornerRadius: bento ? BentoRadius.tile : BentoRadius.flat, style: .continuous)
       shape.fill(Color.primary.opacity(0.05))
     }
     .animation(.easeOut(duration: 0.25), value: order)
@@ -414,7 +414,7 @@ private struct EarsRow: View {
       .pointerHint(Caption.tileMute(app.name, muted: muted))
     }
     .padding(.horizontal, 4)
-    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(hover ? 0.06 : 0)))
+    .background(RoundedRectangle(cornerRadius: BentoRadius.tile - 4, style: .continuous).fill(Color.primary.opacity(hover ? 0.06 : 0)))
     .onHover { hover = $0 }
   }
 }

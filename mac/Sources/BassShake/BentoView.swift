@@ -1771,6 +1771,7 @@ struct BentoGlassWash: View {
   var radius: CGFloat = BentoRadius.tile
   @Environment(\.colorScheme) private var scheme
   @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.displayScale) private var displayScale
 
   private var dark: Bool { scheme == .dark }
   /// Frost (EQ, presets, What's Playing) and graphite (off) stay faint.
@@ -1807,8 +1808,8 @@ struct BentoGlassWash: View {
         // backdrop it went pale and its white type fell near 3:1.
         if dark { shape.fill(Color.black.opacity(0.4)) }
         // The same hairline as BentoFill: marks a one-shot action, not a toggle.
-        shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.26), Color.primary.opacity(0.10)],
-                                          startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
+        shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.34), Color.primary.opacity(0.14)],
+                                          startPoint: .top, endPoint: .bottom), lineWidth: BentoRadius.hairline(displayScale))
       case .fader(let f):
         shape.fill(wash(.faint))
         GeometryReader { g in
@@ -1844,6 +1845,7 @@ struct BentoFill: View {
   @Environment(\.colorSchemeContrast) private var contrast
   /// Power Saver: no drop shadows, and a crisp rim instead of the blurred inner glow.
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.displayScale) private var displayScale
 
   private var dark: Bool { scheme == .dark }
   private var tileShadow: SoftShadow { SoftShadow(on: !powerSaver, color: Color.black.opacity(dark ? 0 : 0.05), radius: 1.5, y: 1) }
@@ -1860,13 +1862,18 @@ struct BentoFill: View {
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-    let rim = LinearGradient(colors: [Color.white.opacity(dark ? 0.18 : 0.65), Color.white.opacity(dark ? 0.03 : 0.12)],
+    // Top-lit: bright along the top edge and faded a third of the way down,
+    // so the sides and bottom carry no outline of their own. One device pixel.
+    let rim = LinearGradient(stops: [.init(color: Color.white.opacity(dark ? 0.20 : 0.75), location: 0),
+                                     .init(color: Color.white.opacity(dark ? 0.05 : 0.20), location: 0.35),
+                                     .init(color: Color.white.opacity(dark ? 0.02 : 0.10), location: 1)],
                              startPoint: .top, endPoint: .bottom)
+    let hair = BentoRadius.hairline(displayScale)
     ZStack {
       switch look {
       case .outline:
-        shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.26), Color.primary.opacity(0.10)],
-                                          startPoint: .top, endPoint: .bottom), lineWidth: 0.75)
+        shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.34), Color.primary.opacity(0.14)],
+                                          startPoint: .top, endPoint: .bottom), lineWidth: BentoRadius.hairline(displayScale))
       case .fader(let f):
         shape.fill(wash(dark ? 0.08 : 0.20))
           .modifier(tileShadow)
@@ -1876,7 +1883,7 @@ struct BentoFill: View {
             .frame(width: g.size.width * CGFloat(min(1, max(0, f))))
         }
         .clipShape(shape)
-        shape.strokeBorder(rim, lineWidth: 0.75)
+        shape.strokeBorder(rim, lineWidth: hair)
       default:
         let a: Double = {
           switch look {
@@ -1896,7 +1903,7 @@ struct BentoFill: View {
               .clipShape(shape)
           }
         }
-        shape.strokeBorder(rim, lineWidth: 0.75)
+        shape.strokeBorder(rim, lineWidth: hair)
       }
     }
     .animation(.easeOut(duration: 0.15), value: look == .lit)
@@ -2552,14 +2559,23 @@ private struct BentoLevelLine: View {
   }
 }
 
+/// One geometry for every block (docs/research/33-bento-geometry.md). The
+/// popover's corner is ~20 pt; blocks sit 12 in with 8 between them, so a
+/// block's corner is 12 (≈ 20 − 12, kept round enough to read as a tile: the
+/// corner gap is 13.7 against the 12 edge). Everything on the popover's edge
+/// (tiles, hero, banners, row chips) shares it; inside a block a radius is
+/// the block's minus its inset, never under `inner`.
 enum BentoRadius {
-  static let tile: CGFloat = 14
-  /// Rounded things inside a tile (14 − 8 padding).
+  static let tile: CGFloat = 12
+  /// Rounded things inside a tile (the floor for tile − inset).
   static let inner: CGFloat = 6
-  /// The hero: 16 pt padding, kept concentric with its inner 6.
-  static let hero: CGFloat = 22
-  /// Classic's faint surfaces: the original EQ backing's radius.
-  static let flat: CGFloat = 12
+  /// The hero is a sibling of the tiles, so the same corner (it was 22:
+  /// rounder than the popover around it).
+  static let hero: CGFloat = tile
+  /// Classic's faint surfaces (the same corner now).
+  static let flat: CGFloat = tile
+  /// The edge hairline: one device pixel, crisp at any scale.
+  static func hairline(_ scale: CGFloat) -> CGFloat { 1 / max(1, scale) }
 }
 
 /// Classic's power switch at its row in the hero, idle or playing (the hero

@@ -465,7 +465,7 @@ struct NowPlayingNote: View {
       .padding(.vertical, 12)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
         shape.fill(.thinMaterial)
           .overlay(shape.fill(Color.accentColor.opacity(0.10)))
           .overlay(shape.strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 0.5))

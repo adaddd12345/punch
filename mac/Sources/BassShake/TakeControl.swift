@@ -554,7 +554,7 @@ struct TakeoverBanner: View {
   @Environment(\.colorSchemeContrast) private var contrast
 
   var body: some View {
-    let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+    let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
         ZStack(alignment: .bottomTrailing) {
