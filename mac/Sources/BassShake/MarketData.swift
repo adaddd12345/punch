@@ -1,9 +1,9 @@
 import Foundation
 
-// Wall Street's market data (TickerTape.swift draws it). Free, keyless, public
+// The stock ticker's market data (TickerTape.swift draws it). Free, keyless, public
 // endpoints only, fetched off the main thread with an ephemeral session (no
 // cookies, no cache on disk, no identifiers), and only when the ticker asks:
-// it asks while the popup is visible with Wall Street on, never in the background.
+// it asks while the popup is visible with the ticker on, never in the background.
 //   Quotes (indices, stocks, FX & commodities): Yahoo Finance's spark endpoint,
 //     one request for every symbol, at most once a minute.
 //   Crypto: CoinGecko's simple/price, at most once a minute.
@@ -35,15 +35,19 @@ struct MarketQuote: Equatable {
 
   var priceText: String {
     let decimals = price < 10 ? 4 : price >= 10_000 && key.hasPrefix("c:") ? 0 : 2
+    return Self.formatters[decimals]?.string(from: NSNumber(value: price)) ?? String(price)
+  }
+  /// Made once (a NumberFormatter is slow to build); used on the main thread only.
+  private static let formatters: [Int: NumberFormatter] = Dictionary(uniqueKeysWithValues: [0, 2, 4].map { d in
     let f = NumberFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
     f.numberStyle = .decimal
     f.usesGroupingSeparator = true
     f.groupingSeparator = ","
-    f.minimumFractionDigits = decimals
-    f.maximumFractionDigits = decimals
-    return f.string(from: NSNumber(value: price)) ?? String(price)
-  }
+    f.minimumFractionDigits = d
+    f.maximumFractionDigits = d
+    return (d, f)
+  })
   var changeText: String { String(format: "%+.2f%%", change) }
   var dir: Int { change > 0.0049 ? 1 : change < -0.0049 ? -1 : 0 }
 }

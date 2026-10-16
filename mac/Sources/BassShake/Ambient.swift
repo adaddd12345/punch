@@ -70,8 +70,6 @@ private struct PopupBackdrop: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      // The ticker tape (Wall Street) rides the same clock.
-      .environment(\.festiveClock, clock)
       .background(PopupBackground(style: style, active: active, clock: clock))
       // An overlay takes no part in layout. Left out when the scene is a still frame
       // (Power Saver / Reduce Motion), where a frozen particle would sit on the text.

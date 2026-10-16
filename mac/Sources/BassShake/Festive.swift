@@ -52,8 +52,6 @@ struct FestiveForeground: NSViewRepresentable {
 /// Links a popup's festive background (which owns the display link) to its foreground.
 final class FestiveClock {
   weak var front: FestiveView?
-  /// Wall Street's market panel (TickerTape.swift), moved on the same ticks.
-  weak var tape: MarketPanelView?
   /// The moment the background last drew.
   fileprivate var time = FestiveView.stillTime
   /// The background's display link is running (so the foreground's particles may show).
@@ -205,7 +203,6 @@ final class FestiveView: NSView {
     CATransaction.setDisableActions(true)
     animator?.update(t)
     if let f = clock?.front, f.window === window { f.animator?.update(t) }
-    if let tape = clock?.tape, tape.window === window { tape.tick(t) }
     CATransaction.commit()
   }
 }

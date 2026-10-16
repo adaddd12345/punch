@@ -828,12 +828,13 @@ struct PopoverView: View {
     .environment(\.footerSurface, footerSurface)
   }
 
-  /// Wall Street: the market terminal (quotes, headlines) as a contained panel, inset
-  /// from the tiles and the footer. Headlines open on click.
+  /// The stock ticker (any background; Wall Street turns it on): the market terminal
+  /// (quotes, headlines) as a contained panel, inset from the tiles and the footer.
+  /// Headlines open on click.
   @ViewBuilder private var marketPanel: some View {
     let layers = controller.settings.tickerLayers
-    if controller.settings.backgroundStyle == .wallStreet, !layers.isEmpty {
-      MarketPanel(layers: layers)
+    if controller.settings.showTicker, !layers.isEmpty {
+      MarketPanel(layers: layers, active: visible)
         .frame(height: MarketPanel.height(layers))
         .padding(.top, 2)
         .accessibilityHidden(true)

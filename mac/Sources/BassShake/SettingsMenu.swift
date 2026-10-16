@@ -114,13 +114,16 @@ struct SettingsMenuContent: View {
           ForEach(BackgroundStyle.allCases.filter(\.theme)) { Text($0.title).tag($0) }
         }
       }
-      // Wall Street's market panel: which layers it carries (delayed, not for trading).
-      if controller.settings.backgroundStyle == .wallStreet {
-        Menu("Ticker") {
-          ForEach(MarketLayer.allCases) { l in
-            Toggle(l.title, isOn: Binding(get: { controller.settings.tickerShows(l) },
-                                          set: { controller.settings.setTicker(l, $0) }))
-          }
+      // The stock ticker (market panel), with any background (Wall Street turns it on),
+      // and which layers it carries (delayed, not for trading).
+      Menu("Ticker") {
+        Toggle("Show Stock Ticker", isOn: Binding(get: { controller.settings.showTicker },
+                                                  set: { controller.settings.setShowTickerByHand($0) }))
+        Divider()
+        ForEach(MarketLayer.allCases) { l in
+          Toggle(l.title, isOn: Binding(get: { controller.settings.tickerShows(l) },
+                                        set: { controller.settings.setTicker(l, $0) }))
+            .disabled(!controller.settings.showTicker)
         }
       }
       Toggle("Bento Layout", isOn: bind(\.bento))
