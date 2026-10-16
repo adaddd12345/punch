@@ -7,7 +7,9 @@ import Foundation
 //   Quotes (indices, stocks, FX & commodities): Yahoo Finance's spark endpoint,
 //     one request for every symbol, at most once a minute.
 //   Crypto: CoinGecko's simple/price, at most once a minute.
-//   News: CNBC and MarketWatch top-stories RSS, at most every five minutes.
+//   News: tech and breaking only, Techmeme and BBC News (technology + top stories)
+//     RSS, at most every five minutes; grim stories, clickbait and near-repeats are
+//     dropped (HeadlineFilter).
 // A failed fetch keeps the last values (drawn greyed, "DLY"); nothing yet: a note.
 // Delayed data, not for trading (the panel's tooltip says so).
 
@@ -183,8 +185,9 @@ final class MarketData {
   }
 
   static let feeds: [(source: String, url: String)] = [
-    ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
-    ("MKTW", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+    ("TECHMEME", "https://www.techmeme.com/feed.xml"),
+    ("BBC", "https://feeds.bbci.co.uk/news/technology/rss.xml"),
+    ("BBC", "https://feeds.bbci.co.uk/news/rss.xml"),
   ]
 
   private func fetchNews(_ now: Double) {
@@ -196,7 +199,7 @@ final class MarketData {
       guard let url = URL(string: feed.url) else { continue }
       group.enter()
       session.dataTask(with: url) { data, _, _ in
-        let items = data.map { RSSItems.parse($0, source: feed.source) } ?? []
+        let items = (data.map { RSSItems.parse($0, source: feed.source) } ?? []).filter(HeadlineFilter.keeps)
         lock.lock(); lists[i] = Array(items.prefix(10)); lock.unlock()
         group.leave()
       }.resume()
@@ -207,6 +210,7 @@ final class MarketData {
       for k in 0..<(lists.map(\.count).max() ?? 0) {
         for l in lists where k < l.count { merged.append(l[k]) }
       }
+      merged = HeadlineFilter.unique(merged)
       self.finish("news", ok: !merged.isEmpty) { self.headlines = merged }
     }
   }
@@ -223,10 +227,10 @@ final class MarketData {
       let key = Self.key(l, id)
       quotes[key] = MarketQuote(key: key, symbol: Self.symbols[l]!.first { $0.id == id }!.label, price: p, change: c)
     }
-    let url = URL(string: "https://www.cnbc.com/")!
-    headlines = [Headline(title: "Stocks edge higher as chipmakers rally into earnings", source: "CNBC", url: url),
-                 Headline(title: "Treasury yields slip after softer inflation print", source: "MKTW", url: url),
-                 Headline(title: "Oil steadies as traders weigh supply outlook", source: "CNBC", url: url)]
+    let url = URL(string: "https://www.techmeme.com/")!
+    headlines = [Headline(title: "Apple ships a new M-series chip in its pro laptops", source: "TECHMEME", url: url),
+                 Headline(title: "Open-source AI model tops coding benchmarks", source: "BBC", url: url),
+                 Headline(title: "EU agrees common charger rules for laptops", source: "TECHMEME", url: url)]
     tried = ["yahoo", "crypto", "news"]
   }
 }
@@ -269,11 +273,60 @@ private final class RSSItems: NSObject, XMLParserDelegate {
     field = nil
     guard name == "item" else { return }
     inItem = false
-    let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    var t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Techmeme ends each title with "(Author/Outlet)": the strip has no room for it.
+    if t.hasSuffix(")"), let open = t.range(of: " (", options: .backwards) { t = String(t[..<open.lowerBound]) }
     // Only web links open (a feed can't hand the browser anything else).
     if !t.isEmpty, let url = URL(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
        url.scheme == "https" || url.scheme == "http" {
       items.append(Headline(title: t, source: source, url: url))
     }
+  }
+}
+
+/// The news strip carries tech and breaking news only, and nothing grim or
+/// cheap: a compact word list, clickbait shapes, and near-repeats across feeds.
+enum HeadlineFilter {
+  private static let grim: Set<String> = [
+    "dead", "death", "deaths", "die", "dies", "died", "dying", "kill", "kills", "killed", "killing", "murder",
+    "murdered", "war", "wars", "attack", "attacks", "attacker", "shooting", "shot", "stabbing", "stabbed", "crash",
+    "crashes", "disaster", "tragedy", "bomb", "bombing", "terror", "terrorist", "hostage", "massacre", "execution",
+    "injured", "victim", "victims", "abuse", "assault", "rape", "suicide", "fire", "flood", "earthquake", "missile",
+    "strike", "strikes", "lawsuit", "sued", "sues", "scandal", "fraud", "arrested", "jailed", "guilty", "trial",
+    "layoffs", "cuts", "collapse", "porn", "funeral", "violence", "riot", "invasion", "conflict",
+  ]
+  private static let cheapStarts = ["live:", "watch:", "listen:", "podcast:", "opinion:", "analysis:", "quiz:",
+                                    "in pictures:", "in pics:", "video:", "comment:", "review:"]
+  private static let cheapPhrases = ["you won't believe", "you wont believe", "what you need to know", "here's why",
+                                     "heres why", "things to know", "things you", "ways to", "reasons why", "best deals",
+                                     "deal:", "podcast", "opinion"]
+
+  static func keeps(_ h: Headline) -> Bool {
+    let t = h.title.lowercased()
+    if t.hasSuffix("?") || cheapStarts.contains(where: t.hasPrefix) || cheapPhrases.contains(where: t.contains) {
+      return false
+    }
+    // Listicles: "7 things…", "10 best…".
+    if let first = t.split(separator: " ").first, Int(first) != nil,
+       ["things", "ways", "best", "reasons", "tips", "of"].contains(where: { t.contains(" \($0) ") }) { return false }
+    return words(t).isDisjoint(with: grim)
+  }
+
+  /// Drops a headline sharing most of its words with one already kept.
+  static func unique(_ list: [Headline]) -> [Headline] {
+    var kept: [(Headline, Set<String>)] = []
+    for h in list {
+      let w = words(h.title.lowercased()).filter { $0.count > 3 }
+      let near = kept.contains { _, k in
+        let small = min(w.count, k.count)
+        return small > 0 && Double(w.intersection(k).count) / Double(small) >= 0.6
+      }
+      if !near { kept.append((h, w)) }
+    }
+    return kept.map(\.0)
+  }
+
+  private static func words(_ t: String) -> Set<String> {
+    Set(t.split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init))
   }
 }

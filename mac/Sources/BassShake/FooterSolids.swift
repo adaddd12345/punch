@@ -23,10 +23,13 @@ struct FooterSolid: View {
   @Environment(\.footerLit) private var envLit
   @Environment(\.footerTint) private var envTint
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.popupTint) private var popupTint
 
   var body: some View {
     let on = moving ?? hover
-    let ink = tint ?? envTint ?? (scheme == .dark ? Color.white : Color.black)
+    // The popup's colourway (the hero's tint), else plain white / black.
+    let themed = popupTint.map { scheme == .dark ? $0.pastel : $0.ink }
+    let ink = tint ?? envTint ?? themed ?? (scheme == .dark ? Color.white : Color.black)
     FooterSolidCanvas(kind: kind, pose: on ? 1 : 0, ink: ink)
       .opacity((lit ?? envLit) ? 1 : 0.68)
       .frame(width: 16, height: 16)

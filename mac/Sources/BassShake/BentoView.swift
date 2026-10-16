@@ -39,6 +39,8 @@ struct BentoView: View {
   var macBlock: AnyView? = nil
   /// Other Macs (Remote.swift): a tile per paired Mac nearby, placed by the layout order.
   var remoteBlock: AnyView? = nil
+  /// The stock ticker panel (PopoverView.marketPanel), its own block; nil = off.
+  var tickerBlock: AnyView? = nil
   /// Hold-to-rearrange (Reshuffle.swift).
   @ObservedObject var reshuffle: Reshuffle
   /// Membership only (which entries, not levels): hides the What's Playing block when it would be empty.
@@ -85,6 +87,12 @@ struct BentoView: View {
     return s.liquidGlass && !powerSaver && !reduceTransparency
   }
 
+  /// The hero's glass, off while it's the block being dragged (like every
+  /// tile's, via \.bentoGlass). Kept on, its id'd glass stayed in the
+  /// GlassEffectContainer's place and merged with the tiles it passed, so the
+  /// lifted hero never visibly left its slot and couldn't be dropped elsewhere.
+  private var heroGlass: Bool { glass && drag?.key != LayoutSection.bentoHero.key }
+
   /// Edit Layout's choice: each layout keeps its own keys.
   private func shows(_ bento: LayoutSection, _ classic: LayoutSection) -> Bool {
     s.shows(flat ? classic : bento)
@@ -97,6 +105,9 @@ struct BentoView: View {
       .environment(\.bentoGlass, glass ? BentoGlassSpace(id: glassSpace) : nil)
       // Always set, so a tile's glassEffectID never comes and goes with `glass`.
       .environment(\.bentoGlassNamespace, glassSpace)
+      // The colourway for what's drawn outside the tiles (ticker block here, footer via the preference).
+      .environment(\.popupTint, flat ? nil : heroTint)
+      .preference(key: PopupTintPreference.self, value: flat ? nil : heroTint)
   }
 
   private var stack: some View {
@@ -159,6 +170,7 @@ struct BentoView: View {
     let mini = size == .mini
     switch key {
     case LayoutSection.macVolume.key: return macBlock != nil
+    case LayoutSection.ticker.key: return !mini && tickerBlock != nil
     case LayoutSection.liveTime.key: return !mini && s.showLiveTime
     case LayoutSection.remoteMacs.key: return !mini && remoteBlock != nil && !remoteMacs.shown.isEmpty && s.shows(.remoteMacs)
     case LayoutSection.bentoHero.key, LayoutSection.classicHeader.key: return true
@@ -188,6 +200,8 @@ struct BentoView: View {
     switch key {
     case LayoutSection.macVolume.key:
       if let macBlock { macBlock }
+    case LayoutSection.ticker.key:
+      if let tickerBlock { tickerBlock }
     case LayoutSection.remoteMacs.key:
       if let remoteBlock { remoteBlock }
     case LayoutSection.liveTime.key:
@@ -622,7 +636,7 @@ struct BentoView: View {
     .background { heroBackground(t, dark: dark, shape: shape) }
     // Liquid Glass: plain glass under the wash (the wash, not .tint, carries the
     // colour, so it stays when the window isn't key).
-    .modifier(BentoGlassSurface(on: glass, radius: BentoRadius.hero, interactive: false, id: "hero", space: glassSpace))
+    .modifier(BentoGlassSurface(on: heroGlass, radius: BentoRadius.hero, interactive: false, id: "hero", space: glassSpace))
     .animation(.easeOut(duration: 0.2), value: modesLine)
     .animation(.easeOut(duration: 0.2), value: editedBase)
   }
@@ -708,7 +722,7 @@ struct BentoView: View {
     }
     .pointerHintTint(ink(t))
     .background { heroBackground(t, dark: dark, shape: shape, radius: radius, lineInset: radius, lineBottom: 4) }
-    .modifier(BentoGlassSurface(on: glass, radius: radius, interactive: false, id: "hero", space: glassSpace))
+    .modifier(BentoGlassSurface(on: heroGlass, radius: radius, interactive: false, id: "hero", space: glassSpace))
   }
 
   /// Mini's preset: a 32 disc with the shaker glyph, the word and its chevron, one menu.
@@ -1052,7 +1066,7 @@ struct BentoView: View {
                               lineInset: CGFloat? = nil, lineBottom: CGFloat? = nil) -> some View {
     ZStack {
       Group {
-        if glass {
+        if heroGlass {
           BentoGlassWash(tint: t, look: live ? .strong : .base, radius: radius)
         } else {
           BentoFill(tint: t, look: live ? .strong : .base, radius: radius)
@@ -1682,11 +1696,27 @@ private struct BentoGlassNamespaceKey: EnvironmentKey {
   static let defaultValue: Namespace.ID? = nil
 }
 
+private struct PopupTintKey: EnvironmentKey {
+  static let defaultValue: BentoTint? = nil
+}
+
+/// BentoView's hero tint (mode / preset), up to PopoverView for the footer.
+struct PopupTintPreference: PreferenceKey {
+  static let defaultValue: BentoTint? = nil
+  static func reduce(value: inout BentoTint?, nextValue: () -> BentoTint?) { value = value ?? nextValue() }
+}
+
 private struct BentoFlatKey: EnvironmentKey {
   static let defaultValue = false
 }
 
 extension EnvironmentValues {
+  /// The popup's colourway (the hero's tint), for the stock ticker and footer
+  /// glyphs. nil: Classic or outside the popup (neutral).
+  var popupTint: BentoTint? {
+    get { self[PopupTintKey.self] }
+    set { self[PopupTintKey.self] = newValue }
+  }
   /// Set by BentoView in the Classic layout: tiles draw as one faint surface.
   var bentoFlat: Bool {
     get { self[BentoFlatKey.self] }

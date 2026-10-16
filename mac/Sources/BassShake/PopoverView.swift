@@ -8,6 +8,8 @@ struct PopoverView: View {
   let meters: MeterModel
   @EnvironmentObject var updates: Updates
   @State private var ticker = MeterTicker()
+  /// BentoView's hero tint, for the footer glyphs (PopupTintPreference).
+  @State private var popupTint: BentoTint?
   @State private var visible = false
   @State private var editor: PresetEditor.Mode?
   @State private var showDrivers = false
@@ -223,17 +225,18 @@ struct PopoverView: View {
                       // Taking control of one Mac: no tiles for others (Switch Back first).
                       remoteBlock: controller.isMirror ? nil
                         : AnyView(RemoteMacsBlock(directory: RemoteControl.shared.directory, size: size)),
+                      tickerBlock: tickerBlock,
                       reshuffle: reshuffle)
+              .onPreferenceChange(PopupTintPreference.self) { popupTint = $0 }
           }
         }
       }
       // Under the stack, so a mute never pushes What's Playing down.
       mutedNotice
-      // Wall Street's market panel, its own row above the footer (or at the bottom).
-      if size != .mini { marketPanel }
       // No hairline: the shelf's own tone and a 10 pt gap set the footer apart.
       if size != .mini && !dockHeaderShown {
         footer
+          .environment(\.popupTint, popupTint)
           .padding(.top, FooterBento.edgeGap - 8)
       }
     }
@@ -831,14 +834,14 @@ struct PopoverView: View {
   /// The stock ticker (any background; Wall Street turns it on): the market terminal
   /// (quotes, headlines) as a contained panel, inset from the tiles and the footer.
   /// Headlines open on click.
-  @ViewBuilder private var marketPanel: some View {
+  /// A block in BentoView's stack (LayoutSection.ticker: reorderable, above
+  /// the footer by default); nil while it's off.
+  private var tickerBlock: AnyView? {
     let layers = controller.settings.tickerLayers
-    if controller.settings.showTicker, !layers.isEmpty {
-      MarketPanel(layers: layers, active: visible)
-        .frame(height: MarketPanel.height(layers))
-        .padding(.top, 2)
-        .accessibilityHidden(true)
-    }
+    guard size != .mini, controller.settings.showTicker, !layers.isEmpty else { return nil }
+    return AnyView(MarketPanel(layers: layers, active: visible, terminal: controller.settings.backgroundStyle == .wallStreet)
+      .frame(height: MarketPanel.height(layers))
+      .accessibilityHidden(true))
   }
 
   /// How the footer's shelf is drawn: glass like the tiles (macOS 26, Liquid Glass

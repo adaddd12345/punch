@@ -21,6 +21,8 @@ struct MarketPanel: NSViewRepresentable {
   let layers: Set<MarketLayer>
   /// The popup is open.
   var active = true
+  /// Wall Street: the terminal look (amber on black) whatever the tiles' tint.
+  var terminal = false
 
   static let inset: CGFloat = 4
   static let quoteHeight: CGFloat = 20
@@ -36,6 +38,15 @@ struct MarketPanel: NSViewRepresentable {
   func updateNSView(_ view: MarketPanelView, context: Context) {
     view.setLayers(layers)
     let env = context.environment
+    // The popup's colourway: labels in the hero tint's pastel on a deep shade of
+    // it. Wall Street (or no tint: Classic) keeps the terminal's amber on black.
+    if !terminal, let t = env.popupTint, let c = NSColor(t.pastel).usingColorSpace(.sRGB) {
+      let r = c.redComponent, g = c.greenComponent, b = c.blueComponent, k: CGFloat = 0.13
+      view.setPalette(accent: CGColor(srgbRed: r, green: g, blue: b, alpha: 1),
+                      panel: CGColor(srgbRed: r * k, green: g * k, blue: b * k, alpha: 0.94))
+    } else {
+      view.setPalette(accent: Ink.terminalAmber, panel: MarketPanelView.terminalPanel)
+    }
     view.setState(still: env.powerSaver || env.accessibilityReduceMotion, visible: active && !env.drawPaused)
   }
 }
@@ -45,16 +56,20 @@ struct MarketPanel: NSViewRepresentable {
 private enum Ink: Int {
   case amber, price, up, down, flat, stale, headline, dim
 
+  static let terminalAmber = CGColor(srgbRed: 1.00, green: 0.63, blue: 0.12, alpha: 1)
+  /// Labels, tags and notes: amber, or the popup's tint (set by the panel before it draws).
+  static var accent = terminalAmber
+
   var color: CGColor {
     switch self {
-    case .amber: return CGColor(srgbRed: 1.00, green: 0.63, blue: 0.12, alpha: 1)
+    case .amber: return Self.accent
     case .price: return CGColor(srgbRed: 0.96, green: 0.94, blue: 0.88, alpha: 1)
     case .up: return CGColor(srgbRed: 0.26, green: 0.93, blue: 0.45, alpha: 1)
     case .down: return CGColor(srgbRed: 1.00, green: 0.33, blue: 0.29, alpha: 1)
     case .flat: return CGColor(srgbRed: 0.72, green: 0.72, blue: 0.70, alpha: 1)
     case .stale: return CGColor(srgbRed: 0.52, green: 0.52, blue: 0.50, alpha: 1)
     case .headline: return CGColor(srgbRed: 0.93, green: 0.92, blue: 0.88, alpha: 0.95)
-    case .dim: return CGColor(srgbRed: 1.00, green: 0.63, blue: 0.12, alpha: 0.55)
+    case .dim: return Self.accent.copy(alpha: 0.55)!
     }
   }
   static func of(_ dir: Int, stale: Bool) -> Ink { stale ? .stale : dir > 0 ? .up : dir < 0 ? .down : .flat }
@@ -336,6 +351,10 @@ private final class Strip {
     }
   }
 
+  func setPanel(_ panel: CGColor) {
+    for f in fades { f.colors = [panel.copy(alpha: 1)!, panel.copy(alpha: 0)!] }
+  }
+
   func setFrame(_ r: CGRect) {
     clip.frame = r
     band.bounds = CGRect(x: 0, y: 0, width: r.width, height: r.height)
@@ -463,11 +482,13 @@ private final class Strip {
 // MARK: - Panel
 
 final class MarketPanelView: NSView {
-  private static let panelColour = CGColor(srgbRed: 0.035, green: 0.035, blue: 0.04, alpha: 0.94)
+  static let terminalPanel = CGColor(srgbRed: 0.035, green: 0.035, blue: 0.04, alpha: 0.94)
+  private var panelColour = MarketPanelView.terminalPanel
+  private var accent = Ink.terminalAmber
   private let panel = CALayer()
   private let rule = CALayer()
-  private let quotes = Strip(speed: 24, gap: 18, panel: panelColour)
-  private let news = Strip(speed: 15, gap: 30, panel: panelColour)
+  private let quotes = Strip(speed: 24, gap: 18, panel: terminalPanel)
+  private let news = Strip(speed: 15, gap: 30, panel: terminalPanel)
   private var quotePool: [QuoteLayer] = []
   private var textPool: [TextLayer] = []
 
@@ -495,7 +516,7 @@ final class MarketPanelView: NSView {
     quotes.make = { [weak self] in self?.makeQuote($0) }
     news.make = { [weak self] in self?.makeHeadline($0) }
     toolTip = "Delayed market data from Yahoo Finance and CoinGecko, not for trading. "
-      + "Headlines from CNBC and MarketWatch open in your browser."
+      + "Tech and breaking headlines from Techmeme and BBC News open in your browser."
     setAccessibilityElement(false)
     observer = NotificationCenter.default.addObserver(forName: MarketData.changed, object: nil, queue: .main) {
       [weak self] _ in self?.dataChanged()
@@ -515,6 +536,17 @@ final class MarketPanelView: NSView {
     built = nil
     needsLayout = true
     if visible { ask() }
+  }
+
+  /// The colourway (MarketPanel): a change redraws the strips' labels.
+  func setPalette(accent: CGColor, panel: CGColor) {
+    guard accent != self.accent || panel != panelColour else { return }
+    self.accent = accent
+    panelColour = panel
+    quotes.setPanel(panel)
+    news.setPanel(panel)
+    built = nil
+    needsLayout = true
   }
 
   /// `still`: Power Saver / Reduce Motion. `visible`: the popup is open and not covered.
@@ -571,15 +603,16 @@ final class MarketPanelView: NSView {
     guard bounds.width > 1 else { return }
     if let b = built, b.scale == scale, b.size == bounds.size { return }
     built = (scale, bounds.size)
+    Ink.accent = accent
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     let hair = 1 / scale
-    // A terminal in both appearances: near-black glass, a faint amber edge.
+    // A terminal in both appearances: a deep panel, a faint edge in its accent.
     panel.frame = bounds
     panel.cornerRadius = 7
-    panel.backgroundColor = Self.panelColour
+    panel.backgroundColor = panelColour
     panel.borderWidth = hair
-    panel.borderColor = CGColor(srgbRed: 1.0, green: 0.63, blue: 0.12, alpha: 0.22)
+    panel.borderColor = accent.copy(alpha: 0.22)
     let inset = MarketPanel.inset, side: CGFloat = 4
     var y = inset
     for (s, on) in [(quotes, showsQuotes), (news, showsNews)] {
@@ -593,7 +626,7 @@ final class MarketPanelView: NSView {
     rule.isHidden = !(showsQuotes && showsNews)
     if showsQuotes && showsNews {
       rule.frame = CGRect(x: side + 2, y: y + 0.5 - hair / 2, width: bounds.width - side * 2 - 4, height: hair)
-      rule.backgroundColor = CGColor(srgbRed: 1.0, green: 0.63, blue: 0.12, alpha: 0.18)
+      rule.backgroundColor = accent.copy(alpha: 0.18)
       y += 1
     }
     if showsNews {
@@ -642,6 +675,7 @@ final class MarketPanelView: NSView {
 
   private func dataChanged() {
     guard built != nil else { return }
+    Ink.accent = accent
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     if showsQuotes {
@@ -768,6 +802,9 @@ final class MarketPanelView: NSView {
     hold(quotes: false, news: false)
     NSCursor.arrow.set()
   }
+
+  /// Rearranging: presses go to the block's drag (SwiftUI), not to the headlines.
+  override func hitTest(_ point: NSPoint) -> NSView? { Reshuffle.anyOn ? nil : super.hitTest(point) }
 
   override func mouseDown(with event: NSEvent) {
     if let url = headline(at: convert(event.locationInWindow, from: nil)) { NSWorkspace.shared.open(url) }

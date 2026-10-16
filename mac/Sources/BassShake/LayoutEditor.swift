@@ -39,6 +39,11 @@ struct LayoutSection: Identifiable, Equatable {
   static let remoteMacs = LayoutSection(key: "remote.macs", name: "Connected Mac", symbol: "laptopcomputer",
                                         tint: .steel, height: 56, when: "With Control Another Mac From Here on and a paired Mac nearby")
 
+  // Both layouts, Full and Compact: the stock ticker (TickerTape.swift),
+  // above the footer by default. Stored as Settings.showTicker.
+  static let ticker = LayoutSection(key: "market.ticker", name: "Stock Ticker", symbol: "chart.line.uptrend.xyaxis",
+                                    tint: .butter, height: 32, when: "With Show Stock Ticker on")
+
   // Bento, top to bottom.
   static let bentoHero = LayoutSection(key: "bento.hero", name: "Top Tile", symbol: "power", tint: .butter,
                                        height: 64, locked: "Always shown: it has the power button.")
@@ -75,11 +80,11 @@ struct LayoutSection: Identifiable, Equatable {
 
   /// Default orders, top to bottom: Live Time first, Mac Volume right under the EQ.
   static let bento: [LayoutSection] = [liveTime, bentoHero, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials, bentoPresets,
-                                       bentoModes, bentoModeSettings, bentoLightsOut, bentoFooter]
+                                       bentoModes, bentoModeSettings, bentoLightsOut, ticker, bentoFooter]
   /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
   static let classic: [LayoutSection] = [liveTime, classicHeader, classicNowPlaying, classicEQ, macVolume, remoteMacs, classicMeters,
                                          classicSliders, classicPresets, classicModes, classicModeSettings, classicLightsOut,
-                                         classicFooter]
+                                         ticker, classicFooter]
 
   /// The defaults before Mac Volume moved under the EQ (it was first). A saved
   /// order equal to these was never really customised: it gets the new default.
@@ -105,7 +110,8 @@ struct LayoutSection: Identifiable, Equatable {
     }
     for (i, s) in movable.enumerated() where !out.contains(s) {
       let above = movable[..<i].reversed().first { out.contains($0) }
-      let at = above.flatMap { a in out.firstIndex(of: a).map { $0 + 1 } } ?? 0
+      // The last default (the ticker) stays last: right above the footer.
+      let at = i == movable.count - 1 ? out.count : above.flatMap { a in out.firstIndex(of: a).map { $0 + 1 } } ?? 0
       out.insert(s, at: at)
     }
     return out + fixed
@@ -130,6 +136,7 @@ extension Settings {
   func shows(_ section: LayoutSection) -> Bool {
     if section.key == LayoutSection.macVolume.key { return showMacVolume }
     if section.key == LayoutSection.liveTime.key { return showLiveTime }
+    if section.key == LayoutSection.ticker.key { return showTicker }
     return section.locked != nil || !hiddenSections.contains(section.key)
   }
 }
@@ -152,7 +159,7 @@ struct LayoutEditorView: View {
 
   /// Live Time is opt-in (off by default), so Show All leaves it alone.
   private var anyHidden: Bool {
-    sections.contains { $0.key != LayoutSection.liveTime.key && !controller.settings.shows($0) }
+    sections.contains { $0.key != LayoutSection.liveTime.key && $0.key != LayoutSection.ticker.key && !controller.settings.shows($0) }
   }
 
   var body: some View {
@@ -236,6 +243,8 @@ struct LayoutEditorView: View {
       controller.settings.showMacVolume.toggle()
     } else if s.key == LayoutSection.liveTime.key {
       controller.settings.showLiveTime.toggle()
+    } else if s.key == LayoutSection.ticker.key {
+      controller.settings.setShowTickerByHand(!controller.settings.showTicker)
     } else if let i = controller.settings.hiddenSections.firstIndex(of: s.key) {
       controller.settings.hiddenSections.remove(at: i)
     } else {
