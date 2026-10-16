@@ -2,7 +2,7 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
-// Vinyl Peek (⋯ › Look › Artwork Style): What's Playing art as a record
+// Vinyl Peek (⋯ › Look › Artwork › Style): What's Playing art as a record
 // sleeve with a translucent coloured record peeking from its trailing edge.
 //
 // - The sleeve is the cover / still when there is one; otherwise a soft
@@ -615,11 +615,7 @@ struct VinylPeekArt: View {
   @ViewBuilder
   private func sleeve(_ g: VinylGeometry, _ p: ArtPalette, dark: Bool, shape: RoundedRectangle) -> some View {
     if let artwork {
-      Image(nsImage: artwork)
-        .resizable()
-        .interpolation(.high)
-        .aspectRatio(contentMode: .fill)
-        .frame(width: g.sleeve, height: g.sleeve)
+      EffectArtworkImage(image: artwork, size: g.sleeve)
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         .transition(.opacity)

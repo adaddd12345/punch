@@ -8,7 +8,7 @@ import SwiftUI
 /// What a settings-menu item opens in the popup. PopoverView opens every one the same
 /// way: the Live / DJ / Beats tray (its own window) shuts and rearranging ends first.
 enum SettingsPanel: Equatable {
-  case remote, mySounds, layout, hearingFit, micTest, latencyLab, drivers, resetConfirm
+  case remote, mySounds, layout, hearingFit, micTest, latencyLab, markets, drivers, resetConfirm
 }
 
 /// This Mac's settings menu.
@@ -125,6 +125,9 @@ struct SettingsMenuContent: View {
                                         set: { controller.settings.setTicker(l, $0) }))
             .disabled(!controller.settings.showTicker)
         }
+        Divider()
+        Button("Market Briefing…") { panel = .markets }
+          .disabled(!controller.settings.showTicker || controller.settings.tickerLayers.isEmpty)
       }
       Toggle("Bento Layout", isOn: bind(\.bento))
       // The Bento tiles in system Liquid Glass (macOS 26+). Power Saver and
@@ -144,9 +147,18 @@ struct SettingsMenuContent: View {
       Picker("Scope Color", selection: bind(\.scopeColor)) {
         ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
       }
-      // What's Playing art: the cover, or a sleeve with a record peeking out.
-      Picker("Artwork Style", selection: bind(\.artworkStyle)) {
-        ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
+      // Artwork layout and image treatment are independent, so effects also
+      // work on the cover inside Vinyl Peek's sleeve.
+      Menu("Artwork") {
+        Picker("Style", selection: bind(\.artworkStyle)) {
+          ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.inline)
+        Divider()
+        Picker("Effects", selection: bind(\.artworkEffect)) {
+          ForEach(ArtworkEffect.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.inline)
       }
       // What's Playing's play / pause as the isometric shield (off: the flat disc).
       Toggle("Isometric Play Button", isOn: bind(\.isoMuteButton))

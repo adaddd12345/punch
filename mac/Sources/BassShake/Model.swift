@@ -864,9 +864,12 @@ struct Settings: Codable, Equatable {
   /// The menu-bar icon carries the Mac's volume: a stack of 10 pills beside the
   /// shaker, a slash while muted or at 0 (⋯ › Look).
   var menuBarVolume = true
-  /// What's Playing art (⋯ › Look › Artwork Style): the plain cover, or Vinyl
+  /// What's Playing art (⋯ › Look › Artwork › Style): the plain cover, or Vinyl
   /// Peek (a sleeve with a record peeking out that turns while it plays).
   var artworkStyle: ArtworkStyle = .cover
+  /// A treatment for cover art and video stills, independent of cover / vinyl.
+  /// None adds no stylization; automatic padding removal still applies.
+  var artworkEffect: ArtworkEffect = .none
   /// What's Playing's play / pause as the isometric shield (⋯ › Look ›
   /// Isometric Play Button; the key keeps its old name so saved prefs load). Off: the flat disc.
   var isoMuteButton = false
@@ -991,6 +994,7 @@ struct Settings: Codable, Equatable {
     playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
     artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
+    artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
     isoMuteButton = (try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton)) ?? d.isoMuteButton
     bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
     bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount

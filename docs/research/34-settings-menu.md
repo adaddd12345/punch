@@ -58,6 +58,16 @@ Sources: Apple HIG, *Menus* and *The menu bar* (developer.apple.com/design/human
 Connect Another Mac… | Check for Updates… · Help › · About | Quit. Only two levels anywhere: Sound Like ›,
 App Details ›, Microphone › and Ticker › (pickers that can't be inline). No saved setting was removed.
 
+Artwork now lives at **Look › Artwork**, with inline **Style** (Cover / Vinyl Peek)
+and **Effects** (None / Halftone Dots) groups. The native menu shows both sets of
+checkmarked choices together, without another submenu. Effects are independent
+of the cover / sleeve layout, default to None, and apply only to cover art and
+video stills; icons and playback controls retain their original rendering.
+Both effects automatically trim empty transparent margins and confidently
+detected paired black video bars before filling the artwork frame. Near-black
+JPEG padding is tolerated; uneven dark edges and ambiguous dark compositions
+remain unchanged. Detection and rendering are cached and run off the main thread.
+
 **Controlling another Mac:** same items as before, now from `RemoteSettingsMenuContent`; its sound
 switches are the shared `SoundFeatureItems`, so the two menus can't drift.
 

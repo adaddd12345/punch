@@ -7,8 +7,8 @@ import SwiftUI
 /// MarketData.swift) and, under it, a taller, slower news strip. Prices and changes are in
 /// Lights Out's tall rolling figures (CountdownFont), and roll like its countdown when a
 /// refresh moves them (only the figures that changed, only on screen): up rises in from
-/// below, down drops in from above. Clicking a headline opens it in the browser; hovering
-/// a strip holds it still.
+/// below, down drops in from above. Clicking a headline opens it in the browser;
+/// a quote opens Market Briefing. Hover settles both strips and emphasizes one quote.
 ///
 /// Cheap: every symbol, figure and headline is drawn once into a small image when the data
 /// changes (figures are cached) and laid out once on a band; Core Animation slides the band
@@ -16,13 +16,15 @@ import SwiftUI
 /// per frame: no display link, no SwiftUI re-render, no layer moves from here. Edge fades
 /// are plain overlays (no mask, no offscreen pass). Data is asked for by a 5 s timer, only
 /// while the popup is open and visible. Hidden: stopped where it was. Power Saver / Reduce
-/// Motion: still strips showing the first items.
+/// Motion: still strips, with every item reachable through the briefing button.
 struct MarketPanel: NSViewRepresentable {
   let layers: Set<MarketLayer>
   /// The popup is open.
   var active = true
   /// Wall Street: the terminal look (amber on black) whatever the tiles' tint.
   var terminal = false
+  /// Opens the readable briefing, optionally at the quote under the pointer.
+  var onInspect: (String?) -> Void = { _ in }
 
   static let inset: CGFloat = 4
   static let quoteHeight: CGFloat = 20
@@ -36,6 +38,7 @@ struct MarketPanel: NSViewRepresentable {
   func makeNSView(context: Context) -> MarketPanelView { MarketPanelView() }
 
   func updateNSView(_ view: MarketPanelView, context: Context) {
+    view.onInspect = onInspect
     view.setLayers(layers)
     let env = context.environment
     // The popup's colourway: labels in the hero tint's pastel on a deep shade of
@@ -239,7 +242,7 @@ private final class RollField: CALayer {
 
 // MARK: - Slots
 
-/// A quote: "AAPL 341.54 ▼ −0.41%" (+ "DLY" when the last fetch failed).
+/// A quote: "AAPL 341.54 ▼ −0.41%" (+ "OLD" when its update is unavailable).
 private final class QuoteLayer: CALayer {
   let label = CALayer()
   let price = RollField()
@@ -247,6 +250,7 @@ private final class QuoteLayer: CALayer {
   let change = RollField()
   let tag = CALayer()
   var quote: MarketQuote?
+  private var highlighted = false
 
   override init() {
     super.init()
@@ -260,12 +264,15 @@ private final class QuoteLayer: CALayer {
 
   static let figures = Draw.Figures(height: 10)
 
-  func show(_ q: MarketQuote, height h: CGFloat, scale: CGFloat, animated: Bool) {
+  func show(_ q: MarketQuote, height h: CGFloat, scale: CGFloat, animated: Bool, highlighted: Bool = false) {
     let move = quote.map { q.price > $0.price ? 1 : q.price < $0.price ? -1 : 0 } ?? 0
     let fig = Self.figures
     let y = ((h - fig.window) / 2).rounded()
     var x: CGFloat = 0
-    if quote?.symbol != q.symbol, let (img, size) = Draw.text(Draw.attr(q.symbol, Draw.symbolFont, .amber, kern: 0.2),
+    let emphasis = highlighted && !q.stale && q.change != nil && q.dir != 0
+    let labelInk: Ink = q.stale ? .stale : emphasis ? Ink.of(q.dir, stale: false) : .amber
+    if quote?.symbol != q.symbol || self.highlighted != highlighted || quote?.dir != q.dir || quote?.stale != q.stale,
+       let (img, size) = Draw.text(Draw.attr(q.symbol, Draw.symbolFont, labelInk, kern: 0.2),
                                                                height: h, scale: scale) {
       label.contents = img
       label.contentsScale = scale
@@ -273,13 +280,15 @@ private final class QuoteLayer: CALayer {
     }
     label.position = .zero
     x = label.bounds.width + 5
-    let pw = price.set(q.priceText, ink: q.stale ? .stale : .price, fig: fig, scale: scale, dir: move,
+    let pw = price.set(q.priceText, ink: q.stale ? .stale : emphasis ? Ink.of(q.dir, stale: false) : .price,
+                       fig: fig, scale: scale, dir: move,
                        animated: animated && move != 0)
     price.position = CGPoint(x: x, y: y)
     x += pw + 4
     let ink = Ink.of(q.dir, stale: q.stale)
-    let mark = q.dir > 0 ? "▲" : q.dir < 0 ? "▼" : "■"
-    if quote?.dir != q.dir || quote?.stale != q.stale || arrow.contents == nil,
+    let mark = q.change == nil ? "" : q.dir > 0 ? "▲" : q.dir < 0 ? "▼" : "■"
+    arrow.isHidden = q.change == nil
+    if quote?.dir != q.dir || quote?.stale != q.stale || (quote?.change == nil) != (q.change == nil) || arrow.contents == nil,
        let (img, size) = Draw.text(Draw.attr(mark, .systemFont(ofSize: q.dir == 0 ? 5 : 7, weight: .bold), ink),
                                    height: h, scale: scale) {
       arrow.contents = img
@@ -287,14 +296,14 @@ private final class QuoteLayer: CALayer {
       arrow.bounds = CGRect(origin: .zero, size: size)
     }
     arrow.position = CGPoint(x: x, y: 0)
-    x += arrow.bounds.width + 2
+    x += (q.change == nil ? 0 : arrow.bounds.width) + 2
     let cw = change.set(q.changeText.replacingOccurrences(of: "-", with: "−"), ink: ink, fig: fig, scale: scale,
                         dir: move, animated: animated && move != 0)
     change.position = CGPoint(x: x, y: y)
     x += cw
     tag.isHidden = !q.stale
     if q.stale {
-      if tag.contents == nil, let (img, size) = Draw.text(Draw.attr("DLY", Draw.tagFont, .stale), height: h, scale: scale) {
+      if tag.contents == nil, let (img, size) = Draw.text(Draw.attr("OLD", Draw.tagFont, .stale), height: h, scale: scale) {
         tag.contents = img
         tag.contentsScale = scale
         tag.bounds = CGRect(origin: .zero, size: size)
@@ -303,6 +312,7 @@ private final class QuoteLayer: CALayer {
       x += 4 + tag.bounds.width
     }
     quote = q
+    self.highlighted = highlighted
     bounds = CGRect(x: 0, y: 0, width: ceil(x), height: h)
   }
 }
@@ -333,9 +343,38 @@ private final class Strip {
   private(set) var keys: [String] = []
   /// One loop: every key once, with its gap.
   private var loop = 0.0
-  /// How far the band had scrolled when it last stopped (0..<loop).
+  /// The current animation's origin, or the stopped offset (0..<loop).
   private var phase = 0.0
   private var moving = false
+  /// An interruptible velocity ramp. The render server draws it; this small
+  /// model only supplies continuity when another pointer event interrupts it.
+  private struct Motion {
+    let started: CFTimeInterval
+    let duration: Double
+    let fromSpeed: Double
+    let toSpeed: Double
+
+    func velocity(at time: CFTimeInterval) -> Double {
+      guard duration > 0 else { return toSpeed }
+      let t = min(1, max(0, (time - started) / duration))
+      let ease = t * t * (3 - 2 * t)
+      return fromSpeed + (toSpeed - fromSpeed) * ease
+    }
+
+    func distance(at time: CFTimeInterval) -> Double {
+      let elapsed = max(0, time - started)
+      guard duration > 0 else { return toSpeed * elapsed }
+      let t = min(1, elapsed / duration)
+      // Integrate smoothstep velocity: acceleration is zero at both ends, so
+      // entering the hover does not apply a sudden brake, nor snap at rest.
+      let integrated = t * t * t - 0.5 * t * t * t * t
+      return duration * (fromSpeed * t + (toSpeed - fromSpeed) * integrated)
+        + toSpeed * max(0, elapsed - duration)
+    }
+  }
+  private var motion: Motion?
+  static let stopDuration = 0.56
+  static let startDuration = 0.70
   private static let lead = 6.0
 
   init(speed: Double, gap: Double, panel: CGColor) {
@@ -364,8 +403,11 @@ private final class Strip {
 
   /// Where the band is now (0..<loop), read from the animation while it slides.
   func offset() -> Double {
-    guard moving, loop > 0, let p = band.presentation() else { return phase }
-    return wrap(-Double(p.position.x))
+    guard loop > 0, let motion else { return phase }
+    let now = band.convertTime(CACurrentMediaTime(), from: nil)
+    if now < motion.started + motion.duration || motion.toSpeed > 0,
+       let p = band.presentation() { return wrap(-Double(p.position.x)) }
+    return wrap(phase + motion.distance(at: now))
   }
 
   /// Lays out `keys`. `keep`: the slot at the left edge stays where it is on screen (if its
@@ -417,12 +459,14 @@ private final class Strip {
     slide()
   }
 
-  /// Slides, or stops where it is.
-  func setMoving(_ on: Bool) {
-    guard on != moving else { return }
+  /// Hover eases velocity, while hidden views and direct clicks stop immediately.
+  func setMoving(_ on: Bool, animated: Bool = false) {
+    let now = band.convertTime(CACurrentMediaTime(), from: nil)
+    let settling = motion.map { now < $0.started + $0.duration } ?? false
+    guard on != moving || (!animated && settling) else { return }
     phase = offset()
     moving = on
-    slide()
+    slide(rampDuration: animated ? (on ? Self.startDuration : Self.stopDuration) : 0)
   }
 
   /// The slot's on-screen span overlaps the row (band scrolled `o`).
@@ -458,17 +502,47 @@ private final class Strip {
   }
 
   /// Puts the band at `phase` and, while moving, hands the loop to Core Animation.
-  private func slide() {
+  private func slide(rampDuration: Double? = nil) {
+    let now = band.convertTime(CACurrentMediaTime(), from: nil)
+    let from = motion?.velocity(at: now) ?? 0
+    let target = moving ? speed : 0
+    // A data/layout refresh preserves any remaining coast instead of snapping.
+    let remaining = motion.map { max(0, $0.started + $0.duration - now) } ?? 0
+    let duration = loop > 0 && abs(from - target) > 0.001 ? (rampDuration ?? remaining) : 0
+    let distance = (from + target) * duration / 2
+    let end = wrap(phase + distance)
+    motion = Motion(started: now, duration: duration, fromSpeed: from, toSpeed: target)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     band.removeAnimation(forKey: "slide")
-    band.position = CGPoint(x: -phase, y: 0)
+    band.removeAnimation(forKey: "coast")
+    band.position = CGPoint(x: -end, y: 0)
+    if duration > 0, distance > 0 {
+      let a = CAKeyframeAnimation(keyPath: "position.x")
+      let samples = max(24, Int(ceil(duration * 120)))
+      // Send the whole curve once. Core Animation supplies every frame; no
+      // display link, SwiftUI redraw, or pointer timer drives the coast.
+      a.values = (0...samples).map { index -> Double in
+        let time = now + duration * Double(index) / Double(samples)
+        // Keep the path unwrapped through a loop seam.
+        return -(phase + (motion?.distance(at: time) ?? 0))
+      }
+      a.keyTimes = (0...samples).map { NSNumber(value: Double($0) / Double(samples)) }
+      a.calculationMode = .linear
+      a.beginTime = now
+      a.duration = duration
+      a.timingFunction = CAMediaTimingFunction(name: .linear)
+      a.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+      band.add(a, forKey: "coast")
+    }
     if moving, loop > 0 {
       let a = CABasicAnimation(keyPath: "position.x")
       a.fromValue = 0
       a.toValue = -loop
       a.duration = loop / speed
-      a.timeOffset = phase / speed
+      a.beginTime = now + duration
+      a.timeOffset = end / speed
+      a.timingFunction = CAMediaTimingFunction(name: .linear)
       a.repeatCount = .infinity
       a.isRemovedOnCompletion = false
       // Smooth, not 15 fps steps, but never a 120 Hz display's full rate.
@@ -495,9 +569,18 @@ final class MarketPanelView: NSView {
   private var layersOn: Set<MarketLayer> = []
   private var still = false
   private var visible = false
+  private var requestedVisible = false
   private var timer: Timer?
   private var built: (scale: CGFloat, size: CGSize)?
   private var observer: NSObjectProtocol?
+  var onInspect: (String?) -> Void = { _ in }
+  private let inspect = NSButton()
+  private var hoveredKey: String?
+  private var pointer: NSPoint?
+  private var press: (point: NSPoint, time: TimeInterval)?
+  private var renderedNews: [String] = []
+  private var hoverSettled: DispatchWorkItem?
+  private var resumeAfterExit: DispatchWorkItem?
 
   private var data: MarketData { .shared }
   private var scale: CGFloat { window?.backingScaleFactor ?? 2 }
@@ -515,8 +598,18 @@ final class MarketPanelView: NSView {
     panel.addSublayer(rule)
     quotes.make = { [weak self] in self?.makeQuote($0) }
     news.make = { [weak self] in self?.makeHeadline($0) }
-    toolTip = "Delayed market data from Yahoo Finance and CoinGecko, not for trading. "
-      + "Tech and breaking headlines from Techmeme and BBC News open in your browser."
+    inspect.image = NSImage(systemSymbolName: "list.bullet", accessibilityDescription: nil)
+    inspect.imagePosition = .imageOnly
+    inspect.isBordered = false
+    inspect.bezelStyle = .inline
+    inspect.setButtonType(.momentaryPushIn)
+    inspect.target = self
+    inspect.action = #selector(openBriefing)
+    inspect.toolTip = "Market Briefing: every quote, full headlines and sources"
+    inspect.setAccessibilityLabel("Open market briefing")
+    addSubview(inspect)
+    toolTip = "Market snapshots from Yahoo Finance and CoinGecko; delays vary. "
+      + "Open Market Briefing for quote times, comparisons and full headlines."
     setAccessibilityElement(false)
     observer = NotificationCenter.default.addObserver(forName: MarketData.changed, object: nil, queue: .main) {
       [weak self] _ in self?.dataChanged()
@@ -526,6 +619,8 @@ final class MarketPanelView: NSView {
   deinit {
     observer.map(NotificationCenter.default.removeObserver)
     timer?.invalidate()
+    hoverSettled?.cancel()
+    resumeAfterExit?.cancel()
   }
 
   override var isFlipped: Bool { true }
@@ -542,6 +637,7 @@ final class MarketPanelView: NSView {
   func setPalette(accent: CGColor, panel: CGColor) {
     guard accent != self.accent || panel != panelColour else { return }
     self.accent = accent
+    inspect.contentTintColor = NSColor(cgColor: accent)
     panelColour = panel
     quotes.setPanel(panel)
     news.setPanel(panel)
@@ -553,10 +649,11 @@ final class MarketPanelView: NSView {
   func setState(still: Bool, visible: Bool) {
     let toStill = still && !self.still
     self.still = still
-    self.visible = visible && window != nil
+    requestedVisible = visible
+    self.visible = requestedVisible && window != nil
     if self.visible, timer == nil {
       ask()
-      // Asks only; MarketData fetches what's due (quotes a minute apart, news five).
+      // Asks only; MarketData throttles each source independently.
       let t = Timer(timeInterval: 5, repeats: true) { [weak self] _ in self?.ask() }
       t.tolerance = 1
       RunLoop.main.add(t, forMode: .common)
@@ -564,8 +661,25 @@ final class MarketPanelView: NSView {
     } else if !self.visible {
       timer?.invalidate()
       timer = nil
+      hoverSettled?.cancel()
+      hoverSettled = nil
+      resumeAfterExit?.cancel()
+      resumeAfterExit = nil
+      press = nil
+      pointer = nil
+      setHovered(nil)
+      quotes.held = false
+      news.held = false
     }
     if toStill {
+      hoverSettled?.cancel()
+      hoverSettled = nil
+      resumeAfterExit?.cancel()
+      resumeAfterExit = nil
+      if pointer == nil {
+        quotes.held = false
+        news.held = false
+      }
       quotes.restart()
       news.restart()
     }
@@ -574,8 +688,8 @@ final class MarketPanelView: NSView {
 
   private func syncMotion() {
     let run = visible && !still && built != nil
-    quotes.setMoving(run && showsQuotes && !quotes.held)
-    news.setMoving(run && showsNews && !news.held)
+    quotes.setMoving(run && showsQuotes && !quotes.held, animated: run)
+    news.setMoving(run && showsNews && !news.held, animated: run)
   }
 
   override func layout() {
@@ -586,7 +700,7 @@ final class MarketPanelView: NSView {
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     built = nil
-    if window == nil { setState(still: still, visible: false) }
+    setState(still: still, visible: requestedVisible)
     rebuildIfNeeded()
   }
 
@@ -614,13 +728,15 @@ final class MarketPanelView: NSView {
     panel.borderWidth = hair
     panel.borderColor = accent.copy(alpha: 0.22)
     let inset = MarketPanel.inset, side: CGFloat = 4
+    inspect.frame = CGRect(x: bounds.width - 27, y: inset - 2, width: 24, height: 24)
+    inspect.contentTintColor = NSColor(cgColor: accent)
     var y = inset
     for (s, on) in [(quotes, showsQuotes), (news, showsNews)] {
       s.clip.isHidden = !on
       s.fades.forEach { $0.isHidden = !on }
     }
     if showsQuotes {
-      quotes.setFrame(CGRect(x: side, y: y, width: bounds.width - side * 2, height: MarketPanel.quoteHeight))
+      quotes.setFrame(CGRect(x: side, y: y, width: max(1, bounds.width - side * 2 - 27), height: MarketPanel.quoteHeight))
       y += MarketPanel.quoteHeight
     }
     rule.isHidden = !(showsQuotes && showsNews)
@@ -630,11 +746,12 @@ final class MarketPanelView: NSView {
       y += 1
     }
     if showsNews {
-      news.setFrame(CGRect(x: side, y: y, width: bounds.width - side * 2, height: MarketPanel.newsHeight))
+      news.setFrame(CGRect(x: side, y: y, width: max(1, bounds.width - side * 2 - (showsQuotes ? 0 : 27)), height: MarketPanel.newsHeight))
     }
     // Drawn for this scale and size: lay the strips out from the start.
     quotes.fill(showsQuotes ? quoteKeys() : [], keep: false)
     news.fill(showsNews ? newsKeys() : [], keep: false)
+    renderedNews = newsSignature()
     CATransaction.commit()
     syncMotion()
   }
@@ -642,8 +759,13 @@ final class MarketPanelView: NSView {
   // MARK: Data
 
   private func ask() {
-    guard !layersOn.isEmpty else { return }
+    guard visible, !layersOn.isEmpty else { return }
     data.refresh(layersOn)
+    // An old cache can age while the popup is closed, even before a fetch fails.
+    if renderedNews != newsSignature() || quotes.slots.contains(where: { s in
+      guard let l = s.layer as? QuoteLayer, let q = quote(s.key) else { return false }
+      return l.quote?.stale != q.stale
+    }) { dataChanged() }
   }
 
   private func quoteKeys() -> [String] {
@@ -655,7 +777,9 @@ final class MarketPanelView: NSView {
       }
     }
     if out.isEmpty {
-      let sources: Set<String> = layersOn.contains(.crypto) && layersOn.count == 1 ? ["crypto"] : ["yahoo"]
+      var sources: Set<String> = []
+      if layersOn.contains(.crypto) { sources.insert("crypto") }
+      if !layersOn.subtracting([.crypto, .news]).isEmpty { sources.insert("yahoo") }
       out = [data.tried.isSuperset(of: sources) ? "_none" : "_wait"]
     }
     return out
@@ -665,6 +789,10 @@ final class MarketPanelView: NSView {
   private func newsKeys() -> [String] {
     if data.headlines.isEmpty { return [data.tried.contains("news") ? "_none" : "_wait"] }
     return data.headlines.map { "n:" + $0.url.absoluteString }
+  }
+
+  private func newsSignature() -> [String] {
+    data.headlines.map { "\($0.url.absoluteString)|\($0.title)|\($0.source)|\(data.isHeadlineStale($0))" }
   }
 
   private func quote(_ key: String) -> MarketQuote? {
@@ -690,19 +818,21 @@ final class MarketPanelView: NSView {
         for s in quotes.slots {
           guard let l = s.layer as? QuoteLayer, let q = quote(s.key) else { continue }
           l.show(q, height: MarketPanel.quoteHeight, scale: scale,
-                 animated: !still && visible && quotes.onScreen(s, at: o))
+                 animated: !still && visible && quotes.onScreen(s, at: o), highlighted: s.key == hoveredKey)
         }
         quotes.relayout()
       }
     }
     if showsNews {
       let nk = newsKeys()
-      if nk != news.keys {
+      if nk != news.keys || renderedNews != newsSignature() {
         let note = nk.first?.hasPrefix("_") == true || news.keys.first?.hasPrefix("_") == true
         news.fill(nk, keep: !note && !still)
+        renderedNews = newsSignature()
       }
     }
     CATransaction.commit()
+    if let pointer { updatePointer(pointer) }
   }
 
   // MARK: Slots
@@ -713,7 +843,7 @@ final class MarketPanelView: NSView {
     let l = quotePool.popLast() ?? QuoteLayer()
     l.anchorPoint = CGPoint(x: 0, y: 0.5)
     l.quote = nil
-    l.show(q, height: MarketPanel.quoteHeight, scale: scale, animated: false)
+    l.show(q, height: MarketPanel.quoteHeight, scale: scale, animated: false, highlighted: key == hoveredKey)
     return l
   }
 
@@ -725,8 +855,10 @@ final class MarketPanelView: NSView {
     l.anchorPoint = CGPoint(x: 0, y: 0.5)
     l.url = h.url
     let height = MarketPanel.newsHeight
-    let title = Draw.attr(h.title.count > 140 ? String(h.title.prefix(139)) + "…" : h.title, Draw.headlineFont, .headline)
-    let tagLine = CTLineCreateWithAttributedString(NSAttributedString(string: h.source, attributes: [
+    let stale = data.isHeadlineStale(h)
+    let title = Draw.attr(h.title.count > 140 ? String(h.title.prefix(139)) + "…" : h.title,
+                          Draw.headlineFont, stale ? .stale : .headline)
+    let tagLine = CTLineCreateWithAttributedString(NSAttributedString(string: h.source + (stale ? " · OLD" : ""), attributes: [
       .font: Draw.tagFont, .foregroundColor: NSColor.black, .kern: 0.4]))
     let tagW = ceil(CTLineGetTypographicBounds(tagLine, nil, nil, nil)) + 8
     guard let (titleImg, titleSize) = Draw.text(title, height: height, scale: scale) else { return nil }
@@ -786,20 +918,89 @@ final class MarketPanelView: NSView {
 
   private func hold(quotes q: Bool, news n: Bool) {
     guard q != quotes.held || n != news.held else { return }
+    hoverSettled?.cancel()
+    hoverSettled = nil
     quotes.held = q
     news.held = n
     syncMotion()
+    if (q || n) && visible && !still {
+      // A gentle coast can cross a symbol boundary by a few points.
+      // Refresh the stationary pointer once when it ends, never on every frame.
+      let work = DispatchWorkItem { [weak self] in
+        guard let self, self.visible, !self.still, let p = self.pointer else { return }
+        self.updatePointer(p)
+      }
+      hoverSettled = work
+      DispatchQueue.main.asyncAfter(deadline: .now() + Strip.stopDuration, execute: work)
+    }
+  }
+
+  @objc private func openBriefing() { onInspect(nil) }
+
+  private func setHovered(_ key: String?) {
+    guard key != hoveredKey else { return }
+    hoveredKey = key
+    Ink.accent = accent
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    for s in quotes.slots {
+      guard let l = s.layer as? QuoteLayer, let q = quote(s.key) else { continue }
+      l.show(q, height: MarketPanel.quoteHeight, scale: scale, animated: false, highlighted: s.key == key)
+    }
+    CATransaction.commit()
+  }
+
+  private func updatePointer(_ p: NSPoint) {
+    pointer = p
+    resumeAfterExit?.cancel()
+    resumeAfterExit = nil
+    let overQuotes = showsQuotes && quotes.clip.frame.contains(p)
+    // One reading surface: crossing the divider or reaching for the briefing
+    // button shouldn't restart one row while braking the other.
+    let inside = bounds.contains(p)
+    hold(quotes: inside && showsQuotes, news: inside && showsNews)
+    let key = overQuotes ? quotes.slot(at: p.x - quotes.clip.frame.minX)?.key : nil
+    setHovered(key.flatMap { data.quotes[$0] == nil ? nil : $0 })
+    if let key = hoveredKey, let q = quote(key) {
+      toolTip = "\(q.name.isEmpty ? q.symbol : q.name) · \(q.priceText) \(q.unit)\n"
+        + "\(q.changeText) \(q.changeBasis)\n\(q.timestampText) · \(q.source)"
+        + (q.stale ? "\nUpdate unavailable; last known quote." : "")
+        + "\nOpen Market Briefing for details."
+    } else if let url = headline(at: p), let h = data.headlines.first(where: { $0.url == url }) {
+      toolTip = "\(h.title)\n\(h.publisher) · \(h.timestampText)"
+    } else {
+      toolTip = "Market snapshots; delays vary. Market Briefing shows every quote and full headline."
+    }
+    (hoveredKey != nil || headline(at: p) != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
+  }
+
+  override func mouseEntered(with event: NSEvent) {
+    updatePointer(convert(event.locationInWindow, from: nil))
   }
 
   override func mouseMoved(with event: NSEvent) {
-    let p = convert(event.locationInWindow, from: nil)
-    // The strip under the pointer holds still, so a headline can be read and clicked.
-    hold(quotes: showsQuotes && quotes.clip.frame.contains(p), news: showsNews && news.clip.frame.contains(p))
-    (headline(at: p) != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
+    updatePointer(convert(event.locationInWindow, from: nil))
   }
 
   override func mouseExited(with event: NSEvent) {
-    hold(quotes: false, news: false)
+    pointer = nil
+    setHovered(nil)
+    // Keep the pending endpoint refresh during the exit grace: a quick
+    // re-entry is still part of the same coast. A committed exit cancels it.
+    resumeAfterExit?.cancel()
+    if visible && !still {
+      // Ignore an accidental skim across the edge before gently taking off.
+      let work = DispatchWorkItem { [weak self] in
+        guard let self, self.pointer == nil else { return }
+        self.resumeAfterExit = nil
+        self.hold(quotes: false, news: false)
+      }
+      resumeAfterExit = work
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.10, execute: work)
+    } else {
+      resumeAfterExit = nil
+      hold(quotes: false, news: false)
+    }
     NSCursor.arrow.set()
   }
 
@@ -807,6 +1008,29 @@ final class MarketPanelView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? { Reshuffle.anyOn ? nil : super.hitTest(point) }
 
   override func mouseDown(with event: NSEvent) {
-    if let url = headline(at: convert(event.locationInWindow, from: nil)) { NSWorkspace.shared.open(url) }
+    let p = convert(event.locationInWindow, from: nil)
+    hoverSettled?.cancel()
+    hoverSettled = nil
+    // Direct manipulation takes priority over easing: the click target must
+    // remain at the exact displayed position between mouse-down and mouse-up.
+    if bounds.contains(p) {
+      quotes.setMoving(false)
+      news.setMoving(false)
+    }
+    updatePointer(p)
+    press = (p, event.timestamp)
+  }
+
+  override func mouseDragged(with event: NSEvent) { press = nil }
+
+  override func mouseUp(with event: NSEvent) {
+    defer { press = nil }
+    let p = convert(event.locationInWindow, from: nil)
+    guard let press, !Reshuffle.anyOn, event.timestamp - press.time < 0.5,
+          hypot(p.x - press.point.x, p.y - press.point.y) < 4 else { return }
+    if showsQuotes, quotes.clip.frame.contains(p),
+       let key = quotes.slot(at: p.x - quotes.clip.frame.minX)?.key, data.quotes[key] != nil {
+      onInspect(key)
+    } else if let url = headline(at: p) { NSWorkspace.shared.open(url) }
   }
 }

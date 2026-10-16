@@ -38,6 +38,8 @@ struct PopoverView: View {
   @State private var showLayoutEditor = false
   @State private var showMySounds = false
   @State private var showRemote = false
+  @State private var showMarkets = false
+  @State private var marketQuote: String?
   /// The Dock header is hovered (its ✕ shows).
   @State private var headerHovered = false
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -79,6 +81,12 @@ struct PopoverView: View {
         HearingFitView(controller: controller) { withAnimation { showHearingFit = false } }
       } else if showLatencyLab {
         LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
+      } else if showMarkets {
+        MarketBriefingView(layers: controller.settings.tickerLayers, initialQuoteKey: marketQuote,
+                           backgroundStyle: controller.settings.backgroundStyle,
+                           maxHeight: role == .menuBar ? min(500, space.maxHeight ?? 500) : 500) {
+          withAnimation { showMarkets = false; marketQuote = nil }
+        }
       } else {
         controls
       }
@@ -88,6 +96,7 @@ struct PopoverView: View {
     // Power Saver for everything inside; animation pauses while the window is covered.
     .drawBudgetRoot()
     .environment(\.artworkStyle, controller.settings.artworkStyle)
+    .environment(\.artworkEffect, controller.settings.artworkEffect)
     .environment(\.isoPlayButton, controller.settings.isoMuteButton)
     .onChange(of: menuPanel) { _, p in
       guard let p else { return }
@@ -114,6 +123,7 @@ struct PopoverView: View {
       case .hearingFit: showHearingFit = true
       case .micTest: showMicTest = true
       case .latencyLab: showLatencyLab = true
+      case .markets: showMarkets = true
       case .drivers: showDrivers = true
       case .resetConfirm: break
       }
@@ -833,15 +843,15 @@ struct PopoverView: View {
 
   /// The stock ticker (any background; Wall Street turns it on): the market terminal
   /// (quotes, headlines) as a contained panel, inset from the tiles and the footer.
-  /// Headlines open on click.
+  /// Headlines open on click; quotes and the list control open a readable briefing.
   /// A block in BentoView's stack (LayoutSection.ticker: reorderable, above
   /// the footer by default); nil while it's off.
   private var tickerBlock: AnyView? {
     let layers = controller.settings.tickerLayers
     guard size != .mini, controller.settings.showTicker, !layers.isEmpty else { return nil }
-    return AnyView(MarketPanel(layers: layers, active: visible, terminal: controller.settings.backgroundStyle == .wallStreet)
-      .frame(height: MarketPanel.height(layers))
-      .accessibilityHidden(true))
+    return AnyView(MarketPanel(layers: layers, active: visible, terminal: controller.settings.backgroundStyle == .wallStreet,
+                               onInspect: { key in marketQuote = key; open(.markets) })
+      .frame(height: MarketPanel.height(layers)))
   }
 
   /// How the footer's shelf is drawn: glass like the tiles (macOS 26, Liquid Glass

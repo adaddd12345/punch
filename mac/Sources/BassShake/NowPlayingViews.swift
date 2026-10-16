@@ -295,7 +295,7 @@ private struct NextButton: View {
 
 /// Cover art (or a tab's still), else the tab's site icon on a neutral tile,
 /// else just the app's icon. Never a badge: with art or a site icon, the app's
-/// icon leads the words instead (NowSubtitle). With ⋯ › Look › Artwork Style
+/// icon leads the words instead (NowSubtitle). With ⋯ › Look › Artwork › Style
 /// set to Vinyl Peek, the same art as a sleeve with a record (VinylPeek.swift).
 struct NowArt: View {
   let artwork: NSImage?
@@ -325,11 +325,7 @@ struct NowArt: View {
     let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
     return ZStack {
       if let artwork {
-        Image(nsImage: artwork)
-          .resizable()
-          .interpolation(.high)
-          .aspectRatio(contentMode: .fill)
-          .frame(width: size, height: size)
+        EffectArtworkImage(image: artwork, size: size)
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
