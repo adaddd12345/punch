@@ -97,6 +97,7 @@ struct PopoverView: View {
     .drawBudgetRoot()
     .environment(\.artworkStyle, controller.settings.artworkStyle)
     .environment(\.artworkEffect, controller.settings.artworkEffect)
+    .environment(\.artworkFoil, controller.settings.artworkFoil)
     .environment(\.isoPlayButton, controller.settings.isoMuteButton)
     .onChange(of: menuPanel) { _, p in
       guard let p else { return }
@@ -137,6 +138,7 @@ struct PopoverView: View {
                      tint: popupTint,
                      artworkStyle: controller.settings.artworkStyle,
                      artworkEffect: controller.settings.artworkEffect,
+                     artworkFoil: controller.settings.artworkFoil,
                      isoPlayButton: controller.settings.isoMuteButton)
   }
 

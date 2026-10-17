@@ -159,6 +159,8 @@ struct SettingsMenuContent: View {
           ForEach(ArtworkEffect.allCases) { Text($0.title).tag($0) }
         }
         .pickerStyle(.inline)
+        Divider()
+        Toggle("Holographic Accent", isOn: bind(\.artworkFoil))
       }
       // What's Playing's play / pause as the isometric shield (off: the flat disc).
       Toggle("Isometric Play Button", isOn: bind(\.isoMuteButton))

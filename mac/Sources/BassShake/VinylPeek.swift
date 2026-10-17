@@ -14,6 +14,9 @@ import SwiftUI
 //   once per 7.5 s; muted it stops; paused it also slides part-way back into
 //   the sleeve (spring). The small tiles' records never turn: one motion on
 //   screen at a time. Reduce Motion, Power Saver, a hidden / covered window: still.
+// - Hovering hero-sized artwork turns the record edge-on, then brings it in
+//   front of the sleeve. One reversible spring owns the whole gesture; no
+//   delayed stages or moving hit target. Optional foil stays on the sleeve.
 //
 // CPU: the record, its sheen and its shadow are three bitmaps rendered once
 // per tint and size (VinylArtCache). The turn is a Core Animation rotation of
@@ -544,7 +547,71 @@ final class VinylRecordView: NSView {
 
 // MARK: - The art
 
-/// Vinyl Peek art in a `size` square: sleeve leading, record behind it.
+/// A single progress value coordinates depth, tilt and position. The depth
+/// swap happens while the record is edge-on, so it never cuts through the cover.
+/// A retargeted spring can retrace this same path from any point on hover exit.
+struct VinylFlipPose {
+  let progress: CGFloat
+  private var p: CGFloat { min(1, max(0, progress)) }
+  var edge: CGFloat { sin(.pi * p) }
+  var inFront: Bool { p >= 0.5 }
+  var recordYaw: Double { -90 * Double(edge) }
+  var sleeveYaw: Double { 9 * Double(p) }
+  var sleeveScale: CGFloat { 1 - 0.025 * p }
+  func recordCenter(_ g: VinylGeometry, resting: CGFloat) -> CGFloat {
+    resting + (g.size * 0.55 - resting) * p
+  }
+  func sleeveShift(_ g: VinylGeometry) -> CGFloat { min(1.5, g.size * 0.03) * p }
+}
+
+/// Only this small presentation interpolates during hover. The existing record
+/// bitmaps and the sleeve stay mounted, including the record's independent spin.
+struct VinylFlipScene<Record: View, Sleeve: View>: View, Animatable {
+  var progress: CGFloat
+  let geometry: VinylGeometry
+  let restingCenter: CGFloat
+  let dark: Bool
+  let record: Record
+  let sleeve: Sleeve
+
+  var animatableData: CGFloat {
+    get { progress }
+    set { progress = newValue }
+  }
+
+  var body: some View {
+    let g = geometry
+    let pose = VinylFlipPose(progress: progress)
+    let center = pose.recordCenter(g, resting: restingCenter)
+    ZStack(alignment: .topLeading) {
+      record
+        .frame(width: g.record, height: g.record)
+        .rotation3DEffect(.degrees(pose.recordYaw), axis: (x: 0, y: 1, z: 0), perspective: 0.35)
+        .offset(y: -g.size * 0.025 * pose.edge)
+        .position(x: center, y: g.size / 2)
+        .zIndex(pose.inFront ? 2 : 0)
+      // The sleeve's shade belongs only to the record behind it. Fade it before
+      // the edge-on crossing; there is no square shadow across the front disc.
+      LinearGradient(colors: [.black.opacity(dark ? 0.38 : 0.22), .clear],
+                     startPoint: .leading, endPoint: .trailing)
+        .frame(width: max(1.5, g.sleeve * 0.07), height: g.size)
+        .offset(x: g.sleeve)
+        .frame(width: g.size, height: g.size, alignment: .topLeading)
+        .mask(Circle().frame(width: g.record, height: g.record).position(x: center, y: g.size / 2))
+        .opacity(max(0, 1 - progress * 2))
+        .zIndex(0.5)
+      sleeve
+        .frame(width: g.sleeve, height: g.sleeve)
+        .scaleEffect(pose.sleeveScale)
+        .rotation3DEffect(.degrees(pose.sleeveYaw), axis: (x: 0, y: 1, z: 0), perspective: 0.3)
+        .offset(x: pose.sleeveShift(g), y: g.sleeveRect.minY)
+        .zIndex(1)
+    }
+    .frame(width: g.size, height: g.size, alignment: .topLeading)
+  }
+}
+
+/// Vinyl Peek art in a fixed `size` square: hover reveals the record in front.
 struct VinylPeekArt: View {
   let artwork: NSImage?
   let favicon: NSImage?
@@ -558,12 +625,16 @@ struct VinylPeekArt: View {
   /// First frame lands in place and fades in; only later changes slide.
   @State private var settled = false
   @State private var slides = false
+  @State private var hovering = false
   @Environment(\.colorScheme) private var scheme
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.drawPaused) private var drawPaused
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   private var source: NSImage { artwork ?? favicon ?? icon }
+  // Tiny tiles already carry a sleeve-sized transport control on hover. Keep
+  // that target clear; the fuller turn belongs to the hero and compact headline.
+  private var canFlip: Bool { size >= 36 && !reduceMotion && !powerSaver && !drawPaused }
 
   var body: some View {
     let g = VinylGeometry(size: size)
@@ -572,35 +643,29 @@ struct VinylPeekArt: View {
     let p = ArtPalettes.shared.cached(source) ?? (palette?.id == id ? palette?.value : nil) ?? .neutral
     let center = out ? g.playingCenter : g.pausedCenter
     let shape = RoundedRectangle(cornerRadius: g.sleeveRadius, style: .continuous)
-    ZStack(alignment: .topLeading) {
-      VinylRecord(record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
-                  spinning: spinning && !reduceMotion && !powerSaver && !drawPaused)
-        .frame(width: g.record, height: g.record)
-        .position(x: center, y: size / 2)
-      // The sleeve's shade on the record, just past its edge.
-      ZStack(alignment: .topLeading) {
-        LinearGradient(colors: [Color.black.opacity(dark ? 0.38 : 0.22), Color.black.opacity(0)],
-                       startPoint: .leading, endPoint: .trailing)
-          .frame(width: max(1.5, g.sleeve * 0.07), height: size)
-          .offset(x: g.sleeve)
-      }
-      .frame(width: size, height: size, alignment: .topLeading)
-      .mask(Circle().frame(width: g.record, height: g.record).position(x: center, y: size / 2))
-      .allowsHitTesting(false)
-      sleeve(g, p, dark: dark, shape: shape)
-        .frame(width: g.sleeve, height: g.sleeve)
-        .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(dark ? 0.35 : 0.2), radius: 2, y: 1))
-        .offset(y: g.sleeveRect.minY)
-    }
+    let engaged = hovering && canFlip
+    VinylFlipScene(progress: engaged ? 1 : 0, geometry: g, restingCenter: center, dark: dark,
+      record: VinylRecord(record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
+                          spinning: spinning && !reduceMotion && !powerSaver && !drawPaused),
+      sleeve: sleeve(g, p, dark: dark, shape: shape, engaged: engaged)
+        .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(dark ? 0.35 : 0.2), radius: 2, y: 1)))
     .frame(width: size, height: size, alignment: .topLeading)
-    .animation(reduceMotion || !slides ? nil : .spring(response: 0.55, dampingFraction: 0.82), value: out)
+    // This stationary region owns hover, not the turning layers inside it.
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 && canFlip && !Reshuffle.anyOn }
+    .animation(canFlip ? .smooth(duration: 0.68) : nil, value: engaged)
+    .animation(reduceMotion || powerSaver || drawPaused || !slides ? nil : .spring(response: 0.55, dampingFraction: 0.82), value: out)
     .opacity(settled ? 1 : 0)
-    .onAppear {
+    .task {
       fetch()
-      withAnimation(.easeOut(duration: 0.2)) { settled = true }
+      withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { settled = true }
       // State that lands just after opening snaps too, rather than sliding in.
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { slides = true }
+      try? await Task.sleep(for: .milliseconds(500))
+      guard !Task.isCancelled else { return }
+      slides = true
     }
+    .onDisappear { hovering = false; slides = false; settled = false }
+    .onChange(of: canFlip) { _, allowed in if !allowed { hovering = false } }
     .onChange(of: id) { _, _ in fetch() }
   }
 
@@ -613,16 +678,18 @@ struct VinylPeekArt: View {
   }
 
   @ViewBuilder
-  private func sleeve(_ g: VinylGeometry, _ p: ArtPalette, dark: Bool, shape: RoundedRectangle) -> some View {
+  private func sleeve(_ g: VinylGeometry, _ p: ArtPalette, dark: Bool, shape: RoundedRectangle, engaged: Bool) -> some View {
     if let artwork {
       EffectArtworkImage(image: artwork, size: g.sleeve)
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+        .overlay { ArtworkFoil(size: g.sleeve, radius: g.sleeveRadius, engaged: engaged) }
         .transition(.opacity)
     } else {
       let (top, bottom) = p.sleeve(dark: dark)
       shape.fill(LinearGradient(colors: [top.color, bottom.color], startPoint: .topLeading, endPoint: .bottomTrailing))
         .overlay(shape.strokeBorder(Color.primary.opacity(dark ? 0.16 : 0.10), lineWidth: 0.5))
+        .overlay { ArtworkFoil(size: g.sleeve, radius: g.sleeveRadius, blank: true, engaged: engaged) }
         .overlay {
           if let favicon {
             let side = (g.sleeve * 0.52).rounded()

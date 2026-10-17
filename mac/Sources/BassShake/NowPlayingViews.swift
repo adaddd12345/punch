@@ -310,6 +310,9 @@ struct NowArt: View {
   var style: ArtworkStyle? = nil
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.artworkStyle) private var setting
+  @Environment(\.artworkFoil) private var foil
+  @Environment(\.drawPaused) private var drawPaused
+  @State private var hovering = false
 
   var body: some View {
     if (style ?? setting).resolved(for: size) == .vinyl {
@@ -328,6 +331,7 @@ struct NowArt: View {
         EffectArtworkImage(image: artwork, size: size)
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+          .overlay { ArtworkFoil(size: size, radius: size * 0.22, engaged: hovering) }
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
           .transition(.opacity)
       } else if let favicon {
@@ -335,6 +339,7 @@ struct NowArt: View {
         let side = (size * 0.6).rounded()
         shape.fill(Color.primary.opacity(0.07))
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+          .overlay { ArtworkFoil(size: size, radius: size * 0.22, blank: true, engaged: hovering) }
           .overlay(
             Image(nsImage: favicon)
               .resizable()
@@ -346,14 +351,26 @@ struct NowArt: View {
           .frame(width: size, height: size)
           .transition(.opacity)
       } else {
-        Image(nsImage: icon)
-          .resizable()
-          .interpolation(.high)
-          .frame(width: size, height: size)
-          .transition(.opacity)
+        ZStack {
+          if foil && size >= 28 {
+            shape.fill(Color.primary.opacity(0.05))
+              .overlay { ArtworkFoil(size: size, radius: size * 0.22, blank: true, engaged: hovering) }
+          }
+          Image(nsImage: icon)
+            .resizable()
+            .interpolation(.high)
+            .frame(width: size * (foil && size >= 28 ? 0.8 : 1),
+                   height: size * (foil && size >= 28 ? 0.8 : 1))
+        }
+        .frame(width: size, height: size)
+        .transition(.opacity)
       }
     }
     .frame(width: size, height: size)
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 && !drawPaused && !Reshuffle.anyOn }
+    .onDisappear { hovering = false }
+    .onChange(of: drawPaused) { _, paused in if paused { hovering = false } }
     // A still or cover that arrives after the words fades in, never pops.
     .animation(.easeOut(duration: 0.3), value: artwork.map(ObjectIdentifier.init))
     .animation(.easeOut(duration: 0.3), value: favicon.map(ObjectIdentifier.init))

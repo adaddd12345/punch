@@ -877,6 +877,8 @@ struct Settings: Codable, Equatable {
   /// A treatment for cover art and video stills, independent of cover / vinyl.
   /// None adds no stylization; automatic padding removal still applies.
   var artworkEffect: ArtworkEffect = .none
+  /// An optional printed-foil accent; separate from Halftone Dots and layout.
+  var artworkFoil = false
   /// What's Playing's play / pause as the isometric shield (⋯ › Look ›
   /// Isometric Play Button; the key keeps its old name so saved prefs load). Off: the flat disc.
   var isoMuteButton = false
@@ -1002,6 +1004,7 @@ struct Settings: Codable, Equatable {
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
     artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
+    artworkFoil = (try? c.decodeIfPresent(Bool.self, forKey: .artworkFoil)) ?? d.artworkFoil
     isoMuteButton = (try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton)) ?? d.isoMuteButton
     bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
     bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount

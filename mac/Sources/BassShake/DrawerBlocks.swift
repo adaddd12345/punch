@@ -9,6 +9,7 @@ struct DrawerAppearance: Equatable {
   var tint: BentoTint?
   var artworkStyle: ArtworkStyle = .cover
   var artworkEffect: ArtworkEffect = .none
+  var artworkFoil = false
   var isoPlayButton = false
 }
 
