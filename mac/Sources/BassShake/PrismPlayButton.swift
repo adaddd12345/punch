@@ -20,7 +20,7 @@ extension EnvironmentValues {
   }
 }
 
-/// A flat, chamfered shield with one shallow side and a small foil edge.
+/// A speaker driver seated in a chamfered housing, sharing the shaker’s materials.
 /// Only this drawing tilts; PrimaryButton's layout and hit region stay still.
 struct PrismPlayFace: View {
   let speaker: Bool
@@ -90,48 +90,85 @@ struct PrismPlayArtwork: View, Animatable {
       ctx.translateBy(x: size.width / 2, y: size.height / 2)
       ctx.scaleBy(x: unit, y: unit)
 
-      // The face turns just four degrees toward the pointer, with a barely
-      // perceptible counterclockwise lean. One orthographic plane for every part.
-      let yaw = h * 4 * .pi / 180, pitch = h * -3 * .pi / 180, roll = h * -1.4 * .pi / 180
-      let shrink = 1 - 0.025 * p
-      let a = cos(roll) * cos(yaw) - sin(roll) * sin(pitch) * sin(yaw)
-      let b = sin(roll) * cos(yaw) + cos(roll) * sin(pitch) * sin(yaw)
-      let c = -sin(roll) * cos(pitch), d = cos(roll) * cos(pitch)
-      ctx.concatenate(CGAffineTransform(a: a * shrink, b: b * shrink,
-                                       c: c * shrink, d: d * shrink, tx: 0, ty: -0.3 * h + 0.5 * p))
       ctx.translateBy(x: -20, y: -20)
+      let projection = PrismProjection(hover: h)
+      // Leave a little more baffle around the driver; the casing keeps its size.
+      let driverScale: CGFloat = 0.94
+      func plane(_ path: Path, _ z: CGFloat) -> Path { path.applying(projection.plane(z: z)) }
+      func point(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) -> CGPoint { projection.point(x, y, z) }
+      func disc(_ radius: CGFloat, _ z: CGFloat) -> Path {
+        let radius = radius * driverScale
+        return plane(Path(ellipseIn: CGRect(x: 20 - radius, y: 17.8 - radius,
+                                    width: radius * 2, height: radius * 2)), z)
+      }
+      func shade(_ upper: Color, _ lower: Color, _ radius: CGFloat, _ z: CGFloat) -> GraphicsContext.Shading {
+        .linearGradient(Gradient(colors: [upper, lower]),
+                        startPoint: point(16, 17.8 - radius, z), endPoint: point(24, 17.8 + radius, z))
+      }
 
-      let face = Self.outline
-      // A single deeper silhouette supplies the lower/right edge. It compresses
-      // when pressed, without changing the face or surrounding row geometry.
-      let side = face.applying(CGAffineTransform(translationX: 0.9 * (1 - p * 0.5),
-                                               y: (1.3 + 0.3 * h) * (1 - p * 0.55)))
-      ctx.fill(side, with: .color(palette.side))
-      ctx.fill(face, with: .color(palette.face))
+      // A six-unit housing, with separate front and rear planes. At rest the
+      // baffle is square to the viewer; the authored tilt exposes its sidewall.
+      let front = plane(Self.outline, 0)
+      let back = Self.outlinePoints.map { point($0.x, $0.y, -6) }
+      let rim = Self.outlinePoints.map { point($0.x, $0.y, 0) }
+      ctx.fill(PrismProjection.hullPath(back + rim), with: shade(palette.sideTop, palette.side, 18, -3))
+      ctx.fill(front, with: shade(palette.bevel, palette.sideTop, 18, 0))
+      // A narrow machined bevel, independent of the six-unit housing depth.
+      let inset = Self.outline.applying(CGAffineTransform(translationX: 20, y: 19)
+        .scaledBy(x: 0.965, y: 0.965).translatedBy(x: -20, y: -19))
+      ctx.fill(plane(inset, 0.3), with: .color(palette.face))
 
-      var light = Path()
-      light.move(to: CGPoint(x: 4.7, y: 11.8))
-      light.addLine(to: CGPoint(x: 10.2, y: 5.2))
-      light.addQuadCurve(to: CGPoint(x: 12.1, y: 4.3), control: CGPoint(x: 10.9, y: 4.3))
-      light.addLine(to: CGPoint(x: 27.2, y: 4.3))
-      ctx.stroke(light, with: .color(palette.catchLight.opacity(0.38)), style: StrokeStyle(lineWidth: 0.65, lineCap: .round))
+      // The opening, raised surround, and recessed diaphragm are distinct
+      // parts. The narrow dark gap is structural, rather than a drawn outline.
+      ctx.fill(disc(12.4, 0.4), with: .color(palette.gap))
+      ctx.fill(disc(11.8, 0.8), with: shade(palette.ringHi, palette.ring, 11.8 * driverScale, 0.8))
+      ctx.fill(disc(10.45, 0.9), with: .color(palette.rubber))
+      let travel = 0.7 * p
+      // Small optical compression makes the suspension travel readable even
+      // straight on. It never changes the housing or the outer surround.
+      let compression = 1 - 0.025 * p
+      ctx.fill(disc(9.5 * compression, -0.8 - travel), with: shade(palette.coneTop, palette.coneBottom, 9.5 * driverScale, -0.8 - travel))
+      ctx.stroke(disc(8.35 * compression, -1.1 - travel), with: .color(palette.coneSeam), lineWidth: 0.28)
 
-      // A narrow laminated edge, not a rainbow over the transport glyph.
+      // The transport cap moves into its suspension on press; the housing
+      // remains planted. Lighting stays upper-left throughout the hover.
+      let capZ = -0.25 - travel
+      ctx.fill(disc(7.25 * compression, capZ - 0.25), with: .color(palette.gap))
+      ctx.fill(disc(6.9 * compression, capZ), with: .color(palette.cap))
+      var capLight = Path()
+      capLight.addArc(center: CGPoint(x: 20, y: 17.8), radius: 6.65 * driverScale * compression,
+                      startAngle: .degrees(205), endAngle: .degrees(295), clockwise: false)
+      let capRadius = 6.65 * driverScale * compression
+      // Highlights fade into their material instead of ending as painted dashes.
+      ctx.stroke(plane(capLight, capZ + 0.02), with: .linearGradient(
+        Gradient(stops: [.init(color: palette.catchLight.opacity(0), location: 0),
+                         .init(color: palette.catchLight.opacity(0.24 - 0.1 * p), location: 0.45),
+                         .init(color: palette.catchLight.opacity(0), location: 1)]),
+        startPoint: point(20 + capRadius * cos(205 * .pi / 180), 17.8 + capRadius * sin(205 * .pi / 180), capZ + 0.02),
+        endPoint: point(20 + capRadius * cos(295 * .pi / 180), 17.8 + capRadius * sin(295 * .pi / 180), capZ + 0.02)),
+        style: StrokeStyle(lineWidth: 0.28, lineCap: .round))
+
+      // One quiet foil sliver on the upper-right driver rim, never on the glyph.
       var foil = Path()
-      foil.move(to: CGPoint(x: 28.3, y: 4.8))
-      foil.addLine(to: CGPoint(x: 34.5, y: 11.3))
-      foil.addQuadCurve(to: CGPoint(x: 34.8, y: 13.1), control: CGPoint(x: 35.1, y: 12))
-      foil.addLine(to: CGPoint(x: 32.9, y: 22.4))
-      ctx.stroke(foil, with: .linearGradient(Gradient(colors: [palette.foilA.opacity(0.15 + h * 0.35),
-                                                              palette.catchLight.opacity(0.3 + h * 0.3),
-                                                              palette.foilB.opacity(0.12 + h * 0.3)]),
-                                            startPoint: CGPoint(x: 28, y: 4), endPoint: CGPoint(x: 33, y: 23)),
-                 style: StrokeStyle(lineWidth: 1.15, lineCap: .round))
+      foil.addArc(center: CGPoint(x: 20, y: 17.8), radius: 11.45 * driverScale,
+                  startAngle: .degrees(296), endAngle: .degrees(326), clockwise: false)
+      let foilRadius = 11.45 * driverScale
+      ctx.stroke(plane(foil, 0.85), with: .linearGradient(
+        Gradient(stops: [.init(color: palette.foilA.opacity(0), location: 0),
+                         .init(color: palette.foilA.opacity(0.2 + h * 0.2), location: 0.25),
+                         .init(color: palette.catchLight.opacity(0.35 + h * 0.2), location: 0.5),
+                         .init(color: palette.foilB.opacity(0.15 + h * 0.15), location: 0.75),
+                         .init(color: palette.foilB.opacity(0), location: 1)]),
+        startPoint: point(20 + foilRadius * cos(296 * .pi / 180), 17.8 + foilRadius * sin(296 * .pi / 180), 0.85),
+        endPoint: point(20 + foilRadius * cos(326 * .pi / 180), 17.8 + foilRadius * sin(326 * .pi / 180), 0.85)),
+        style: StrokeStyle(lineWidth: 0.45, lineCap: .round))
 
       let symbol = speaker ? (muted ? "speaker.slash.fill" : "speaker.wave.2.fill") : (playing ? "pause.fill" : "play.fill")
-      let glyph = Text(Image(systemName: symbol)).font(.system(size: speaker ? 12.5 : 13, weight: .bold))
+      let glyph = Text(Image(systemName: symbol)).font(.system(size: (speaker ? 9.2 : 9.65) * compression, weight: .bold))
         .foregroundColor(palette.ink)
-      ctx.draw(glyph, at: CGPoint(x: 20 + (!speaker && !playing ? 0.7 : 0), y: 17.8), anchor: .center)
+      var mark = ctx
+      mark.concatenate(projection.plane(z: capZ + 0.02))
+      mark.draw(glyph, at: CGPoint(x: 20 + (!speaker && !playing ? 0.5 * compression : 0), y: 17.8), anchor: .center)
     }
   }
 
@@ -145,8 +182,8 @@ struct PrismPlayArtwork: View, Animatable {
     p.addQuadCurve(to: CGPoint(x: 36, y: 12.5), control: CGPoint(x: 36.2, y: 11.2))
     p.addLine(to: CGPoint(x: 33.8, y: 23))
     p.addQuadCurve(to: CGPoint(x: 32.6, y: 25.2), control: CGPoint(x: 33.5, y: 24.3))
-    p.addLine(to: CGPoint(x: 22, y: 35))
-    p.addQuadCurve(to: CGPoint(x: 18, y: 35), control: CGPoint(x: 20, y: 36.7))
+    p.addLine(to: CGPoint(x: 23, y: 33.8))
+    p.addQuadCurve(to: CGPoint(x: 17, y: 33.8), control: CGPoint(x: 20, y: 35.4))
     p.addLine(to: CGPoint(x: 7.4, y: 25.2))
     p.addQuadCurve(to: CGPoint(x: 6.2, y: 23), control: CGPoint(x: 6.5, y: 24.3))
     p.addLine(to: CGPoint(x: 4, y: 12.5))
@@ -156,25 +193,105 @@ struct PrismPlayArtwork: View, Animatable {
     p.closeSubpath()
     return p
   }()
+
+  private static let outlinePoints: [CGPoint] = {
+    var points: [CGPoint] = []
+    var last = CGPoint.zero
+    outline.cgPath.applyWithBlock { element in
+      let e = element.pointee
+      switch e.type {
+      case .moveToPoint, .addLineToPoint:
+        last = e.points[0]; points.append(last)
+      case .addQuadCurveToPoint:
+        let from = last, control = e.points[0], to = e.points[1]
+        for i in 1...8 {
+          let t = CGFloat(i) / 8, u = 1 - t
+          points.append(CGPoint(x: u * u * from.x + 2 * u * t * control.x + t * t * to.x,
+                                y: u * u * from.y + 2 * u * t * control.y + t * t * to.y))
+        }
+        last = to
+      case .closeSubpath: break
+      default: assertionFailure("The shield outline uses only lines and quadratic curves")
+      }
+    }
+    return points
+  }()
+
 }
 
-/// Use the actual transport colour, including neutral palettes. The glyph's
-/// contrast is chosen from the finished face, not an assumed light/dark theme.
+/// A fixed orthographic camera. Each part has real depth, so the casing and
+/// driver reveal different edges on hover. Zero roll keeps its stance deliberate.
+private struct PrismProjection {
+  let yaw, pitch: CGFloat
+  init(hover: CGFloat) {
+    yaw = hover * 8 * .pi / 180
+    pitch = hover * 6 * .pi / 180
+  }
+  func plane(z: CGFloat) -> CGAffineTransform {
+    let a = cos(yaw), b = sin(pitch) * sin(yaw), d = cos(pitch)
+    return CGAffineTransform(a: a, b: b, c: 0, d: d,
+                             tx: 20 - 20 * a + sin(yaw) * z,
+                             ty: 20 - 20 * b - 20 * d - sin(pitch) * cos(yaw) * z)
+  }
+  func point(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) -> CGPoint {
+    CGPoint(x: x, y: y).applying(plane(z: z))
+  }
+  static func hullPath(_ points: [CGPoint]) -> Path {
+    let sorted = points.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+    func cross(_ o: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+      (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    }
+    var lower: [CGPoint] = [], upper: [CGPoint] = []
+    for q in sorted {
+      while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], q) <= 0 { lower.removeLast() }
+      lower.append(q)
+    }
+    for q in sorted.reversed() {
+      while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], q) <= 0 { upper.removeLast() }
+      upper.append(q)
+    }
+    let hull = Array(lower.dropLast() + upper.dropLast())
+    return Path { p in
+      guard let first = hull.first else { return }
+      p.move(to: first)
+      for q in hull.dropFirst() { p.addLine(to: q) }
+      p.closeSubpath()
+    }
+  }
+}
+
+/// Hardware tones follow the player’s real transport colour. Neutral players
+/// stay neutral; the cap keeps that exact tint and chooses a contrasting glyph.
 struct PrismPlayPalette {
-  let face, side, ink, catchLight, foilA, foilB: Color
+  let face, bevel, sideTop, side, gap, rubber, ring, ringHi, coneTop, coneBottom, coneSeam: Color
+  let cap, ink, catchLight, foilA, foilB: Color
 
   init(tint: Color?, dark: Bool) {
     let resolved = tint.flatMap { NSColor($0).usingColorSpace(.sRGB) }
       ?? NSColor(srgbRed: dark ? 0.28 : 0.86, green: dark ? 0.29 : 0.87, blue: dark ? 0.30 : 0.88, alpha: 1)
     let r = resolved.redComponent, g = resolved.greenComponent, b = resolved.blueComponent
-    face = Color(red: r, green: g, blue: b)
-    side = Color(red: r * 0.62, green: g * 0.62, blue: b * 0.62)
+    func metal(_ base: CGFloat, _ tintAmount: CGFloat) -> Color {
+      Color(red: base * (1 - tintAmount) + r * tintAmount,
+            green: base * (1 - tintAmount) + g * tintAmount,
+            blue: base * (1 - tintAmount) + b * tintAmount)
+    }
+    cap = Color(red: r, green: g, blue: b)
+    face = metal(dark ? 0.29 : 0.79, 0.20)
+    bevel = metal(dark ? 0.52 : 0.94, 0.12)
+    sideTop = metal(dark ? 0.22 : 0.54, 0.18)
+    side = metal(dark ? 0.10 : 0.31, 0.16)
+    gap = metal(0.055, 0.08)
+    rubber = metal(0.12, 0.12)
+    ring = metal(dark ? 0.19 : 0.30, 0.68)
+    ringHi = metal(dark ? 0.66 : 0.79, 0.54)
+    coneTop = metal(0.16, 0.15)
+    coneBottom = metal(0.30, 0.18)
+    coneSeam = metal(0.42, 0.12)
     func linear(_ c: CGFloat) -> CGFloat { c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
     let luminance = 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
     ink = luminance > 0.179 ? .black : .white
     catchLight = Color(red: r + (1 - r) * 0.7, green: g + (1 - g) * 0.7, blue: b + (1 - b) * 0.7)
     let hue = resolved.hueComponent, sat = resolved.saturationComponent
-    // A neighbouring hue on each edge; grey stays grey.
     foilA = Color(hue: (hue + 0.08).truncatingRemainder(dividingBy: 1), saturation: sat * 0.55, brightness: 1)
     foilB = Color(hue: (hue + 0.92).truncatingRemainder(dividingBy: 1), saturation: sat * 0.55, brightness: 1)
   }
