@@ -55,6 +55,7 @@ jobs:
       - name: Artwork background and bass reaction checks
         run: |
           bash mac/scripts/artwork-backdrop-check.sh
+          bash mac/scripts/artwork-bleed-check.sh
           bash mac/scripts/artwork-reaction-check.sh
       - name: Build app bundle
         run: mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"

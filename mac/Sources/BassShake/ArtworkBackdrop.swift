@@ -7,6 +7,7 @@ import SwiftUI
 struct ArtworkBackdropContext {
   var reaction: ArtworkReaction?
   var live = false
+  var bleed = false
   static let local = ArtworkBackdropContext()
 }
 
@@ -43,29 +44,41 @@ private struct CurrentArtworkBackdrop: View {
   let still: Bool
   @ObservedObject private var stack = NowStack.shared
   @ObservedObject private var model = NowPlaying.shared
-  @State private var requested: Cover?
+  @State private var paletteSong: String?
   @State private var palette = ArtworkBackdropPalette.neutral
 
   private struct Cover: Equatable {
     let entry: String
-    let image: ObjectIdentifier
+    let image: ObjectIdentifier?
   }
 
   var body: some View {
-    let detail = stack.lead.map { model.describe($0) }
+    let detail = stack.lead.map { model.describe($0, state: false) }
     let artwork = detail?.artwork
-    let cover = stack.lead.flatMap { entry in artwork.map { Cover(entry: entry.id, image: ObjectIdentifier($0)) } }
+    let song = stack.lead.map { $0.id + "\u{1f}" + (detail?.title ?? "") + "\u{1f}" + (detail?.subtitle ?? "") }
+    let cover = song.map { Cover(entry: $0, image: artwork.map(ObjectIdentifier.init)) }
     ArtworkGradient(palette: palette, reaction: source.reaction, active: active,
-                    live: source.live && artwork != nil && detail?.paused == false, still: still)
-      .onChange(of: cover, initial: true) { _, next in
-        requested = next
-        guard let artwork else { palette = .neutral; return }
-        ArtworkBackdropPalettes.shared.palette(for: artwork) { result in
-          guard requested == next else { return }
-          palette = result ?? .neutral
+                    live: source.live && artwork != nil && detail?.paused == false, still: still,
+                    bleed: source.bleed, song: paletteSong)
+      .task(id: cover) {
+        guard let artwork else {
+          // Metadata commonly arrives ahead of the image. Keep the previous
+          // colour briefly, but never leave an unrelated cover indefinitely.
+          if source.bleed && paletteSong != nil {
+            do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
+          }
+          guard !Task.isCancelled else { return }
+          palette = .neutral
+          paletteSong = nil
+          return
         }
+        let result: ArtworkBackdropPalette? = await withCheckedContinuation { continuation in
+          ArtworkBackdropPalettes.shared.palette(for: artwork) { continuation.resume(returning: $0) }
+        }
+        guard !Task.isCancelled else { return }
+        paletteSong = result == nil ? nil : song
+        palette = result ?? .neutral
       }
-      .onDisappear { requested = nil }
   }
 }
 
@@ -75,19 +88,24 @@ struct ArtworkGradient: NSViewRepresentable {
   let active: Bool
   let live: Bool
   let still: Bool
+  var bleed = false
+  var song: String? = nil
 
   func makeNSView(context: Context) -> ArtworkGradientView { ArtworkGradientView() }
   func updateNSView(_ view: ArtworkGradientView, context: Context) {
     view.update(palette: palette, reaction: reaction, active: active,
-                live: live, still: still)
+                live: live, still: still, bleed: bleed, song: song)
   }
-  static func dismantleNSView(_ view: ArtworkGradientView, coordinator: ()) { view.stop() }
+  static func dismantleNSView(_ view: ArtworkGradientView, coordinator: ()) { view.finish() }
 }
 
 /// One opaque colour floor and three broad radial fields. Bass changes their
 /// geometry, never their hue or the overall brightness. No blur, particles or
 /// fake beat clock; sustained notes hold a calm expanded pose.
 final class ArtworkGradientView: NSView {
+  private let composition = CALayer()
+  private let transition = ArtworkBleed()
+  private var song: String?
   private let floor = CAGradientLayer()
   private let fields = (0..<3).map { _ in CAGradientLayer() }
   private var palette: ArtworkBackdropPalette?
@@ -107,13 +125,14 @@ final class ArtworkGradientView: NSView {
     floor.startPoint = CGPoint(x: 0.08, y: 0)
     floor.endPoint = CGPoint(x: 0.9, y: 1)
     floor.locations = [0, 0.22, 0.72, 1]
-    layer?.addSublayer(floor)
+    layer?.addSublayer(composition)
+    composition.addSublayer(floor)
     for field in fields {
       field.type = .radial
       field.locations = [0, 0.42, 1]
       field.startPoint = CGPoint(x: 0.5, y: 0.5)
       field.endPoint = CGPoint(x: 1, y: 1)
-      layer?.addSublayer(field)
+      composition.addSublayer(field)
     }
     setAccessibilityElement(false)
   }
@@ -122,23 +141,31 @@ final class ArtworkGradientView: NSView {
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
   func update(palette next: ArtworkBackdropPalette, reaction: ArtworkReaction?,
-              active: Bool, live: Bool, still: Bool) {
+              active: Bool, live: Bool, still: Bool, bleed: Bool = false, song: String? = nil) {
     self.reaction = reaction
     self.active = active
     self.live = live
     self.still = still
+    if !bleed || still || !active { transition.finish() }
     if palette != next {
-      let animate = palette != nil && active && !still && window != nil
+      let animate = palette != nil && active && !still && window?.isVisible == true
+        && window?.occlusionState.contains(.visible) == true
+      let changedSong = self.song != nil && song != nil && self.song != song
+      let spreading = animate && bleed && changedSong && layer.map {
+        transition.begin(root: $0, composition: composition, scale: window?.backingScaleFactor ?? 1)
+      } == true
+      if !spreading { transition.finish() }
       setColors([next.depth, next.dominant, next.dominant, next.depth].map { $0.cg() },
-                on: floor, animate: animate)
+                on: floor, animate: animate && !spreading)
       let tones = [next.light, next.secondary, next.dominant]
       let alphas = [0.62, 0.88, 0.65]
       for i in fields.indices {
         let c = tones[i], a = alphas[i]
-        setColors([c.cg(a), c.cg(a * 0.5), c.cg(0)], on: fields[i], animate: animate)
+        setColors([c.cg(a), c.cg(a * 0.5), c.cg(0)], on: fields[i], animate: animate && !spreading)
       }
       palette = next
     }
+    self.song = song
     if still || !active {
       stop()
       if still {
@@ -163,9 +190,11 @@ final class ArtworkGradientView: NSView {
     let size = bounds.size
     guard size.width.isFinite, size.height.isFinite, size.width > 1, size.height > 1,
           size != lastSize else { return }
+    transition.finish()
     lastSize = size
     CATransaction.begin()
     CATransaction.setDisableActions(true)
+    composition.frame = bounds
     floor.frame = bounds
     for (i, field) in fields.enumerated() {
       let dimensions: [(CGFloat, CGFloat)] = [(1.75, 0.95), (1.9, 1.05), (1.6, 0.9)]
@@ -178,8 +207,13 @@ final class ArtworkGradientView: NSView {
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    stop()
+    finish()
     if window != nil && active && live && !still { start() }
+  }
+
+  func finish() {
+    stop()
+    transition.finish()
   }
 
   func stop() {

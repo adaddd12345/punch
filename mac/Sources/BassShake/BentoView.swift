@@ -962,7 +962,7 @@ struct BentoView: View {
       }
       .padding(.horizontal, 8)
       .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24, alignment: .leading)
-      .background(chipShape.fill(Color.primary.opacity(0.08)))
+      .background(chipShape.fill(.artworkControl))
     }
     .frame(maxWidth: .infinity)
   }
@@ -1073,7 +1073,7 @@ struct BentoView: View {
       .padding(.horizontal, 8)
       .frame(height: 24)
       .foregroundStyle(on ? Color.white : Color.primary)
-      .background(chipShape.fill(on ? Color.orange : Color.primary.opacity(0.08)))
+      .background(chipShape.fill(on ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.artworkControl)))
       .contentShape(chipShape)
     }
     .buttonStyle(BentoPressStyle())
@@ -1143,7 +1143,7 @@ struct BentoView: View {
       .foregroundStyle(.artworkPrimary)
       .padding(.horizontal, iconOnly ? 0 : 8)
       .frame(minWidth: 24, maxWidth: iconOnly ? 24 : .infinity, minHeight: 24, maxHeight: 24)
-      .background(chipShape.fill(Color.primary.opacity(0.08)))
+      .background(chipShape.fill(.artworkControl))
       .contentShape(chipShape)
     }
     .menuStyle(.button)

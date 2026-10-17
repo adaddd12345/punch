@@ -9,6 +9,16 @@ struct NowPlayingCheck {
     precondition(value, reason)
   }
   static func main() {
+    let idle = NowPlayingShelf.split(["paused", "guess", "other"], open: false, playing: { _ in false })
+    check(idle.shown.isEmpty && idle.hidden == ["paused", "guess", "other"], "Idle media must collapse into one drawer")
+    let playing = NowPlayingShelf.split(["paused", "playing", "other"], open: false, playing: { $0 == "playing" })
+    check(playing.shown == ["playing"] && playing.hidden == ["paused", "other"], "Confirmed player leads the left slot")
+    let opened = NowPlayingShelf.split(["paused", "playing", "other"], open: true, playing: { $0 == "playing" })
+    check(opened.shown == ["playing", "paused", "other"], "Opening keeps every item reachable without duplication")
+    let single = NowPlayingShelf.split(["playing"], open: false, playing: { _ in true })
+    check(single.shown == ["playing"] && single.hidden.isEmpty, "A sole player needs no empty drawer")
+    let several = NowPlayingShelf.split([1, 2, 3], open: false, playing: { $0 > 1 })
+    check(several.shown == [2] && several.hidden == [1, 3], "Multiple players keep stable order and remain accessible")
     typealias Policy = NowPlayingContinuity
     for elapsed in [0.1, 5, 181, 3_600, 86_400] {
       check(Policy.retains(hasTrack: true, pending: false, pausedAt: nil, lastHeard: 10, now: 10 + elapsed),

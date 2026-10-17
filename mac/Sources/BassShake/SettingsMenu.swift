@@ -115,6 +115,8 @@ struct SettingsMenuContent: View {
         }
       }
       if controller.settings.backgroundStyle == .artwork {
+        Toggle("Bleed", isOn: bind(\.artworkBackgroundBleed))
+          .help("Let one cover’s colours flow into the next. Visual only; audio is unchanged.")
         Toggle("Live React", isOn: bind(\.artworkBackgroundLive))
           .help("Moves the artwork gradient gently with this Mac’s audio, especially bass.")
       }

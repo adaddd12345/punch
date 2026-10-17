@@ -287,7 +287,8 @@ struct PopoverView: View {
     .popupBackdrop(controller.settings.backgroundStyle, active: visible)
     .environment(\.artworkBackdropContext, controller.isMirror ? nil :
       ArtworkBackdropContext(reaction: role == .launchWindow ? nil : controller.artworkReaction,
-                             live: controller.settings.artworkBackgroundLive))
+                             live: controller.settings.artworkBackgroundLive,
+                             bleed: controller.settings.artworkBackgroundBleed))
     // "Updated to …" sits in the band UpdateBand makes for it. Its dismissal is
     // the one state change that collapses the band (the popup's height follows
     // the same animation frame by frame).
@@ -890,7 +891,7 @@ struct PopoverView: View {
              secondary: ("Keep Centered", { controller.settings.balanceLock = true; controller.centerBalance() }))
     case _ where controller.steppedAside:
       Banner(symbol: "speaker.slash", tint: .orange,
-             text: "Apps were playing but no sound reached The Bass Shaker, so it stepped aside and your Mac is playing normally. It tries again when playback changes.",
+             text: "No audio reached the capture. EQ is temporarily bypassed; this can also happen when an app keeps a silent stream open. Retrying automatically.",
              action: ("Try Again", { controller.checkAndFix() }), secondary: nil)
     case .starting:
       EmptyView()  // shown late, as an overlay: see slowStart
@@ -974,7 +975,9 @@ struct PopoverView: View {
       if labels == .full, case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
           .font(.system(size: 9, weight: .medium, design: .rounded))
-          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.85)
+          .foregroundStyle(.secondary)
           .padding(.trailing, FooterBento.groupGap)
       }
       toolsGroup

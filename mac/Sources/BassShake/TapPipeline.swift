@@ -261,14 +261,30 @@ final class TapPipeline {
   }
 
   /// The processes (other than us and `extra`) running output right now.
-  static func playingProcesses(excluding extra: Set<AudioObjectID> = []) -> Set<AudioObjectID> {
+  static func playingProcesses(excluding extra: Set<AudioObjectID> = [], on output: AudioObjectID? = nil) -> Set<AudioObjectID> {
     let own = ownProcessObject()
     let procs = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyProcessObjectList),
                                 of: AudioObjectID.self, zero: 0)) ?? []
     var out: Set<AudioObjectID> = []
     for p in procs where p != own && !extra.contains(p) {
       let running = (try? HAL.get(p, .global(kAudioProcessPropertyIsRunningOutput), default: UInt32(0))) ?? 0
-      if running != 0 { out.insert(p) }
+      guard running != 0 else { continue }
+      // A device-scoped tap cannot hear an app deliberately routed elsewhere.
+      // Unknown device membership stays eligible: never conceal a dead tap
+      // because a HAL query failed. Global fallback taps inspect every output.
+      if let output, let devices = try? HAL.array(p, .output(kAudioProcessPropertyDevices),
+                                                  of: AudioObjectID.self, zero: 0), !devices.isEmpty {
+        let matches = devices.contains(output) || devices.contains { device in
+          let address = AudioObjectPropertyAddress.global(kAudioAggregateDevicePropertyActiveSubDeviceList)
+          guard HAL.has(device, address) else { return false }
+          guard let subs = try? HAL.array(device, address, of: AudioObjectID.self, zero: 0), !subs.isEmpty else {
+            return true  // an unreadable / starting aggregate is unknown, not unrelated
+          }
+          return subs.contains(output)
+        }
+        if !matches { continue }
+      }
+      out.insert(p)
     }
     return out
   }

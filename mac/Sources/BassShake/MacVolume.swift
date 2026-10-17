@@ -427,6 +427,8 @@ private struct MacMuteButton: View {
   var height: CGFloat = 24
   var disc = false
   @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.popupTint) private var tint
+  @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     let s = model.state
@@ -442,12 +444,12 @@ private struct MacMuteButton: View {
         // stands out over any fill level; the faint steel-on-tint disc vanished.
         // Silent: a solid red disc with a white glyph (a red glyph on the faint disc read as pink).
         .foregroundStyle(disc && s.silent ? Color.white
-                         : s.silent ? Color.red : (onFader ? Color(nsColor: .windowBackgroundColor) : (usable ? Color.primary : Color.secondary)))
+                         : s.silent ? Color.red : (onFader ? (scheme == .dark ? Color.black : Color.white) : (usable ? Color.primary : Color.secondary)))
         .frame(width: width, height: height)
         .background {
           if disc {
             Circle().fill(s.silent ? Color.red
-                          : onFader ? Color.primary.opacity(contrast == .increased ? 0.95 : 0.82)
+                          : onFader ? (scheme == .dark ? tint?.pastel : tint?.ink) ?? Color.primary
                                     : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08))
           }
         }

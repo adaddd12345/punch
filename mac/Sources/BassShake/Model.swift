@@ -789,6 +789,8 @@ struct Settings: Codable, Equatable {
   var backgroundStyle: BackgroundStyle = .system
   /// Only Artwork Match reacts to captured Mac audio; static by default.
   var artworkBackgroundLive = false
+  /// Let the previous cover colour linger while the next spreads across the background.
+  var artworkBackgroundBleed = false
   /// Wall Street turns EQ Visual to Spectrum the first time it's picked.
   var wallStreetSeen = false
   /// The market panel (quotes, headlines) over any background (⋯ › Look › Ticker ›
@@ -944,6 +946,36 @@ struct Settings: Codable, Equatable {
     var deviceUID: String?   // which output was active when the mode started
   }
 
+  /// Fields consumed by the processing graph (including per-output gain).
+  /// Appearance, layout and artwork preferences cannot change the sound.
+  func sameProcessing(as other: Settings) -> Bool {
+    enabled == other.enabled
+      && bands == other.bands
+      && bass == other.bass
+      && boostDb == other.boostDb
+      && character == other.character
+      && studioEars == other.studioEars
+      && mode == other.mode
+      && noiseOn == other.noiseOn
+      && noiseColor == other.noiseColor
+      && noiseDb == other.noiseDb
+      && bypassDevices == other.bypassDevices
+      && autoLoudness == other.autoLoudness
+      && limit == other.limit
+      && centerLock == other.centerLock
+      && earProtector == other.earProtector
+      && nightGuard == other.nightGuard
+      && nightGuardDb == other.nightGuardDb
+      && quietFloor == other.quietFloor
+      && fairLevel == other.fairLevel
+      && soundLike == other.soundLike
+      && presetName == other.presetName
+      && hearing == other.hearing
+      && bassCharacter == other.bassCharacter
+      && bassAmount == other.bassAmount
+      && lateNightHaze == other.lateNightHaze
+  }
+
   static let key = "BassShake.settings.v1"
 
   init() {}
@@ -988,6 +1020,7 @@ struct Settings: Codable, Equatable {
     spectrum = (try? c.decodeIfPresent(Bool.self, forKey: .spectrum)) ?? d.spectrum
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
+    artworkBackgroundBleed = (try? c.decodeIfPresent(Bool.self, forKey: .artworkBackgroundBleed)) ?? d.artworkBackgroundBleed
     artworkBackgroundLive = (try? c.decodeIfPresent(Bool.self, forKey: .artworkBackgroundLive)) ?? d.artworkBackgroundLive
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
     labelLevel = (try? c.decodeIfPresent(LabelLevel.self, forKey: .labelLevel)) ?? d.labelLevel

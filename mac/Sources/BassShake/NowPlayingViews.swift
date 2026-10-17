@@ -441,8 +441,8 @@ struct MuteButton: View {
       Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
         .font(.system(size: compact ? 7 : 9, weight: .bold))
         .frame(width: compact ? 18 : 24, height: compact ? 18 : 24)
-        .foregroundStyle(muted ? Color.white : (cardPalette?.secondary.color ?? Color.primary.opacity(0.7)))
-        .background(Circle().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
+        .foregroundStyle(muted ? Color.white : (cardPalette?.ink.color ?? Color.primary.opacity(0.85)))
+        .background(Circle().fill(muted ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.artworkControl)))
         .contentShape(Circle())
     }
     .buttonStyle(BentoPressStyle())

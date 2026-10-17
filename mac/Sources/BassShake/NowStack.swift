@@ -97,50 +97,6 @@ extension NowPlaying {
 final class NowStack: ObservableObject {
   static let shared = NowStack(model: .shared)
 
-  /// Most cells under the hero (three rows of two). More: the first five, then
-  /// the drawer ("+N", N at least 2), which opens the rest inline as tiles.
-  static let maxCells = 6
-
-  /// Guessed tabs (`certain` false) shown at most, the hero's included, when
-  /// one browser is all that sounds: the rest wait in the drawer, so tabs we
-  /// can't hear aren't laid out as equals.
-  static let maxGuesses = 3
-
-  /// The tiles on screen and the ones behind the drawer (empty: no drawer).
-  /// `guessCap`: guessed tabs kept out of the drawer (see `guessCap(lead:rest:)`).
-  static func split(_ rest: [NowEntry], open: Bool, guessCap: Int = .max) -> (shown: [NowEntry], hidden: [NowEntry]) {
-    var kept: [NowEntry] = []
-    var extra: [NowEntry] = []
-    var guesses = 0
-    for e in rest {
-      if e.item?.certain == false {
-        guesses += 1
-        if guesses > guessCap { extra.append(e); continue }
-      }
-      kept.append(e)
-    }
-    // A drawer holds at least two (one tile would take its own place anyway).
-    if extra.count < 2 { kept = rest; extra = [] }
-    if kept.count + (extra.isEmpty ? 0 : 1) > maxCells {
-      extra = Array(kept.dropFirst(maxCells - 1)) + extra
-      kept = Array(kept.prefix(maxCells - 1))
-    }
-    guard !extra.isEmpty else { return (rest, []) }
-    return (open ? kept + extra : kept, extra)
-  }
-
-  /// `maxGuesses` less the hero's, when exactly one browser is on screen and
-  /// none of its tabs is certain; otherwise no cap.
-  static func guessCap(lead: NowEntry?, rest: [NowEntry]) -> Int {
-    guard let lead else { return .max }
-    let all = [lead] + rest
-    let browsers = Set(all.filter { $0.app.isBrowser }.map(\.app.id))
-    guard browsers.count == 1, let id = browsers.first else { return .max }
-    let tabs = all.filter { $0.app.id == id }
-    guard tabs.allSatisfy({ $0.item?.certain == false }) else { return .max }
-    return maxGuesses - (lead.app.id == id ? 1 : 0)
-  }
-
   /// The hero's entry (the loudest app's lead tab, or the app). nil: nothing playing.
   @Published private(set) var lead: NowEntry?
   /// Everything else playing, in arrival order.
@@ -217,7 +173,7 @@ final class NowStack: ObservableObject {
         lead = r.lead
         rest = r.rest
         pending = wait
-        if drawerOpen && Self.split(r.rest, open: false, guessCap: Self.guessCap(lead: r.lead, rest: r.rest)).hidden.isEmpty {
+        if drawerOpen && r.rest.isEmpty {
           drawerOpen = false
         }
       }
@@ -232,7 +188,7 @@ final class NowStack: ObservableObject {
   /// Opens or closes the drawer: the hidden tiles fly out of (or back into) it
   /// on the stack's one spring.
   func setDrawer(_ open: Bool) {
-    let open = open && !Self.split(rest, open: false, guessCap: Self.guessCap(lead: lead, rest: rest)).hidden.isEmpty
+    let open = open && !rest.isEmpty
     guard open != drawerOpen else { return }
     var t = Transaction(animation: Self.morph)
     t[NowMorphing.self] = true
@@ -420,17 +376,15 @@ struct NowPlayingTiles: View {
 
   var body: some View {
     let rest = on && stack.lead != nil ? stack.rest : []
-    // Rows of two under the hero; an odd last cell spans its row (BentoPairs).
-    // Up to three rows; past six, the sixth cell is the drawer of the rest
-    // (N is at least 2). Open, every tile shows and the drawer becomes a slim
-    // "Show less" row at the end, in the same view so its glass morphs.
-    let split = NowStack.split(rest, open: stack.drawerOpen, guessCap: NowStack.guessCap(lead: stack.lead, rest: rest))
+    // One confirmed playing entry stays visible on the left. Paused and
+    // guessed tabs remain available in one drawer, without claiming playback.
+    let split = NowPlayingShelf.split(rest, open: stack.drawerOpen, playing: model.barsLit)
     let drawer = !split.hidden.isEmpty
     let open = drawer && stack.drawerOpen
     let cells = split.shown.count + (drawer && !open ? 1 : 0)
     // A Group, not a stack: with nothing here, no extra 8 pt gap in the Bento column.
     Group {
-      if !split.shown.isEmpty {
+      if !rest.isEmpty {
         BentoPairs(spacing: 8, trailingRow: open) {
           ForEach(Array(split.shown.enumerated()), id: \.element.id) { i, e in
             // The last tile of an odd count spans the row and has room for mute.
@@ -441,6 +395,7 @@ struct NowPlayingTiles: View {
           }
           if drawer {
             NowDrawerTile(model: model, entries: split.hidden, open: open, active: active, compact: compact,
+                          previewTitle: split.shown.isEmpty ? split.hidden.first.map { model.describe($0, state: false).title } : nil,
                           toggle: { stack.setDrawer(!open) })
               .transition(.nowTile(reduceMotion: reduceMotion))
           }
@@ -606,6 +561,7 @@ struct NowDrawerTile: View {
   let open: Bool
   let active: Bool
   var compact = false
+  var previewTitle: String? = nil
   var toggle: () -> Void = {}
   @Environment(\.colorScheme) private var scheme
 
@@ -625,7 +581,7 @@ struct NowDrawerTile: View {
     .buttonStyle(BentoPressStyle())
     .frame(maxWidth: .infinity)
     .pointerHintTint(scheme == .dark ? BentoTint.frost.pastel : BentoTint.frost.ink)
-    .accessibilityLabel(open ? "Show less" : "Show \(entries.count) more playing")
+    .accessibilityLabel(open ? "Show less" : "Show \(entries.count) other media items")
     .accessibilityValue(open ? "" : entries.map { model.describe($0, state: false).title }.joined(separator: ", "))
     // Open: "Show less" says it all (an empty hint shows nothing).
     .pointerHint(open ? PointerHint("") : Caption.morePlaying)
@@ -649,10 +605,10 @@ struct NowDrawerTile: View {
       }
       .frame(width: mini + CGFloat(max(covers.count - 1, 0)) * step, height: art, alignment: .leading)
       VStack(alignment: .leading, spacing: compact ? 0 : 1) {
-        Text("+\(entries.count)")
+        Text(previewTitle == nil ? "+\(entries.count)" : "More playing · \(entries.count)")
           .font(.system(size: compact ? 11 : 12, weight: .heavy, design: .rounded))
           .foregroundStyle(Color.primary)
-        Text("more playing")
+        Text(previewTitle ?? "more playing")
           .font(.system(size: compact ? 9 : 10, weight: .medium, design: .rounded))
           .foregroundStyle(.secondary)
       }

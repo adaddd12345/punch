@@ -33,6 +33,23 @@ extension ShapeStyle where Self == ArtworkPrimaryStyle {
   static var artworkPrimary: ArtworkPrimaryStyle { ArtworkPrimaryStyle() }
 }
 
+/// A solid, cover-relative control surface; avoids system grey drifting
+/// when macOS changes appearance underneath a coloured card.
+struct ArtworkControlStyle: ShapeStyle {
+  func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+    if let palette = environment.artworkCardPalette {
+      return palette.surface.mix(palette.ink, 0.10).color
+    }
+    let tint = environment.popupTint
+    let color = environment.colorScheme == .dark ? tint?.pastel : tint?.ink
+    return (color ?? Color.primary).opacity(0.12)
+  }
+}
+
+extension ShapeStyle where Self == ArtworkControlStyle {
+  static var artworkControl: ArtworkControlStyle { ArtworkControlStyle() }
+}
+
 /// Only the music card observes metadata. Progress/audio meters never cause
 /// palette extraction or a redraw of the enclosing settings and tile layout.
 struct ArtworkCardTheme<Content: View>: View {

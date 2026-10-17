@@ -312,9 +312,11 @@ final class MutedApps: ObservableObject {
       .assign(to: &$present)
     stack.$lead.map { $0?.app.id }.removeDuplicates().assign(to: &$hero)
     // The closed drawer has no mute: only the tiles on screen count.
-    stack.$rest.combineLatest(stack.$drawerOpen, stack.$lead)
-      .map { rest, open, lead in
-        Set(NowStack.split(rest, open: open, guessCap: NowStack.guessCap(lead: lead, rest: rest)).shown.map(\.app.id))
+    stack.$rest.combineLatest(stack.$drawerOpen)
+      .map { rest, open in
+        // The collapsed shelf only exposes an unmuted, confirmed player.
+        // Muted entries are reachable as tiles only while the drawer is open.
+        open ? Set(rest.map(\.app.id)) : Set<String>()
       }
       .removeDuplicates().assign(to: &$tiles)
   }

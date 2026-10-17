@@ -62,3 +62,15 @@ struct SpotifyOutputContext {
     return now - (absentSince ?? now) >= 4
   }
 }
+
+/// The compact secondary shelf: one confirmed player, then the remaining
+/// media. Keeps stable arrival order, without promoting uncertain browser tabs.
+enum NowPlayingShelf {
+  static func split<Entry>(_ entries: [Entry], open: Bool, playing: (Entry) -> Bool)
+    -> (shown: [Entry], hidden: [Entry]) {
+    let first = entries.firstIndex(where: playing)
+    let shown = first.map { [entries[$0]] } ?? []
+    let hidden = entries.enumerated().filter { $0.offset != first }.map(\.element)
+    return (open ? shown + hidden : shown, hidden)
+  }
+}

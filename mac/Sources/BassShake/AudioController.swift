@@ -153,7 +153,8 @@ final class AudioController: ObservableObject {
       if !previews.isEmpty { refreshLiveEdit() }
       // Banking the device's sound (inside the save) changes nothing heard.
       if rememberingDevice { return }
-      pushParams()
+      // Visual preferences never republish DSP coefficients or restart glides.
+      if !settings.sameProcessing(as: oldValue) { pushParams() }
       scheduleSave()
     }
   }
@@ -2145,7 +2146,8 @@ final class AudioController: ObservableObject {
       }
       return
     }
-    let playing = TapPipeline.playingProcesses(excluding: audioExcluded)
+    let playing = TapPipeline.playingProcesses(excluding: audioExcluded,
+      on: p.info.flatMap { $0.tapIsGlobal ? nil : $0.deviceID })
     let othersPlaying = !playing.isEmpty
     let statsLine = "cycles \(s.callbacks) silent-in \(s.silentCallbacks) dead-out \(s.deadOutputCallbacks) layout-err \(s.layoutErrors) ch \(s.lastInputChannels)->\(s.lastOutputChannels)"
     DispatchQueue.main.async { [weak self] in self?.lastStatsLine = statsLine }
@@ -2165,6 +2167,7 @@ final class AudioController: ObservableObject {
       // Apps are playing but nothing from them reaches us. Our tap mutes
       // them, so the Mac may be silent: never wait this out.
       let reason: RebuildReason = stalledStreak >= 3 ? .stalled : .silentTap
+      log.notice("watchdog evidence: \(playing.count, privacy: .public) output processes; \(dCallbacks, privacy: .public) callbacks, \(dSilent, privacy: .public) silent; device \(p.info?.deviceID ?? 0, privacy: .public)")
       silentStreak = 0
       stalledStreak = 0
       if !everHeardAudio && reason == .silentTap && AudioCapturePermission.preflight() != .granted {
@@ -2212,7 +2215,9 @@ final class AudioController: ObservableObject {
     }
     let rate = Devices.nominalSampleRate(info.deviceID)
     if rate > 0 && abs(rate - info.sampleRate) >= 0.5 { return "rate \(info.sampleRate) -> \(rate)" }
-    if !p.aggregateIsRunning { return "aggregate not running" }
+    if ProcessInfo.processInfo.systemUptime - info.startedAt >= 3, !p.aggregateIsRunning {
+      return "aggregate not running"
+    }
     if let subs = p.activeSubDevices, !subs.contains(info.deviceID) { return "aggregate lost its output (\(subs))" }
     return nil
   }
@@ -2230,16 +2235,17 @@ final class AudioController: ObservableObject {
   /// looks the same as a dead tap, so this stays quiet: a banner in the
   /// popover, no alarm. A dead tap costs at most ~3 s per retry.
   private func stepAside(_ reason: RebuildReason, playing: Set<AudioObjectID>) {
+    let output = (audioPipeline as? TapPipeline)?.info.flatMap { $0.tapIsGlobal ? nil : $0.deviceID }
     pipelineStop(fade: false)
     stepAsideCount += 1
     let wait = Double(min(stepAsideCount, 3) * 20)
     log.error("watchdog: \(reason.rawValue, privacy: .public) persisted after a rebuild; stepped aside (#\(self.stepAsideCount, privacy: .public), retry in \(Int(wait), privacy: .public) s or when playback changes)")
     DispatchQueue.main.async { [weak self] in self?.steppedAside = true }
-    armStepAsideRetry(after: wait, playing: playing)
+    armStepAsideRetry(after: wait, playing: playing, output: output)
   }
 
   /// audioQueue only.
-  private func armStepAsideRetry(after wait: Double, playing: Set<AudioObjectID>?) {
+  private func armStepAsideRetry(after wait: Double, playing: Set<AudioObjectID>?, output: AudioObjectID? = nil) {
     stepAsideTimer?.cancel()
     let deadline = ProcessInfo.processInfo.systemUptime + wait
     let excluded = audioExcluded
@@ -2248,7 +2254,7 @@ final class AudioController: ObservableObject {
     t.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(250))
     t.setEventHandler { [weak self] in
       guard let self else { return }
-      let now = TapPipeline.playingProcesses(excluding: excluded)
+      let now = TapPipeline.playingProcesses(excluding: excluded, on: output)
       if baseline == nil { baseline = now }
       guard now != baseline || ProcessInfo.processInfo.systemUptime >= deadline else { return }
       self.stepAsideTimer?.cancel()
