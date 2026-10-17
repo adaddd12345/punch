@@ -40,6 +40,10 @@ struct BeatsView: View {
   @Environment(\.powerSaver) private var powerSaver
   /// The drawer is hidden or covered: no playhead updates.
   @Environment(\.drawPaused) private var drawPaused
+  @Environment(\.popupTint) private var tint
+  @Environment(\.colorScheme) private var scheme
+
+  private var accent: Color { Drawer.accent(tint, scheme) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Drawer.gap) {
@@ -149,7 +153,7 @@ struct BeatsView: View {
         .frame(width: 40, height: Drawer.hit)
         .foregroundStyle(player.playing ? Color.white : Color.primary)
         .background(RoundedRectangle(cornerRadius: Drawer.innerRadius, style: .continuous)
-          .fill(player.playing ? Color.accentColor : Color.primary.opacity(0.08)))
+          .fill(player.playing ? (tint?.ink ?? Color.accentColor) : Color.primary.opacity(0.08)))
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -176,7 +180,7 @@ struct BeatsView: View {
         .lineLimit(1)
         .fixedSize()
         .frame(minWidth: 52, minHeight: Drawer.hit)
-        .foregroundStyle(player.bpm == drop.bpm ? Color.primary : Color.accentColor)
+        .foregroundStyle(player.bpm == drop.bpm ? Color.primary : accent)
         .contentShape(Rectangle())
         .onTapGesture { player.resetBPM() }
         .help("Tempo. Click to go back to \(Int(drop.bpm)) BPM.")
@@ -519,9 +523,12 @@ struct ScrubPercent: View {
   private let travel: CGFloat = 160
   @State private var start: Double?
   @State private var hover = false
+  @Environment(\.popupTint) private var tint
+  @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     let dragging = start != nil
+    let accent = Drawer.accent(tint, scheme)
     VStack(spacing: 2) {
       HStack(spacing: 2) {
         Image(systemName: "chevron.left").opacity(hover || dragging ? 0.6 : 0)
@@ -536,12 +543,12 @@ struct ScrubPercent: View {
       GeometryReader { g in
         Capsule().fill(Color.primary.opacity(0.12))
           .overlay(alignment: .leading) {
-            Capsule().fill(Color.accentColor).frame(width: g.size.width * value)
+            Capsule().fill(accent).frame(width: g.size.width * value)
           }
       }
       .frame(width: 30, height: 2)
     }
-    .foregroundStyle(dragging ? Color.accentColor : Color.primary)
+    .foregroundStyle(dragging ? accent : Color.primary)
     .padding(.horizontal, 2)
     .contentShape(Rectangle())
     .onHover { h in

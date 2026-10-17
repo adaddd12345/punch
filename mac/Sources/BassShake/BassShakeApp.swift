@@ -462,9 +462,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     if (notification.object as? NSWindow) === window { applyActivationPolicy(windowClosing: true) }
   }
 
+  func popoverWillClose(_ notification: Notification) {
+    // Close the tray while the parent still exists, including native closes
+    // that never pass through closePopover or SwiftUI's onDisappear.
+    endLift()
+    LiveDrawer.shared.hide()
+  }
+
   func popoverDidClose(_ notification: Notification) {
     // Re-shown already (moved to another anchor): leave the new one alone.
     guard !popover.isShown else { return }
+    LiveDrawer.shared.hide()
     removeOutsideClickMonitors()
     statusItem?.button?.highlight(false)
     clearDockAnchor()

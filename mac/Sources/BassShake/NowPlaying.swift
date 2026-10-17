@@ -203,8 +203,8 @@ final class NowPlaying: ObservableObject {
   static let maxOthers = 3
   /// A silent app stays this long (gaps between songs).
   static let graceSeconds = 4.0
-  /// A paused Spotify / Music with a known song (or an app the key paused)
-  /// stays this long, so its play button stays reachable.
+  /// A media-key pause without confirmed song metadata stays this long.
+  /// A known Spotify / Music song stays until stopped, quit, or details are off.
   static let pausedSeconds = 180.0
   /// An app is audible when it was loud this recently.
   static let audibleSeconds = 1.5
@@ -524,9 +524,29 @@ final class NowPlaying: ObservableObject {
     if levels.isEmpty && now - activeSince < 1.0 { return }
     updateAudible(levels, now: now, dt: dt)
 
+    // A process lifetime is also a song-cache lifetime. A relaunched player
+    // must not inherit the previous instance's paused song through the memo.
+    for (id, app) in known where !isRunning(app) {
+      if let player = app.player {
+        tracks[player.rawValue] = nil
+        tracksMemo[player.rawValue] = nil
+      }
+      known[id] = nil
+      lastHeard[id] = nil
+      firstSeen[id] = nil
+      pausedByUs[id] = nil
+    }
+
     // Muted apps stay listed (so their tile can unmute them) but rank last.
-    let playing = live.apps.filter { $0.isPlaying && !Self.isSystemVoice($0.bundleID, name: $0.name) }
+    let playing = live.apps.filter {
+      $0.isPlaying && !Self.isSystemVoice($0.bundleID, name: $0.name)
+        && RunningApps.isLive(pid: $0.appPID)
+        && !($0.bundleID.flatMap { detailsAllowed($0) ? tracks[$0] : nil }?.playing == false)
+    }
     let playingIDs = Set(playing.map(\.id))
+    // A muted stream remains reachable below, but must not displace a
+    // paused song merely because its audio process is still running.
+    let leadingIDs = playingIDs.subtracting(live.muted)
     for a in playing {
       lastHeard[a.id] = now
       known[a.id] = NowApp(a)
@@ -534,8 +554,12 @@ final class NowPlaying: ObservableObject {
     }
     var ids = playingIDs
     for (id, heard) in lastHeard where !playingIDs.contains(id) {
-      let keep = retainsWhilePaused(id) ? Self.pausedSeconds : Self.graceSeconds
-      if now - heard < keep, let app = known[id], isRunning(app) { ids.insert(id) }
+      if let app = known[id], isRunning(app),
+         NowPlayingContinuity.retains(hasTrack: knownTrack(app) != nil, pending: pending?.id == id,
+                                     pausedAt: pausedByUs[id], lastHeard: heard, now: now,
+                                     graceSeconds: Self.graceSeconds, pausedSeconds: Self.pausedSeconds) {
+        ids.insert(id)
+      }
     }
     for id in Array(lastHeard.keys) where !ids.contains(id) {
       lastHeard[id] = nil
@@ -556,16 +580,20 @@ final class NowPlaying: ObservableObject {
     let ranked = ids.sorted { x, y in
       let dx = db(x), dy = db(y)
       if dx != dy { return dx > dy }
-      return (firstSeen[x] ?? 0) < (firstSeen[y] ?? 0)
+      let tx = firstSeen[x] ?? 0, ty = firstSeen[y] ?? 0
+      return tx != ty ? tx < ty : x < y
     }
 
     var heroID = hero?.id
     if let h = heroID, !ids.contains(h) { heroID = nil; challenger = nil }
     if heroID == nil {
-      heroID = ranked.first(where: playingIDs.contains)
+      let resumable = Set(ids.filter { retainsWhilePaused($0) })
+      heroID = NowPlayingContinuity.fallback(ranked: ranked, playing: leadingIDs,
+                                           resumable: resumable, lastHeard: lastHeard)
+        ?? ranked.first(where: playingIDs.contains)
       challenger = nil
-    } else if let h = heroID, let best = ranked.first(where: { $0 != h && playingIDs.contains($0) }),
-              db(best) >= db(h) + Self.swapDb {
+    } else if let h = heroID, let best = ranked.first(where: { $0 != h && leadingIDs.contains($0) }),
+              known[h].flatMap({ knownTrack($0) })?.playing == false || db(best) >= db(h) + Self.swapDb {
       // Only an app that is playing now can take over (a paused one in its grace period,
       // still loud in the 3 s average, must not stand in front of a louder player).
       if let c = challenger, c.id == best {
@@ -663,11 +691,18 @@ final class NowPlaying: ObservableObject {
   }
 
   private func retainsWhilePaused(_ id: String) -> Bool {
-    if NowPlayer(rawValue: id) != nil && tracks[id] != nil { return true }
+    if let app = known[id], knownTrack(app) != nil { return true }
     // A key still being checked (a play click on a paused app keeps it on screen).
     if pending?.id == id { return true }
     if let t = pausedByUs[id], ProcessInfo.processInfo.systemUptime - t < Self.pausedSeconds { return true }
     return false
+  }
+
+  /// Visible slots and audio-process presence can both disappear during pause.
+  /// The permission-gated song survives either, in memory only.
+  private func knownTrack(_ app: NowApp) -> NowTrack? {
+    guard let p = app.player, detailsAllowed(p.rawValue) else { return nil }
+    return tracks[p.rawValue] ?? tracksMemo[p.rawValue]
   }
 
   /// Who is really sounding. The meter falls at a fixed rate after sound
@@ -884,12 +919,18 @@ final class NowPlaying: ObservableObject {
 
   // MARK: - Layer B: Spotify / Music (AppleScript off main)
 
-  /// Players on screen right now that may be asked (running, not denied).
+  /// Shown players may ask once. Also revalidate already-authorized running
+  /// players, so opening the popup after pausing can discover their song even
+  /// after macOS removes their audio process. Never prompt for a silent app.
   private func shownPlayers() -> [NowPlayer] {
     guard mayAsk else { return [] }
     let shown = ([hero].compactMap { $0 } + others).compactMap(\.player)
     gate.markSeen(shown.map(\.rawValue))
-    return shown.filter { !denied.contains($0.rawValue) && gate.isOn($0.rawValue) && $0.isRunning }
+    let permitted = NowPlayer.allCases.filter { gate.status[$0.rawValue] == AutomationGate.allowed }
+    var seen = Set<NowPlayer>()
+    return (shown + permitted).filter {
+      seen.insert($0).inserted && detailsAllowed($0.rawValue) && $0.isRunning
+    }
   }
 
   private func pollPlayers() {
@@ -904,6 +945,7 @@ final class NowPlaying: ObservableObject {
     guard !players.isEmpty, !polling else { return }
     polling = true
     let serial = commandSerial
+    let pids = Dictionary(uniqueKeysWithValues: players.compactMap { p in RunningApps.pid(p.rawValue).map { (p, $0) } })
     let autoAsk = Set(players.map(\.rawValue).filter { !gate.wasAsked($0) })
     let allowed = Set(players.map(\.rawValue).filter { gate.status[$0] == AutomationGate.allowed })
     scriptQueue.async { [bridge] in
@@ -920,12 +962,12 @@ final class NowPlaying: ObservableObject {
       }
       DispatchQueue.main.async {
         for (id, code) in codes { self.gate.record(id, code) }
-        self.apply(results, serial: serial)
+        self.apply(results, serial: serial, pids: pids)
       }
     }
   }
 
-  private func apply(_ results: [NowPlayer: NowPlayingScripts.State], serial: Int) {
+  private func apply(_ results: [NowPlayer: NowPlayingScripts.State], serial: Int, pids: [NowPlayer: pid_t]) {
     polling = false
     // Record denials even when the popup closed under the Automation prompt.
     for (p, r) in results {
@@ -938,9 +980,10 @@ final class NowPlaying: ObservableObject {
         }
       }
     }
-    guard active else { return }
+    guard active, mayAsk else { return }
     // A command was sent after this poll was read: keep its optimistic play state.
     let stale = serial != commandSerial
+    let now = ProcessInfo.processInfo.systemUptime
     var next = tracks
     func failed(_ id: String) {
       let n = (failures[id] ?? 0) + 1
@@ -950,6 +993,12 @@ final class NowPlaying: ObservableObject {
     for (p, r) in results {
       let id = p.rawValue
       tracksMemo[id] = nil
+      // A late result must not undo Details Off, or belong to a new instance
+      // of an app that quit and relaunched while its poll was in flight.
+      guard detailsAllowed(id), let pid = pids[p], RunningApps.pid(id) == pid else {
+        next[id] = nil
+        continue
+      }
       switch r {
       case .denied:
         answered.insert(id)
@@ -984,6 +1033,13 @@ final class NowPlaying: ObservableObject {
           }
         }
         next[id] = t
+        if let running = RunningApps.apps(id).first(where: { $0.processIdentifier == pid && !$0.isTerminated }) {
+          let app = LiveApp(id: id, name: running.localizedName ?? AutomationGate.name(id), bundleID: id,
+                            appPID: pid, processObjects: [], playingObjects: [], helperCount: 0, deviceNames: [])
+          known[id] = NowApp(app)
+          if lastHeard[id] == nil { lastHeard[id] = now }
+          if firstSeen[id] == nil { firstSeen[id] = lastHeard[id] }
+        }
       }
     }
     if next != tracks { tracks = next }
@@ -1117,6 +1173,10 @@ final class NowPlaying: ObservableObject {
     let browsersShown = ([hero].compactMap { $0 } + others).filter(\.isBrowser).count
     for (b, appID, r, ax) in results {
       itemsMemo[appID] = nil
+      guard detailsAllowed(b.rawValue), b.isLive else {
+        next[appID] = nil
+        continue
+      }
       // One rule for every failed poll: the last tabs stay until three in a row.
       func failed() {
         let n = (failures[b.rawValue] ?? 0) + 1

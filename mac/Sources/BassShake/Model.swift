@@ -127,6 +127,13 @@ extension Preset {
     Preset(name: "Basic Enhance", nodes: [(105, 2, 0.71), (250, -1.5, 0.8), (1_000, 0, 1), (3_500, 0.5, 0.7), (6_500, 0, 1), (10_000, 2, 0.71)],
            bass: 0.15, symbol: "wand.and.stars", character: SoundCharacter(width: 1.05),
            subtitle: "A gentle all-rounder: a little low-end weight, less mud, a touch of air."),
+    // Dark lo-fi balance without the drive, hiss or pitch wobble of Study,
+    // Late Night and the DJ Lofi pad. Keep the sub, gently clear upper bass,
+    // and soften hats with cuts only: no extra gain pressure with Limit off.
+    // Independent Bass Character, Boost and DJ effects still layer as usual.
+    Preset(name: "Soft Lofi", nodes: [(70, 0, 0.71), (180, -1, 0.8), (400, -1.5, 0.8), (1_400, -0.5, 1), (3_200, -2.5, 0.8), (6_000, -7, 0.7071)],
+           bass: 0, symbol: "sun.haze",
+           subtitle: "Keeps deep bass, softens highs, without adding grit or wobble."),
     Preset(name: "Underground Rap", nodes: [(100, 3.5, 0.71), (280, -3, 1.1), (900, 1.5, 0.9), (3_000, 2.5, 1), (7_000, -1.5, 2.5), (10_000, 1.5, 0.71)],
            bass: 0.55, symbol: "flame",
            character: SoundCharacter(compressor: .init(thresholdDb: -18, ratio: 3, attackMs: 25, releaseMs: 120, makeupDb: 3, sidechainHpHz: 90),

@@ -21,6 +21,8 @@ struct DJView: View {
   @ObservedObject var controller: AudioController
   @StateObject private var deck = DJDeck()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.popupTint) private var tint
+  @Environment(\.colorScheme) private var scheme
 
   private var dj: DJState { controller.dj }
 
@@ -54,7 +56,7 @@ struct DJView: View {
     HStack(spacing: 10) {
       Text("DJ")
         .font(Drawer.headerFont)
-        .foregroundStyle(.primary)
+        .foregroundStyle(Drawer.accent(tint, scheme, fallback: .primary))
       pageControl
       Spacer(minLength: 0)
       // Always laid out (fixed height); shown only while something is on.
@@ -158,7 +160,7 @@ struct DJView: View {
           if !controller.dj.filterPinned { controller.dj.filter = 0 }
         } label: {
           DartGlyph(pinned: dj.filterPinned, size: 11)
-            .foregroundStyle(dj.filterPinned ? DJStyle.filterAccent : DJStyle.faint)
+            .foregroundStyle(dj.filterPinned ? Drawer.accent(tint, scheme, fallback: DJStyle.filterAccent) : DJStyle.faint)
         }
         .buttonStyle(PinButtonStyle(minSize: 24))
         .help(dj.filterPinned ? "Unpin: the filter springs back to off when you let go"
@@ -181,13 +183,16 @@ private struct DJFilterSlider: View {
   let pinned: Bool
   @State private var live: Double?
   @State private var editing = false
+  @Environment(\.popupTint) private var tint
+  @Environment(\.colorScheme) private var scheme
 
   var body: some View {
     let f = live ?? filter
     let active = abs(f) > 0.01 || pinned
+    let accent = Drawer.accent(tint, scheme, fallback: DJStyle.filterAccent)
     Text("Filter")
       .font(Drawer.barFont)
-      .foregroundStyle(active ? DJStyle.filterAccent : DJStyle.ink)
+      .foregroundStyle(active ? accent : DJStyle.ink)
       .frame(width: 42, alignment: .leading)
     Text("LP").font(.system(size: 10, weight: .medium)).foregroundStyle(DJStyle.faint)
     Slider(value: Binding(get: { f }, set: { v in
@@ -208,7 +213,7 @@ private struct DJFilterSlider: View {
              if controller.dj.filter != final { controller.dj.filter = final }
            })
       .controlSize(.small)
-      .tint(DJStyle.filterAccent)
+      .tint(accent)
       .accessibilityLabel("Filter")
       .pointerHint("Filter", does: "Left muffles, right thins; springs back unless pinned.", track: false)
   }

@@ -132,6 +132,14 @@ struct PopoverView: View {
 
   private var labels: LabelLevel { controller.settings.labelLevel }
 
+  private var drawerAppearance: DrawerAppearance {
+    DrawerAppearance(background: controller.settings.backgroundStyle,
+                     tint: popupTint,
+                     artworkStyle: controller.settings.artworkStyle,
+                     artworkEffect: controller.settings.artworkEffect,
+                     isoPlayButton: controller.settings.isoMuteButton)
+  }
+
   /// Take Control: this popup drives another Mac (its controller is a mirror).
   private var takeover: TakeoverSession? {
     guard controller.isMirror, let s = TakeControl.shared.session, s.mirror === controller else { return nil }
@@ -324,20 +332,27 @@ struct PopoverView: View {
     .onChange(of: controller.settings.pointerHints, initial: true) { _, on in
       LiveDrawer.shared.pointerHints = on
     }
+    .onChange(of: drawerAppearance, initial: true) { _, appearance in
+      guard ownsDrawer, LiveDrawer.shared.host === window.window else { return }
+      LiveDrawer.shared.appearance = appearance
+    }
     .onChange(of: showLive) { _, on in
       if on {
+        guard bindDrawerClose() else { return }
         showDJ = false
         showBeats = false
+        LiveDrawer.shared.appearance = drawerAppearance
         LiveDrawer.shared.show(model: controller.live)
       } else if !showDJ && !showBeats {
         LiveDrawer.shared.hide()
       }
     }
     .onChange(of: showDJ) { _, on in
-      LiveDrawer.shared.onHide = { [weak controller] in controller?.dj.held = []; controller?.dj.listening = false }
       if on {
+        guard bindDrawerClose() else { return }
         controller.dj.listening = true  // the panel may only be re-ordered in (no onAppear)
         showBeats = false
+        LiveDrawer.shared.appearance = drawerAppearance
         LiveDrawer.shared.show(DJView(controller: controller), height: Drawer.height)
       } else if !showLive && !showBeats {
         LiveDrawer.shared.hide()
@@ -345,6 +360,7 @@ struct PopoverView: View {
     }
     .onChange(of: showBeats) { _, on in
       if on {
+        guard bindDrawerClose() else { return }
         showLive = false
         showDJ = false
         showBeatsDrawer()
@@ -355,7 +371,10 @@ struct PopoverView: View {
     .onChange(of: beats.revealCount) { _, _ in
       // A beat opened from Finder: the popup comes up first, then Beats.
       guard ownsDrawer, size != .mini else { return }
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showBeats = true }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+        guard window.window?.isVisible == true, LiveDrawer.shared.host === window.window else { return }
+        showBeats = true
+      }
     }
     .onAppear {
       visible = true
@@ -428,10 +447,30 @@ struct PopoverView: View {
   /// The Mac this popup belongs to (the mirror's owner for Take Control).
   private var home: AudioController { controller.isMirror ? (TakeControl.shared.localController ?? controller) : controller }
 
+  /// The retained popover does not always disappear in SwiftUI when AppKit
+  /// closes it. Drawer closure must reset its buttons at the same time.
+  private func bindDrawerClose() -> Bool {
+    guard ownsDrawer, window.window?.isVisible == true, LiveDrawer.shared.host === window.window else {
+      showLive = false
+      showDJ = false
+      showBeats = false
+      return false
+    }
+    LiveDrawer.shared.onHide = { [weak controller] in
+      showLive = false
+      showDJ = false
+      showBeats = false
+      controller?.dj.held = []
+      controller?.dj.listening = false
+    }
+    return true
+  }
+
   private func showBeatsDrawer() {
     // Under the popup (lifted on a bottom Dock) like DJ and Live whenever it
     // fits; the slim side card only beside a popup on a side Dock.
     let side = LiveDrawer.shared.sideOnly
+    LiveDrawer.shared.appearance = drawerAppearance
     LiveDrawer.shared.show(BeatsView(player: beats, side: side, grid: controller.settings.beatsGrid) { [controller] g in
                              if controller.settings.beatsGrid != g { controller.settings.beatsGrid = g }
                            },

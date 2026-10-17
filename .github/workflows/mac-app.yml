@@ -48,6 +48,8 @@ jobs:
           cmake --build core/build -j
           ctest --test-dir core/build --output-on-failure
           core/build/punch_bench
+      - name: Paused-song continuity checks
+        run: bash mac/scripts/now-playing-check.sh
       - name: Build app bundle
         run: mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"
       # Launch the built app and make sure it stays up. No one answers the

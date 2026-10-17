@@ -52,6 +52,11 @@ final class LiveDrawer {
     get { hints.on }
     set { if hints.on != newValue { hints.on = newValue } }
   }
+  /// The drawer lives in another window, so its theme must be forwarded.
+  var appearance: DrawerAppearance {
+    get { drawerContent.appearance }
+    set { if drawerContent.appearance != newValue { drawerContent.appearance = newValue } }
+  }
   /// Observed only by the drawer's hint root: flips when the setting changes
   /// or the drawer shows/hides (hiding clears any caption and hover stack).
   private let hints = DrawerHints()
@@ -93,7 +98,7 @@ final class LiveDrawer {
   /// sizes the panel first, so under vs beside is decided on the real size
   /// (no lift-then-move when it turns out not to fit).
   func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil, height: CGFloat? = nil) {
-    guard let host else { return }
+    guard let host, host.isVisible else { return }
     self.side = side || sideOnly
     if panel == nil {
       let p = DrawerPanel(contentRect: NSRect(x: 0, y: 0, width: anchorRect?.width ?? host.frame.width, height: 120),
@@ -156,13 +161,14 @@ final class LiveDrawer {
   /// The content's measured size: resize the panel on the next turn, without
   /// animation, so no resize happens inside a layout or render pass.
   private func fit(_ size: CGSize) {
-    guard size.width > 1, size.height > 1 else { return }
+    guard hints.shown, size.width > 1, size.height > 1 else { return }
     let first = pendingSize == nil
     pendingSize = size
     guard first else { return }
     DispatchQueue.main.async { [weak self] in
       guard let self, let panel = self.panel, let s = self.pendingSize else { return }
       self.pendingSize = nil
+      guard self.hints.shown else { return }
       let cur = panel.frame.size
       guard abs(cur.width - s.width) > 0.5 || abs(cur.height - s.height) > 0.5 else { return }
       panel.setContentSize(NSSize(width: ceil(s.width), height: ceil(s.height)))
@@ -173,12 +179,19 @@ final class LiveDrawer {
   var onHide: (() -> Void)?
 
   func hide() {
-    guard let panel, panel.isVisible else { return }
-    onHide?()
+    // AppKit may already have ordered the child out with its parent. Its
+    // visibility is not the drawer's open state: always detach and clear it.
+    let wasShown = hints.shown || panel?.parent != nil || panel?.isVisible == true
+    verifyWork?.cancel()
+    verifyWork = nil
+    pendingSize = nil
     hints.shown = false
-    panel.parent?.removeChildWindow(panel)
-    panel.orderOut(nil)
+    if let panel {
+      panel.parent?.removeChildWindow(panel)
+      panel.orderOut(nil)
+    }
     setLift(0)   // the popup glides back down to the Dock
+    if wasShown { onHide?() }
   }
 
   /// After the glide: if the popup couldn't actually rise far enough (macOS
@@ -207,7 +220,7 @@ final class LiveDrawer {
   }
 
   private func reposition(decide: Bool = false) {
-    guard let panel, let r = anchorRect else { return }
+    guard hints.shown, let panel, let r = anchorRect else { return }
     // Origin only (the panel is sized by `fit`). Aligned to the popover content.
     let host = panel.parent ?? self.host
     let vis = (host ?? panel).screen?.visibleFrame
@@ -298,6 +311,7 @@ final class DrawerHints: ObservableObject {
 /// The drawer's current content (Live Channels, DJ, Beats), swapped in place.
 final class DrawerContent: ObservableObject {
   @Published var view = AnyView(EmptyView())
+  @Published var appearance = DrawerAppearance()
   var width: CGFloat = 360
 }
 
@@ -307,10 +321,19 @@ struct DrawerRoot: View {
   @ObservedObject var model: DrawerContent
   @ObservedObject var flags: DrawerHints
   let onSize: (CGSize) -> Void
+  @Environment(\.colorScheme) private var scheme
   var body: some View {
     model.view
-      .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
+      .environment(\.popupTint, model.appearance.tint)
+      .environment(\.artworkStyle, model.appearance.artworkStyle)
+      .environment(\.artworkEffect, model.appearance.artworkEffect)
+      .environment(\.isoPlayButton, model.appearance.isoPlayButton)
+      .tint(Drawer.accent(model.appearance.tint, scheme))
+      // The main colourway over the same native material. Keep particles out
+      // of the smaller working area; its pads already communicate activity.
+      .background(PopupBackground(style: model.appearance.background, active: flags.shown))
       .background(VisualEffectBackground())
+      .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
       .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
       .fixedSize()
       .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }

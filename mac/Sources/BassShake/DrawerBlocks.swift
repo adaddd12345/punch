@@ -1,6 +1,17 @@
 import AppKit
 import SwiftUI
 
+/// A detached hosting view does not inherit the popup's environment. Keep
+/// its appearance explicit so an open drawer follows Look and preset changes
+/// without replacing its content (and resetting a held pad or Beats layout).
+struct DrawerAppearance: Equatable {
+  var background: BackgroundStyle = .system
+  var tint: BentoTint?
+  var artworkStyle: ArtworkStyle = .cover
+  var artworkEffect: ArtworkEffect = .none
+  var isoPlayButton = false
+}
+
 /// The one design language of the tray's Beats and DJ drawers: flat colour
 /// blocks with a title and a one-line descriptor top-left, a neutral surface
 /// for bars, and small square "pixel" cells for state. No outlines, no
@@ -37,6 +48,11 @@ enum Drawer {
   static let ink = Color(red: 0.10, green: 0.10, blue: 0.12)
   static func detailInk(_ contrast: ColorSchemeContrast) -> Color {
     ink.opacity(contrast == .increased ? 1 : 0.86)
+  }
+
+  /// General controls follow the popup; pad/stem colours still identify sounds.
+  static func accent(_ tint: BentoTint?, _ scheme: ColorScheme, fallback: Color = .accentColor) -> Color {
+    tint.map { scheme == .dark ? $0.pastel : $0.ink } ?? fallback
   }
 }
 
@@ -96,11 +112,13 @@ struct DrawerSurface: View {
   var radius: CGFloat = Drawer.radius
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.popupTint) private var tint
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
     let hc = contrast == .increased
     shape.fill(Color.primary.opacity(hc ? 0.12 : (scheme == .dark ? 0.08 : 0.055)))
+      .overlay { if let tint { shape.fill(tint.pastel.opacity(scheme == .dark ? 0.08 : 0.12)) } }
       .overlay { if hc { shape.strokeBorder(Color.primary.opacity(0.45), lineWidth: 1) } }
       .allowsHitTesting(false)
       .accessibilityHidden(true)
