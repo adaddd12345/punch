@@ -328,7 +328,7 @@ struct DrawerRoot: View {
       .environment(\.artworkStyle, model.appearance.artworkStyle)
       .environment(\.artworkEffect, model.appearance.artworkEffect)
       .environment(\.artworkFoil, model.appearance.artworkFoil)
-      .environment(\.isoPlayButton, model.appearance.isoPlayButton)
+      .environment(\.playButtonLook, model.appearance.playButtonLook)
       .tint(Drawer.accent(model.appearance.tint, scheme))
       // The main colourway over the same native material. Keep particles out
       // of the smaller working area; its pads already communicate activity.

@@ -10,7 +10,7 @@ struct DrawerAppearance: Equatable {
   var artworkStyle: ArtworkStyle = .cover
   var artworkEffect: ArtworkEffect = .none
   var artworkFoil = false
-  var isoPlayButton = false
+  var playButtonLook: PlayButtonLook = .flat
 }
 
 /// The one design language of the tray's Beats and DJ drawers: flat colour

@@ -162,8 +162,13 @@ struct SettingsMenuContent: View {
         Divider()
         Toggle("Holographic Accent", isOn: bind(\.artworkFoil))
       }
-      // What's Playing's play / pause as the isometric shield (off: the flat disc).
-      Toggle("Isometric Play Button", isOn: bind(\.isoMuteButton))
+      Picker("Play Button", selection: Binding(get: { controller.settings.playButtonLook }, set: {
+        controller.settings.playButtonLook = $0
+        // Older paired builds keep the nearest available appearance.
+        controller.settings.isoMuteButton = $0 != .flat
+      })) {
+        ForEach(PlayButtonLook.allCases) { Text($0.title).tag($0) }
+      }
       Divider()
       Toggle("Fade In & Out", isOn: bind(\.fadeWindows))
       // Drawing only: the sound, Fair Level and every meter's reading stay the same.

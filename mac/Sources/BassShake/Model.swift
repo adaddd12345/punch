@@ -723,6 +723,19 @@ enum AppIconStyle: String, Codable, CaseIterable {
   var title: String { rawValue.capitalized }
 }
 
+/// Alternate faces for the same What's Playing transport control.
+enum PlayButtonLook: String, Codable, CaseIterable, Identifiable {
+  case flat, sculpted, prism
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .flat: return "Flat"
+    case .sculpted: return "Original Shield"
+    case .prism: return "Prism Shield"
+    }
+  }
+}
+
 /// Everything the user can change, persisted as one JSON blob.
 struct Settings: Codable, Equatable {
   var enabled = true
@@ -879,9 +892,11 @@ struct Settings: Codable, Equatable {
   var artworkEffect: ArtworkEffect = .none
   /// An optional printed-foil accent; separate from Halftone Dots and layout.
   var artworkFoil = false
-  /// What's Playing's play / pause as the isometric shield (⋯ › Look ›
-  /// Isometric Play Button; the key keeps its old name so saved prefs load). Off: the flat disc.
+  /// Legacy play-button preference, retained for settings shared with older builds.
   var isoMuteButton = false
+  /// What's Playing's play / pause appearance (⋯ › Look › Play Button).
+  /// Old saves keep either their flat disc or sculpted shield.
+  var playButtonLook: PlayButtonLook = .flat
   /// Bass character (Distort / Punch) and its amount (0...1).
   var bassCharacter: BassCharacter = .off
   var bassAmount: Double = 0.6
@@ -1006,6 +1021,8 @@ struct Settings: Codable, Equatable {
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
     artworkFoil = (try? c.decodeIfPresent(Bool.self, forKey: .artworkFoil)) ?? d.artworkFoil
     isoMuteButton = (try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton)) ?? d.isoMuteButton
+    playButtonLook = (try? c.decodeIfPresent(PlayButtonLook.self, forKey: .playButtonLook))
+      ?? (isoMuteButton ? .sculpted : .flat)
     bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
     bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount
     lateNightHaze = (try? c.decodeIfPresent(Double.self, forKey: .lateNightHaze)) ?? d.lateNightHaze

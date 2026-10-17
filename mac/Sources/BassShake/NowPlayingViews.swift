@@ -187,8 +187,8 @@ private struct NoticeText: View {
 /// app with no pause. A filled tint disc, so it reads apart from Power.
 /// Locked (the key needs Accessibility): a small lock badge, an always-on
 /// hover card, and a click that opens Accessibility instead of sending a key.
-/// ⋯ › Look › Isometric Play Button draws the same button as the 3D shield
-/// (IsoPlayButton.swift), at the same size.
+/// ⋯ › Look › Play Button changes only the face and press treatment, at the
+/// same size and with the same action, hint and accessibility label.
 private struct PrimaryButton: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
@@ -197,7 +197,7 @@ private struct PrimaryButton: View {
   /// The live tint; nil draws the quiet "off" disc.
   let fill: Color?
   @Environment(\.colorScheme) private var scheme
-  @Environment(\.isoPlayButton) private var iso
+  @Environment(\.playButtonLook) private var look
 
   var body: some View {
     let route = model.route(app)
@@ -225,10 +225,14 @@ private struct PrimaryButton: View {
                         browser: app.isBrowser)
     let button = Button { model.primary(app) } label: {
       Group {
-        if iso {
+        switch look {
+        case .sculpted:
           IsoPlayFace(level: NowLevels.shared.meter(for: app.id), speaker: route == .mute || fallback,
                       playing: playing, muted: muted, tint: fill, size: size)
-        } else {
+        case .prism:
+          PrismPlayFace(speaker: route == .mute || fallback, playing: playing,
+                        muted: muted, tint: fill, size: size)
+        case .flat:
           Image(systemName: symbol)
             .font(.system(size: glyph, weight: .heavy))
             .foregroundStyle(ink)
@@ -242,7 +246,11 @@ private struct PrimaryButton: View {
       .contentShape(Circle())
     }
     return Group {
-      if iso { button.buttonStyle(IsoPlayStyle()) } else { button.buttonStyle(BentoPressStyle()) }
+      switch look {
+      case .flat: button.buttonStyle(BentoPressStyle())
+      case .sculpted: button.buttonStyle(IsoPlayStyle())
+      case .prism: button.buttonStyle(PrismPlayStyle())
+      }
     }
     .fixedSize()
     .animation(.easeOut(duration: 0.2), value: locked)

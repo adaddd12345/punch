@@ -98,7 +98,7 @@ struct PopoverView: View {
     .environment(\.artworkStyle, controller.settings.artworkStyle)
     .environment(\.artworkEffect, controller.settings.artworkEffect)
     .environment(\.artworkFoil, controller.settings.artworkFoil)
-    .environment(\.isoPlayButton, controller.settings.isoMuteButton)
+    .environment(\.playButtonLook, controller.settings.playButtonLook)
     .onChange(of: menuPanel) { _, p in
       guard let p else { return }
       menuPanel = nil
@@ -139,7 +139,7 @@ struct PopoverView: View {
                      artworkStyle: controller.settings.artworkStyle,
                      artworkEffect: controller.settings.artworkEffect,
                      artworkFoil: controller.settings.artworkFoil,
-                     isoPlayButton: controller.settings.isoMuteButton)
+                     playButtonLook: controller.settings.playButtonLook)
   }
 
   /// Take Control: this popup drives another Mac (its controller is a mirror).
