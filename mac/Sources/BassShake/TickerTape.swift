@@ -374,7 +374,8 @@ private final class Strip {
   }
   private var motion: Motion?
   static let hoverSpeedScale = 0.20
-  static let slowDuration = 0.75
+  // Acknowledge hover promptly, then settle into the reading pace without a snap.
+  static let slowDuration = 0.38
   static let startDuration = 0.70
   private static let lead = 6.0
 
