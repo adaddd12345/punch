@@ -7,23 +7,15 @@ import SwiftUI
 //
 // - The sleeve is the cover / still when there is one; otherwise a soft
 //   gradient in the icon's own colours with the site or app icon centred.
-// - The record is tinted from the art (ArtPalettes: an 8×8 thumbnail, off the
-//   main thread, cached per image). Its grooves are faint tonal bands and a
-//   cloudy density in the acrylic, never drawn lines; a fixed sheen sits on top.
-// - While the lead entry (the hero, Mini's channel) is heard its record turns
-//   once per 7.5 s; muted it stops; paused it also slides part-way back into
-//   the sleeve (spring). The small tiles' records never turn: one motion on
-//   screen at a time. Reduce Motion, Power Saver, a hidden / covered window: still.
-// - Hovering hero-sized artwork pulls the record right as its sleeve eases
-//   left, then settles the record in front with a small planar roll. Both
-//   faces stay visible. One reversible spring owns the gesture; the depth
-//   changes only while the two are clear. Optional foil stays on the sleeve.
+// - Artwork Tint follows the cover and turns while heard. The five fixed
+//   material studies keep their lighting still, as in their local preview.
+// - Hover is a compact partial pull: the sleeve travels 3 pt left and the
+//   record 4 pt right at a 48 pt slot, together over 360 ms. The disc remains
+//   between two paper faces throughout; no flip, full extraction or layer swap.
+// - Reduce Motion, Power Saver and covered windows keep the presentation still.
 //
-// CPU: the record, its sheen and its shadow are three bitmaps rendered once
-// per tint and size (VinylArtCache). The turn is a Core Animation rotation of
-// one of them, run by the render server at up to 15 fps: no SwiftUI updates,
-// no redraws per frame. The art slot keeps its footprint: the sleeve shrinks
-// to make room for the record.
+// Material, sheen and shadow are cached bitmaps. Hover moves those layers;
+// pigment and grooves are never regenerated per animation frame.
 
 enum ArtworkStyle: String, Codable, CaseIterable, Identifiable {
   case cover, vinyl
@@ -50,7 +42,7 @@ struct VinylGeometry {
   var sleeve: CGFloat { (size * 0.75).rounded() }
   /// The record's diameter: smaller than the sleeve, so over a third of it
   /// (and a sliver of its label) shows without shrinking the cover further.
-  var record: CGFloat { (sleeve * 0.88).rounded() }
+  var record: CGFloat { min(sleeve - 1, (sleeve * 34 / 36).rounded()) }
   /// The record's centre x while playing: its trailing edge on the slot's.
   var playingCenter: CGFloat { size - record / 2 }
   /// Paused: tucked part-way back into the sleeve.
@@ -73,18 +65,32 @@ struct OnSleeve<Overlay: View>: ViewModifier {
   let alignment: Alignment
   @ViewBuilder let overlay: () -> Overlay
   @Environment(\.artworkStyle) private var style
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var hovering = false
+
+  private var canReveal: Bool {
+    style.resolved(for: size) == .vinyl && size >= 36 && !reduceMotion && !powerSaver && !drawPaused
+  }
 
   func body(content: Content) -> some View {
     content.overlay(alignment: .topLeading) {
       if style.resolved(for: size) == .vinyl {
         let g = VinylGeometry(size: size)
+        // The sleeve's transport badge moves with its paper, on the same
+        // stationary hover region and timing as the underlying artwork.
         overlay()
           .frame(width: g.sleeve, height: g.sleeve, alignment: alignment)
-          .offset(x: 0, y: g.sleeveRect.minY)
+          .offset(x: hovering && canReveal ? -size * 3 / 48 : 0, y: g.sleeveRect.minY)
+          .animation(canReveal ? .smooth(duration: 0.36) : nil, value: hovering && canReveal)
       } else {
         overlay().frame(width: size, height: size, alignment: alignment)
       }
     }
+    .onHover { hovering = $0 && canReveal && !Reshuffle.anyOn }
+    .onChange(of: canReveal) { _, allowed in if !allowed { hovering = false } }
+    .onDisappear { hovering = false }
   }
 }
 
@@ -399,6 +405,7 @@ enum VinylArtCache {
 /// The record: shadow, turning disc, fixed sheen. The turn is a Core Animation
 /// rotation (render server, ≤ 15 fps); stopping keeps the angle it reached.
 struct VinylRecord: NSViewRepresentable {
+  var material: VinylMaterial = .artwork
   let record: ArtRGB
   let label: ArtRGB
   let diameter: CGFloat
@@ -408,7 +415,7 @@ struct VinylRecord: NSViewRepresentable {
   func makeNSView(context: Context) -> VinylRecordView { VinylRecordView() }
 
   func updateNSView(_ v: VinylRecordView, context: Context) {
-    v.configure(record: record, label: label, diameter: diameter, dark: dark)
+    v.configure(material: material, record: record, label: label, diameter: diameter, dark: dark)
     v.spinning = spinning
   }
 }
@@ -420,7 +427,7 @@ final class VinylRecordView: NSView {
   private let discLayer = CALayer()
   private let sheenLayer = CALayer()
   private var key = ""
-  private var inputs: (ArtRGB, ArtRGB, CGFloat, Bool)?
+  private var inputs: (material: VinylMaterial, record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool)?
   private var pad: CGFloat = 0
   /// The angle the disc stopped at (radians, clockwise).
   private var angle: CGFloat = 0
@@ -440,19 +447,31 @@ final class VinylRecordView: NSView {
   override var isFlipped: Bool { true }
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-  func configure(record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool) {
-    inputs = (record, label, diameter, dark)
+  func configure(material: VinylMaterial, record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool) {
+    if inputs?.material != material && material != .artwork {
+      // Fixed materials always retain the artist's intended reflection angle.
+      discLayer.removeAnimation(forKey: "turn")
+      angle = 0
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      discLayer.setValue(0, forKeyPath: "transform.rotation.z")
+      CATransaction.commit()
+    }
+    inputs = (material, record, label, diameter, dark)
     render()
   }
 
   private func render() {
-    guard let (record, label, diameter, dark) = inputs else { return }
+    guard let (material, record, label, diameter, dark) = inputs else { return }
     let scale = window?.backingScaleFactor ?? 2
-    let k = "\(record.key)-\(label.key)-\(diameter)-\(scale)-\(dark)"
+    let tintKey = material == .artwork ? "\(record.key)-\(label.key)" : material.rawValue
+    let k = "\(tintKey)-\(diameter)-\(scale)-\(dark)"
     guard k != key else { return }
     let first = key.isEmpty
     key = k
-    let im = VinylArtCache.images(record: record, label: label, diameter: diameter, scale: scale, dark: dark)
+    let im = material == .artwork
+      ? VinylArtCache.images(record: record, label: label, diameter: diameter, scale: scale, dark: dark)
+      : NativeVinylMaterials.images(material: material, diameter: diameter, scale: scale, dark: dark)
     pad = im.pad
     CATransaction.begin()
     // A new tint cross-fades (0.3 s); the first one just appears.
@@ -517,46 +536,19 @@ final class VinylRecordView: NSView {
 
 // MARK: - The art
 
-/// Release the record to the right, then settle it in front along a shallow
-/// planar arc. At the halfway depth change, the faces are fully separated.
-/// A retargeted spring retraces this same path when the pointer leaves early.
+/// One shared, reversible partial pull. Even at full hover the record remains
+/// inside the sleeve: no discontinuous depth switch or wide extraction path.
 struct VinylRevealPose {
   let progress: CGFloat
   private var p: CGFloat { min(1, max(0, progress)) }
-  private var release: CGFloat { sin(.pi * p) }
-  var inFront: Bool { p >= 0.5 }
-  var recordRoll: Double { 18 * Double(p) }
-  var sleeveRoll: Double { -3 * Double(p) }
-
-  private func clearCenter(_ g: VinylGeometry) -> CGFloat {
-    // Keep the disc within the headline's existing 8 pt artwork/title gap.
-    g.size + min(7, g.size * 0.145) - g.record / 2
-  }
-
   func recordCenter(_ g: VinylGeometry, resting: CGFloat) -> CGFloat {
-    let end = g.size * 0.70
-    let origin = p < 0.5 ? resting : end
-    // The two horizontal segments share a zero tangent at full release; the
-    // vertical arc keeps moving through that point, rather than pausing there.
-    return origin + (clearCenter(g) - origin) * release
+    resting + (g.size * 4 / 48) * p
   }
-  func recordLift(_ g: VinylGeometry) -> CGFloat {
-    -g.size * 0.035 * sin(2 * .pi * p)
-  }
-  func sleeveShift(_ g: VinylGeometry) -> CGFloat {
-    let end = -min(3, g.size * 0.055)
-    // Make room on the card's padded side during the release, then settle just
-    // 2–3 pt left. Include the rotated sleeve's actual outer edge in clearance.
-    let angle = CGFloat(1.5 * Double.pi / 180)
-    let rotationEdge = g.sleeve / 2 * (cos(angle) + sin(angle) - 1)
-    let clear = clearCenter(g) - g.record / 2 - g.sleeve - rotationEdge - 0.75
-    let settle = p * p * (3 - 2 * p)
-    return end * settle + (clear - end / 2) * release * release
-  }
+  func sleeveShift(_ g: VinylGeometry) -> CGFloat { -g.size * 3 / 48 * p }
 }
 
-/// Only this small presentation interpolates during hover. The existing record
-/// bitmaps and the sleeve stay mounted, including the record's independent spin.
+/// Only the pose interpolates. Record, paper and cover stay mounted, with a
+/// paper back beneath the transparent material and a contact shade at its mouth.
 struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
   var progress: CGFloat
   let geometry: VinylGeometry
@@ -574,29 +566,34 @@ struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
     let g = geometry
     let pose = VinylRevealPose(progress: progress)
     let center = pose.recordCenter(g, resting: restingCenter)
+    let shift = pose.sleeveShift(g)
+    let shape = RoundedRectangle(cornerRadius: g.sleeveRadius, style: .continuous)
     ZStack(alignment: .topLeading) {
+      shape.fill(LinearGradient(colors: [Color(red: 0.79, green: 0.73, blue: 0.65),
+                                        Color(red: 0.95, green: 0.91, blue: 0.86)],
+                                startPoint: .leading, endPoint: .trailing))
+        .frame(width: g.sleeve, height: g.sleeve)
+        .offset(x: shift + g.size * 0.00625, y: g.sleeveRect.minY)
       record
         .frame(width: g.record, height: g.record)
-        .rotationEffect(.degrees(pose.recordRoll))
-        .offset(y: pose.recordLift(g))
         .position(x: center, y: g.size / 2)
-        .zIndex(pose.inFront ? 2 : 0)
-      // The narrow sleeve-edge shade follows its face instead of floating at the
-      // old cover edge while the sleeve moves left.
-      LinearGradient(colors: [.black.opacity(dark ? 0.38 : 0.22), .clear],
+      LinearGradient(colors: [.black.opacity(dark ? 0.38 : 0.30), .clear],
                      startPoint: .leading, endPoint: .trailing)
-        .frame(width: max(1.5, g.sleeve * 0.07), height: g.size)
-        .offset(x: g.sleeve + pose.sleeveShift(g))
+        .frame(width: g.size * 3 / 48, height: g.sleeve)
+        .offset(x: g.sleeve + shift, y: g.sleeveRect.minY)
         .frame(width: g.size, height: g.size, alignment: .topLeading)
         .mask(Circle().frame(width: g.record, height: g.record)
-          .position(x: center, y: g.size / 2 + pose.recordLift(g)))
-        .opacity(max(0, 1 - progress * 2))
-        .zIndex(0.5)
+          .position(x: center, y: g.size / 2))
+        .opacity(1 - 0.24 * min(1, max(0, progress)))
       sleeve
         .frame(width: g.sleeve, height: g.sleeve)
-        .rotationEffect(.degrees(pose.sleeveRoll))
-        .offset(x: pose.sleeveShift(g), y: g.sleeveRect.minY)
-        .zIndex(1)
+        .overlay(alignment: .trailing) {
+          LinearGradient(colors: [.clear, .black.opacity(0.34)],
+                         startPoint: .leading, endPoint: .trailing)
+            .frame(width: max(0.4, g.sleeve * 0.014), height: g.sleeve * 0.92)
+            .clipShape(Capsule())
+        }
+        .offset(x: shift, y: g.sleeveRect.minY)
     }
     .frame(width: g.size, height: g.size, alignment: .topLeading)
   }
@@ -618,6 +615,7 @@ struct VinylPeekArt: View {
   @State private var slides = false
   @State private var hovering = false
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.vinylMaterial) private var material
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.drawPaused) private var drawPaused
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -636,15 +634,15 @@ struct VinylPeekArt: View {
     let shape = RoundedRectangle(cornerRadius: g.sleeveRadius, style: .continuous)
     let engaged = hovering && canReveal
     VinylRevealScene(progress: engaged ? 1 : 0, geometry: g, restingCenter: center, dark: dark,
-      record: VinylRecord(record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
-                          spinning: spinning && !reduceMotion && !powerSaver && !drawPaused),
+      record: VinylRecord(material: material, record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
+                          spinning: material == .artwork && spinning && !reduceMotion && !powerSaver && !drawPaused),
       sleeve: sleeve(g, p, dark: dark, shape: shape, engaged: engaged)
         .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(dark ? 0.35 : 0.2), radius: 2, y: 1)))
     .frame(width: size, height: size, alignment: .topLeading)
     // This stationary region owns hover, not the sliding layers inside it.
     .contentShape(Rectangle())
     .onHover { hovering = $0 && canReveal && !Reshuffle.anyOn }
-    .animation(canReveal ? .smooth(duration: 0.68) : nil, value: engaged)
+    .animation(canReveal ? .smooth(duration: 0.36) : nil, value: engaged)
     .animation(reduceMotion || powerSaver || drawPaused || !slides ? nil : .spring(response: 0.55, dampingFraction: 0.82), value: out)
     .opacity(settled ? 1 : 0)
     .task {

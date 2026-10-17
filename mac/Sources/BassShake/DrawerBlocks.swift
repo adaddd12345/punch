@@ -8,6 +8,7 @@ struct DrawerAppearance: Equatable {
   var background: BackgroundStyle = .system
   var tint: BentoTint?
   var artworkStyle: ArtworkStyle = .cover
+  var vinylMaterial: VinylMaterial = .artwork
   var artworkEffect: ArtworkEffect = .none
   var artworkFoil = false
   var playButtonLook: PlayButtonLook = .flat

@@ -96,6 +96,7 @@ struct PopoverView: View {
     // Power Saver for everything inside; animation pauses while the window is covered.
     .drawBudgetRoot()
     .environment(\.artworkStyle, controller.settings.artworkStyle)
+    .environment(\.vinylMaterial, controller.settings.vinylMaterial)
     .environment(\.artworkEffect, controller.settings.artworkEffect)
     .environment(\.artworkFoil, controller.settings.artworkFoil)
     .environment(\.playButtonLook, controller.settings.playButtonLook)
@@ -138,6 +139,7 @@ struct PopoverView: View {
     DrawerAppearance(background: controller.settings.backgroundStyle,
                      tint: popupTint,
                      artworkStyle: controller.settings.artworkStyle,
+                     vinylMaterial: controller.settings.vinylMaterial,
                      artworkEffect: controller.settings.artworkEffect,
                      artworkFoil: controller.settings.artworkFoil,
                      playButtonLook: controller.settings.playButtonLook,

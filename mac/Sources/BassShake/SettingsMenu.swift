@@ -158,6 +158,12 @@ struct SettingsMenuContent: View {
           ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
         }
         .pickerStyle(.inline)
+        Picker("Vinyl Material", selection: Binding(get: { controller.settings.vinylMaterial }, set: {
+          controller.settings.vinylMaterial = $0
+          controller.settings.artworkStyle = .vinyl
+        })) {
+          ForEach(VinylMaterial.allCases) { Text($0.title).tag($0) }
+        }
         Divider()
         Picker("Effects", selection: bind(\.artworkEffect)) {
           ForEach(ArtworkEffect.allCases) { Text($0.title).tag($0) }

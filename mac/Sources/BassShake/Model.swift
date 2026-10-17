@@ -888,8 +888,10 @@ struct Settings: Codable, Equatable {
   /// shaker, a slash while muted or at 0 (⋯ › Look).
   var menuBarVolume = true
   /// What's Playing art (⋯ › Look › Artwork › Style): the plain cover, or Vinyl
-  /// Peek (a sleeve with a record peeking out that turns while it plays).
+  /// Peek (a sleeve with a choice of record materials peeking out).
   var artworkStyle: ArtworkStyle = .cover
+  /// The record material; Artwork Tint preserves the original per-cover look.
+  var vinylMaterial: VinylMaterial = .artwork
   /// A treatment for cover art and video stills, independent of cover / vinyl.
   /// None adds no stylization; automatic padding removal still applies.
   var artworkEffect: ArtworkEffect = .none
@@ -1022,6 +1024,7 @@ struct Settings: Codable, Equatable {
     playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
     artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
+    vinylMaterial = (try? c.decodeIfPresent(VinylMaterial.self, forKey: .vinylMaterial)) ?? d.vinylMaterial
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
     artworkFoil = (try? c.decodeIfPresent(Bool.self, forKey: .artworkFoil)) ?? d.artworkFoil
     isoMuteButton = (try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton)) ?? d.isoMuteButton

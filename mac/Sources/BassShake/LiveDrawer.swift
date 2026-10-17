@@ -326,6 +326,7 @@ struct DrawerRoot: View {
     model.view
       .environment(\.popupTint, model.appearance.tint)
       .environment(\.artworkStyle, model.appearance.artworkStyle)
+      .environment(\.vinylMaterial, model.appearance.vinylMaterial)
       .environment(\.artworkEffect, model.appearance.artworkEffect)
       .environment(\.artworkFoil, model.appearance.artworkFoil)
       .environment(\.playButtonLook, model.appearance.playButtonLook)
