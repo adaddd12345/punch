@@ -890,7 +890,7 @@ struct Settings: Codable, Equatable {
   /// A treatment for cover art and video stills, independent of cover / vinyl.
   /// None adds no stylization; automatic padding removal still applies.
   var artworkEffect: ArtworkEffect = .none
-  /// An optional printed-foil accent; separate from Halftone Dots and layout.
+  /// An optional iridescent plastic finish; separate from Halftone Dots and layout.
   var artworkFoil = false
   /// Legacy play-button preference, retained for settings shared with older builds.
   var isoMuteButton = false

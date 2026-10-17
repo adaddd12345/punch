@@ -160,7 +160,7 @@ struct SettingsMenuContent: View {
         }
         .pickerStyle(.inline)
         Divider()
-        Toggle("Holographic Accent", isOn: bind(\.artworkFoil))
+        Toggle("Holographic Finish", isOn: bind(\.artworkFoil))
       }
       Picker("Play Button", selection: Binding(get: { controller.settings.playButtonLook }, set: {
         controller.settings.playButtonLook = $0
