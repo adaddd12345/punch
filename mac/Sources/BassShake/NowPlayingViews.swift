@@ -120,7 +120,7 @@ struct NowPlayingHeadline: View {
                 .tracking(-0.3)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-                .foregroundStyle(Color.primary)
+                .foregroundStyle(.artworkPrimary)
                 .contentTransition(.opacity)
                 .loadingLine(loading, fraction: NowLoading.titleWidth(entry.id), font: title)
               NowSubtitle(text: text.subtitle, icon: text.hasArt ? model.icon(app) : nil, font: 11)
@@ -175,7 +175,7 @@ private struct NoticeText: View {
   var body: some View {
     Text(text)
       .font(.system(size: 10, weight: .medium, design: .rounded))
-      .foregroundStyle(.secondary)
+      .foregroundStyle(.artworkSecondary)
       .lineLimit(3)
       .truncationMode(.tail)
       .fixedSize(horizontal: false, vertical: true)
@@ -288,7 +288,7 @@ private struct NextButton: View {
     Button { model.nextTrack(app) } label: {
       Image(systemName: "forward.fill")
         .font(.system(size: 10, weight: .bold))
-        .foregroundStyle(Color.primary)
+        .foregroundStyle(.artworkPrimary)
         .frame(width: 24, height: 24)
         .background(Circle().fill(Color.primary.opacity(0.10)))
         .contentShape(Circle())
@@ -419,7 +419,7 @@ struct NowSubtitle: View {
         .font(.system(size: font, weight: .medium, design: .rounded))
         .lineLimit(1)
         .truncationMode(.tail)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.artworkSecondary)
         .contentTransition(.opacity)
     }
     .animation(.easeOut(duration: 0.2), value: icon != nil)
@@ -433,6 +433,7 @@ struct MuteButton: View {
   @ObservedObject var model: NowPlaying
   let app: NowApp
   let compact: Bool
+  @Environment(\.artworkCardPalette) private var cardPalette
 
   var body: some View {
     let muted = model.isMuted(app.id)
@@ -440,7 +441,7 @@ struct MuteButton: View {
       Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
         .font(.system(size: compact ? 7 : 9, weight: .bold))
         .frame(width: compact ? 18 : 24, height: compact ? 18 : 24)
-        .foregroundStyle(muted ? Color.white : Color.primary.opacity(0.7))
+        .foregroundStyle(muted ? Color.white : (cardPalette?.secondary.color ?? Color.primary.opacity(0.7)))
         .background(Circle().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
         .contentShape(Circle())
     }
@@ -468,7 +469,7 @@ struct NowPlayingNote: View {
               .font(.system(size: 11, weight: .medium))
               .fixedSize(horizontal: false, vertical: true)
           }
-          .foregroundStyle(Color.primary)
+          .foregroundStyle(.artworkPrimary)
         } icon: {
           Image(systemName: "music.note").foregroundStyle(Color.accentColor)
         }

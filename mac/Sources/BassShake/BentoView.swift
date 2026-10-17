@@ -425,7 +425,7 @@ struct BentoView: View {
       LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
         ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
                   value: boost, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
-                  glassID: "dial.boost", mini: mini, param: controller.param("boost", \.boostDb, step: 0.5),
+                  glassID: "dial.boost", mini: mini, param: controller.param("boost", \.boostDb, step: 0.1),
                   format: { ("+", "\(Int($0.rounded()))", " dB") }) {
           if $0 != controller.settings.boostDb { controller.settings.boostDb = $0 }
         } accessory: { limitCard(mini: mini) }
@@ -448,7 +448,7 @@ struct BentoView: View {
         LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
                       value: Binding(get: { boost }, set: { controller.settings.boostDb = $0 }),
                       range: 0...12, format: { String(format: "+%.0f dB", $0) },
-                      param: controller.param("boost", \.boostDb, step: 0.5))
+                      param: controller.param("boost", \.boostDb, step: 0.1))
       }
         .pointerHint(Caption.boost(s.boostDb, scrub: false), live: true, track: false)
       HStack(spacing: 6) {
@@ -616,40 +616,45 @@ struct BentoView: View {
   }
 
   private var bentoHero: some View {
-    let t = heroTint
-    let dark = scheme == .dark
-    let shape = RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous)
-    return VStack(alignment: .leading, spacing: 0) {
-      NowPlayingSwitch(model: nowPlaying, on: s.showNowPlaying) {
-        if compact { idleCompact(t, dark: dark) } else { idleFull(t, dark: dark) }
-      } playing: { app in
-        if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
-      }
-    }
-    .padding(heroPad)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .overlay(alignment: .bottom) {
-      // The level line lives in the (non-interactive) background: this thin
-      // strip over it carries its caption.
-      // Only with the preset showing: while an app leads, no level line.
-      if live {
-        HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
-          Color.clear
-            .frame(height: compact ? 8 : 12)
-            .contentShape(Rectangle())
-            .pointerHint { [meters] in Caption.level(meters) }
-            .padding(.horizontal, heroPad)
+    ArtworkCardTheme(model: nowPlaying, on: s.showNowPlaying) { artwork in
+      let t = artwork?.tint ?? heroTint
+      let dark = artwork?.dark ?? (scheme == .dark)
+      let shape = RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous)
+      return VStack(alignment: .leading, spacing: 0) {
+        NowPlayingSwitch(model: nowPlaying, on: s.showNowPlaying) {
+          if compact { idleCompact(t, dark: dark) } else { idleFull(t, dark: dark) }
+        } playing: { app in
+          if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
         }
       }
+      .padding(heroPad)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .overlay(alignment: .bottom) {
+        // The level line lives in the (non-interactive) background: this thin
+        // strip over it carries its caption.
+        // Only with the preset showing: while an app leads, no level line.
+        if live {
+          HiddenWhilePlaying(model: nowPlaying, on: s.showNowPlaying) {
+            Color.clear
+              .frame(height: compact ? 8 : 12)
+              .contentShape(Rectangle())
+              .pointerHint { [meters] in Caption.level(meters) }
+              .padding(.horizontal, heroPad)
+          }
+        }
+      }
+      .pointerHintTint(ink(t))
+      .modifier(BentoHoverSurface(radius: BentoRadius.hero))
+      .background {
+        if let artwork { ArtworkCardFill(palette: artwork, radius: BentoRadius.hero, glass: heroGlass) }
+        else { heroBackground(t, dark: dark, shape: shape) }
+      }
+      // Liquid Glass: plain glass under the wash (the wash, not .tint, carries the
+      // colour, so it stays when the window isn't key).
+      .modifier(BentoGlassSurface(on: heroGlass, radius: BentoRadius.hero, interactive: false, id: "hero", space: glassSpace))
+      .animation(.easeOut(duration: 0.2), value: modesLine)
+      .animation(.easeOut(duration: 0.2), value: editedBase)
     }
-    .pointerHintTint(ink(t))
-    .modifier(BentoHoverSurface(radius: BentoRadius.hero))
-    .background { heroBackground(t, dark: dark, shape: shape) }
-    // Liquid Glass: plain glass under the wash (the wash, not .tint, carries the
-    // colour, so it stays when the window isn't key).
-    .modifier(BentoGlassSurface(on: heroGlass, radius: BentoRadius.hero, interactive: false, id: "hero", space: glassSpace))
-    .animation(.easeOut(duration: 0.2), value: modesLine)
-    .animation(.easeOut(duration: 0.2), value: editedBase)
   }
 
   // MARK: Hero layouts
@@ -696,45 +701,50 @@ struct BentoView: View {
   /// right edge; window tools, A/B and Power on the right, the tools starting
   /// on the Boost tile's content edge. Edges: 12 · 172 | 184 · 324.
   private var miniHero: some View {
-    let t = live ? heroTint : BentoTint.graphite
-    let dark = scheme == .dark
-    let radius: CGFloat = 28
-    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-    return HStack(alignment: .center, spacing: 12) {
-      // Something playing: its icon (play/pause), name and the preset as a chip.
-      NowPlayingSwitch(model: nowPlaying, on: s.showPlayingChannel) {
-        miniPreset(t, dark: dark)
-      } playing: { app in
-        PlayingChannelMini(model: nowPlaying, app: app, art: 32, nameSize: 13) {
-          presetMenu { PlayingPresetChip(word: heroWord, live: live, ink: ink(t)) }
+    ArtworkCardTheme(model: nowPlaying, on: s.showPlayingChannel) { artwork in
+      let t = artwork?.tint ?? (live ? heroTint : BentoTint.graphite)
+      let dark = artwork?.dark ?? (scheme == .dark)
+      let radius: CGFloat = 28
+      let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+      return HStack(alignment: .center, spacing: 12) {
+        // Something playing: its icon (play/pause), name and the preset as a chip.
+        NowPlayingSwitch(model: nowPlaying, on: s.showPlayingChannel) {
+          miniPreset(t, dark: dark)
+        } playing: { app in
+          PlayingChannelMini(model: nowPlaying, app: app, art: 32, nameSize: 13) {
+            presetMenu { PlayingPresetChip(word: heroWord, live: live, ink: ink(t)) }
+          }
+        }
+        .frame(width: 160, alignment: .leading)
+        heroIcons
+        HStack(spacing: 8) {
+          miniAB
+          powerButton(size: 32)
         }
       }
-      .frame(width: 160, alignment: .leading)
-      heroIcons
-      HStack(spacing: 8) {
-        miniAB
-        powerButton(size: 32)
-      }
-    }
-    .frame(height: 32)
-    .padding(12)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .overlay(alignment: .bottom) {
-      // The level line's caption (the line itself is in the background).
-      if live {
-        HiddenWhilePlaying(model: nowPlaying, on: playingShown) {
-          Color.clear
-            .frame(height: 8)
-            .contentShape(Rectangle())
-            .pointerHint { [meters] in Caption.level(meters) }
-            .padding(.horizontal, radius)
+      .frame(height: 32)
+      .padding(12)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .overlay(alignment: .bottom) {
+        // The level line's caption (the line itself is in the background).
+        if live {
+          HiddenWhilePlaying(model: nowPlaying, on: playingShown) {
+            Color.clear
+              .frame(height: 8)
+              .contentShape(Rectangle())
+              .pointerHint { [meters] in Caption.level(meters) }
+              .padding(.horizontal, radius)
+          }
         }
       }
+      .pointerHintTint(ink(t))
+      .modifier(BentoHoverSurface(radius: radius))
+      .background {
+        if let artwork { ArtworkCardFill(palette: artwork, radius: radius, glass: heroGlass) }
+        else { heroBackground(t, dark: dark, shape: shape, radius: radius, lineInset: radius, lineBottom: 4) }
+      }
+      .modifier(BentoGlassSurface(on: heroGlass, radius: radius, interactive: false, id: "hero", space: glassSpace))
     }
-    .pointerHintTint(ink(t))
-    .modifier(BentoHoverSurface(radius: radius))
-    .background { heroBackground(t, dark: dark, shape: shape, radius: radius, lineInset: radius, lineBottom: 4) }
-    .modifier(BentoGlassSurface(on: heroGlass, radius: radius, interactive: false, id: "hero", space: glassSpace))
   }
 
   /// Mini's preset: a 32 disc with the shaker glyph, the word and its chevron, one menu.
@@ -761,7 +771,7 @@ struct BentoView: View {
               .lineLimit(1)
               .minimumScaleFactor(0.7)
               .truncationMode(.tail)
-              .foregroundStyle(Color.primary)
+              .foregroundStyle(.artworkPrimary)
               .id(heroWord)
               .transition(heroWordTransition)
           }
@@ -769,7 +779,7 @@ struct BentoView: View {
           if live {
             Image(systemName: "chevron.down")
               .font(.system(size: 10, weight: .heavy))
-              .foregroundStyle(.secondary)
+              .foregroundStyle(.artworkSecondary)
           }
         }
       }
@@ -902,7 +912,7 @@ struct BentoView: View {
       Spacer(minLength: 0)
     }
     .font(.system(size: 11, weight: .medium, design: .rounded))
-    .foregroundStyle(.secondary)
+    .foregroundStyle(.artworkSecondary)
   }
 
   // MARK: Hero controls
@@ -920,7 +930,7 @@ struct BentoView: View {
               .tracking(font >= 30 ? -0.8 : (flat ? -0.2 : -0.4))
               .lineLimit(1)
               .minimumScaleFactor(scale)
-              .foregroundStyle(Color.primary)
+              .foregroundStyle(.artworkPrimary)
               .modifier(SoftShadow(on: !powerSaver && !flat, color: dark && live ? t.pastel.opacity(0.55) : .clear, radius: 10))
               .id(heroWord)
               .transition(heroWordTransition)
@@ -928,7 +938,7 @@ struct BentoView: View {
           if live {
             Image(systemName: "chevron.down")
               .font(.system(size: chevron, weight: .heavy))
-              .foregroundStyle(.secondary)
+              .foregroundStyle(.artworkSecondary)
           }
         }
       }
@@ -947,7 +957,7 @@ struct BentoView: View {
         if live {
           Image(systemName: "chevron.down")
             .font(.system(size: 8, weight: .bold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.artworkSecondary)
         }
       }
       .padding(.horizontal, 8)
@@ -984,8 +994,8 @@ struct BentoView: View {
   private enum ChipEdited { case word, dot, none }
   private enum ChipModes { case full, count, none }
 
-  private var chipName: Text {
-    Text(heroWord).font(.system(size: 12, weight: .heavy, design: .rounded)).foregroundColor(.primary)
+  private var chipName: some View {
+    Text(heroWord).font(.system(size: 12, weight: .heavy, design: .rounded)).foregroundStyle(.artworkPrimary)
   }
 
   private func chipLine(_ t: BentoTint, glyph: Bool = true, edited: ChipEdited, modes: ChipModes) -> some View {
@@ -1005,7 +1015,7 @@ struct BentoView: View {
       case .word:
         Text("· edited")
           .font(.system(size: 11, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.artworkSecondary)
           .lineLimit(1)
           .fixedSize()
       case .dot:
@@ -1043,7 +1053,7 @@ struct BentoView: View {
     }
     .font(.system(size: 11, weight: .medium, design: .rounded))
     // Dark: full primary; .secondary went to 2:1 on the gold hero.
-    .foregroundStyle(scheme == .dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
+    .foregroundStyle(scheme == .dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.artworkSecondary))
     .layoutPriority(1)
   }
 
@@ -1127,10 +1137,10 @@ struct BentoView: View {
           Spacer(minLength: 0)
           Image(systemName: "chevron.down")
             .font(.system(size: 8, weight: .bold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.artworkSecondary)
         }
       }
-      .foregroundStyle(Color.primary)
+      .foregroundStyle(.artworkPrimary)
       .padding(.horizontal, iconOnly ? 0 : 8)
       .frame(minWidth: 24, maxWidth: iconOnly ? 24 : .infinity, minHeight: 24, maxHeight: 24)
       .background(chipShape.fill(Color.primary.opacity(0.08)))
@@ -1441,11 +1451,10 @@ struct BentoView: View {
       BentoTile(tint: tint(.indigo), glassID: "detail.nightGuard") {
         LabeledSlider(title: "Allow", symbol: "shield",
                       value: Binding(get: { s.nightGuardDb }, set: { v in
-                        let r = v.rounded()
-                        if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
+                        if v != controller.settings.nightGuardDb { controller.settings.nightGuardDb = v }
                       }),
                       range: 3...15, format: { "+\(Int($0.rounded())) dB" },
-                      param: controller.param("allow", \.nightGuardDb, step: 1))
+                      param: controller.param("allow", \.nightGuardDb, step: 0.1))
       }
       .pointerHint(Caption.allow(s.nightGuardDb, scrub: false), live: true, track: false)
     } else {
@@ -1457,10 +1466,10 @@ struct BentoView: View {
     LiveShown(liveEdit: controller.liveEdit, path: \.nightGuardDb, value: s.nightGuardDb) { allow in
       ScrubTile(title: "Allow", symbol: "shield", tint: tint(.indigo),
                 value: allow, range: 3...15, defaultValue: Self.defaultAllow,
-                detent: Self.defaultAllow, tickStep: 1, step: 1, glassID: "detail.nightGuard",
-                param: controller.param("allow", \.nightGuardDb, step: 1),
+                detent: Self.defaultAllow, tickStep: 1, glassID: "detail.nightGuard",
+                param: controller.param("allow", \.nightGuardDb, step: 0.1),
                 format: { ("+", "\(Int($0.rounded()))", " dB") }) {
-        v in let r = v.rounded(); if r != controller.settings.nightGuardDb { controller.settings.nightGuardDb = r }
+        v in if v != controller.settings.nightGuardDb { controller.settings.nightGuardDb = v }
       } accessory: { EmptyView() }
       .pointerHint(Caption.allow(allow, scrub: true), live: true)
     }
@@ -2080,7 +2089,7 @@ private struct ChipModeStyle: ViewModifier {
       .lineLimit(1)
       .fixedSize()
       // Dark: full primary; .secondary went to 2:1 on the gold hero.
-      .foregroundStyle(dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
+      .foregroundStyle(dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.artworkSecondary))
   }
 }
 
@@ -2141,6 +2150,7 @@ private struct ScrubTile<Accessory: View>: View {
   private let travel: CGFloat = 160
   @State private var start: Double?
   @State private var last: Double?
+  @State private var position: Double?
   @State private var band: CGFloat = 0
   @State private var hover = false
   @State private var cursorPushed = false
@@ -2148,7 +2158,7 @@ private struct ScrubTile<Accessory: View>: View {
 
   /// While dragging with a `param`: the value being heard (settings still hold the old one).
   private var shown: Double { param != nil ? (last ?? value) : value }
-  private var fraction: Double { (shown - range.lowerBound) / (range.upperBound - range.lowerBound) }
+  private var fraction: Double { ((position ?? shown) - range.lowerBound) / (range.upperBound - range.lowerBound) }
 
   private func tick(_ v: Double) -> Int { Int(((v - range.lowerBound) / tickStep + 1e-6).rounded(.down)) }
 
@@ -2218,6 +2228,7 @@ private struct ScrubTile<Accessory: View>: View {
         // Rubber band: past either end the number gives a few points.
         let over = raw - v
         band = CGFloat(max(-6, min(6, over / span * Double(travel) * 0.15)))
+        position = v
         let q = step > 0 ? (v / step).rounded() * step : (param?.quantize(v) ?? v)
         let prev = last ?? value
         haptics(from: prev, to: q)
@@ -2231,6 +2242,7 @@ private struct ScrubTile<Accessory: View>: View {
       .onEnded { _ in
         if let param, let v = last { param.commit(v) }
         start = nil; last = nil; band = 0
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) { position = nil }
       })
     .simultaneousGesture(TapGesture(count: 2).onEnded { set(defaultValue) })
     .onHover { h in
@@ -2250,6 +2262,7 @@ private struct ScrubTile<Accessory: View>: View {
       if let param, start != nil, let v = last { param.commit(v) }
       start = nil
       last = nil
+      position = nil
       band = 0
     }
   }
@@ -2431,6 +2444,7 @@ private struct BassTile: View {
   private let travel: CGFloat = 160
   @State private var start: Double?
   @State private var last: Double?
+  @State private var position: Double?
   @State private var hover = false
   @State private var cursorPushed = false
   @Environment(\.labelLevel) private var labels
@@ -2449,7 +2463,7 @@ private struct BassTile: View {
 
   var body: some View {
     let dark = scheme == .dark
-    BentoTile(tint: face, look: on ? .fader(shownAmount) : .quiet, padding: compact ? 8 : 9, interactive: true) {
+    BentoTile(tint: face, look: on ? .fader(position ?? shownAmount) : .quiet, padding: compact ? 8 : 9, interactive: true) {
       VStack(alignment: .leading, spacing: compact ? 4 : 0) {
         HStack(spacing: 6) {
           ModeGlyph(symbol: "waveform.path", tint: face, on: on, size: compact ? 16 : 18, bare: flat)
@@ -2505,7 +2519,8 @@ private struct BassTile: View {
         guard on else { return }
         if start == nil { start = amount; last = amount }
         let raw = (start ?? amount) + Double(g.translation.width / travel)
-        let v = (min(1, max(0, raw)) * 100).rounded() / 100
+        position = min(1, max(0, raw))
+        let v = (position! * 100).rounded() / 100
         if let l = last, Int(l * 20 + 1e-6) != Int(v * 20 + 1e-6) {
           NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
@@ -2520,12 +2535,13 @@ private struct BassTile: View {
       .onEnded { _ in
         if let param, let v = last { param.commit(v) }
         start = nil; last = nil
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.12)) { position = nil }
       })
     .simultaneousGesture(TapGesture(count: 2).onEnded { if on { setAmount(Self.defaultAmount) } })
     .onDisappear {
       if cursorPushed { NSCursor.pop(); cursorPushed = false }
       if let param, start != nil, let v = last { param.commit(v) }
-      start = nil; last = nil
+      start = nil; last = nil; position = nil
     }
     .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: character)
     .accessibilityElement(children: .contain)
@@ -2547,32 +2563,28 @@ private struct BassTile: View {
             .opacity(c == character || all[i - 1] == character ? 0 : 1)
         }
         let sel = c == character
-        Group {
-          if iconOnly {
-            Image(systemName: c.symbol).font(.system(size: 10, weight: .semibold))
-          } else {
-            Text(c.title)
-              .font(.system(size: compact ? 10 : 11, weight: sel ? .bold : .medium, design: .rounded))
-              .lineLimit(1)
-              .minimumScaleFactor(0.8)
-              .opacity(labelOpacity)
+        Button { if !sel { setCharacter(c) } } label: {
+          Group {
+            if iconOnly {
+              Image(systemName: c.symbol).font(.system(size: 10, weight: .semibold))
+            } else {
+              Text(c.title)
+                .font(.system(size: compact ? 10 : 11, weight: sel ? .bold : .medium, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .opacity(labelOpacity)
+            }
           }
+          .foregroundStyle(sel && c != .off ? Color.white : Color.primary.opacity(sel ? 0.9 : (dark ? 0.75 : 0.65)))
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .contentShape(Rectangle())
         }
-        .foregroundStyle(sel && c != .off ? Color.white : Color.primary.opacity(sel ? 0.9 : (dark ? 0.75 : 0.65)))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-          if sel {
-            inner.fill(c == .off ? Color.primary.opacity(0.08) : BentoInk.miniFill)
-          }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { if !sel { setCharacter(c) } }
+        .buttonStyle(BassSegmentStyle(selected: sel, active: sel && c != .off))
         .help(c.description)
         .accessibilityElement()
         .accessibilityLabel(c.title)
         .accessibilityHint(c.description)
         .accessibilityAddTraits(sel ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction { setCharacter(c) }
       }
     }
     .frame(height: compact ? 20 : 24)

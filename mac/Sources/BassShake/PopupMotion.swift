@@ -1,0 +1,23 @@
+import SwiftUI
+
+/// A size change is a short, reversible transition, with no window-edge bounce.
+/// Keeping one spring lets a second press redirect the current movement.
+enum PopupMotion {
+  static let resize = Animation.smooth(duration: 0.24)
+}
+
+/// Window tools should acknowledge the press before the more expensive layout
+/// changes. Their old elastic release competed with the whole popup resizing.
+struct WindowToolButtonStyle: ButtonStyle {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+
+  func makeBody(configuration: Configuration) -> some View {
+    let pressed = configuration.isPressed
+    return configuration.label
+      .background(Color.primary.opacity(pressed ? 0.07 : 0))
+      .opacity(pressed ? 0.78 : 1)
+      .scaleEffect(pressed && !reduceMotion && !powerSaver ? 0.98 : 1)
+      .animation(pressed || reduceMotion || powerSaver ? nil : .easeOut(duration: 0.12), value: pressed)
+  }
+}

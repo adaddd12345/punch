@@ -270,7 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     // The popup's height changes (the "Updated to" band collapsing, ⌘1/2/3,
     // Mac Volume): keep a Dock popup's arrow on its anchor.
     sizeObserver = host.observe(\.preferredContentSize, options: [.new]) { [weak self] _, _ in
-      DispatchQueue.main.async { self?.popupResized() }
+      self?.popupResize.request()
     }
     applyPopoverBehavior()
   }
@@ -279,7 +279,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
 
   private var sizeObserver: NSKeyValueObservation?
   private var popupWindowObserver: NSObjectProtocol?
-  private var settleCheck: DispatchWorkItem?
+  private lazy var popupResize = PopupResizeCoordinator(
+    update: { [weak self] in self?.keepOnAnchor() },
+    settled: { [weak self] in self?.settlePopupSize() })
   /// The Dock point the popup hangs from, before any lift for the tray.
   private var dockPoint: NSPoint?
   /// How far the popup is lifted above its Dock point (the tray sits in between).
@@ -290,19 +292,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   /// NSPopover re-aims when the size changes, but it has been seen keeping
   /// its top instead (the body left hanging above the arrow until reopened),
   /// so check on every resize and once the size has settled.
-  private func popupResized() {
-    keepOnAnchor()
-    settleCheck?.cancel()
-    let w = DispatchWorkItem { [weak self] in
-      guard let self, self.popover.isShown, case .dock? = self.anchoredAt,
-            let host = self.popover.contentViewController else { return }
-      // The window never caught up with the content's size: hand it over.
-      let want = host.preferredContentSize
-      if want.height > 1, abs(self.popover.contentSize.height - want.height) > 0.5 { self.popover.contentSize = want }
-      self.keepOnAnchor()
+  private func settlePopupSize() {
+    guard popover.isShown, case .dock? = anchoredAt,
+          let host = popover.contentViewController else { return }
+    // The window never caught up with the content's size: hand it over.
+    // Read the current measurement, never a size captured before another press.
+    let want = host.preferredContentSize
+    guard want.width.isFinite, want.height.isFinite, want.width > 1, want.height > 1 else { return }
+    if abs(popover.contentSize.height - want.height) > 0.5
+        || abs(popover.contentSize.width - want.width) > 0.5 {
+      popover.contentSize = want
     }
-    settleCheck = w
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: w)
+    keepOnAnchor()
   }
 
   /// Re-aims the popover when its arrow has come off the Dock anchor.
@@ -325,7 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     guard let pw = popover.contentViewController?.view.window else { return }
     popupWindowObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: pw,
                                                                  queue: .main) { [weak self] _ in
-      DispatchQueue.main.async { self?.popupResized() }
+      self?.popupResize.request()
     }
   }
 
@@ -465,6 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   func popoverWillClose(_ notification: Notification) {
     // Close the tray while the parent still exists, including native closes
     // that never pass through closePopover or SwiftUI's onDisappear.
+    popupResize.cancel()
     endLift()
     LiveDrawer.shared.hide()
   }
@@ -522,6 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
 
   private func showPopover(_ anchor: PopoverAnchor) {
     closedByDockPress = nil
+    popupResize.cancel()
     applyPopoverBehavior()
     endLift()
     switch anchor {

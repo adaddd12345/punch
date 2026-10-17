@@ -94,6 +94,7 @@ struct LiveSlider: View {
   var live: Binding<Double?>? = nil
   @State private var ownLive: Double?
   @State private var editing = false
+  @State private var sent: Double?
 
   private var current: Double? {
     get { live?.wrappedValue ?? ownLive }
@@ -104,15 +105,27 @@ struct LiveSlider: View {
     Slider(value: Binding(get: { current ?? value }, set: { v in
       let q = min(range.upperBound, max(range.lowerBound, param.quantize(v)))
       if editing {
-        if q != (current ?? value) { current = q; param.preview(q) }
+        // The thumb follows the pointer; only sound updates are quantized.
+        current = min(range.upperBound, max(range.lowerBound, v))
+        if q != (sent ?? value) { sent = q; param.preview(q) }
       } else {
         current = nil
         if q != value { param.commit(q) }
       }
     }), in: range) { e in
       editing = e
-      if !e, let v = current { param.commit(v); current = nil }
+      if e { sent = value } else { finish() }
     }
+    .onDisappear { finish() }
+  }
+
+  private func finish() {
+    if let v = current {
+      param.commit(min(range.upperBound, max(range.lowerBound, param.quantize(v))))
+    }
+    current = nil
+    sent = nil
+    editing = false
   }
 }
 

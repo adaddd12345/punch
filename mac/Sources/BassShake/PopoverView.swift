@@ -260,7 +260,7 @@ struct PopoverView: View {
           .padding(.top, FooterBento.edgeGap - 8)
       }
     }
-    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.86), value: size)
+    .animation(reduceMotion || controller.settings.powerSaver ? nil : PopupMotion.resize, value: size)
     .animation(.easeOut(duration: 0.2), value: controller.settings.showMacVolume)
     .confirmationDialog("Reset all settings?", isPresented: $confirmReset) {
       Button("Reset Everything", role: .destructive) { controller.resetAllSettings() }
@@ -588,7 +588,7 @@ struct PopoverView: View {
                  value: Binding(get: { controller.settings.boostDb }, set: { controller.settings.boostDb = $0 }),
                  range: 0...12, format: { ("+", "\(Int($0.rounded()))", " dB") },
                  dimmed: !controller.settings.enabled,
-                 param: controller.param("boost", \.boostDb, step: 0.5)) { miniLimit }
+                 param: controller.param("boost", \.boostDb, step: 0.1)) { miniLimit }
           .frame(width: col)
           .pointerHint(Caption.boost(controller.settings.boostDb, scrub: false), live: true, track: false)
       }
@@ -783,7 +783,7 @@ struct PopoverView: View {
     }
     return Group {
       // The pin answers the pointer with a thin border (PinButtonStyle).
-      if dart { button.buttonStyle(PinButtonStyle(minSize: 0)) } else { button.buttonStyle(BentoPressStyle()) }
+      if dart { button.buttonStyle(PinButtonStyle(minSize: 0)) } else { button.buttonStyle(WindowToolButtonStyle()) }
     }
   }
 
@@ -1301,23 +1301,33 @@ private struct SlimScroller: NSViewRepresentable {
 struct OverflowScroll<Content: View>: View {
   @ViewBuilder let content: () -> Content
   @State private var contentHeight: CGFloat?
-  @State private var viewportHeight: CGFloat = 0
+  @State private var overflows = false
+  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
-    let fits = contentHeight.map { $0 <= viewportHeight + 0.5 } ?? true
+    let scale = max(1, displayScale)
     ScrollView(.vertical) {
       content()
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
-          if h != contentHeight { contentHeight = h }
+        .onGeometryChange(for: CGFloat.self, of: { ceil($0.size.height * scale) / scale }) { h in
+          guard h.isFinite, h >= 0, h != contentHeight else { return }
+          // Geometry is already the animated result. Do not spring its
+          // measurement a second time or chase sub-pixel settling changes.
+          var transaction = Transaction(animation: nil)
+          transaction.disablesAnimations = true
+          withTransaction(transaction) { contentHeight = h }
         }
         .background(SlimScroller())
     }
     .scrollBounceBehavior(.basedOnSize)
     // Fitting, it draws like a plain stack (glows and a dragged block aren't cut off).
-    .scrollClipDisabled(fits)
+    .scrollClipDisabled(!overflows)
     .frame(idealHeight: contentHeight, maxHeight: contentHeight)
-    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
-      if h != viewportHeight { viewportHeight = h }
+    // Only the clipping decision needs state, not every intermediate viewport
+    // height while the window is shrinking or expanding.
+    .onGeometryChange(for: Bool.self, of: { (contentHeight ?? 0) > $0.size.height + 1 / scale }) { value in
+      var transaction = Transaction(animation: nil)
+      transaction.disablesAnimations = true
+      withTransaction(transaction) { overflows = value }
     }
   }
 }
