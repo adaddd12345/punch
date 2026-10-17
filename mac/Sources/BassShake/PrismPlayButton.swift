@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private struct PlayButtonLookKey: EnvironmentKey { static let defaultValue = PlayButtonLook.flat }
+private struct PlayButtonLookKey: EnvironmentKey { static let defaultValue = PlayButtonLook.prism }
 private struct PrismHoverKey: EnvironmentKey { static let defaultValue = false }
 private struct PrismPressedKey: EnvironmentKey { static let defaultValue = false }
 

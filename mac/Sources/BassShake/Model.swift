@@ -732,7 +732,7 @@ enum PlayButtonLook: String, Codable, CaseIterable, Identifiable {
     switch self {
     case .flat: return "Flat"
     case .sculpted: return "Original Shield"
-    case .prism: return "Prism Shield"
+    case .prism: return "Glass Shield"
     }
   }
 }
@@ -906,10 +906,10 @@ struct Settings: Codable, Equatable {
   /// An optional iridescent plastic finish; separate from Halftone Dots and layout.
   var artworkFoil = false
   /// Legacy play-button preference, retained for settings shared with older builds.
-  var isoMuteButton = false
+  var isoMuteButton = true
   /// What's Playing's play / pause appearance (⋯ › Look › Play Button).
-  /// Old saves keep either their flat disc or sculpted shield.
-  var playButtonLook: PlayButtonLook = .flat
+  /// New themes use the approved glass shield; saved choices remain unchanged.
+  var playButtonLook: PlayButtonLook = .prism
   /// Bass character (Distort / Punch) and its amount (0...1).
   var bassCharacter: BassCharacter = .off
   var bassAmount: Double = 0.6
@@ -1074,8 +1074,13 @@ struct Settings: Codable, Equatable {
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
     artworkFoil = (try? c.decodeIfPresent(Bool.self, forKey: .artworkFoil)) ?? d.artworkFoil
     isoMuteButton = (try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton)) ?? d.isoMuteButton
-    playButtonLook = (try? c.decodeIfPresent(PlayButtonLook.self, forKey: .playButtonLook))
-      ?? (isoMuteButton ? .sculpted : .flat)
+    if let savedLook = try? c.decodeIfPresent(PlayButtonLook.self, forKey: .playButtonLook) {
+      playButtonLook = savedLook
+    } else if let legacyShield = try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton) {
+      playButtonLook = legacyShield ? .sculpted : .flat
+    } else {
+      playButtonLook = d.playButtonLook
+    }
     bassCharacter = (try? c.decodeIfPresent(BassCharacter.self, forKey: .bassCharacter)) ?? d.bassCharacter
     bassAmount = (try? c.decodeIfPresent(Double.self, forKey: .bassAmount)) ?? d.bassAmount
     lateNightHaze = (try? c.decodeIfPresent(Double.self, forKey: .lateNightHaze)) ?? d.lateNightHaze

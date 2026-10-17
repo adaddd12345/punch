@@ -1005,6 +1005,7 @@ struct PopoverView: View {
     FooterShelf {
       statusGroup
       Spacer(minLength: FooterBento.groupGap)
+      DeviceBatteryFooter(output: controller.currentDevice, active: visible && !controller.isMirror)
       if labels == .full, case .running(_, let sr) = controller.status {
         Text(String(format: "%.1f kHz", sr / 1000))
           .font(.system(size: 9, weight: .medium, design: .rounded))
