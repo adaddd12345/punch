@@ -15,8 +15,8 @@ struct FooterFlatIcon: View {
     }
     .frame(width: 16, height: 16)
     .accessibilityHidden(true)
-    // Mounted layers and a single reversible transaction avoid delayed hover jobs.
-    // A steep start and long tail suggest a tiny toss without bounce or repetition.
+    // Settings uses a reversible ease-out; the loupe owns its inspection sequence.
+    // A steep start and long tail keep both gestures quiet and responsive.
     .animation(motionAllowed ? .timingCurve(0.16, 1, 0.3, 1, duration: engaged ? 0.46 : 0.28) : nil,
                value: motionAllowed && engaged)
     // Recreate only when motion eligibility changes, cancelling in-flight layers.
@@ -32,7 +32,7 @@ struct FooterFlatIcon: View {
       case .dj: DJDeckGlyph().stroke(style: Self.stroke)
       case .beats: MusicSleeveGlyph().stroke(style: Self.stroke)
       case .settings: serviceGlyph
-      case .diagnose: DiagnosticLoupeGlyph(focus: motionAllowed && engaged ? 1 : 0).stroke(style: Self.stroke)
+      case .diagnose: DiagnosticLoupeAnimation(engaged: engaged, motionAllowed: motionAllowed, stroke: Self.stroke)
       case .power:
         Image(systemName: "power")
           .font(.system(size: 13, weight: .regular))
@@ -75,20 +75,58 @@ private struct MusicSleeveGlyph: Shape {
   }
 }
 
+/// One curious look per pointer entry: inspect the note, look up, then go home.
+/// SwiftUI cancels this task on exit, disappearance or a motion-setting change.
+private struct DiagnosticLoupeAnimation: View {
+  let engaged: Bool
+  let motionAllowed: Bool
+  let stroke: StrokeStyle
+  @State private var focus: CGFloat = 0
+  @State private var inspection: CGFloat = 0
+
+  var body: some View {
+    DiagnosticLoupeGlyph(focus: focus, inspection: inspection).stroke(style: stroke)
+      .task(id: engaged && motionAllowed) {
+        guard engaged && motionAllowed else {
+          withAnimation(motionAllowed ? .easeOut(duration: 0.26) : nil) { focus = 0 }
+          return
+        }
+        withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.38)) {
+          focus = 1
+          inspection = 0
+        }
+        do {
+          // Brief pauses at each stop make this read as looking, not orbiting.
+          try await Task.sleep(for: .milliseconds(520))
+          try Task.checkCancellation()
+          withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.42)) { inspection = 1 }
+          try await Task.sleep(for: .milliseconds(580))
+          try Task.checkCancellation()
+          withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.46)) { focus = 0 }
+        } catch {
+          // The next hover task owns the return/re-entry; no delayed cleanup.
+        }
+      }
+  }
+}
+
 /// A transparent loupe moves over one note. The note is drawn once, with a
 /// smooth radial displacement inside the lens, so there is no doubled image.
 private struct DiagnosticLoupeGlyph: Shape {
   var focus: CGFloat
-  var animatableData: CGFloat {
-    get { focus }
-    set { focus = newValue }
+  var inspection: CGFloat
+  var animatableData: AnimatablePair<CGFloat, CGFloat> {
+    get { AnimatablePair(focus, inspection) }
+    set { focus = newValue.first; inspection = newValue.second }
   }
 
   func path(in rect: CGRect) -> Path {
     let t = Double(min(1, max(0, focus)))
-    let cx = 16 - 7.7 * t, cy = 16 - 6.2 * t
-    let rx = 5.2 + 2.8 * t, ry = rx * (1 - 0.06 * t)
-    let tilt = -5 * Double.pi / 180 * t
+    let look = Double(min(1, max(0, inspection)))
+    let cx = 16 + (-7.7 + 2.7 * look) * t
+    let cy = 16 + (-6.2 - 2.1 * look) * t
+    let rx = 5.2 + (2.8 - 0.8 * look) * t, ry = rx * (1 - 0.06 * t)
+    let tilt = (-5 + 10 * look) * Double.pi / 180 * t
     let c = cos(tilt), s = sin(tilt)
     func lensPoint(_ x: Double, _ y: Double) -> CGPoint {
       CGPoint(x: cx + x * c - y * s, y: cy + x * s + y * c)
