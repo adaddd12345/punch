@@ -1,19 +1,16 @@
+import AppKit
 import SwiftUI
 
-// The footer's glyphs as tiny extruded solids: a flat profile lifted into a short slab and
-// seen from slightly above, so each reads as an object with mass. Form comes from two flat
-// tones of the ink (top face lighter, walls darker) plus the plain ink for marks; no
-// outlines, no gradients. All five share one camera, one slab height range and one
-// 1.6–1.8 pt "stroke", so they read as a set. Hover tilts the camera a little further
-// toward you and turns the part that turns (the knob's pointer, the cog, the magnifier).
-// Drawn with concrete colours: a Canvas shaded with `.foreground` draws nothing inside
-// Liquid Glass.
+// Small hardware glyphs share the player's restrained material: a softly shaded face,
+// narrow bevel and a short sidewall. The theme colours the material rather than painting
+// the whole object. The front stays nearly square at rest; hover gives one small tilt.
+// Canvas needs concrete colours inside Liquid Glass, not `.foreground` shading.
 
 /// A footer glyph as an extruded solid in the 16 pt box.
 struct FooterSolid: View {
   enum Kind { case knob, grid, gear, check, power }
   let kind: Kind
-  /// A fixed ink (white on the lit DJ chip); nil: the scheme's ink, or the button's tint.
+  /// A fixed ink for an active chip; otherwise the shared, lightly tinted material.
   var tint: Color? = nil
   /// nil: from the button around it (`footerLit`).
   var lit: Bool? = nil
@@ -24,25 +21,38 @@ struct FooterSolid: View {
   @Environment(\.footerTint) private var envTint
   @Environment(\.colorScheme) private var scheme
   @Environment(\.popupTint) private var popupTint
+  @Environment(\.footerSurface) private var surface
+  @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
 
   var body: some View {
-    let on = moving ?? hover
-    // The popup's colourway (the hero's tint), else plain white / black.
-    let themed = popupTint.map { scheme == .dark ? $0.pastel : $0.ink }
-    let ink = tint ?? envTint ?? themed ?? (scheme == .dark ? Color.white : Color.black)
-    FooterSolidCanvas(kind: kind, pose: on ? 1 : 0, ink: ink)
-      .opacity((lit ?? envLit) ? 1 : 0.68)
+    let motion = !reduceMotion && !powerSaver && !drawPaused
+    let on = motion && (moving ?? hover)
+    let dark = scheme == .dark
+    let explicit = tint ?? envTint
+    let themed = popupTint.map { dark ? $0.pastel : $0.ink }
+    let material = FooterMaterial(tint: explicit ?? themed, dark: dark,
+                                  fixedInk: explicit != nil, contrast: contrast == .increased)
+    FooterSolidCanvas(kind: kind, pose: on ? 1 : 0, material: material,
+                      flat: surface == .flat, opaque: reduceTransparency || contrast == .increased)
+      .opacity(reduceTransparency || contrast == .increased || explicit != nil ? 1
+               : (lit ?? envLit) ? 1 : 0.9)
       .frame(width: 16, height: 16)
-      .animation(FooterMotion.spring, value: on)
+      .animation(motion ? FooterMotion.spring : nil, value: on)
       .accessibilityHidden(true)
   }
 }
 
 private struct FooterSolidCanvas: View, Animatable {
   let kind: FooterSolid.Kind
-  /// 0 at rest, 1 hovered (tilted further, turned).
+  /// 0 at rest, 1 hovered. No idle animation.
   var pose: Double
-  let ink: Color
+  let material: FooterMaterial
+  let flat: Bool
+  let opaque: Bool
   var animatableData: Double {
     get { pose }
     set { pose = newValue }
@@ -50,30 +60,75 @@ private struct FooterSolidCanvas: View, Animatable {
 
   var body: some View {
     Canvas { ctx, size in
-      let tones = SolidTones(ink: ink)
-      let p = CGFloat(pose)
-      // Elevation 58° at rest, 48° hovered: slight perspective, a touch more on hover.
-      let e = (58 - 10 * p) * .pi / 180
+      let unit = size.width / 16
+      let tones = SolidTones(material: material, unit: unit, flat: flat)
+      let p = CGFloat(min(1, max(0, pose)))
+      let e = (flat ? 90 : 80 - 6 * p) * .pi / 180
       var cam = SolidCam(s: sin(e), c: cos(e), turn: 0, h: 0,
-                         u: size.width / 16, o: CGPoint(x: size.width / 2, y: size.height / 2))
-      ctx.drawLayer { l in kind.draw(&l, &cam, tones, p) }
+                         u: unit, o: CGPoint(x: size.width / 2, y: size.height / 2))
+      // Filter the finished glyph once, not each overlapping extrusion slice.
+      if !flat && !opaque {
+        ctx.addFilter(.shadow(color: .black.opacity(material.shadow), radius: 0.55 * unit,
+                              x: 0, y: 0.65 * unit))
+      }
+      ctx.drawLayer { layer in kind.draw(&layer, &cam, tones, flat ? 0 : p) }
     }
   }
 }
 
-/// Ink plus white for the lit top, ink plus black for the walls, the ink itself for marks.
+/// Like the speaker button, neutral tone steps carry the form and the preset lends
+/// a little colour. Explicit active / warning ink retains its meaning.
+struct FooterMaterial {
+  let faceTop, faceBottom, sideTop, sideBottom, mark, highlight: Color
+  let activeFill: Color
+  let shadow: Double
+
+  init(tint: Color?, dark: Bool, fixedInk: Bool = false, contrast: Bool = false) {
+    let rgb = tint.flatMap { NSColor($0).usingColorSpace(.sRGB) }
+      ?? NSColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+    func tone(_ base: CGFloat, _ amount: CGFloat) -> Color {
+      Color(red: base * (1 - amount) + rgb.redComponent * amount,
+            green: base * (1 - amount) + rgb.greenComponent * amount,
+            blue: base * (1 - amount) + rgb.blueComponent * amount)
+    }
+    let colour: CGFloat = fixedInk ? 0.92 : 0.16
+    faceTop = tone(contrast ? (dark ? 0.94 : 0.26) : (dark ? 0.78 : 0.48), colour)
+    faceBottom = tone(contrast ? (dark ? 0.86 : 0.20) : (dark ? 0.64 : 0.35), colour)
+    sideTop = tone(dark ? 0.48 : 0.32, fixedInk ? 0.68 : 0.18)
+    sideBottom = tone(dark ? 0.30 : 0.24, fixedInk ? 0.55 : 0.18)
+    mark = tone(dark ? 0.92 : 0.18, fixedInk ? 0.35 : 0.12)
+    highlight = tone(1, 0.08).opacity(contrast ? 0 : (dark ? 0.48 : 0.38))
+    // Even the lightest preset ink stays dark enough for a white active label.
+    activeFill = tone(0.12, 0.68)
+    shadow = dark ? 0.22 : 0.13
+  }
+}
+
 private struct SolidTones {
-  let ink: Color
+  let material: FooterMaterial
+  let unit: CGFloat
+  let flat: Bool
+
+  private func shade(_ upper: Color, _ lower: Color, _ p: Path) -> GraphicsContext.Shading {
+    let r = p.boundingRect
+    return .linearGradient(Gradient(colors: [upper, lower]),
+                           startPoint: CGPoint(x: r.minX, y: r.minY),
+                           endPoint: CGPoint(x: r.maxX, y: r.maxY))
+  }
   func top(_ l: inout GraphicsContext, _ p: Path) {
-    l.fill(p, with: .color(ink))
-    l.fill(p, with: .color(Color.white.opacity(0.4)))
+    if flat { l.fill(p, with: .color(material.faceBottom)); return }
+    l.fill(p, with: shade(material.faceTop, material.faceBottom, p))
+    // An inset hairline, not a bright outline around every edge.
+    var edge = l
+    edge.clip(to: p)
+    edge.stroke(p, with: shade(material.highlight, .clear, p), lineWidth: 0.65 * unit)
   }
   func side(_ l: inout GraphicsContext, _ p: Path) {
-    l.fill(p, with: .color(ink))
-    l.fill(p, with: .color(Color.black.opacity(0.42)))
+    if flat { return }
+    l.fill(p, with: shade(material.sideTop, material.sideBottom, p))
   }
   func mark(_ l: inout GraphicsContext, _ p: Path) {
-    l.fill(p, with: .color(ink))
+    l.fill(p, with: .color(material.mark))
   }
 }
 
@@ -132,12 +187,12 @@ private extension FooterSolid.Kind {
     case .knob:
       // A short cylinder with a pointer groove; the tick marks on the panel stay put.
       cam.h = 3.4
-      cam.turn = 30 * p * .pi / 180
+      cam.turn = 12 * p * .pi / 180
       for a: CGFloat in [-70, 0, 70] {
         t.mark(&l, line([polar(6.0, a), polar(7.2, a)], 1.3).applying(cam.at(0, turns: false)))
       }
       cam.slab(&l, [Path(ellipseIn: CGRect(x: -4.6, y: -4.6, width: 9.2, height: 9.2))], t)
-      t.side(&l, line([polar(0.8, -40), polar(3.5, -40)], 1.4).applying(cam.at(cam.h)))
+      t.mark(&l, line([polar(0.8, -40), polar(3.5, -40)], 1.2).applying(cam.at(cam.h)))
 
     case .grid:
       // Four keycaps; the far row first so the near row's walls overlap it.
@@ -151,9 +206,9 @@ private extension FooterSolid.Kind {
       }
 
     case .gear:
-      // A ring of fins round a hole (the hole shows its far inner wall); hover turns it half a tooth.
+      // A ring of fins round a hole (the hole shows its far inner wall); hover gives it a small turn.
       cam.h = 2.4
-      cam.turn = 22.5 * p * .pi / 180
+      cam.turn = 8 * p * .pi / 180
       var cog = Path()
       var pts: [CGPoint] = []
       let teeth = 8, R: CGFloat = 6.6, r: CGFloat = 4.9
@@ -172,7 +227,7 @@ private extension FooterSolid.Kind {
     case .check:
       // A magnifier slab with a pulse across the lens; hover turns it a little.
       cam.h = 1.9
-      cam.turn = 12 * p * .pi / 180
+      cam.turn = -4 * p * .pi / 180
       let c = CGPoint(x: -1.3, y: -1.3), rr: CGFloat = 4.0, w: CGFloat = 1.6
       let handle = line([CGPoint(x: 1.9, y: 1.9), CGPoint(x: 5.5, y: 5.5)], 2.3)
       cam.slab(&l, [ring(c, rr, w), handle], t)

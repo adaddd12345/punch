@@ -945,6 +945,7 @@ struct PopoverView: View {
     .contentShape(Rectangle())
     .onHover { headerHovered = $0 }
     .environment(\.footerSurface, footerSurface)
+    .environment(\.popupTint, popupTint)
   }
 
   /// Status and modes: what's playing (Live), DJ, Beats, and Latency when it's on.
@@ -960,9 +961,7 @@ struct PopoverView: View {
           if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip(iconOnly: labels == .icons)
-        .foregroundStyle(controller.dj.anyActive ? Color.white : Color.primary)
-        .background(Capsule().fill(controller.dj.anyActive ? Color.purple
-                                   : (showDJ ? Color.accentColor.opacity(0.2) : Color.clear)))
+        .modifier(FooterModePlate(active: controller.dj.anyActive, expanded: showDJ))
       }
       .buttonStyle(FooterButtonStyle(chip: true))
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
@@ -979,8 +978,7 @@ struct PopoverView: View {
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip(iconOnly: labels == .icons)
-        .foregroundStyle(beats.playing ? Color.accentColor : Color.primary)
-        .background(Capsule().fill(showBeats ? Color.accentColor.opacity(0.2) : Color.clear))
+        .modifier(FooterModePlate(active: beats.playing, expanded: showBeats))
       }
       .buttonStyle(FooterButtonStyle(chip: true))
       .help("Beats: play lofi beat drops, mute parts and change the tempo")

@@ -13,10 +13,8 @@ import SwiftUI
 
 enum FooterMotion {
   /// The one spring for hover, press and the glyph gestures.
-  static let spring = Animation.spring(response: 0.3, dampingFraction: 0.82)
+  static let spring = Animation.spring(response: 0.42, dampingFraction: 0.94)
   static let pressScale: CGFloat = 0.96
-  /// The drawn glyphs' hover turn about their vertical axis, in degrees.
-  static let turn: Double = 24
 }
 
 /// The footer shelf's numbers.
@@ -169,10 +167,11 @@ private struct FooterButtonBody: View {
   @State private var hovered = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
   @Environment(\.isEnabled) private var enabled
 
   var body: some View {
-    let motion = !reduceMotion && !powerSaver
+    let motion = !reduceMotion && !powerSaver && !drawPaused
     let pressed = configuration.isPressed
     let lit = enabled && (hovered || pressed)
     configuration.label
@@ -181,7 +180,7 @@ private struct FooterButtonBody: View {
       .foregroundStyle(chip ? AnyShapeStyle(.primary)
                        : danger && lit ? AnyShapeStyle(Color.red) : AnyShapeStyle(lit ? .primary : .secondary))
       .environment(\.footerHover, motion && enabled && hovered)
-      .environment(\.footerLit, chip || lit)
+      .environment(\.footerLit, lit)
       .environment(\.footerTint, danger && lit ? Color.red : nil)
       .background {
         if danger && lit { Capsule().fill(Color.red.opacity(pressed ? 0.22 : 0.14)).allowsHitTesting(false) }
@@ -191,7 +190,9 @@ private struct FooterButtonBody: View {
       .contentShape(Capsule())
       // Clicks like a 28 pt control without growing its group.
       .verticalHitSlop((28 - FooterBento.button) / 2)
-      .onHover { hovered = $0 }
+      .onHover { hovered = $0 && !drawPaused }
+      .onChange(of: drawPaused) { _, paused in if paused { hovered = false } }
+      .onDisappear { hovered = false }
       .animation(powerSaver ? nil : (motion ? FooterMotion.spring : .easeOut(duration: 0.15)), value: lit)
       .animation(motion ? FooterMotion.spring : nil, value: pressed)
   }
@@ -208,9 +209,38 @@ private struct FooterPlate: View {
   }
 }
 
+/// DJ and Beats use the same selected wash and active material as the player.
+/// Opening a drawer is a quiet wash; processing / playback uses a solid active chip.
+struct FooterModePlate: ViewModifier {
+  let active: Bool
+  let expanded: Bool
+  @Environment(\.popupTint) private var tint
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.colorSchemeContrast) private var contrast
+
+  func body(content: Content) -> some View {
+    let dark = scheme == .dark
+    let material = FooterMaterial(tint: tint?.ink, dark: dark)
+    let wash = (dark ? tint?.pastel : tint?.ink) ?? Color.primary
+    content
+      .foregroundStyle(active ? Color.white : Color.primary)
+      .background {
+        Capsule()
+          .fill(active ? material.activeFill : expanded && !reduceTransparency ? wash.opacity(contrast == .increased ? 0.24 : 0.12) : .clear)
+          .overlay {
+            if active || expanded {
+              Capsule().strokeBorder(Color.primary.opacity(contrast == .increased || reduceTransparency ? 0.3 : 0.08), lineWidth: 0.5)
+            }
+          }
+          .allowsHitTesting(false)
+      }
+  }
+}
+
 /// The settings menu as an extruded cog. The Menu keeps a plain, invisible label the size
 /// of the 24 pt button (its own click handling is untouched); the drawn cog sits over it
-/// and never takes a click. Hover tilts it and turns it half a tooth; it sinks a little
+/// and never takes a click. Hover tilts it and gives it a small turn; it sinks a little
 /// while its menu is open.
 struct FooterShakerMenu<Content: View>: View {
   let help: String
@@ -219,11 +249,12 @@ struct FooterShakerMenu<Content: View>: View {
   @State private var open = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
 
   static var size: CGFloat { FooterBlank.size }
 
   var body: some View {
-    let motion = !reduceMotion && !powerSaver
+    let motion = !reduceMotion && !powerSaver && !drawPaused
     let lit = hovered || open
     Menu {
       content()
@@ -235,7 +266,7 @@ struct FooterShakerMenu<Content: View>: View {
     .fixedSize()
     .frame(width: FooterBento.button, height: FooterBento.button)
     .overlay {
-      // An extruded cog; hover tilts it and turns it half a tooth.
+      // An extruded cog; hover tilts it and gives it a small turn.
       FooterSolid(kind: .gear, lit: lit, moving: motion && hovered && !open)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
@@ -244,7 +275,11 @@ struct FooterShakerMenu<Content: View>: View {
         .animation(powerSaver ? nil : (motion ? FooterMotion.spring : .easeOut(duration: 0.15)), value: lit)
         .animation(motion ? FooterMotion.spring : nil, value: open)
     }
-    .onHover { hovered = $0 }
+    .onHover { hovered = $0 && !drawPaused }
+    .onChange(of: drawPaused) { _, paused in
+      if paused { hovered = false; open = false }
+    }
+    .onDisappear { hovered = false; open = false }
     // Its own menu opening while the pointer is on it: the "pressed" look until it closes.
     .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
       if hovered { open = true }
