@@ -32,6 +32,7 @@ struct PrismPlayFace: View {
   @Environment(\.prismHover) private var hovered
   @Environment(\.prismPressed) private var pressed
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.drawPaused) private var drawPaused
 
@@ -39,7 +40,8 @@ struct PrismPlayFace: View {
     let motion = !reduceMotion && !powerSaver && !drawPaused
     PrismPlayArtwork(hover: motion && hovered ? 1 : 0, press: motion && pressed ? 1 : 0,
                      speaker: speaker, playing: playing, muted: muted,
-                     palette: PrismPlayPalette(tint: tint, dark: scheme == .dark))
+                     palette: PrismPlayPalette(tint: tint, dark: scheme == .dark,
+                                               opaque: reduceTransparency))
       .frame(width: size, height: size)
       .opacity(pressed && !motion ? 0.76 : 1)
       .animation(motion ? .spring(response: hovered ? 0.32 : 0.40, dampingFraction: 0.92) : nil, value: hovered)
@@ -93,7 +95,7 @@ struct PrismPlayArtwork: View, Animatable {
       ctx.translateBy(x: -20, y: -20)
       let projection = PrismProjection(hover: h)
       // Leave a little more baffle around the driver; the casing keeps its size.
-      let driverScale: CGFloat = 0.94
+      let driverScale: CGFloat = 0.89
       func plane(_ path: Path, _ z: CGFloat) -> Path { path.applying(projection.plane(z: z)) }
       func point(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) -> CGPoint { projection.point(x, y, z) }
       func disc(_ radius: CGFloat, _ z: CGFloat) -> Path {
@@ -106,17 +108,39 @@ struct PrismPlayArtwork: View, Animatable {
                         startPoint: point(16, 17.8 - radius, z), endPoint: point(24, 17.8 + radius, z))
       }
 
-      // A six-unit housing, with separate front and rear planes. At rest the
+      // The approved 7.2-unit housing, with separate front and rear planes. At rest the
       // baffle is square to the viewer; the authored tilt exposes its sidewall.
       let front = plane(Self.outline, 0)
-      let back = Self.outlinePoints.map { point($0.x, $0.y, -6) }
+      let back = Self.outlinePoints.map { point($0.x, $0.y, -7.2) }
       let rim = Self.outlinePoints.map { point($0.x, $0.y, 0) }
-      ctx.fill(PrismProjection.hullPath(back + rim), with: shade(palette.sideTop, palette.side, 18, -3))
-      ctx.fill(front, with: shade(palette.bevel, palette.sideTop, 18, 0))
-      // A narrow machined bevel, independent of the six-unit housing depth.
+      // Cut the face out of the wall fill. Stacking translucent full silhouettes
+      // would build up opacity and turn the glass back into grey clay.
+      var wall = PrismProjection.hullPath(back + rim)
+      wall.addPath(front)
+      ctx.fill(wall, with: shade(palette.sideTop, palette.side, 18, -3.6),
+               style: FillStyle(eoFill: true))
+      // A narrow polished bevel, independent of the housing depth.
       let inset = Self.outline.applying(CGAffineTransform(translationX: 20, y: 19)
-        .scaledBy(x: 0.965, y: 0.965).translatedBy(x: -20, y: -19))
-      ctx.fill(plane(inset, 0.3), with: .color(palette.face))
+        .scaledBy(x: 0.975, y: 0.975).translatedBy(x: -20, y: -19))
+      let glassFace = plane(inset, 0.3)
+      var bevel = front
+      bevel.addPath(glassFace)
+      ctx.fill(bevel, with: shade(palette.bevel, palette.sideTop, 18, 0),
+               style: FillStyle(eoFill: true))
+      ctx.fill(glassFace, with: .color(palette.face))
+      // One broad, quiet reflection moves with the existing tilt. The player
+      // colour remains visible through the baffle; the driver stays readable.
+      ctx.fill(glassFace, with: .linearGradient(Gradient(stops: [
+        .init(color: palette.catchLight.opacity(0.22), location: 0),
+        .init(color: palette.catchLight.opacity(0.025), location: 0.40),
+        .init(color: palette.catchLight.opacity(0.01), location: 0.62),
+        .init(color: palette.catchLight.opacity(0.15), location: 1),
+      ]), startPoint: point(9 + 4 * h, 2, 0.3), endPoint: point(29 + 4 * h, 35, 0.3)))
+      ctx.stroke(front, with: .linearGradient(Gradient(stops: [
+        .init(color: palette.catchLight.opacity(0.64), location: 0),
+        .init(color: palette.catchLight.opacity(0.10), location: 0.44),
+        .init(color: palette.catchLight.opacity(0.38), location: 1),
+      ]), startPoint: point(8, 3, 0), endPoint: point(31, 35, 0)), lineWidth: 0.24)
 
       // The opening, raised surround, and recessed diaphragm are distinct
       // parts. The narrow dark gap is structural, rather than a drawn outline.
@@ -172,24 +196,25 @@ struct PrismPlayArtwork: View, Animatable {
     }
   }
 
-  /// Broad shoulders and a softly truncated tip; all details share this 40pt grid.
+  /// User-approved studio outline. Camera and live transport stay app-owned.
+  /// Dimensions are archived in Resources/source/prism-shield-settings.json.
   private static let outline: Path = {
     var p = Path()
-    p.move(to: CGPoint(x: 12, y: 3.5))
-    p.addLine(to: CGPoint(x: 27.8, y: 3.5))
-    p.addQuadCurve(to: CGPoint(x: 29.6, y: 4.3), control: CGPoint(x: 28.9, y: 3.5))
-    p.addLine(to: CGPoint(x: 35.3, y: 10.3))
-    p.addQuadCurve(to: CGPoint(x: 36, y: 12.5), control: CGPoint(x: 36.2, y: 11.2))
-    p.addLine(to: CGPoint(x: 33.8, y: 23))
-    p.addQuadCurve(to: CGPoint(x: 32.6, y: 25.2), control: CGPoint(x: 33.5, y: 24.3))
-    p.addLine(to: CGPoint(x: 23, y: 33.8))
-    p.addQuadCurve(to: CGPoint(x: 17, y: 33.8), control: CGPoint(x: 20, y: 35.4))
-    p.addLine(to: CGPoint(x: 7.4, y: 25.2))
-    p.addQuadCurve(to: CGPoint(x: 6.2, y: 23), control: CGPoint(x: 6.5, y: 24.3))
-    p.addLine(to: CGPoint(x: 4, y: 12.5))
-    p.addQuadCurve(to: CGPoint(x: 4.7, y: 10.3), control: CGPoint(x: 3.8, y: 11.2))
-    p.addLine(to: CGPoint(x: 10.4, y: 4.3))
-    p.addQuadCurve(to: CGPoint(x: 12, y: 3.5), control: CGPoint(x: 11.1, y: 3.5))
+    p.move(to: CGPoint(x: 12.8952, y: 2.9655))
+    p.addLine(to: CGPoint(x: 26.9893, y: 2.9655))
+    p.addQuadCurve(to: CGPoint(x: 28.1051, y: 3.4372), control: CGPoint(x: 27.6242, y: 2.9655))
+    p.addLine(to: CGPoint(x: 35.7965, y: 10.4003))
+    p.addQuadCurve(to: CGPoint(x: 36.2871, y: 11.6976), control: CGPoint(x: 36.4025, y: 10.931))
+    p.addLine(to: CGPoint(x: 33.8419, y: 23.7162))
+    p.addQuadCurve(to: CGPoint(x: 33.1493, y: 25.0134), control: CGPoint(x: 33.6688, y: 24.4828))
+    p.addLine(to: CGPoint(x: 21.7314, y: 36.2058))
+    p.addQuadCurve(to: CGPoint(x: 18.2686, y: 36.2058), control: CGPoint(x: 20, y: 37.2655))
+    p.addLine(to: CGPoint(x: 6.8507, y: 25.0134))
+    p.addQuadCurve(to: CGPoint(x: 6.1581, y: 23.7162), control: CGPoint(x: 6.3313, y: 24.4828))
+    p.addLine(to: CGPoint(x: 3.7129, y: 11.6976))
+    p.addQuadCurve(to: CGPoint(x: 4.2035, y: 10.4003), control: CGPoint(x: 3.5975, y: 10.931))
+    p.addLine(to: CGPoint(x: 11.8949, y: 3.4372))
+    p.addQuadCurve(to: CGPoint(x: 12.8952, y: 2.9655), control: CGPoint(x: 12.3758, y: 2.9655))
     p.closeSubpath()
     return p
   }()
@@ -263,13 +288,13 @@ private struct PrismProjection {
   }
 }
 
-/// Hardware tones follow the player’s real transport colour. Neutral players
-/// stay neutral; the cap keeps that exact tint and chooses a contrasting glyph.
+/// The baffle transmits the player surface; polished edges give the glass depth.
+/// The transport cap retains its exact tint and a contrasting glyph.
 struct PrismPlayPalette {
   let face, bevel, sideTop, side, gap, rubber, ring, ringHi, coneTop, coneBottom, coneSeam: Color
   let cap, ink, catchLight, foilA, foilB: Color
 
-  init(tint: Color?, dark: Bool) {
+  init(tint: Color?, dark: Bool, opaque: Bool = false) {
     let resolved = tint.flatMap { NSColor($0).usingColorSpace(.sRGB) }
       ?? NSColor(srgbRed: dark ? 0.28 : 0.86, green: dark ? 0.29 : 0.87, blue: dark ? 0.30 : 0.88, alpha: 1)
     let r = resolved.redComponent, g = resolved.greenComponent, b = resolved.blueComponent
@@ -279,10 +304,10 @@ struct PrismPlayPalette {
             blue: base * (1 - tintAmount) + b * tintAmount)
     }
     cap = Color(red: r, green: g, blue: b)
-    face = metal(dark ? 0.29 : 0.79, 0.20)
-    bevel = metal(dark ? 0.52 : 0.94, 0.12)
-    sideTop = metal(dark ? 0.22 : 0.54, 0.18)
-    side = metal(dark ? 0.10 : 0.31, 0.16)
+    face = metal(dark ? 0.62 : 0.94, 0.16).opacity(opaque ? 1 : (dark ? 0.22 : 0.36))
+    bevel = metal(dark ? 0.92 : 1, 0.06).opacity(opaque ? 1 : 0.65)
+    sideTop = metal(dark ? 0.60 : 0.76, 0.12).opacity(opaque ? 1 : 0.38)
+    side = metal(dark ? 0.30 : 0.50, 0.16).opacity(opaque ? 1 : 0.30)
     gap = metal(0.055, 0.08)
     rubber = metal(0.12, 0.12)
     ring = metal(dark ? 0.19 : 0.30, 0.68)
