@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Flat monochrome footer symbols, at the same weight as the bento controls.
+/// Quiet monochrome footer symbols with open counters at their native 16 pt size.
 struct FooterFlatIcon: View {
   enum Kind { case dj, beats, settings, diagnose, power }
   let kind: Kind
@@ -23,12 +23,14 @@ struct FooterFlatIcon: View {
       case .diagnose: MusicServiceGlyph().stroke(style: Self.stroke)
       case .power:
         Image(systemName: "power")
-          .font(.system(size: 13, weight: .semibold))
+          .font(.system(size: 13, weight: .regular))
           .symbolRenderingMode(.monochrome)
     }
   }
 
-  private static let stroke = StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round)
+  // One point leaves breathing room between the small internal contours.
+  // Judge at native size: enlarged outlines hide how dense these marks can read.
+  private static let stroke = StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round)
 }
 
 /// The sleeve's spine and paired notes remain open at menu-bar scale.
@@ -131,12 +133,10 @@ private struct DJDeckGlyph: Shape {
   func path(in rect: CGRect) -> Path {
     var p = Path()
     p.addEllipse(in: CGRect(x: 9, y: 4.5, width: 6, height: 7))
-    p.move(to: CGPoint(x: 5.8, y: 10))
+    p.move(to: CGPoint(x: 5.8, y: 10.8))
     p.addLine(to: CGPoint(x: 5.8, y: 7.5))
     p.addCurve(to: CGPoint(x: 18.2, y: 7.5), control1: CGPoint(x: 5.8, y: -0.2), control2: CGPoint(x: 18.2, y: -0.2))
-    p.addLine(to: CGPoint(x: 18.2, y: 10))
-    p.addRoundedRect(in: CGRect(x: 4.8, y: 7.3, width: 2.2, height: 4), cornerSize: CGSize(width: 1, height: 1))
-    p.addRoundedRect(in: CGRect(x: 17, y: 7.3, width: 2.2, height: 4), cornerSize: CGSize(width: 1, height: 1))
+    p.addLine(to: CGPoint(x: 18.2, y: 10.8))
     p.move(to: CGPoint(x: 6, y: 14))
     p.addLine(to: CGPoint(x: 18, y: 14))
     p.addLine(to: CGPoint(x: 21.5, y: 21))
