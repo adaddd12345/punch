@@ -239,8 +239,21 @@ struct FooterModePlate: ViewModifier {
   }
 }
 
-/// The settings menu as a flat cog. The Menu keeps a plain, invisible label the size
-/// of the 24 pt button (its own click handling is untouched); the drawn cog sits over it
+/// Reads the hover supplied by FooterButtonStyle without owning another hit area.
+struct FooterDiagnosticIcon: View {
+  @Environment(\.footerHover) private var hovered
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
+
+  var body: some View {
+    FooterFlatIcon(kind: .diagnose, engaged: hovered,
+                   motionAllowed: !reduceMotion && !powerSaver && !drawPaused)
+  }
+}
+
+/// The settings menu as a hand with tools. The Menu keeps an invisible label the size
+/// of the 24 pt button (its own click handling is untouched); the artwork sits over it
 /// and never takes a click. Its button acknowledges hover and sinks a little
 /// while its menu is open.
 struct FooterShakerMenu<Content: View>: View {
@@ -268,7 +281,7 @@ struct FooterShakerMenu<Content: View>: View {
     .frame(width: FooterBento.button, height: FooterBento.button)
     .overlay {
       // Hand, shaker and wrench; the plate carries hover and press feedback.
-      FooterFlatIcon(kind: .settings)
+      FooterFlatIcon(kind: .settings, engaged: lit, motionAllowed: motion)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)
@@ -295,7 +308,7 @@ struct FooterShakerMenu<Content: View>: View {
 }
 
 /// The drawn glyphs' size, and the ⋯ Menu's clear label (a borderless menu button shows
-/// only an image or text, so the cog is drawn over it instead).
+/// only an image or text, so the artwork is drawn over it instead).
 private enum FooterBlank {
   static let size: CGFloat = 16
   /// The Menu's label at the button's full 24 pt, so all of the circle clicks.

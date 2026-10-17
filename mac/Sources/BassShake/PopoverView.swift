@@ -1082,7 +1082,7 @@ struct PopoverView: View {
             Image(systemName: "hourglass").font(.system(size: 11, weight: .semibold))
               .frame(width: 16, height: 16)
           } else {
-            FooterFlatIcon(kind: .diagnose)
+            FooterDiagnosticIcon()
           }
         }
       }
