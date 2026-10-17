@@ -51,7 +51,7 @@ struct MySoundsView: View {
     }
     .padding(12)
     .frame(width: 360)
-    .background(PopupBackground(style: controller.settings.backgroundStyle, active: visible))
+    .popupBackdrop(controller.settings.backgroundStyle, active: visible)
     .animation(.easeOut(duration: 0.18), value: recolor)
     .animation(.easeOut(duration: 0.18), value: controller.settings.userPresets.map(\.id))
     .onAppear {

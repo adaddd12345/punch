@@ -180,7 +180,7 @@ struct LayoutEditorView: View {
     }
     .padding(12)
     .frame(width: 360)
-    .background(PopupBackground(style: controller.settings.backgroundStyle, active: visible))
+    .popupBackdrop(controller.settings.backgroundStyle, active: visible)
     .onAppear { visible = true }
     .onDisappear { visible = false }
   }

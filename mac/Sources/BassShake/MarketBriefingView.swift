@@ -83,7 +83,7 @@ struct MarketBriefingView: View {
     }
     .padding(12)
     .frame(width: 360, height: height, alignment: .top)
-    .background(PopupBackground(style: backgroundStyle, active: visible))
+    .popupBackdrop(backgroundStyle, active: visible)
     .onAppear { visible = true }
     .onDisappear { visible = false }
     .onChange(of: layers) { _, value in

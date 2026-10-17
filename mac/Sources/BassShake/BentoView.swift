@@ -1714,6 +1714,7 @@ private struct BentoFlatFill: View {
     let faint = Color.primary.opacity(hc ? 0.10 : 0.045)
     let wash = tint.pastel.opacity((scheme == .dark ? 0.16 : 0.26) + (hc ? 0.12 : 0))
     ZStack {
+      SeasonalControlBacking(shape: shape)
       switch look {
       case .outline:
         shape.strokeBorder(Color.primary.opacity(hc ? 0.35 : 0.14), lineWidth: hc ? 1 : 0.5)
@@ -1966,6 +1967,7 @@ struct BentoFill: View {
                              startPoint: .top, endPoint: .bottom)
     let hair = BentoRadius.hairline(displayScale)
     ZStack {
+      SeasonalControlBacking(shape: shape)
       switch look {
       case .outline:
         shape.strokeBorder(LinearGradient(colors: [Color.primary.opacity(0.34), Color.primary.opacity(0.14)],

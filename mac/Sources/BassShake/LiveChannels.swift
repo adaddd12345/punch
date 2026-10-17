@@ -58,6 +58,9 @@ final class LiveChannels: ObservableObject {
   // MARK: Main-thread state
 
   @Published private(set) var apps: [LiveApp] = []
+  /// A complete successful output-activity snapshot. Read on main by the
+  /// existing What's Playing tick; a failed HAL read must not imply silence.
+  private(set) var outputActivityKnown = false
   /// Displayed level per app id, dBFS (meter ballistics applied). Only
   /// filled while metering. Changes at 30 Hz, so it lives in its own object:
   /// only the meters observe `levelModel`, not every view of this model.
@@ -312,6 +315,7 @@ final class LiveChannels: ObservableObject {
   /// wait; the crash guard's atexit handler destroys mute taps if this times
   /// out.
   func shutdown() {
+    outputActivityKnown = false
     pollTimer?.invalidate()
     pollTimer = nil
     let done = DispatchSemaphore(value: 0)
@@ -453,6 +457,7 @@ final class LiveChannels: ObservableObject {
   /// gone. Forget them and start over.
   private func serviceRestarted() {
     log.notice("coreaudiod restarted")
+    DispatchQueue.main.async { self.outputActivityKnown = false }
     for t in muteTaps.values { BSCrashGuardRemoveTap(t.id) }
     muteTaps = [:]
     teardownMeter()
@@ -485,8 +490,10 @@ final class LiveChannels: ObservableObject {
   private func refreshNow() {
     guard !halShutDown else { return }
     let own = TapPipeline.ownProcessObject()
-    let objects = ((try? HAL.array(systemObject, .global(kAudioHardwarePropertyProcessObjectList),
-                                   of: AudioObjectID.self, zero: 0)) ?? [])
+    let discovered = try? HAL.array(systemObject, .global(kAudioHardwarePropertyProcessObjectList),
+                                    of: AudioObjectID.self, zero: 0)
+    var activityKnown = discovered != nil
+    let objects = (discovered ?? [])
       .filter { $0 != unknownObject && $0 != own }
     let objectSet = Set(objects)
     if objectSet != watchedObjects { watchProcesses(objectSet) }
@@ -496,7 +503,9 @@ final class LiveChannels: ObservableObject {
 
     var groups: [String: LiveApp] = [:]
     for obj in objects {
-      let running = ((try? HAL.get(obj, .global(kAudioProcessPropertyIsRunningOutput), default: UInt32(0))) ?? 0) != 0
+      let outputState = try? HAL.get(obj, .global(kAudioProcessPropertyIsRunningOutput), default: UInt32(0))
+      if outputState == nil { activityKnown = false }
+      let running = (outputState ?? 0) != 0
       let owner: AppAttribution.Owner
       if let cached = owners[obj] {
         owner = cached
@@ -540,7 +549,9 @@ final class LiveChannels: ObservableObject {
     }
 
     let excluded = halExcluded
+    let outputActivityKnown = activityKnown
     DispatchQueue.main.async {
+      self.outputActivityKnown = outputActivityKnown
       if self.apps != visible { self.apps = visible }
       if self.defaultOutputName != defaultName { self.defaultOutputName = defaultName }
       // Session-only mutes ("pid.<n>") end when that process is gone.

@@ -101,6 +101,7 @@ struct FooterShelf<Content: View>: View {
       .padding(.horizontal, FooterBento.inset)
       .frame(height: FooterBento.height)
       .background { FooterShelfFill(surface: surface) }
+      .background { if surface != .glass { SeasonalControlBacking(shape: Capsule()) } }
       .modifier(FooterShelfGlass(on: surface == .glass))
       .padding(.horizontal, -FooterBento.bleed)
       .padding(edge == .bottom ? .bottom : .top, -FooterBento.bleed)

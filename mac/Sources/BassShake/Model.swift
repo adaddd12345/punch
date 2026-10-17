@@ -483,7 +483,7 @@ enum CenterLock: String, Codable, CaseIterable, Identifiable {
 
 enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   case system, ambientBlue, coffee, irishGreen, ember, violet, rose, arctic
-  // Seasonal (vector snow, embers, gold flecks, petals over a wash; Festive.swift).
+  // Seasonal (rich, appearance-independent gradients; Festive.swift).
   // An older build that doesn't know these raw values falls back to System Grey.
   case frost, pumpkin, lunar, sakura
   // Themes: Wall Street (a terminal-black wash and a market panel of quotes and
@@ -504,7 +504,7 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   }
   /// Listed under Themes.
   var theme: Bool { self == .wallStreet }
-  /// Drawn by FestiveView (vector particles on the shared display link).
+  /// Drawn by FestiveView (native gradient layers on a display link).
   var scene: Bool { festive || theme }
   var title: String {
     switch self {

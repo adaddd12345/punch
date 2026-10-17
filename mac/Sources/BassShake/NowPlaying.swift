@@ -150,6 +150,11 @@ struct NowItem: Equatable, Identifiable {
 final class NowPlaying: ObservableObject {
   static let shared = NowPlaying()
 
+  /// Only the small EQ caption observes this; its visibility doesn't redraw
+  /// every music control. The 10 Hz tick publishes only Boolean transitions.
+  let eqPlayback = EQPlaybackState()
+  private var spotifyOutput = SpotifyOutputContext()
+
   /// The app you hear most. nil: nothing playing (the hero is unchanged).
   @Published private(set) var hero: NowApp?
   /// Other playing apps, at most three, in a stable order.
@@ -396,6 +401,7 @@ final class NowPlaying: ObservableObject {
     guard on != wanted else { return }
     wanted = on
     if !on {
+      resetSpotifyOutput()
       if closing { teardown() }
       measured = false
       deferredClick = nil
@@ -457,6 +463,7 @@ final class NowPlaying: ObservableObject {
 
   /// Everything off for a closed popup. The pause marks stay (a reopen shows Play).
   private func teardown() {
+    resetSpotifyOutput()
     closing = false
     timer?.invalidate()
     timer = nil
@@ -491,6 +498,7 @@ final class NowPlaying: ObservableObject {
     // Meter only while the window was really on screen lately (2 s, so a brief
     // occlusion flicker doesn't rebuild the HAL meter).
     let seen = now - lastVisible < 2.0
+    updateSpotifyOutput(live, now: now, visible: seen)
     if seen != wasSeen {
       wasSeen = seen
       if seen { deferredClick = nil }
@@ -638,6 +646,29 @@ final class NowPlaying: ObservableObject {
   }
 
   // MARK: - Details: remembered, and pending
+
+  private func resetSpotifyOutput() {
+    spotifyOutput.reset()
+    eqPlayback.setMissingSpotifyAudio(false)
+  }
+
+  private func updateSpotifyOutput(_ live: LiveChannels, now: TimeInterval, visible: Bool) {
+    let id = NowPlayer.spotify.rawValue
+    guard let controller else { resetSpotifyOutput(); return }
+    let running: Bool
+    if case .running = controller.status { running = true } else { running = false }
+    let s = controller.settings
+    let eligible = visible && active && running && s.enabled && detailsAllowed(id)
+      && tracks[id]?.playing == true && !commandBusy.contains(id)
+      && pending?.id != id && !live.muted.contains(id) && !live.shakerOff.contains(id)
+      && !(s.mode != .off && s.noiseOn)
+    // Even a zero-amplitude passage has a running Core Audio output stream.
+    // Any local source suppresses the explanation while the EQ has audio.
+    let localOutput: Bool? = live.outputActivityKnown ? live.apps.contains(where: \.isPlaying) : nil
+    let show = spotifyOutput.update(now: now, pid: RunningApps.pid(id), eligible: eligible,
+                                    localOutput: localOutput, freshness: max(6, Self.pollEvery + 2))
+    eqPlayback.setMissingSpotifyAudio(show)
+  }
 
   private func detailsAllowed(_ bundleID: String) -> Bool {
     mayAsk && !denied.contains(bundleID) && gate.isOn(bundleID) && gate.status[bundleID] != AutomationGate.denied
@@ -996,8 +1027,20 @@ final class NowPlaying: ObservableObject {
       // A late result must not undo Details Off, or belong to a new instance
       // of an app that quit and relaunched while its poll was in flight.
       guard detailsAllowed(id), let pid = pids[p], RunningApps.pid(id) == pid else {
+        if p == .spotify { resetSpotifyOutput() }
         next[id] = nil
         continue
+      }
+      if p == .spotify {
+        // Do not refresh this evidence from a cached or optimistic play state.
+        // A failed poll hides the hint immediately even while its song remains.
+        if case .track(let title, let artist, let playing, _, _) = r,
+           !stale, !title.isEmpty || !artist.isEmpty {
+          spotifyOutput.confirm(playing: playing, pid: pid, at: now)
+          if !playing { eqPlayback.setMissingSpotifyAudio(false) }
+        } else {
+          resetSpotifyOutput()
+        }
       }
       switch r {
       case .denied:
@@ -1433,6 +1476,15 @@ final class NowPlaying: ObservableObject {
         self.lastPoll = ProcessInfo.processInfo.systemUptime - Self.pollEvery + 0.4
       }
     }
+  }
+}
+
+/// Quiet context for an inactive EQ, isolated from the fast audio models.
+final class EQPlaybackState: ObservableObject {
+  @Published private(set) var missingSpotifyAudio = false
+
+  func setMissingSpotifyAudio(_ missing: Bool) {
+    if missing != missingSpotifyAudio { missingSpotifyAudio = missing }
   }
 }
 

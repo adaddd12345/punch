@@ -22,3 +22,43 @@ enum NowPlayingContinuity {
     }
   }
 }
+
+/// A remote-playing hint needs fresh player metadata and a sustained absence
+/// of Core Audio output, never a quiet sample or an unbuilt level meter.
+struct SpotifyOutputContext {
+  private var confirmedAt: TimeInterval?
+  private var confirmedPID: Int32?
+  private var absentSince: TimeInterval?
+  private var lastUpdate: TimeInterval?
+
+  mutating func confirm(playing: Bool?, pid: Int32?, at now: TimeInterval) {
+    guard playing == true, let pid, now.isFinite else { reset(); return }
+    if confirmedPID != pid { reset() }
+    confirmedAt = now
+    confirmedPID = pid
+  }
+
+  mutating func reset() {
+    confirmedAt = nil
+    confirmedPID = nil
+    absentSince = nil
+    lastUpdate = nil
+  }
+
+  /// nil output means discovery is unknown, not that the Mac is silent.
+  /// `eligible` includes permissions, pipeline health and intentional mutes.
+  mutating func update(now: TimeInterval, pid: Int32?, eligible: Bool,
+                       localOutput: Bool?, freshness: TimeInterval) -> Bool {
+    // A closed/occluded window or suspended process cannot accumulate grace.
+    if let lastUpdate, now < lastUpdate || now - lastUpdate > 1 { absentSince = nil }
+    lastUpdate = now
+    guard now.isFinite, eligible, localOutput == false,
+          let pid, pid == confirmedPID, let confirmedAt,
+          now >= confirmedAt, now - confirmedAt <= freshness else {
+      absentSince = nil
+      return false
+    }
+    if absentSince == nil { absentSince = now }
+    return now - (absentSince ?? now) >= 4
+  }
+}

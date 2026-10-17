@@ -8,8 +8,6 @@ struct PopupBackground: View {
   let style: BackgroundStyle
   /// False while the popup is closed/hidden: the smoke stops drawing.
   var active = true
-  /// Seasonal styles: lets a FestiveForeground ride this background's display link.
-  var clock: FestiveClock? = nil
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
   /// The window is hidden or fully covered (e.g. a pinned panel behind other windows).
@@ -18,7 +16,7 @@ struct PopupBackground: View {
   var body: some View {
     if style.scene {
       // Seasonal scenes (Festive.swift): a still frame under Power Saver and Reduce Motion.
-      FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion, clock: clock)
+      FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion)
         .allowsHitTesting(false)
     } else if style.morph {
       // Freezing / Ember (MorphBackground.swift): one still frame under Power Saver and
@@ -54,32 +52,40 @@ struct PopupBackground: View {
 }
 
 extension View {
-  /// The popup's background style behind the content; for a seasonal style, also a few
-  /// faint particles drifting in front of it.
+  /// Colour stays behind the controls; seasonal themes add no foreground decoration.
   func popupBackdrop(_ style: BackgroundStyle, active: Bool) -> some View {
-    modifier(PopupBackdrop(style: style, active: active))
+    background(PopupBackground(style: style, active: active))
+      .environment(\.seasonalBackdrop, style.festive)
   }
 }
 
-private struct PopupBackdrop: ViewModifier {
-  let style: BackgroundStyle
-  let active: Bool
-  @State private var clock = FestiveClock()
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.powerSaver) private var powerSaver
+private struct SeasonalBackdropKey: EnvironmentKey {
+  static let defaultValue = false
+}
 
-  func body(content: Content) -> some View {
-    content
-      .background(PopupBackground(style: style, active: active, clock: clock))
-      // An overlay takes no part in layout. Left out when the scene is a still frame
-      // (Power Saver / Reduce Motion), where a frozen particle would sit on the text.
-      .overlay {
-        if style.scene && style != .wallStreet && !(powerSaver || reduceMotion) {
-          FestiveForeground(style: style, clock: clock)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
-      }
+extension EnvironmentValues {
+  var seasonalBackdrop: Bool {
+    get { self[SeasonalBackdropKey.self] }
+    set { self[SeasonalBackdropKey.self] = newValue }
+  }
+}
+
+/// Non-glass controls need their own contrast over the saturated seasonal canvas.
+/// This backing stays inside each control; it never greys or whitens the background.
+struct SeasonalControlBacking<S: Shape>: View {
+  let shape: S
+  @Environment(\.seasonalBackdrop) private var seasonal
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+  var body: some View {
+    if seasonal {
+      shape.fill((scheme == .dark ? Color.black : Color.white)
+        .opacity(reduceTransparency ? 1 : (contrast == .increased ? 0.78 : 0.52)))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
   }
 }
 

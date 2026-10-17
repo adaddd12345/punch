@@ -845,7 +845,7 @@ enum Caption {
   /// The EQ line itself (between nodes): dragging it is Boost.
   static func eqLine(boostDb: Double) -> PointerHint {
     PointerHint("Boost", value: String(format: "+%.0f dB", boostDb.rounded()),
-                does: "The line is your whole sound: drag it to change Boost.",
+                does: "Raises or lowers the level without changing the EQ shape.",
                 gestures: ["Drag ↕", "Double-click: 0 dB", "⌥-drag: bass vs treble", "Hold ⇧: fine"])
   }
 

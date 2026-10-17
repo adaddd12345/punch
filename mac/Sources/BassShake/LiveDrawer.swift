@@ -330,9 +330,8 @@ struct DrawerRoot: View {
       .environment(\.artworkFoil, model.appearance.artworkFoil)
       .environment(\.playButtonLook, model.appearance.playButtonLook)
       .tint(Drawer.accent(model.appearance.tint, scheme))
-      // The main colourway over the same native material. Keep particles out
-      // of the smaller working area; its pads already communicate activity.
-      .background(PopupBackground(style: model.appearance.background, active: flags.shown))
+      // The main colourway over the same native material.
+      .popupBackdrop(model.appearance.background, active: flags.shown)
       .background(VisualEffectBackground())
       .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
       .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

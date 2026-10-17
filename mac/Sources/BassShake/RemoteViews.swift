@@ -370,7 +370,7 @@ struct RemotePanelView: View {
     }
     .padding(12)
     .frame(width: 360)
-    .background(PopupBackground(style: s.backgroundStyle, active: visible))
+    .popupBackdrop(s.backgroundStyle, active: visible)
     .animation(.easeOut(duration: 0.15), value: s.remoteAllow)
     .animation(.easeOut(duration: 0.15), value: s.remoteControl)
     .animation(.easeOut(duration: 0.15), value: picking)
