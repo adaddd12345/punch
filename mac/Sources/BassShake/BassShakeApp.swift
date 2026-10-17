@@ -900,10 +900,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
 
 /// Same controls as the menu-bar popup, plus a pointer to where the app lives.
 struct MainWindowView: View {
-  let controller: AudioController
+  @ObservedObject var controller: AudioController
 
   var body: some View {
     VStack(spacing: 0) {
+      if !controller.needsOnboarding {
       HStack(alignment: .top, spacing: 10) {
         Image(nsImage: MenuBarIcon.image)
           .renderingMode(.template)
@@ -916,6 +917,7 @@ struct MainWindowView: View {
       .frame(width: 360, alignment: .leading)
       .background(Color.primary.opacity(0.04))
       Divider()
+      }
       TakeoverRoot(local: controller, ownsDrawer: false)
     }
   }

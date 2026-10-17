@@ -69,7 +69,9 @@ struct PopoverView: View {
   var body: some View {
     Group {
       if controller.needsOnboarding {
-        OnboardingView(controller: controller)
+        OverflowScroll { OnboardingView(controller: controller) }
+          .frame(width: 360)
+          .frame(maxHeight: onboardingHeight)
       } else if showRemote {
         RemotePanelView(controller: controller, remote: RemoteControl.shared) { withAnimation { showRemote = false } }
       } else if showMySounds {
@@ -107,6 +109,11 @@ struct PopoverView: View {
       menuPanel = nil
       open(p)
     }
+  }
+
+  private var onboardingHeight: CGFloat {
+    let screen = max(320, (NSScreen.main?.visibleFrame.height ?? 800) - 80)
+    return role == .menuBar ? min(screen, space.maxHeight ?? screen) : screen
   }
 
   /// A settings-menu item's panel. Every item alike: rearranging ends (else Esc stays
