@@ -103,6 +103,7 @@ struct BentoView: View {
     stack
       .modifier(BentoGlassContainer())
       .environment(\.bentoFlat, flat)
+      .environment(\.bentoHoverEnabled, !flat && !reshuffle.on)
       .environment(\.bentoGlass, glass ? BentoGlassSpace(id: glassSpace) : nil)
       // Always set, so a tile's glassEffectID never comes and goes with `glass`.
       .environment(\.bentoGlassNamespace, glassSpace)
@@ -642,6 +643,7 @@ struct BentoView: View {
       }
     }
     .pointerHintTint(ink(t))
+    .modifier(BentoHoverSurface(radius: BentoRadius.hero))
     .background { heroBackground(t, dark: dark, shape: shape) }
     // Liquid Glass: plain glass under the wash (the wash, not .tint, carries the
     // colour, so it stays when the window isn't key).
@@ -730,6 +732,7 @@ struct BentoView: View {
       }
     }
     .pointerHintTint(ink(t))
+    .modifier(BentoHoverSurface(radius: radius))
     .background { heroBackground(t, dark: dark, shape: shape, radius: radius, lineInset: radius, lineBottom: 4) }
     .modifier(BentoGlassSurface(on: heroGlass, radius: radius, interactive: false, id: "hero", space: glassSpace))
   }
@@ -1654,6 +1657,8 @@ struct BentoTile<Content: View>: View {
   var clipped = false
   /// Liquid Glass: the tile reacts to the pointer (tiles you click or drag).
   var interactive = false
+  /// Main-window hover wash. Read-only tiles and grouped child controls can opt out.
+  var hoverResponse = true
   /// Liquid Glass: a tile that comes and goes morphs under this ID.
   var glassID: String? = nil
   @ViewBuilder let content: () -> Content
@@ -1669,6 +1674,7 @@ struct BentoTile<Content: View>: View {
     content()
       .padding(padding)
       .frame(maxWidth: .infinity, alignment: .leading)
+      .modifier(BentoHoverSurface(radius: r, enabled: hoverResponse && !flat))
       .background {
         if flat {
           BentoFlatFill(tint: tint, look: look, radius: r)
@@ -1807,13 +1813,15 @@ struct BentoGlassSurface: ViewModifier {
   var clear = false
   var id: String? = nil
   var space: Namespace.ID? = nil
+  @Environment(\.bentoHoverEnabled) private var quietHover
 
   /// Off is Glass.identity, not a different view tree: only #available and
   /// the per-tile id branch, so toggling glass keeps the content's state.
   func body(content: Content) -> some View {
     if #available(macOS 26, *) {
       let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-      let glass = on ? (clear ? Glass.clear : Glass.regular).interactive(interactive) : Glass.identity
+      // Main Bento supplies its quiet wash; don't layer a system lift over it.
+      let glass = on ? (clear ? Glass.clear : Glass.regular).interactive(interactive && !quietHover) : Glass.identity
       if let id, let space {
         content
           .glassEffect(glass, in: shape)
@@ -2264,7 +2272,7 @@ private struct CompactModeQuad: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    BentoTile(tint: .graphite, look: .quiet, padding: 4) {
+    BentoTile(tint: .graphite, look: .quiet, padding: 4, hoverResponse: false) {
       VStack(spacing: 2) {
         HStack(spacing: 2) { ForEach(items.prefix(2)) { cell($0) } }
         HStack(spacing: 2) { ForEach(items.dropFirst(2).prefix(2)) { cell($0) } }
@@ -2280,6 +2288,7 @@ private struct CompactModeQuad: View {
     return Button(action: item.action) {
       ModeGlyph(symbol: item.symbol, tint: item.on ? item.tint : .graphite, on: item.on, size: 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .modifier(BentoHoverSurface(radius: BentoRadius.inner, control: true))
         .background(shape.fill(item.tint.pastel.opacity(item.on ? (scheme == .dark ? 0.18 : 0.30) : 0)))
         .contentShape(shape)
     }

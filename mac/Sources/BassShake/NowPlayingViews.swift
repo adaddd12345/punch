@@ -340,6 +340,7 @@ struct NowArt: View {
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
           .overlay { ArtworkFoil(size: size, radius: size * 0.22, engaged: hovering) }
+          .compositingGroup()
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
           .transition(.opacity)
       } else if let favicon {

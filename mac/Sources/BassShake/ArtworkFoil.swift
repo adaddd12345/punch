@@ -44,12 +44,17 @@ struct ArtworkFoil: View {
         .overlay {
           // A hairline catch on the plastic's edge, not a second frame.
           shape.strokeBorder(LinearGradient(stops: [
-            .init(color: .white.opacity(lit ? 0.36 : 0.24), location: 0),
+            .init(color: .white.opacity(lit ? 0.26 : 0.16), location: 0),
             .init(color: .white.opacity(0.06), location: 0.43),
             .init(color: .clear, location: 0.66),
             .init(color: spectrum[3].opacity(0.16), location: 1)
           ], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.5)
         }
+        // Blend the finished film against the sleeve, not each reflection
+        // against a transparent intermediate layer. Overlay preserves the
+        // cover's darks and saturated primaries; Screen is only for blank art.
+        .compositingGroup()
+        .blendMode(blank ? .screen : .overlay)
         .animation(moves ? .smooth(duration: 0.72, extraBounce: 0) : nil, value: lit)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -58,20 +63,20 @@ struct ArtworkFoil: View {
 
   private var sheet: some View {
     ZStack {
-      // Colour belongs to the reflected light. Screen keeps cover shadows and
-      // lettering intact instead of replacing them with an opaque rainbow.
+      // A transparent chromatic film, composited as one layer above the art.
+      // Do not Screen the whole cover: it raises low channels into a pale veil.
       LinearGradient(colors: spectrum,
                      startPoint: .init(x: lit ? -0.15 : 0.15, y: 0),
                      endPoint: .init(x: lit ? 0.85 : 1.15, y: 1))
-        .opacity(reduceTransparency ? 0.025 : (blank ? 0.18 : 0.09))
-        .blendMode(.screen)
+        .opacity(reduceTransparency ? 0.015 : (blank ? 0.18 : 0.10))
 
       // A wide, soft pearl reflection gives the face a laminated-plastic feel.
-      // Its low alpha preserves faces, lettering and halftone detail underneath.
+      // Its contrast blend leaves printed blacks and whites anchored, while
+      // the broad reflection shifts without adding a milky white base.
       LinearGradient(stops: [
         .init(color: .clear, location: 0.08),
         .init(color: spectrum[0].opacity(0.12), location: 0.29),
-        .init(color: .white.opacity(lit ? 0.20 : 0.12), location: 0.43),
+        .init(color: .white.opacity(lit ? 0.16 : 0.09), location: 0.43),
         .init(color: spectrum[1].opacity(0.20), location: 0.51),
         .init(color: spectrum[2].opacity(0.16), location: 0.60),
         .init(color: .clear, location: 0.80)
@@ -79,7 +84,6 @@ struct ArtworkFoil: View {
         .frame(width: size * 1.55, height: size * 1.55)
         .offset(x: size * (lit ? 0.22 : -0.22), y: size * (lit ? -0.07 : 0.07))
         .opacity(reduceTransparency ? 0 : (scheme == .dark ? 0.85 : 1))
-        .blendMode(.screen)
     }
     .frame(width: size, height: size)
   }

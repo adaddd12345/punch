@@ -37,7 +37,7 @@ struct LiveTimeTile: View {
   private var height: CGFloat { compact ? 22 : 28 }
 
   var body: some View {
-    BentoTile(tint: live ? .frost : .graphite, padding: compact ? 8 : 10, glassID: "liveTime") {
+    BentoTile(tint: live ? .frost : .graphite, padding: compact ? 8 : 10, hoverResponse: false, glassID: "liveTime") {
       if let end = endsAt {
         TimelineView(CountdownSchedule(end: end, paused: drawPaused)) { ctx in
           let left = Int(ceil(max(0, end.timeIntervalSince(ctx.date))))

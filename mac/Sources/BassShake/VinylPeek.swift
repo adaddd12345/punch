@@ -684,6 +684,7 @@ struct VinylPeekArt: View {
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         .overlay { ArtworkFoil(size: g.sleeve, radius: g.sleeveRadius, engaged: engaged) }
+        .compositingGroup()
         .transition(.opacity)
     } else {
       let (top, bottom) = p.sleeve(dark: dark)
