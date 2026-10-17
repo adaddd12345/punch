@@ -52,6 +52,10 @@ jobs:
         run: bash mac/scripts/now-playing-check.sh
       - name: Artwork color and contrast checks
         run: bash mac/scripts/artwork-card-check.sh
+      - name: Artwork background and bass reaction checks
+        run: |
+          bash mac/scripts/artwork-backdrop-check.sh
+          bash mac/scripts/artwork-reaction-check.sh
       - name: Build app bundle
         run: mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"
       # Launch the built app and make sure it stays up. No one answers the

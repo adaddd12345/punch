@@ -114,6 +114,10 @@ struct SettingsMenuContent: View {
           ForEach(BackgroundStyle.allCases.filter(\.theme)) { Text($0.title).tag($0) }
         }
       }
+      if controller.settings.backgroundStyle == .artwork {
+        Toggle("Live React", isOn: bind(\.artworkBackgroundLive))
+          .help("Moves the artwork gradient gently with this Mac’s audio, especially bass.")
+      }
       // The stock ticker (market panel), with any background (Wall Street turns it on),
       // and which layers it carries (delayed, not for trading).
       Menu("Ticker") {

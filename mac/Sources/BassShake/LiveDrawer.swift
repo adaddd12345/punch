@@ -332,6 +332,7 @@ struct DrawerRoot: View {
       .tint(Drawer.accent(model.appearance.tint, scheme))
       // The main colourway over the same native material.
       .popupBackdrop(model.appearance.background, active: flags.shown)
+      .environment(\.artworkBackdropContext, model.appearance.localArtwork ? .local : nil)
       .background(VisualEffectBackground())
       .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
       .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

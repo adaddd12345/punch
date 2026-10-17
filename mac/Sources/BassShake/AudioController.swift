@@ -176,6 +176,8 @@ final class AudioController: ObservableObject {
   let live = LiveChannels()
   let waveform = WaveformModel()
   let spectrum = SpectrumModel()
+  /// Artwork Match's decorative bass envelope; never publishes controller changes.
+  let artworkReaction = ArtworkReaction()
   /// Mac Volume: the system output's volume and mute, followed whether or not
   /// the pipeline runs (its own queues; only its small views observe it).
   let macVolume = MacVolume()
@@ -569,7 +571,9 @@ final class AudioController: ObservableObject {
   /// Drains the engine's post-processing mono feed (UI thread).
   func readAnalyzer(_ buf: inout [Float]) -> Int {
     if isMirror { return 0 }
-    return buf.withUnsafeMutableBufferPointer { Int(punch_read_analyzer(engine, $0.baseAddress, $0.count)) }
+    let n = buf.withUnsafeMutableBufferPointer { Int(punch_read_analyzer(engine, $0.baseAddress, $0.count)) }
+    if artworkReaction.captureActive { artworkReaction.consume(buf, count: n) }
+    return n
   }
 
   // MARK: - Per-device sound

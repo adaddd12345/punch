@@ -320,7 +320,8 @@ final class NowPlaying: ObservableObject {
     // Full/Compact (both layouts): What's Playing. Mini (both layouts): the
     // playing channel, on by default; song and cover still need What's Playing.
     c.$settings
-      .map { ($0.showNowPlaying && $0.viewSize != .mini) || ($0.showPlayingChannel && $0.viewSize == .mini) }
+      .map { ($0.showNowPlaying && $0.viewSize != .mini) || ($0.showPlayingChannel && $0.viewSize == .mini)
+        || $0.backgroundStyle == .artwork }
       .removeDuplicates()
       .sink { [weak self] on in DispatchQueue.main.async { self?.setWanted(on) } }
       .store(in: &cancellables)
@@ -941,7 +942,7 @@ final class NowPlaying: ObservableObject {
   private var mayAsk: Bool {
     guard let s = controller?.settings else { return false }
     // Song & Video Details off: apps only (no scripts, Accessibility reads or stills).
-    return s.showNowPlaying && s.nowPlayingNoteSeen && s.playingDetails
+    return (s.showNowPlaying || s.backgroundStyle == .artwork) && s.nowPlayingNoteSeen && s.playingDetails
   }
 
   private func isRunning(_ app: NowApp) -> Bool {

@@ -42,8 +42,8 @@ struct PrismPlayFace: View {
                      palette: PrismPlayPalette(tint: tint, dark: scheme == .dark))
       .frame(width: size, height: size)
       .opacity(pressed && !motion ? 0.76 : 1)
-      .animation(motion ? .spring(response: hovered ? 0.42 : 0.5, dampingFraction: 0.94) : nil, value: hovered)
-      .animation(motion ? .spring(response: 0.24, dampingFraction: 0.9) : nil, value: pressed)
+      .animation(motion ? .spring(response: hovered ? 0.32 : 0.40, dampingFraction: 0.92) : nil, value: hovered)
+      .animation(motion ? .spring(response: 0.18, dampingFraction: 0.92) : nil, value: pressed)
       .accessibilityHidden(true)
   }
 }
@@ -123,10 +123,10 @@ struct PrismPlayArtwork: View, Animatable {
       ctx.fill(disc(12.4, 0.4), with: .color(palette.gap))
       ctx.fill(disc(11.8, 0.8), with: shade(palette.ringHi, palette.ring, 11.8 * driverScale, 0.8))
       ctx.fill(disc(10.45, 0.9), with: .color(palette.rubber))
-      let travel = 0.7 * p
+      let travel = 1.0 * p
       // Small optical compression makes the suspension travel readable even
       // straight on. It never changes the housing or the outer surround.
-      let compression = 1 - 0.025 * p
+      let compression = 1 - 0.04 * p
       ctx.fill(disc(9.5 * compression, -0.8 - travel), with: shade(palette.coneTop, palette.coneBottom, 9.5 * driverScale, -0.8 - travel))
       ctx.stroke(disc(8.35 * compression, -1.1 - travel), with: .color(palette.coneSeam), lineWidth: 0.28)
 
@@ -224,8 +224,11 @@ struct PrismPlayArtwork: View, Animatable {
 private struct PrismProjection {
   let yaw, pitch: CGFloat
   init(hover: CGFloat) {
-    yaw = hover * 8 * .pi / 180
-    pitch = hover * 6 * .pi / 180
+    // At 40pt the six-unit casing now reveals ~2.25pt of sidewall. The old
+    // eight-degree tilt exposed less than one point at compact player sizes.
+    // Rest remains exactly frontal; the camera never rolls or follows a loop.
+    yaw = hover * 22 * .pi / 180
+    pitch = hover * 16 * .pi / 180
   }
   func plane(z: CGFloat) -> CGAffineTransform {
     let a = cos(yaw), b = sin(pitch) * sin(yaw), d = cos(pitch)

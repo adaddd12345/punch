@@ -482,7 +482,7 @@ enum CenterLock: String, Codable, CaseIterable, Identifiable {
 }
 
 enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
-  case system, ambientBlue, coffee, irishGreen, ember, violet, rose, arctic
+  case system, artwork, ambientBlue, coffee, irishGreen, ember, violet, rose, arctic
   // Seasonal (rich, appearance-independent gradients; Festive.swift).
   // An older build that doesn't know these raw values falls back to System Grey.
   case frost, pumpkin, lunar, sakura
@@ -509,6 +509,7 @@ enum BackgroundStyle: String, Codable, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .system: return "System Grey"
+    case .artwork: return "Artwork Match"
     case .ambientBlue: return "Ambient Blue"
     case .coffee: return "Coffee Brown"
     case .irishGreen: return "Irish Green"
@@ -786,6 +787,8 @@ struct Settings: Codable, Equatable {
   var spectrum = false
   var scopeColor: ScopeColor = .accent
   var backgroundStyle: BackgroundStyle = .system
+  /// Only Artwork Match reacts to captured Mac audio; static by default.
+  var artworkBackgroundLive = false
   /// Wall Street turns EQ Visual to Spectrum the first time it's picked.
   var wallStreetSeen = false
   /// The market panel (quotes, headlines) over any background (⋯ › Look › Ticker ›
@@ -983,6 +986,7 @@ struct Settings: Codable, Equatable {
     spectrum = (try? c.decodeIfPresent(Bool.self, forKey: .spectrum)) ?? d.spectrum
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
+    artworkBackgroundLive = (try? c.decodeIfPresent(Bool.self, forKey: .artworkBackgroundLive)) ?? d.artworkBackgroundLive
     viewSize = (try? c.decodeIfPresent(ViewSize.self, forKey: .viewSize)) ?? d.viewSize
     labelLevel = (try? c.decodeIfPresent(LabelLevel.self, forKey: .labelLevel)) ?? d.labelLevel
     beatsGrid = (try? c.decodeIfPresent(Bool.self, forKey: .beatsGrid)) ?? d.beatsGrid

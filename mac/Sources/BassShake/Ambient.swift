@@ -14,7 +14,11 @@ struct PopupBackground: View {
   @Environment(\.drawPaused) private var drawPaused
 
   var body: some View {
-    if style.scene {
+    if style == .artwork {
+      ArtworkBackdrop(active: active && !drawPaused, still: powerSaver || reduceMotion)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    } else if style.scene {
       // Seasonal scenes (Festive.swift): a still frame under Power Saver and Reduce Motion.
       FestiveBackground(style: style, active: active, still: powerSaver || reduceMotion)
         .allowsHitTesting(false)
@@ -55,7 +59,7 @@ extension View {
   /// Colour stays behind the controls; seasonal themes add no foreground decoration.
   func popupBackdrop(_ style: BackgroundStyle, active: Bool) -> some View {
     background(PopupBackground(style: style, active: active))
-      .environment(\.seasonalBackdrop, style.festive)
+      .environment(\.seasonalBackdrop, style.festive || style == .artwork)
   }
 }
 
@@ -70,7 +74,7 @@ extension EnvironmentValues {
   }
 }
 
-/// Non-glass controls need their own contrast over the saturated seasonal canvas.
+/// Non-glass controls need their own contrast over a saturated colour canvas.
 /// This backing stays inside each control; it never greys or whitens the background.
 struct SeasonalControlBacking<S: Shape>: View {
   let shape: S
@@ -99,7 +103,7 @@ struct AmbientPalette {
 
   static func `for`(_ style: BackgroundStyle) -> AmbientPalette? {
     switch style {
-    case .system, .frost, .pumpkin, .lunar, .sakura, .wallStreet, .freezing, .ember: return nil
+    case .system, .artwork, .frost, .pumpkin, .lunar, .sakura, .wallStreet, .freezing, .ember: return nil
     case .ambientBlue:
       return .init(dark: c(0.02, 0.05, 0.14), light: c(0.86, 0.91, 1.0),
                    plumes: [c(0.10, 0.42, 1.00), c(0.05, 0.70, 1.00), c(0.20, 0.30, 0.95), c(0.00, 0.55, 0.90), c(0.45, 0.65, 1.00)])

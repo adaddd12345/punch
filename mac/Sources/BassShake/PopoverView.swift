@@ -99,6 +99,7 @@ struct PopoverView: View {
     .environment(\.artworkEffect, controller.settings.artworkEffect)
     .environment(\.artworkFoil, controller.settings.artworkFoil)
     .environment(\.playButtonLook, controller.settings.playButtonLook)
+    .environment(\.artworkBackdropContext, controller.isMirror ? nil : .local)
     .onChange(of: menuPanel) { _, p in
       guard let p else { return }
       menuPanel = nil
@@ -139,7 +140,8 @@ struct PopoverView: View {
                      artworkStyle: controller.settings.artworkStyle,
                      artworkEffect: controller.settings.artworkEffect,
                      artworkFoil: controller.settings.artworkFoil,
-                     playButtonLook: controller.settings.playButtonLook)
+                     playButtonLook: controller.settings.playButtonLook,
+                     localArtwork: !controller.isMirror)
   }
 
   /// Take Control: this popup drives another Mac (its controller is a mirror).
@@ -281,6 +283,9 @@ struct PopoverView: View {
     // Never taller than the screen space it hangs in (menu-bar popover only).
     .frame(maxHeight: role == .menuBar ? space.maxHeight : nil, alignment: .top)
     .popupBackdrop(controller.settings.backgroundStyle, active: visible)
+    .environment(\.artworkBackdropContext, controller.isMirror ? nil :
+      ArtworkBackdropContext(reaction: role == .launchWindow ? nil : controller.artworkReaction,
+                             live: controller.settings.artworkBackgroundLive))
     // "Updated to …" sits in the band UpdateBand makes for it. Its dismissal is
     // the one state change that collapses the band (the popup's height follows
     // the same animation frame by frame).
@@ -398,19 +403,67 @@ struct PopoverView: View {
         }
       }
       // 30 Hz meters (10 Hz under Power Saver) only while this is on screen (nothing runs when closed).
+      var artworkScratch: [Float] = []
       ticker.start(slow: controller.settings.powerSaver) { [controller, meters, role, window] in
         // A hidden or fully covered window (NSPopover/launch window kept
         // alive off screen) draws nothing: don't drive SwiftUI updates.
-        if let w = window.window, !w.isVisible || !w.occlusionState.contains(.visible) { return }
+        let reactionOwner = ObjectIdentifier(window)
+        guard let w = window.window, w.isVisible, w.occlusionState.contains(.visible) else {
+          if role != .launchWindow { controller.artworkReaction.stop(owner: reactionOwner) }
+          return
+        }
         NowPlaying.shared.noteVisible()
         meters.update(controller.pollMeters())
         let s = controller.settings
+        let reaction = controller.artworkReaction
+        if role != .launchWindow {
+          var source: ArtworkReaction.Source?
+          var rate = 0.0
+          if s.backgroundStyle == .artwork, s.artworkBackgroundLive,
+             !s.powerSaver, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+             !controller.isMirror, s.enabled, !controller.bypassed,
+             case .running(_, let sampleRate) = controller.status,
+             controller.live.outputActivityKnown,
+             let lead = NowStack.shared.lead {
+            let detail = NowPlaying.shared.describe(lead)
+            if let artwork = detail.artwork, !detail.paused,
+               !NowPlaying.shared.isMuted(lead.app.id), lead.item?.muted != true,
+               !controller.live.shakerOff.contains(lead.app.id),
+               controller.live.apps.contains(where: { $0.id == lead.app.id && $0.isPlaying }) {
+              source = .init(entry: lead.id, artwork: ObjectIdentifier(artwork), device: controller.currentDeviceID)
+              rate = sampleRate
+            }
+          }
+          if reaction.beginFrame(source: source, sampleRate: rate, owner: reactionOwner) {
+            if artworkScratch.isEmpty { artworkScratch = [Float](repeating: 0, count: 8192) }
+            // The engine stops enqueueing when its bounded ring fills. Empty it
+            // before enabling fan-out, or reopening would react to old music.
+            for _ in 0..<8 {
+              if controller.readAnalyzer(&artworkScratch) < artworkScratch.count { break }
+            }
+            reaction.didDiscardBacklog()
+          }
+        }
+        var visualPulled = false
         if s.waveform && s.enabled && role != .launchWindow {
           if s.spectrum {
             controller.spectrum.pull(controller)
+            visualPulled = true
           } else if !s.powerSaver {
             controller.waveform.pull(controller)
+            visualPulled = true
           }
+        }
+        if role != .launchWindow {
+          if reaction.captureActive, !visualPulled {
+            if artworkScratch.isEmpty { artworkScratch = [Float](repeating: 0, count: 8192) }
+            // Scope and Spectrum normally own the destructive reader. Only
+            // supply a reader here when neither ran, so no sample is stolen.
+            for _ in 0..<8 {
+              if controller.readAnalyzer(&artworkScratch) < artworkScratch.count { break }
+            }
+          }
+          reaction.finishFrame()
         }
       }
       if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
@@ -426,6 +479,7 @@ struct PopoverView: View {
       visible = false
       reshuffle.detach()
       ticker.stop()
+      if role != .launchWindow { controller.artworkReaction.stop(owner: ObjectIdentifier(window)) }
       meters.reset()
       showLive = false
       showLayoutEditor = false
