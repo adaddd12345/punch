@@ -186,6 +186,8 @@ struct EarsStack: View {
   let headphones: Bool
   let bento: Bool
   let mini: Bool
+  var embedded = false
+  var allowConnections = true
   let select: (OutputDevice) -> Void
   @State private var expanded = false
   @Environment(\.labelLevel) private var labels
@@ -195,7 +197,7 @@ struct EarsStack: View {
   private var count: Int { playing.apps.count }
   /// Mini already shows the loudest app in its hero: the row waits for a second one.
   private var shown: Bool { !mini || count >= 2 }
-  private var chipShape: RoundedRectangle { RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous) }
+  private var chipShape: RoundedRectangle { RoundedRectangle(cornerRadius: embedded ? 8 : BentoRadius.tile, style: .continuous) }
   private var fill: Double { contrast == .increased ? 0.16 : 0.08 }
 
   /// Nothing at all while hidden (no empty slot, so the popup's 8 pt rhythm holds).
@@ -230,9 +232,10 @@ struct EarsStack: View {
           if d.id == currentID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
         }
       }
+      if allowConnections { OutputConnectionMenu() }
     } label: {
       HStack(spacing: 6) {
-        Image(systemName: headphones ? "headphones" : "hifispeaker")
+        Image(systemName: devices.first { $0.id == currentID }?.symbolName ?? "hifispeaker")
           .font(.system(size: 10, weight: .bold))
           .frame(width: 14)
         Text(currentName)
@@ -242,12 +245,12 @@ struct EarsStack: View {
         Spacer(minLength: 0)
         Image(systemName: "chevron.down")
           .font(.system(size: 8, weight: .bold))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.artworkSecondary)
       }
-      .foregroundStyle(Color.primary)
+      .foregroundStyle(.artworkPrimary)
       .padding(.horizontal, 8)
       .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24)
-      .background(chipShape.fill(Color.primary.opacity(fill)))
+      .background(chipShape.fill(embedded ? AnyShapeStyle(.artworkControl) : AnyShapeStyle(Color.primary.opacity(fill))))
       .contentShape(chipShape)
     }
     .menuStyle(.button)
@@ -283,10 +286,10 @@ struct EarsStack: View {
         }
         Image(systemName: "chevron.down")
           .font(.system(size: 8, weight: .bold))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.artworkSecondary)
           .rotationEffect(.degrees(expanded ? 180 : 0))
       }
-      .foregroundStyle(Color.primary)
+      .foregroundStyle(.artworkPrimary)
       .padding(.horizontal, 8)
       .frame(height: 24)
       .background(chipShape.fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(fill)))

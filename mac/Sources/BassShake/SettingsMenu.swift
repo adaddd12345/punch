@@ -63,6 +63,9 @@ struct SettingsMenuContent: View {
   /// Outputs and the microphone: per-device behaviour and the repair tools.
   private var devicesMenu: some View {
     Menu("Devices") {
+      Button("Output Groups…") { OutputGroupsWindow.show() }
+      Button("Connect AirPlay…") { OutputGroupsView.openSound() }
+      Divider()
       Menu("Microphone: \(controller.inputs.first(where: { $0.id == controller.currentInputID })?.name ?? "None")") {
         ForEach(controller.inputs) { d in
           Button {

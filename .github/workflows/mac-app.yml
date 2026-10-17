@@ -50,6 +50,8 @@ jobs:
           core/build/punch_bench
       - name: Paused-song continuity checks
         run: bash mac/scripts/now-playing-check.sh
+      - name: Output groups and player layout checks
+        run: bash mac/scripts/output-groups-check.sh
       - name: Browser tempo safety checks
         run: bash mac/scripts/browser-tempo-check.sh
       - name: Artwork color and contrast checks

@@ -45,14 +45,14 @@ struct LayoutSection: Identifiable, Equatable {
                                     tint: .butter, height: 32, when: "With Show Stock Ticker on")
 
   // Bento, top to bottom.
-  static let bentoHero = LayoutSection(key: "bento.hero", name: "Top Tile", symbol: "power", tint: .butter,
+  static let bentoHero = LayoutSection(key: "bento.hero", name: "Player, Output & Volume", symbol: "power", tint: .butter,
                                        height: 64, locked: "Always shown: it has the power button.")
   static let bentoNowPlaying = LayoutSection(key: "bento.nowPlaying", name: "More Playing Apps", symbol: "music.note.list",
                                              tint: .aqua, height: 36, when: "With What's Playing on")
   static let bentoEQ = LayoutSection(key: "bento.eq", name: "EQ Curve", symbol: "slider.vertical.3", tint: .frost, height: 52)
   static let bentoDials = LayoutSection(key: "bento.dials", name: "Strength & Boost", symbol: "waveform.path", tint: .bass, height: 44)
-  static let bentoPresets = LayoutSection(key: "bento.presets", name: "Presets", symbol: "square.stack", tint: .frost, height: 36)
-  static let bentoModes = LayoutSection(key: "bento.modes", name: "Modes", symbol: "square.grid.3x2", tint: .indigo, height: 56)
+  static let bentoPresets = LayoutSection(key: "bento.presets", name: "Sound Presets", symbol: "square.grid.2x2", tint: .frost, height: 56)
+  static let bentoModes = LayoutSection(key: "bento.modes", name: "Effects & Listening Modes", symbol: "square.grid.3x2", tint: .indigo, height: 56)
   static let bentoModeSettings = LayoutSection(key: "bento.modeSettings", name: "Mode Settings", symbol: "slider.horizontal.3",
                                                tint: .lilac, height: 36, when: "Night Guard, Study, Sleep")
   static let bentoLightsOut = LayoutSection(key: "bento.lightsOut", name: "Lights Out", symbol: "moon.fill", tint: .frost,
@@ -79,7 +79,7 @@ struct LayoutSection: Identifiable, Equatable {
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
   /// Default orders, top to bottom: Live Time first, Mac Volume right under the EQ.
-  static let bento: [LayoutSection] = [liveTime, bentoHero, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials, bentoPresets,
+  static let bento: [LayoutSection] = [liveTime, bentoHero, bentoPresets, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials,
                                        bentoModes, bentoModeSettings, bentoLightsOut, ticker, bentoFooter]
   /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
   static let classic: [LayoutSection] = [liveTime, classicHeader, classicNowPlaying, classicEQ, macVolume, remoteMacs, classicMeters,
@@ -171,7 +171,8 @@ struct LayoutEditorView: View {
         VStack(spacing: 8) {
           ForEach(Array(sections.enumerated()), id: \.element.id) { i, s in
             LayoutCard(section: s, hidden: !controller.settings.shows(s),
-                       canMove: mini || s.fixed ? nil : (up: canMove(s, by: -1), down: canMove(s, by: 1)),
+                       canMove: mini || s.fixed || (controller.settings.bento && s.key == LayoutSection.macVolume.key)
+                         ? nil : (up: canMove(s, by: -1), down: canMove(s, by: 1)),
                        toggle: { toggle(s) }, move: { move(s, by: $0) })
               .offset(drift(t, index: i))
           }
@@ -219,7 +220,9 @@ struct LayoutEditorView: View {
   }
 
   /// The movable sections (footer excluded), top to bottom.
-  private var movable: [String] { sections.filter { !$0.fixed }.map(\.key) }
+  private var movable: [String] {
+    sections.filter { !$0.fixed && !(controller.settings.bento && $0.key == LayoutSection.macVolume.key) }.map(\.key)
+  }
 
   private func canMove(_ s: LayoutSection, by step: Int) -> Bool {
     guard let i = movable.firstIndex(of: s.key) else { return false }

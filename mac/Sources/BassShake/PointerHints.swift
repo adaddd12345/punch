@@ -703,13 +703,13 @@ enum Caption {
   /// otherwise the classic slider. `shaker`: the preset uses the Bass Shaker
   /// (punch on hits, body, clean harmonics) instead of the harmonic enhancer.
   static func strength(_ bass: Double, scrub: Bool, shaker: Bool = false) -> PointerHint {
-    PointerHint("Strength", does: shaker ? "How hard kicks punch and how full the bass sits."
-                                         : "Tricks your ear into hearing deep bass, even on small speakers.",
+    PointerHint("Strength", does: shaker ? "Bass enhancement: changes kick punch and low-end body, not the overall volume."
+                                         : "Bass enhancement: adds harmonics so deep bass is easier to hear. Not the overall volume.",
                 gestures: scrub ? [drag, resetTap] : [])
   }
 
   static func boost(_ db: Double, scrub: Bool) -> PointerHint {
-    PointerHint("Boost", does: "Goes past your Mac's max volume; without Limit, loud parts can distort.",
+    PointerHint("Boost", does: "Overall gain: raises the whole processed signal in decibels, not just the bass. Limit can keep peaks in check.",
                 gestures: scrub ? [drag, resetTap] : [])
   }
 

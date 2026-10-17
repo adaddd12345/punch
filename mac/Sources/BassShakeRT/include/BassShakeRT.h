@@ -30,6 +30,16 @@ void BSRenderContextDestroy(BSRenderContext* ctx);
 // to use the last input buffer.
 void BSRenderContextSetTapBufferIndex(BSRenderContext* ctx, uint32_t index);
 
+// Optional group fan-out, configured before IO starts. Each physical output
+// channel takes a source channel, or -1 for silence. No allocation in IO.
+// Returns false if the map exceeds the supported size or has invalid entries.
+bool BSRenderContextSetOutputMap(BSRenderContext* ctx, const int32_t* channels, uint32_t count);
+
+// Before starting a group IOProc, disable physical microphone input streams.
+// Aggregate creation may ignore channels-in=0; only the appended tap streams
+// should run. This function allocates and must never be called from IO.
+OSStatus BSConfigureTapOnlyInputs(AudioObjectID device, AudioDeviceIOProcID proc, uint32_t tapStreams);
+
 // Ramp output from silence over `ms` (start-up / after rebuild) so the
 // switch from the unprocessed to the processed signal never clicks.
 void BSRenderContextFadeIn(BSRenderContext* ctx, double sampleRate, double ms);

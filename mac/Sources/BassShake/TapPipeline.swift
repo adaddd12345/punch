@@ -28,6 +28,7 @@ final class TapPipeline {
     var deviceID: AudioObjectID
     var deviceUID: String
     var deviceOutputChannels: Int
+    var destinationIDs: [AudioObjectID]
     /// Uptime when IO was started (a just-built pipeline may not be called yet).
     var startedAt: TimeInterval
   }
@@ -88,6 +89,10 @@ final class TapPipeline {
   func start(output: OutputDevice, alsoExclude: [AudioObjectID] = []) throws -> Info {
     stop(fade: false)
     do {
+      let destinations = try OutputGroups.destinations(for: output)
+      let group = output.isOutputGroup ? OutputGroups.read(output.id) : nil
+      let clock = destinations.first { $0.uid == group?.primaryUID }
+        ?? OutputGroups.preferredPrimary(destinations) ?? output
       let own = Self.ownProcessObject()
       var excluded: [AudioObjectID] = own.map { [$0] } ?? []
       for obj in alsoExclude where obj != unknownObject && !excluded.contains(obj) {
@@ -120,20 +125,22 @@ final class TapPipeline {
       let dict: [String: Any] = [
         kAudioAggregateDeviceNameKey: "The Bass Shaker",
         kAudioAggregateDeviceUIDKey: aggUID,
-        kAudioAggregateDeviceMainSubDeviceKey: output.uid,
+        kAudioAggregateDeviceMainSubDeviceKey: clock.uid,
         kAudioAggregateDeviceIsPrivateKey: true,
-        kAudioAggregateDeviceIsStackedKey: false,
+        kAudioAggregateDeviceIsStackedKey: output.isOutputGroup ? 1 : 0,
         kAudioAggregateDeviceTapAutoStartKey: true,
         // channels-in 0: keep a headset's mic out of the aggregate so we
         // never trigger the microphone indicator or flip AirPods to HFP.
-        kAudioAggregateDeviceSubDeviceListKey: [[kAudioSubDeviceUIDKey: output.uid,
-                                                 kAudioSubDeviceInputChannelsKey: 0]],
+        kAudioAggregateDeviceSubDeviceListKey: destinations.map { member in
+          [kAudioSubDeviceUIDKey: member.uid, kAudioSubDeviceInputChannelsKey: 0,
+           kAudioSubDeviceDriftCompensationKey: member.uid == clock.uid ? 0 : 1] as [String: Any]
+        },
         kAudioAggregateDeviceTapListKey: [[
           kAudioSubTapUIDKey: desc.uuid.uuidString,
           // Drift compensation on a Bluetooth clock produces a periodic
           // crackle (~every 0.7 s); the BT device is the clock anyway.
           // AirPlay runs its own (buffered) clock too.
-          kAudioSubTapDriftCompensationKey: !output.isBluetooth && output.transport != UInt32(kAudioDeviceTransportTypeAirPlay),
+          kAudioSubTapDriftCompensationKey: !clock.isBluetooth && !clock.isAirPlay,
         ]],
       ]
       var agg = unknownObject
@@ -153,10 +160,20 @@ final class TapPipeline {
       // first in the aggregate's input buffer list and the tap is appended
       // after them, so the last input buffer is always the tap.
       BSRenderContextSetTapBufferIndex(ctx, UInt32.max)
+      if output.isOutputGroup {
+        let map = try OutputGroups.channelMap(destinations)
+        guard map.withUnsafeBufferPointer({ BSRenderContextSetOutputMap(ctx, $0.baseAddress!, UInt32($0.count)) }) else {
+          throw CAError(-1, "output group channel map")
+        }
+      }
 
       var proc: AudioDeviceIOProcID?
       try check(AudioDeviceCreateIOProcID(agg, BSIOProc, UnsafeMutableRawPointer(ctx), &proc), "create IOProc")
       procID = proc
+
+      if output.isOutputGroup, let proc {
+        try check(BSConfigureTapOnlyInputs(agg, proc, 1), "disable group microphone streams")
+      }
 
       BSRenderContextFadeIn(ctx, sampleRate, 80)
       try check(AudioDeviceStart(agg, proc), "start IO")
@@ -165,6 +182,7 @@ final class TapPipeline {
                    bufferFrames: bufferFrames, tapIsGlobal: isGlobal,
                    deviceID: output.id, deviceUID: output.uid,
                    deviceOutputChannels: HAL.channelCount(output.id, scope: kAudioObjectPropertyScopeOutput),
+                   destinationIDs: destinations.map(\.id),
                    startedAt: ProcessInfo.processInfo.systemUptime)
       info = i
       return i

@@ -19,6 +19,7 @@ struct MacVolumeState: Equatable {
   var known = false
   var deviceID: AudioObjectID = 0
   var deviceName = ""
+  var isOutputGroup = false
   /// VirtualMainVolume exists and is settable (false on most HDMI/DisplayPort,
   /// Multi-Output devices and some USB DACs).
   var canSetVolume = false
@@ -271,7 +272,7 @@ final class MacVolume: ObservableObject {
   private func rewatch(force: Bool = false) {
     var id = Devices.defaultOutput()
     // Process taps never change the default; still, never treat our own aggregate as the Mac's output.
-    if id != 0, let uid = try? HAL.string(id, .global(kAudioDevicePropertyDeviceUID)), uid.hasPrefix("com.bassshake.") {
+    if id != 0, let uid = try? HAL.string(id, .global(kAudioDevicePropertyDeviceUID)), uid.hasPrefix("com.bassshake.aggregate.") {
       id = 0
     }
     if !force && id == device && (id == 0 || deviceListeners != nil) {
@@ -292,6 +293,7 @@ final class MacVolume: ObservableObject {
     b.known = true
     b.deviceID = id
     b.deviceName = (try? HAL.string(id, .global(kAudioObjectPropertyName))) ?? ""
+    b.isOutputGroup = ((try? HAL.string(id, .global(kAudioDevicePropertyDeviceUID))) ?? "").hasPrefix(OutputGroup.prefix)
     b.canSetVolume = HAL.settable(id, Self.volumeAddress)
     // Mute on the main element, else on every channel (some devices have only per-channel mute).
     var els: [AudioObjectPropertyElement] = []
@@ -408,6 +410,7 @@ private enum MacLook {
 
   static func fixedText(_ s: MacVolumeState) -> String {
     guard s.known else { return "No sound output" }
+    if s.isOutputGroup { return "Volume is set per output" }
     return s.deviceName.isEmpty ? "Volume is set on the device" : "Volume is set on \(s.deviceName)"
   }
 }
@@ -478,7 +481,7 @@ struct MacVolumeRow: View {
       HStack(spacing: 4) {
         MacMuteButton(model: model, glyphSize: icons ? 11 : 12, width: icons ? 16 : 20)
         if !icons {
-          Text("Mac")
+          Text(s.isOutputGroup ? "Group" : "Mac")
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .lineLimit(1)
             .fixedSize()
@@ -578,6 +581,7 @@ struct MacVolumeTile: View {
   let size: ViewSize
   /// Settings.liquidGlass (the tile sits outside BentoView, so it decides on its own).
   let liquidGlass: Bool
+  var embedded = false
   @Namespace private var glassSpace
   @State private var start: Double?
   @State private var width: CGFloat = 336
@@ -592,11 +596,11 @@ struct MacVolumeTile: View {
 
   private var glass: Bool {
     guard #available(macOS 26, *) else { return false }
-    return liquidGlass && !powerSaver && !reduceTransparency
+    return !embedded && liquidGlass && !powerSaver && !reduceTransparency
   }
 
   private var mini: Bool { size == .mini }
-  private var radius: CGFloat { mini ? 16 : BentoRadius.tile }
+  private var radius: CGFloat { embedded ? 8 : (mini ? 16 : BentoRadius.tile) }
   private var inset: CGFloat { mini ? 12 : 8 }
 
   var body: some View {
@@ -610,38 +614,8 @@ struct MacVolumeTile: View {
     let s = model.state
     let fader = s.canSetVolume && !s.silent
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-    return BentoTile(tint: s.silent ? .alert : .steel, look: fader ? .fader(s.volume ?? 0) : .base,
-                     padding: 0, radius: radius, interactive: s.canSetVolume, glassID: "macVolume") {
-      HStack(spacing: 8) {
-        // The mute disc sits here, as an overlay outside the drag.
-        Color.clear.frame(width: 24, height: 24)
-        if !mini && labels == .full {
-          Text("Mac")
-            .font(.system(size: 12, weight: .semibold, design: .rounded))
-            // Dark: full primary; .secondary washed out to 2:1 on the fader's fill.
-            .foregroundStyle(scheme == .dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
-            .lineLimit(1)
-            .fixedSize()
-        }
-        if !s.canSetVolume {
-          Text(MacLook.fixedText(s))
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
-        if s.canSetVolume {
-          VolumePills(level: s.silent ? 0 : (s.volume ?? 0), dragging: model.dragging)
-            .padding(.leading, 4)
-        } else {
-          Spacer(minLength: 0)
-        }
-        if MacLook.valueText(s) != nil { value(s).frame(width: 48, alignment: .trailing) }
-      }
-      .frame(height: 24)
-      .padding(.horizontal, inset)
-      .padding(.vertical, size == .full ? 8 : 4)
-    }
+    return volumeSurface(s, fader: fader)
+
     .contentShape(shape)
     .background(GeometryReader { g in
       Color.clear
@@ -677,6 +651,66 @@ struct MacVolumeTile: View {
       if start != nil { start = nil; model.dragging = false }
     }
     .pointerHint(s.known && !s.canSetVolume ? Caption.macVolumeFixed() : Caption.macVolume())
+  }
+
+  @ViewBuilder private func volumeSurface(_ s: MacVolumeState, fader: Bool) -> some View {
+    if embedded {
+      volumeContent(s)
+        .background {
+          GeometryReader { g in
+            ZStack(alignment: .leading) {
+              Rectangle().fill(.artworkControl)
+              if fader {
+                Rectangle().fill(.artworkPrimary).opacity(0.08)
+                  .frame(width: g.size.width * CGFloat(min(1, max(0, s.volume ?? 0))))
+              }
+            }
+          }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    } else {
+      BentoTile(tint: s.silent ? .alert : .steel, look: fader ? .fader(s.volume ?? 0) : .base,
+                padding: 0, radius: radius, interactive: s.canSetVolume, glassID: "macVolume") {
+        volumeContent(s)
+      }
+    }
+  }
+
+  private func volumeContent(_ s: MacVolumeState) -> some View {
+      HStack(spacing: 8) {
+        // The mute disc sits here, as an overlay outside the drag.
+        Color.clear.frame(width: 24, height: 24)
+        if !mini && labels == .full {
+          Text(s.isOutputGroup ? "Group" : "Mac")
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            // Dark: full primary; .secondary washed out to 2:1 on the fader's fill.
+            .foregroundStyle(scheme == .dark ? AnyShapeStyle(Color.primary) : AnyShapeStyle(.secondary))
+            .lineLimit(1)
+            .fixedSize()
+        }
+        if s.isOutputGroup && model.remote == nil {
+          Button("Output levels…") { OutputGroupsWindow.show() }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.artworkPrimary)
+        } else if !s.canSetVolume {
+          Text(MacLook.fixedText(s))
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        if s.canSetVolume {
+          VolumePills(level: s.silent ? 0 : (s.volume ?? 0), dragging: model.dragging)
+            .padding(.leading, 4)
+        } else {
+          Spacer(minLength: 0)
+        }
+        if MacLook.valueText(s) != nil { value(s).frame(width: 48, alignment: .trailing) }
+      }
+      .frame(height: 24)
+      .padding(.horizontal, inset)
+      .padding(.vertical, size == .full ? 8 : 4)
   }
 
   /// One owner for the resize cursor: over the tile, not over the mute disc.

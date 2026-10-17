@@ -38,6 +38,9 @@ struct BentoView: View {
   var flat = false
   /// Mac Volume and the output row (PopoverView's), placed by the layout order.
   var macBlock: AnyView? = nil
+  /// The same output controls, styled as children of the artwork card.
+  var heroMacBlock: AnyView? = nil
+  var heroLiveButton: AnyView? = nil
   /// Other Macs (Remote.swift): a tile per paired Mac nearby, placed by the layout order.
   var remoteBlock: AnyView? = nil
   /// The stock ticker panel (PopoverView.marketPanel), its own block; nil = off.
@@ -49,6 +52,7 @@ struct BentoView: View {
   /// Which paired Macs have a tile (membership only; each tile observes its own Mac).
   @ObservedObject private var remoteMacs = RemoteControl.shared.directory
   @State private var drag: BlockDrag?
+  @State private var detailsCollapsed = false
 
   /// Which mode's settings strip shows: the one turned on most recently.
   private enum Detail { case nightGuard, mode }
@@ -149,7 +153,10 @@ struct BentoView: View {
     .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
     .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
     .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
-    .onChange(of: reshuffle.on) { _, on in if !on { endDrag() } }
+    .onChange(of: reshuffle.on) { _, on in
+      if on { detailsCollapsed = false } else { endDrag() }
+    }
+    .onChange(of: editor) { _, mode in if mode != nil { detailsCollapsed = false } }
   }
 
   // MARK: - Blocks
@@ -170,8 +177,11 @@ struct BentoView: View {
   /// Whether a block draws anything here (Edit Layout, size, settings).
   private func blockShown(_ key: String) -> Bool {
     let mini = size == .mini
+    if !flat && !mini && detailsCollapsed,
+       let hero = blockKeys.firstIndex(of: LayoutSection.bentoHero.key),
+       let index = blockKeys.firstIndex(of: key), index > hero { return false }
     switch key {
-    case LayoutSection.macVolume.key: return macBlock != nil
+    case LayoutSection.macVolume.key: return (flat || mini) && macBlock != nil
     case LayoutSection.ticker.key: return !mini && tickerBlock != nil
     case LayoutSection.liveTime.key: return !mini && s.showLiveTime
     case LayoutSection.remoteMacs.key: return !mini && remoteBlock != nil && !remoteMacs.shown.isEmpty && s.shows(.remoteMacs)
@@ -412,7 +422,7 @@ struct BentoView: View {
       // LiveShown: the number (and its hint) follow a scrub as it's heard;
       // settings, and so the rest of the popup, change once on release.
       LiveShown(liveEdit: controller.liveEdit, path: \.bass, value: s.bass) { bass in
-        ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
+        ScrubTile(title: "Strength", explanation: "Bass enhancement", symbol: "waveform.path", tint: tint(.bass),
                   value: bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
                   glassID: "dial.strength", mini: mini, param: controller.param("strength", \.bass, step: 0.01),
                   format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
@@ -423,7 +433,7 @@ struct BentoView: View {
       .pointerHintTint(ink(tint(.bass)))
       // Also follows a drag of the EQ line (Boost).
       LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
-        ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.bass),
+        ScrubTile(title: "Boost", explanation: "Overall gain", symbol: "speaker.wave.3", tint: tint(.peach),
                   value: boost, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
                   glassID: "dial.boost", mini: mini, param: controller.param("boost", \.boostDb, step: 0.1),
                   format: { ("+", "\(Int($0.rounded()))", " dB") }) {
@@ -431,7 +441,7 @@ struct BentoView: View {
         } accessory: { limitCard(mini: mini) }
         .pointerHint(Caption.boost(boost, scrub: true), live: true)
       }
-      .pointerHintTint(ink(tint(.bass)))
+      .pointerHintTint(ink(tint(.peach)))
     }
   }
 
@@ -626,6 +636,17 @@ struct BentoView: View {
         } playing: { app in
           if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
         }
+        if let heroMacBlock {
+          heroMacBlock.padding(.top, 10)
+        }
+        HStack(spacing: 8) {
+          sourcePicker
+          if let heroLiveButton { heroLiveButton }
+          Spacer(minLength: 0)
+          (heroIconsTight ?? heroIcons)
+          collapseButton
+        }
+        .padding(.top, 8)
       }
       .padding(heroPad)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -669,15 +690,7 @@ struct BentoView: View {
         powerButton(size: 40)
       }
       .frame(height: 48)
-      // With Mac Volume shown the output lives in its row, so the note
-      // shares the tools' row instead (as in Classic).
-      if hasNote && !s.showMacVolume {
-        noteLine
-          .frame(height: 16)
-          .transition(.opacity)
-      }
-      utilityBar(note: hasNote && s.showMacVolume)
-        .padding(.top, 8)
+      if hasNote { noteLine.padding(.top, 6) }
     }
   }
 
@@ -686,8 +699,6 @@ struct BentoView: View {
     HStack(alignment: .center, spacing: 8) {
       bigWord(t, dark: dark, font: 22, chevron: 10, scale: 0.6)
       if live { abChip(compact: true) }
-      heroOutput
-      heroIcons
       powerButton(size: 32)
     }
     .frame(height: 32)
@@ -821,22 +832,9 @@ struct BentoView: View {
       .frame(height: 48)
       if s.artistMode && !controller.isMirror { ArtistTempoView() }
       VStack(alignment: .leading, spacing: 6) {
-        // Without an output chip the tools join the sound row (no near-empty bar).
-        let merged = !flat && s.showMacVolume
-        Group {
-          if merged, let tight = heroIconsTight {
-            // The tools keep their words only while the preset's name (and the
-            // edited dot) fits whole beside them; else they go icon-only.
-            ViewThatFits(in: .horizontal) {
-              soundRow(t, tools: heroIcons, probe: true)
-              soundRow(t, tools: tight, probe: false)
-            }
-          } else {
-            soundRow(t, tools: merged ? heroIcons : nil, probe: false)
-          }
-        }
-        .frame(height: 24)
-        if !merged { utilityBar() }
+        soundRow(t, tools: nil, probe: false)
+          .frame(height: 24)
+        if flat { utilityBar() }
       }
     }
   }
@@ -878,12 +876,57 @@ struct BentoView: View {
       HStack(alignment: .center, spacing: 8) {
         soundChip(t)
         if live { abChip(compact: true) }
-        heroOutput
-        heroIcons
+        if flat { heroOutput; heroIcons }
         powerButton(size: 24)
       }
       .frame(height: 24)
     }
+  }
+
+  @ViewBuilder private var sourcePicker: some View {
+    if !nowStack.rest.isEmpty {
+      Menu {
+        Section("Show in player") {
+          ForEach(([nowStack.lead].compactMap { $0 }) + nowStack.rest) { entry in
+            Button { nowStack.promote(entry) } label: {
+              let title = nowPlaying.describe(entry).title
+              if entry.id == nowStack.lead?.id { Label(title, systemImage: "checkmark") }
+              else { Text(title) }
+            }
+          }
+        }
+      } label: {
+        Image(systemName: "music.note.list")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(.artworkPrimary)
+          .frame(width: 28, height: 24)
+          .background(chipShape.fill(.artworkControl))
+      }
+      .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden)
+      .accessibilityLabel("Choose playing app or tab")
+      .help("Choose which app or tab appears in the player")
+    }
+  }
+
+  private var collapseButton: some View {
+    Button {
+      withAnimation(reduceMotion || powerSaver ? nil : PopupMotion.resize) {
+        detailsCollapsed.toggle()
+      }
+    } label: {
+      Image(systemName: "chevron.down")
+        .font(.system(size: 10, weight: .bold))
+        .rotationEffect(.degrees(detailsCollapsed ? 0 : 180))
+        .foregroundStyle(.artworkPrimary)
+        .frame(width: 28, height: 24)
+        .background(chipShape.fill(.artworkControl))
+        .contentShape(chipShape)
+    }
+    .buttonStyle(WindowToolButtonStyle())
+    .disabled(reshuffle.on)
+    .accessibilityLabel(detailsCollapsed ? "Show controls below player" : "Collapse controls below player")
+    .accessibilityValue(detailsCollapsed ? "Collapsed" : "Expanded")
+    .help(detailsCollapsed ? "Show controls below player" : "Collapse controls below player")
   }
 
   private func transportTint(_ t: BentoTint, dark: Bool) -> Color? { live ? (dark ? t.pastel : t.ink) : nil }
@@ -1126,6 +1169,7 @@ struct BentoView: View {
           if d.id == controller.currentDeviceID { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
         }
       }
+      if !controller.isMirror { OutputConnectionMenu() }
     } label: {
       HStack(spacing: 6) {
         Image(systemName: controller.currentOutputIsHeadphones ? "headphones" : "hifispeaker")
@@ -1224,17 +1268,44 @@ struct BentoView: View {
 
   // MARK: - Presets
 
+  /// Four choices per plate. The active sound scrolls into view, and every
+  /// saved or built-in preset stays available without a second chip strip.
   private var presets: some View {
-    // Not interactive: the whole strip would react to every pill press and
-    // scroll drag. The pills stay non-glass on purpose: at 6 pt spacing they
-    // would merge inside GlassEffectContainer (and be glass on glass).
-    BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
-      PresetStrip(controller: controller, editor: $editor)
-        .contentMargins(.horizontal, 8, for: .scrollContent)
-        .padding(.vertical, 8)
-        .environment(\.bentoChips, true)
+    let preferred = ["Bass Shake", "Bass Shake Classic", "Podcast", "Soft Lofi"]
+    let ordered = preferred.compactMap { name in Preset.all.first { $0.name == name } }
+      + Preset.all.filter { !preferred.contains($0.name) }
+    let builtIn = ordered.map { p in
+      CompactModeQuad.Item(identity: "builtIn:" + p.name, title: p.name, symbol: p.symbol, tint: tint(BentoTint.forPreset(p.name)),
+        on: s.mode == .off && s.userPresetID == nil && s.presetName == p.name,
+        hint: { Caption.preset(p) }, action: { controller.apply(preset: p) })
     }
-    .pointerHintTint(ink(.frost))
+    let saved = s.visibleUserPresets.map { p in
+      CompactModeQuad.Item(identity: p.id.uuidString, title: p.name, symbol: p.icon, tint: tint(.forUserPreset(p)),
+        on: s.mode == .off && s.userPresetID == p.id,
+        hint: { Caption.userPreset(p.name) }, action: { controller.apply(userPreset: p) })
+    }
+    let items = builtIn + saved
+    let groups = stride(from: 0, to: items.count, by: 4).map { Array(items[$0..<min($0 + 4, items.count)]) }
+    let selectedGroup = groups.firstIndex { $0.contains { $0.on } } ?? 0
+    return GeometryReader { geometry in
+      ScrollViewReader { proxy in
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: 8) {
+            ForEach(groups.indices, id: \.self) { i in
+              CompactModeQuad(items: groups[i], showLabels: !compact, accessibilityName: "Sound presets")
+                .frame(width: max(120, (geometry.size.width - 8) / 2))
+                .id(i)
+            }
+          }
+        }
+        .onChange(of: selectedGroup, initial: true) { _, group in
+          withAnimation(reduceMotion || powerSaver ? nil : .easeOut(duration: 0.18)) {
+            proxy.scrollTo(group, anchor: .leading)
+          }
+        }
+      }
+    }
+    .frame(height: compact ? 78 : 112)
     .pointerHintQuick()
   }
 
@@ -2127,6 +2198,7 @@ private struct BlurRise: ViewModifier {
 /// Keyboard/VoiceOver get a real slider.
 private struct ScrubTile<Accessory: View>: View {
   let title: String
+  var explanation: String? = nil
   let symbol: String
   let tint: BentoTint
   let value: Double
@@ -2220,6 +2292,12 @@ private struct ScrubTile<Accessory: View>: View {
             .accessibilityLabel(title)
             .accessibilityValue(f.0 + f.1 + f.2)
         }
+        if !mini, let explanation {
+          Text(explanation)
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
       }
     }
     .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
@@ -2276,7 +2354,8 @@ private struct ScrubTile<Accessory: View>: View {
 /// colour, hit target, hint and accessible name; no nested glass surfaces.
 private struct CompactModeQuad: View {
   struct Item: Identifiable {
-    var id: String { title }
+    var identity: String? = nil
+    var id: String { identity ?? title }
     let title: String
     let symbol: String
     let tint: BentoTint
@@ -2285,6 +2364,9 @@ private struct CompactModeQuad: View {
     let action: () -> Void
   }
   let items: [Item]
+  var showLabels = false
+  var accessibilityName = "Sound modes"
+  @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -2297,14 +2379,25 @@ private struct CompactModeQuad: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("Sound modes")
+    .accessibilityLabel(accessibilityName)
   }
 
   private func cell(_ item: Item) -> some View {
     let shape = RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
     return Button(action: item.action) {
-      ModeGlyph(symbol: item.symbol, tint: item.on ? item.tint : .graphite, on: item.on, size: 22)
+      VStack(spacing: 3) {
+        ModeGlyph(symbol: item.symbol, tint: item.on ? item.tint : .graphite, on: item.on, size: showLabels ? 19 : 22)
+        if showLabels {
+          Text(item.title)
+            .font(.system(size: 10, weight: .semibold, design: .rounded))
+            .foregroundStyle(Color.primary.opacity(labels == .icons ? 0.62 : 1))
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .minimumScaleFactor(0.85)
+        }
+      }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 2)
         .modifier(BentoHoverSurface(radius: BentoRadius.inner, control: true))
         .background(shape.fill(item.tint.pastel.opacity(item.on ? (scheme == .dark ? 0.18 : 0.30) : 0)))
         .contentShape(shape)

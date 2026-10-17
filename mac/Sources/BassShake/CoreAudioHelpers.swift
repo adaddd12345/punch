@@ -89,6 +89,14 @@ enum HAL {
     return AudioObjectHasProperty(object, &addr)
   }
 
+  static func dictionary(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress) throws -> [String: Any] {
+    var address = address
+    var value: Unmanaged<CFDictionary>?
+    var size = UInt32(MemoryLayout<CFDictionary?>.size)
+    try check(AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value), "read device composition")
+    return value?.takeRetainedValue() as? [String: Any] ?? [:]
+  }
+
   /// The property exists and can be written (false when either check fails).
   static func settable(_ object: AudioObjectID, _ address: AudioObjectPropertyAddress) -> Bool {
     var addr = address
@@ -128,11 +136,14 @@ struct OutputDevice: Identifiable, Hashable {
     transport == UInt32(kAudioDeviceTransportTypeBluetooth) || transport == UInt32(kAudioDeviceTransportTypeBluetoothLE)
   }
   var isBuiltIn: Bool { transport == UInt32(kAudioDeviceTransportTypeBuiltIn) }
+  var isAirPlay: Bool { transport == UInt32(kAudioDeviceTransportTypeAirPlay) }
+  var isOutputGroup: Bool { transport == UInt32(kAudioDeviceTransportTypeAggregate) && uid.hasPrefix("com.bassshake.output-group.") }
   var isAggregateOrVirtual: Bool {
     transport == UInt32(kAudioDeviceTransportTypeAggregate) || transport == UInt32(kAudioDeviceTransportTypeVirtual)
   }
 
   var symbolName: String {
+    if isOutputGroup { return "hifispeaker.2" }
     if isBluetooth { return name.localizedCaseInsensitiveContains("airpods") ? "airpodspro" : "headphones" }
     if isBuiltIn { return name.localizedCaseInsensitiveContains("headphone") ? "headphones" : "laptopcomputer" }
     switch transport {
@@ -145,7 +156,7 @@ struct OutputDevice: Identifiable, Hashable {
 }
 
 enum Devices {
-  static func allOutputs() -> [OutputDevice] {
+  static func allOutputs(includeGroups: Bool = true) -> [OutputDevice] {
     let ids = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyDevices), of: AudioObjectID.self, zero: 0)) ?? []
     return ids.compactMap { id -> OutputDevice? in
       guard HAL.channelCount(id, scope: kAudioObjectPropertyScopeOutput) > 0 else { return nil }
@@ -154,7 +165,7 @@ enum Devices {
       let transport = (try? HAL.get(id, .global(kAudioDevicePropertyTransportType), default: UInt32(0))) ?? 0
       let dev = OutputDevice(id: id, uid: uid, name: name, transport: transport)
       // Hide aggregates (including our own private one) and virtual loopbacks.
-      if dev.isAggregateOrVirtual { return nil }
+      if dev.isAggregateOrVirtual && !(includeGroups && dev.isOutputGroup) { return nil }
       return dev
     }
   }

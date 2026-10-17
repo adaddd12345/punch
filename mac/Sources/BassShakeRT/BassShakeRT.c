@@ -5,11 +5,14 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 
 enum { kChunkFrames = 256, kMaxChannels = 16 };
 
 struct BSRenderContext {
   PunchEngine* engine;
+  uint32_t outputMapCount;  // immutable while IO runs
+  int32_t outputMap[128];
   _Atomic uint32_t tapIndex;
   _Atomic float fadeTarget;  // 0 or 1
   _Atomic float fadeStep;    // gain change per frame
@@ -41,6 +44,36 @@ void BSRenderContextDestroy(BSRenderContext* ctx) { free(ctx); }
 
 void BSRenderContextSetTapBufferIndex(BSRenderContext* ctx, uint32_t index) {
   atomic_store_explicit(&ctx->tapIndex, index, memory_order_relaxed);
+}
+
+bool BSRenderContextSetOutputMap(BSRenderContext* ctx, const int32_t* channels, uint32_t count) {
+  if (count > 128) return false;
+  for (uint32_t i = 0; i < count; ++i)
+    if (channels[i] < -1 || channels[i] >= kMaxChannels) return false;
+  if (count) memcpy(ctx->outputMap, channels, count * sizeof(int32_t));
+  ctx->outputMapCount = count;
+  return true;
+}
+
+OSStatus BSConfigureTapOnlyInputs(AudioObjectID device, AudioDeviceIOProcID proc, uint32_t tapStreams) {
+  AudioObjectPropertyAddress address = { kAudioDevicePropertyStreams, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain };
+  UInt32 bytes = 0;
+  OSStatus status = AudioObjectGetPropertyDataSize(device, &address, 0, NULL, &bytes);
+  if (status) return status;
+  UInt32 count = bytes / sizeof(AudioStreamID);
+  if (count < tapStreams) return kAudioHardwareIllegalOperationError;
+  if (!count) return noErr;
+  if (count > 1024) return kAudioHardwareIllegalOperationError;
+  UInt32 size = (UInt32)offsetof(AudioHardwareIOProcStreamUsage, mStreamIsOn) + count * sizeof(UInt32);
+  AudioHardwareIOProcStreamUsage* usage = calloc(1, size);
+  if (!usage) return kAudioHardwareUnspecifiedError;
+  usage->mIOProc = (void*)proc;
+  usage->mNumberStreams = count;
+  for (UInt32 i = count - tapStreams; i < count; ++i) usage->mStreamIsOn[i] = 1;
+  address.mSelector = kAudioDevicePropertyIOProcStreamUsage;
+  status = AudioObjectSetPropertyData(device, &address, 0, NULL, size, usage);
+  free(usage);
+  return status;
 }
 
 static float stepFor(double sampleRate, double ms) {
@@ -122,6 +155,11 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   atomic_store_explicit(&ctx->outChannels, outChTotal, memory_order_relaxed);
   zeroOutput(output);
   if (outChTotal == 0 || outFrames == UINT32_MAX) return noErr;
+  if (ctx->outputMapCount && ctx->outputMapCount != outChTotal) {
+    bump(&ctx->layoutErrors);
+    bump(&ctx->deadOutputCallbacks);
+    return noErr;
+  }
   const UInt32 frames = inFrames < outFrames ? inFrames : outFrames;
 
   // ---- watchdog signal: a live tap is essentially never bit-exact zero
@@ -170,8 +208,9 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
       float* dst = (float*)ob->mData;
       const UInt32 och = ob->mNumberChannels;
       for (UInt32 c = 0; c < och; ++c, ++k) {
-        int sc = k < inCh ? (int)k : (inCh == 1 ? 0 : -1);
-        if (sc < 0) continue;
+        int sc = ctx->outputMapCount ? ctx->outputMap[k] : (k < inCh ? (int)k : (inCh == 1 ? 0 : -1));
+        if (inCh == 1 && sc >= 0) sc = 0;
+        if (sc < 0 || sc >= (int)inCh) continue;
         for (UInt32 i = 0; i < n; ++i) dst[(size_t)(start + i) * och + c] = tmp[i * inCh + (UInt32)sc];
       }
     }

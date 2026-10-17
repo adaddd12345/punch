@@ -38,6 +38,7 @@ struct PopoverView: View {
   @State private var showLayoutEditor = false
   @State private var showMySounds = false
   @State private var showRemote = false
+  @State private var popupOpening = 0
   @State private var showMarkets = false
   @State private var marketQuote: String?
   /// The Dock header is hovered (its ✕ shows).
@@ -246,9 +247,21 @@ struct PopoverView: View {
                       heroIconsTight: size == .full && labels == .full ? AnyView(windowTools(words: false)) : nil,
                       flat: !controller.settings.bento,
                       macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
+                      heroMacBlock: AnyView(VStack(alignment: .leading, spacing: 6) {
+                        if controller.settings.showMacVolume {
+                          MacVolumeTile(model: controller.macVolume, size: .compact, liquidGlass: false, embedded: true)
+                        } else {
+                          MacSilentNotice(model: controller.macVolume, bento: true, mini: false)
+                        }
+                        EarsStack(playing: PlayingApps.shared, live: controller.live, devices: controller.devices,
+                                  currentID: controller.currentDeviceID, headphones: controller.currentOutputIsHeadphones,
+                                  bento: true, mini: false, embedded: true, allowConnections: !controller.isMirror,
+                                  select: { [controller] d in controller.select(device: d) })
+                      }),
+                      heroLiveButton: AnyView(LiveChannelsButton(model: controller.live, expanded: $showLive)),
                       // Taking control of one Mac: no tiles for others (Switch Back first).
                       remoteBlock: controller.isMirror ? nil
-                        : AnyView(RemoteMacsBlock(directory: RemoteControl.shared.directory, size: size)),
+                        : AnyView(RemoteMacsBlock(directory: RemoteControl.shared.directory, size: size, opening: popupOpening)),
                       tickerBlock: tickerBlock,
                       reshuffle: reshuffle)
               .onPreferenceChange(PopupTintPreference.self) { popupTint = $0 }
@@ -386,8 +399,12 @@ struct PopoverView: View {
         showBeats = true
       }
     }
+    .onReceive(NotificationCenter.default.publisher(for: NSPopover.willShowNotification)) { _ in
+      if role == .menuBar { popupOpening += 1 }
+    }
     .onAppear {
       visible = true
+      popupOpening += 1
       updateTaper = updates.justUpdatedTo != nil
       reshuffle.canStart = { [weak controller] in
         // Take Control: the layout is this Mac's; rearrange it from its own popup.
@@ -574,7 +591,7 @@ struct PopoverView: View {
     if controller.settings.showMacVolume {
       EarsStack(playing: PlayingApps.shared, live: controller.live, devices: controller.devices,
                 currentID: controller.currentDeviceID, headphones: controller.currentOutputIsHeadphones,
-                bento: controller.settings.bento, mini: size == .mini,
+                bento: controller.settings.bento, mini: size == .mini, allowConnections: !controller.isMirror,
                 select: { [controller] d in controller.select(device: d) })
     }
   }
@@ -1010,7 +1027,9 @@ struct PopoverView: View {
   /// Status and modes: what's playing (Live), DJ, Beats, and Latency when it's on.
   private var statusGroup: some View {
     FooterGroup {
-      LiveChannelsButton(model: controller.live, expanded: $showLive)
+      if !controller.settings.bento || size == .mini {
+        LiveChannelsButton(model: controller.live, expanded: $showLive)
+      }
       Button {
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {

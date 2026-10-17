@@ -857,6 +857,8 @@ struct Settings: Codable, Equatable {
   /// Block order, top to bottom, per layout (hold any block, or Edit Layout); footer excluded.
   /// Empty = the default order (LayoutSection.ordered), so default changes still reach it.
   var bentoOrder: [String] = []
+  /// One-time move of sound presets to the old modes slot; later custom ordering stays intact.
+  var playerLayoutVersion = 1
   var classicOrder: [String] = []
   /// Power Saver (⋯ › Presets & Settings): simpler visuals and slower meters to save CPU. Never changes the sound.
   var powerSaver = false
@@ -1049,6 +1051,11 @@ struct Settings: Codable, Equatable {
     hiddenSections = (try? c.decodeIfPresent([String].self, forKey: .hiddenSections)) ?? d.hiddenSections
     bentoOrder = ((try? c.decodeIfPresent([String].self, forKey: .bentoOrder)) ?? nil) ?? d.bentoOrder
     classicOrder = ((try? c.decodeIfPresent([String].self, forKey: .classicOrder)) ?? nil) ?? d.classicOrder
+    playerLayoutVersion = (try? c.decodeIfPresent(Int.self, forKey: .playerLayoutVersion)) ?? 0
+    if playerLayoutVersion < 1 {
+      bentoOrder = PlayerLayoutMigration.presetsAtModes(in: bentoOrder)
+      playerLayoutVersion = 1
+    }
     powerSaver = (try? c.decodeIfPresent(Bool.self, forKey: .powerSaver)) ?? d.powerSaver
     liquidGlass = (try? c.decodeIfPresent(Bool.self, forKey: .liquidGlass)) ?? d.liquidGlass
     showInDock = (try? c.decodeIfPresent(Bool.self, forKey: .showInDock)) ?? d.showInDock

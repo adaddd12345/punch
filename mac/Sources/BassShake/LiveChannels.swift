@@ -578,7 +578,7 @@ final class LiveChannels: ObservableObject {
     var name: String?
     if id != unknownObject, HAL.channelCount(id, scope: kAudioObjectPropertyScopeOutput) > 0 {
       let uid = (try? HAL.string(id, .global(kAudioDevicePropertyDeviceUID))) ?? ""
-      if !uid.hasPrefix("com.bassshake.") { name = try? HAL.string(id, .global(kAudioObjectPropertyName)) }
+      if !uid.hasPrefix("com.bassshake.aggregate.") { name = try? HAL.string(id, .global(kAudioObjectPropertyName)) }
     }
     deviceNameCache.updateValue(name, forKey: id)
     return name
@@ -621,7 +621,7 @@ final class LiveChannels: ObservableObject {
     if let r = muteReader, r.tapUUIDs == uuids, r.deviceID == deviceID { return }
     teardownMuteReader()
     guard !uuids.isEmpty, deviceID != unknownObject,
-          let uid = try? HAL.string(deviceID, .global(kAudioDevicePropertyDeviceUID)) else { return }
+          let uid = try? OutputGroups.clockUID(for: deviceID) else { return }
     var agg = unknownObject
     let dict: [String: Any] = [
       kAudioAggregateDeviceNameKey: "The Bass Shaker Mute",
@@ -642,6 +642,7 @@ final class LiveChannels: ObservableObject {
     // No layout: BSMeterIOProc zeroes the output and measures nothing.
     var proc: AudioDeviceIOProcID?
     guard AudioDeviceCreateIOProcID(agg, BSMeterIOProc, UnsafeMutableRawPointer(ctx), &proc) == noErr,
+          (OutputGroups.read(deviceID) == nil || proc.map { BSConfigureTapOnlyInputs(agg, $0, UInt32(uuids.count)) == noErr } == true),
           AudioDeviceStart(agg, proc) == noErr else {
       if let proc { AudioDeviceDestroyIOProcID(agg, proc) }
       AudioHardwareDestroyAggregateDevice(agg)
@@ -740,7 +741,7 @@ final class LiveChannels: ObservableObject {
   /// aggregate never makes a sound; it only reads the taps.
   private func buildMeter(objects: [AudioObjectID], deviceID: AudioObjectID) throws -> MeterAggregate {
     guard deviceID != unknownObject else { throw CAError(-1, "no default output") }
-    let uid = try HAL.string(deviceID, .global(kAudioDevicePropertyDeviceUID))
+    let uid = try OutputGroups.clockUID(for: deviceID)
     var taps: [AudioObjectID] = []
     var tapList: [[String: Any]] = []
     var slotObjects: [AudioObjectID] = []
@@ -792,6 +793,9 @@ final class LiveChannels: ObservableObject {
         BSMeterContextSetLayout(c, buf.baseAddress!, UInt32(buf.count))
       }
       try check(AudioDeviceCreateIOProcID(agg, BSMeterIOProc, UnsafeMutableRawPointer(c), &proc), "create meter IOProc")
+      if OutputGroups.read(deviceID) != nil, let proc {
+        try check(BSConfigureTapOnlyInputs(agg, proc, UInt32(taps.count)), "disable group meter microphones")
+      }
       try check(AudioDeviceStart(agg, proc), "start meter IO")
       meterBox.install(c, slots: slotObjects)
       log.notice("meter: \(taps.count, privacy: .public) taps")

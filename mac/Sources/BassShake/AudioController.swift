@@ -314,6 +314,12 @@ final class AudioController: ObservableObject {
     if settings.enabled { start(.toggle) } else { settings.enabled = true }
   }
 
+  /// Continue setup later without requesting audio access or starting a tap.
+  func finishOnboardingWithoutAudio() {
+    settings.enabled = false
+    markOnboarded()
+  }
+
   private func markOnboarded() {
     UserDefaults.standard.set(true, forKey: Self.onboardedKey)
     needsOnboarding = false
@@ -1608,6 +1614,7 @@ final class AudioController: ObservableObject {
     guard rate > 0, abs(rate - info.sampleRate) < 0.5 else { return nil }
     guard HAL.channelCount(device.id, scope: kAudioObjectPropertyScopeOutput) == info.deviceOutputChannels else { return nil }
     guard p.liveFormatMatches() else { return nil }
+    if device.isOutputGroup, (try? OutputGroups.destinations(for: device).map(\.id)) != info.destinationIDs { return nil }
     guard Set(exclude) == audioExcluded else { return nil }
     guard deadStreak == 0, stalledStreak == 0, p.aggregateIsRunning else { return nil }
     // Just built and not called yet (Bluetooth's first cycle can take 150 ms+): don't tear it down.
@@ -1800,6 +1807,11 @@ final class AudioController: ObservableObject {
     deviceListeners.add(device.id, .global(kAudioDevicePropertyDeviceIsAlive)) { [weak self] in
       // Death or revival: always rebuild (never skipped).
       DispatchQueue.main.async { self?.scheduleRebuild(.deviceAlive, delay: 0.5) }
+    }
+    if device.isOutputGroup {
+      deviceListeners.add(device.id, .global(kAudioAggregateDevicePropertyActiveSubDeviceList)) { [weak self] in
+        DispatchQueue.main.async { self?.scheduleRebuild(.formatChange, delay: 0.4) }
+      }
     }
     watchVolume(device)
   }
@@ -2219,7 +2231,8 @@ final class AudioController: ObservableObject {
     if ProcessInfo.processInfo.systemUptime - info.startedAt >= 3, !p.aggregateIsRunning {
       return "aggregate not running"
     }
-    if let subs = p.activeSubDevices, !subs.contains(info.deviceID) { return "aggregate lost its output (\(subs))" }
+    if let subs = p.activeSubDevices, !Set(info.destinationIDs).isSubset(of: Set(subs)) { return "aggregate lost an output (\(subs))" }
+    if let group = OutputGroups.read(info.deviceID), Set(group.connected.map(\.id)) != Set(info.destinationIDs) { return "output group membership changed" }
     return nil
   }
 

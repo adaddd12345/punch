@@ -11,10 +11,11 @@ import SwiftUI
 struct RemoteMacsBlock: View {
   @ObservedObject var directory: RemoteDirectory
   let size: ViewSize
+  var opening = 0
 
   var body: some View {
     VStack(spacing: 8) {
-      ForEach(directory.shown) { m in RemoteMacTile(model: m, size: size) }
+      ForEach(directory.shown) { m in RemoteMacTile(model: m, size: size, opening: opening) }
     }
   }
 }
@@ -24,7 +25,8 @@ struct RemoteMacsBlock: View {
 struct RemoteMacTile: View {
   @ObservedObject var model: RemotePeerModel
   let size: ViewSize
-  @State private var expanded = true
+  var opening = 0
+  @State private var expanded = false
   @State private var dragStart: Double?
   @GestureState private var volumeHeld = false
   @State private var barWidth: CGFloat = 300
@@ -68,7 +70,9 @@ struct RemoteMacTile: View {
     .animation(reduceMotion || powerSaver ? nil : .easeOut(duration: 0.15), value: model.note)
     .onChange(of: volumeHeld) { _, held in if !held { finishVolumeDrag() } }
     .onChange(of: live) { _, connected in if !connected { finishVolumeDrag() } }
-    .onDisappear { finishVolumeDrag() }
+    .onChange(of: opening) { _, _ in finishVolumeDrag(); expanded = false }
+    .onAppear { expanded = false }
+    .onDisappear { finishVolumeDrag(); expanded = false }
     .pointerHint(model.name, does: "Changes here happen on \(model.name), not this Mac.")
   }
 
