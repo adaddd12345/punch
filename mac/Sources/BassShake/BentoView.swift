@@ -819,6 +819,7 @@ struct BentoView: View {
         NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 40, extras: true)
       }
       .frame(height: 48)
+      if s.artistMode && !controller.isMirror { ArtistTempoView() }
       VStack(alignment: .leading, spacing: 6) {
         // Without an output chip the tools join the sound row (no near-empty bar).
         let merged = !flat && s.showMacVolume
@@ -873,6 +874,7 @@ struct BentoView: View {
         NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 32, extras: false)
       }
       .frame(height: 40)
+      if s.artistMode && !controller.isMirror { ArtistTempoView() }
       HStack(alignment: .center, spacing: 8) {
         soundChip(t)
         if live { abChip(compact: true) }

@@ -301,6 +301,8 @@ final class NowPlaying: ObservableObject {
   private let scriptQueue = DispatchQueue(label: "bassshake.nowplaying", qos: .utility)
   /// Browser tabs only, with their own bridge (a bridge is one queue's alone).
   private let browserQueue = DispatchQueue(label: "bassshake.nowplaying.browsers", qos: .utility)
+  /// Explicit tempo commands must not sit behind a whole batch of tab polls.
+  private let tempoQueue = DispatchQueue(label: "bassshake.nowplaying.tempo", qos: .userInitiated)
   /// Automation status checks at open (App Details), off both script queues.
   private let checkQueue = DispatchQueue(label: "bassshake.nowplaying.check", qos: .utility)
   /// Automation permission for every scripted app (Spotify, Music, browsers).
@@ -309,6 +311,7 @@ final class NowPlaying: ObservableObject {
   private var asking: Set<String> = []
   private let bridge = NowPlayingScripts()   // scriptQueue only
   private let browserBridge = NowPlayingScripts()   // browserQueue only
+  private let tempoBridge = NowPlayingScripts()     // tempoQueue only
   private lazy var artSession = URLSession(configuration: .ephemeral, delegate: ArtRedirectGuard(), delegateQueue: nil)
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "nowplaying")
 
@@ -1180,6 +1183,8 @@ final class NowPlaying: ObservableObject {
       for (b, appID) in browsers {
         // Quit: the one `.stopped` that clears its tabs at once.
         guard b.isLive else { results.append((b, appID, .stopped, nil)); continue }
+        // Keep the last metadata while a user command takes the script lock.
+        if NowPlayingScripts.urgentWaiting { results.append((b, appID, .unavailable, nil)); continue }
         let known = allowed.contains(b.rawValue)
         let r = Self.gated(b.rawValue, ask: autoAsk.contains(b.rawValue), known: known) { browserBridge.tabs(b) }
         if !known { codes[b.rawValue] = r.code }
@@ -1361,6 +1366,31 @@ final class NowPlaying: ObservableObject {
   }
 
   // MARK: - Automation permission (AutomationGate; checks off main)
+
+  /// Artist Mode's explicit, source-level tempo command. Reuses the browser
+  /// bridge and process-wide AppleScript lock; never touches capture or the HAL.
+  func tempo(_ target: BrowserTempoTarget, operation: BrowserTempoScript.Operation,
+             token: String, rate: Double, completion: @escaping (BrowserTempoReply) -> Void) {
+    guard controller?.settings.artistMode == true || operation == .restore,
+          controller?.settings.playingDetails == true, gate.isOn(target.browser.rawValue),
+          !denied.contains(target.browser.rawValue) else {
+      completion(BrowserTempoReply(error: "permission")); return
+    }
+    let urgent = operation != .read
+    if urgent { NowPlayingScripts.beginUrgent() }
+    tempoQueue.async { [tempoBridge] in
+      defer { if urgent { NowPlayingScripts.endUrgent() } }
+      let reply: BrowserTempoReply
+      if !target.browser.isLive {
+        reply = BrowserTempoReply(error: "stopped")
+      } else if AutomationGate.check(target.browser.rawValue, ask: false) != AutomationGate.allowed {
+        reply = BrowserTempoReply(error: "permission")
+      } else {
+        reply = tempoBridge.tempo(target, operation: operation, token: token, rate: rate)
+      }
+      DispatchQueue.main.async { completion(reply) }
+    }
+  }
 
   /// Script queue only. Runs `read` when macOS allows it, or when it's
   /// undecided and `ask` (the read raises macOS's prompt). nil when it didn't

@@ -150,6 +150,7 @@ final class AudioController: ObservableObject {
       if settings.bypassHotkey != oldValue.bypassHotkey { updateHotkey() }
       hqGuardOn.store(settings.hqGuard && settings.enabled)
       if settings.powerSaver != oldValue.powerSaver { PowerSaver.shared.sync(settings.powerSaver) }
+      if !settings.artistMode && oldValue.artistMode && !isMirror { BrowserTempo.shared.restore() }
       if !previews.isEmpty { refreshLiveEdit() }
       // Banking the device's sound (inside the save) changes nothing heard.
       if rememberingDevice { return }

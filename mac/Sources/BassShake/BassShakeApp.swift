@@ -146,6 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
   func applicationWillTerminate(_ notification: Notification) {
+    // Best effort; the page's short lease also releases after an abrupt exit.
+    BrowserTempo.shared.restore()
     // Release the tap so the original audio resumes immediately. If Core
     // Audio is wedged and teardown didn't finish, leave at once: atexit's
     // HAL teardown could block forever, and coreaudiod frees a dead client's
