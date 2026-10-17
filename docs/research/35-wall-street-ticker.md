@@ -14,7 +14,7 @@ The tape establishes atmosphere and offers a glance; the briefing makes the
 information usable without waiting for it to come around.
 
 Keep small signed percentages and directional arrows colored at rest. Hover
-pauses the strip and colors only that quote's symbol and price in the same
+slows the strips to a reading pace and colors only that quote's symbol and price in the same
 direction. This reinforces a meaning already present. Unknown or cached
 quotes stay neutral. No price flashes, expanding rows, glow or network
 requests on hover. Movement means the stated comparison period, never a
@@ -182,3 +182,23 @@ local review bundle is staged at `build/review-20261017/The Bass Shaker.app`
 (local build 175.1). The installed beta and its running audio session were not
 replaced. The review bundle also includes the artwork effects and automatic
 black/transparent border trimming from this session.
+
+## Hover at a slow roll
+
+Adam's follow-up replaces the full hover stop with 20% of each row's normal
+speed: quotes at 4.8 points/second and headlines at 3. Both ease down over
+750 ms and return over 700 ms, preserving position and velocity on interruption.
+The 100 ms exit grace remains. Mouse-down no longer brakes the tape; the pressed
+item is latched so movement and incoming data cannot redirect the click.
+
+A stationary pointer refreshes its highlight, tooltip and cursor after the ramp,
+then at the next item edge or gap. These sparse callbacks use the actual band
+position; Core Animation still draws every frame. Layout and data changes
+reschedule the callback. Hidden panels, Power Saver and Reduce Motion remain
+fully stationary, with all items available in Market Briefing.
+
+Validation: the release build and 19 isolated native checks passed, covering
+interrupted easing, relayout continuity, stationary-pointer edges and gaps,
+loop wrapping, latched clicks across refresh, and stopping when hidden or still.
+The actual presentation layer advanced 2.89 points in 600 ms at hover pace.
+The fixture closed without starting the full app or its audio session.

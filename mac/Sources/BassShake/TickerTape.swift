@@ -8,7 +8,7 @@ import SwiftUI
 /// Lights Out's tall rolling figures (CountdownFont), and roll like its countdown when a
 /// refresh moves them (only the figures that changed, only on screen): up rises in from
 /// below, down drops in from above. Clicking a headline opens it in the browser;
-/// a quote opens Market Briefing. Hover settles both strips and emphasizes one quote.
+/// a quote opens Market Briefing. Hover slows both strips and emphasizes one quote.
 ///
 /// Cheap: every symbol, figure and headline is drawn once into a small image when the data
 /// changes (figures are cached) and laid out once on a band; Core Animation slides the band
@@ -345,7 +345,7 @@ private final class Strip {
   private var loop = 0.0
   /// The current animation's origin, or the stopped offset (0..<loop).
   private var phase = 0.0
-  private var moving = false
+  private var targetSpeed = 0.0
   /// An interruptible velocity ramp. The render server draws it; this small
   /// model only supplies continuity when another pointer event interrupts it.
   private struct Motion {
@@ -366,14 +366,15 @@ private final class Strip {
       guard duration > 0 else { return toSpeed * elapsed }
       let t = min(1, elapsed / duration)
       // Integrate smoothstep velocity: acceleration is zero at both ends, so
-      // entering the hover does not apply a sudden brake, nor snap at rest.
+      // entering or leaving hover does not apply a sudden brake or acceleration.
       let integrated = t * t * t - 0.5 * t * t * t * t
       return duration * (fromSpeed * t + (toSpeed - fromSpeed) * integrated)
         + toSpeed * max(0, elapsed - duration)
     }
   }
   private var motion: Motion?
-  static let stopDuration = 0.56
+  static let hoverSpeedScale = 0.20
+  static let slowDuration = 0.75
   static let startDuration = 0.70
   private static let lead = 6.0
 
@@ -470,14 +471,16 @@ private final class Strip {
     slide()
   }
 
-  /// Hover eases velocity, while hidden views and direct clicks stop immediately.
-  func setMoving(_ on: Bool, animated: Bool = false) {
+  /// Hover eases to a reading pace. Hidden views and reduced motion stay still.
+  func setMoving(_ on: Bool, slow: Bool = false, animated: Bool = false) {
     let now = band.convertTime(CACurrentMediaTime(), from: nil)
+    let next = on ? speed * (slow ? Self.hoverSpeedScale : 1) : 0
     let settling = motion.map { now < $0.started + $0.duration } ?? false
-    guard on != moving || (!animated && settling) else { return }
+    guard next != targetSpeed || (!animated && settling) else { return }
     phase = offset()
-    moving = on
-    slide(rampDuration: animated ? (on ? Self.startDuration : Self.stopDuration) : 0)
+    let slowing = next < (motion?.velocity(at: now) ?? targetSpeed)
+    targetSpeed = next
+    slide(rampDuration: animated ? (slowing ? Self.slowDuration : Self.startDuration) : 0)
   }
 
   /// The slot's on-screen span overlaps the row (band scrolled `o`).
@@ -493,6 +496,23 @@ private final class Strip {
       let l = Double($0.layer.position.x) - o
       return Double(x) >= l && Double(x) <= l + Double($0.layer.bounds.width)
     }
+  }
+
+  /// Refresh a stationary pointer only when its item can change. During a ramp,
+  /// wait for the known endpoint; at reading pace, wake at the next edge or gap.
+  func pointerRefreshDelay(at x: CGFloat) -> TimeInterval? {
+    guard targetSpeed > 0, loop > 0, !slots.isEmpty else { return nil }
+    let now = band.convertTime(CACurrentMediaTime(), from: nil)
+    let remaining = motion.map { max(0, $0.started + $0.duration - now) } ?? 0
+    if remaining > 0 { return remaining + 0.04 }
+    let bandX = Double(x) + offset()
+    let distance = slots.prefix(keys.count).reduce(loop) { closest, slot in
+      let left = Double(slot.layer.position.x)
+      let right = left + Double(slot.layer.bounds.width)
+      return min(closest, wrap(left - bandX), wrap(right - bandX))
+    }
+    // Sample just after crossing, allowing for presentation-layer frame lag.
+    return max(0.05, distance / targetSpeed + 0.04)
   }
 
   private func leftmost() -> (key: String, screenX: Double)? {
@@ -516,7 +536,7 @@ private final class Strip {
   private func slide(rampDuration: Double? = nil) {
     let now = band.convertTime(CACurrentMediaTime(), from: nil)
     let from = motion?.velocity(at: now) ?? 0
-    let target = moving ? speed : 0
+    let target = targetSpeed
     // A data/layout refresh preserves any remaining coast instead of snapping.
     let remaining = motion.map { max(0, $0.started + $0.duration - now) } ?? 0
     let duration = loop > 0 && abs(from - target) > 0.001 ? (rampDuration ?? remaining) : 0
@@ -546,13 +566,13 @@ private final class Strip {
       a.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
       band.add(a, forKey: "coast")
     }
-    if moving, loop > 0 {
+    if target > 0, loop > 0 {
       let a = CABasicAnimation(keyPath: "position.x")
       a.fromValue = 0
       a.toValue = -loop
-      a.duration = loop / speed
+      a.duration = loop / target
       a.beginTime = now + duration
-      a.timeOffset = end / speed
+      a.timeOffset = end / target
       a.timingFunction = CAMediaTimingFunction(name: .linear)
       a.repeatCount = .infinity
       a.isRemovedOnCompletion = false
@@ -591,7 +611,7 @@ final class MarketPanelView: NSView {
   private enum PressTarget { case quote(String), headline(URL) }
   private var press: (point: NSPoint, time: TimeInterval, target: PressTarget?)?
   private var renderedNews: [String] = []
-  private var hoverSettled: DispatchWorkItem?
+  private var hoverRefresh: DispatchWorkItem?
   private var resumeAfterExit: DispatchWorkItem?
 
   private var data: MarketData { .shared }
@@ -631,7 +651,7 @@ final class MarketPanelView: NSView {
   deinit {
     observer.map(NotificationCenter.default.removeObserver)
     timer?.invalidate()
-    hoverSettled?.cancel()
+    hoverRefresh?.cancel()
     resumeAfterExit?.cancel()
   }
 
@@ -673,8 +693,8 @@ final class MarketPanelView: NSView {
     } else if !self.visible {
       timer?.invalidate()
       timer = nil
-      hoverSettled?.cancel()
-      hoverSettled = nil
+      hoverRefresh?.cancel()
+      hoverRefresh = nil
       resumeAfterExit?.cancel()
       resumeAfterExit = nil
       press = nil
@@ -684,8 +704,8 @@ final class MarketPanelView: NSView {
       news.held = false
     }
     if toStill {
-      hoverSettled?.cancel()
-      hoverSettled = nil
+      hoverRefresh?.cancel()
+      hoverRefresh = nil
       resumeAfterExit?.cancel()
       resumeAfterExit = nil
       if pointer == nil {
@@ -696,12 +716,13 @@ final class MarketPanelView: NSView {
       news.restart()
     }
     syncMotion()
+    if let pointer { updatePointer(pointer) }
   }
 
   private func syncMotion() {
     let run = visible && !still && built != nil
-    quotes.setMoving(run && showsQuotes && !quotes.held, animated: run)
-    news.setMoving(run && showsNews && !news.held, animated: run)
+    quotes.setMoving(run && showsQuotes, slow: quotes.held, animated: run)
+    news.setMoving(run && showsNews, slow: news.held, animated: run)
   }
 
   override func layout() {
@@ -767,6 +788,7 @@ final class MarketPanelView: NSView {
     renderedNews = newsSignature()
     CATransaction.commit()
     syncMotion()
+    if let pointer { updatePointer(pointer) }
   }
 
   // MARK: Data
@@ -939,21 +961,28 @@ final class MarketPanelView: NSView {
 
   private func hold(quotes q: Bool, news n: Bool) {
     guard q != quotes.held || n != news.held else { return }
-    hoverSettled?.cancel()
-    hoverSettled = nil
+    hoverRefresh?.cancel()
+    hoverRefresh = nil
     quotes.held = q
     news.held = n
     syncMotion()
-    if (q || n) && visible && !still {
-      // A gentle coast can cross a symbol boundary by a few points.
-      // Refresh the stationary pointer once when it ends, never on every frame.
-      let work = DispatchWorkItem { [weak self] in
-        guard let self, self.visible, !self.still, let p = self.pointer else { return }
-        self.updatePointer(p)
-      }
-      hoverSettled = work
-      DispatchQueue.main.asyncAfter(deadline: .now() + Strip.stopDuration, execute: work)
+  }
+
+  private func schedulePointerRefresh(at p: NSPoint) {
+    hoverRefresh?.cancel()
+    hoverRefresh = nil
+    guard visible, !still else { return }
+    let strip: Strip
+    if showsQuotes && quotes.clip.frame.contains(p) { strip = quotes }
+    else if showsNews && news.clip.frame.contains(p) { strip = news }
+    else { return }
+    guard let delay = strip.pointerRefreshDelay(at: p.x - strip.clip.frame.minX) else { return }
+    let work = DispatchWorkItem { [weak self] in
+      guard let self, self.visible, !self.still, let p = self.pointer else { return }
+      self.updatePointer(p)
     }
+    hoverRefresh = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
   }
 
   @objc private func openBriefing() { onInspect(nil) }
@@ -993,6 +1022,7 @@ final class MarketPanelView: NSView {
       toolTip = "Market snapshots; delays vary. Market Briefing shows every quote and full headline."
     }
     (hoveredKey != nil || headline(at: p) != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
+    schedulePointerRefresh(at: p)
   }
 
   override func mouseEntered(with event: NSEvent) {
@@ -1006,8 +1036,8 @@ final class MarketPanelView: NSView {
   override func mouseExited(with event: NSEvent) {
     pointer = nil
     setHovered(nil)
-    // Keep the pending endpoint refresh during the exit grace: a quick
-    // re-entry is still part of the same coast. A committed exit cancels it.
+    hoverRefresh?.cancel()
+    hoverRefresh = nil
     resumeAfterExit?.cancel()
     if visible && !still {
       // Ignore an accidental skim across the edge before gently taking off.
@@ -1030,17 +1060,9 @@ final class MarketPanelView: NSView {
 
   override func mouseDown(with event: NSEvent) {
     let p = convert(event.locationInWindow, from: nil)
-    hoverSettled?.cancel()
-    hoverSettled = nil
-    // Direct manipulation takes priority over easing: the click target must
-    // remain at the exact displayed position between mouse-down and mouse-up.
-    if bounds.contains(p) {
-      quotes.setMoving(false)
-      news.setMoving(false)
-    }
     updatePointer(p)
-    // A quote or feed update can finish while the button is down. Honor the
-    // item the reader pressed, even if the new layout moves another under it.
+    // Keep rolling, but honor the item pressed even if movement or a feed
+    // refresh puts another item under the pointer before mouse-up.
     press = (p, event.timestamp, pressTarget(at: p))
   }
 
