@@ -6,7 +6,7 @@ import SwiftUI
 // in from the popup's edges, so it reads as the dock of the same object rather than three
 // more floating pills. Groups inside are spacing only (status and modes left, tools right),
 // with one short inset rule before Quit. Buttons 24 tall, 6 pt inside, so their plates are
-// concentric (radius 18 − 6 = 12). Glyphs are small extruded solids (FooterSolids.swift).
+// concentric (radius 18 − 6 = 12). Glyphs are flat monochrome symbols (FooterFlatIcon.swift).
 // Hover fades in the plate, a press sinks it a little, the solids tilt and turn. Once per
 // hover, one spring. Reduce Motion: the plate only. Power Saver: the plate only, without
 // animation. Layout and hit areas never change: every effect is render-only.
@@ -239,9 +239,9 @@ struct FooterModePlate: ViewModifier {
   }
 }
 
-/// The settings menu as an extruded cog. The Menu keeps a plain, invisible label the size
+/// The settings menu as a flat cog. The Menu keeps a plain, invisible label the size
 /// of the 24 pt button (its own click handling is untouched); the drawn cog sits over it
-/// and never takes a click. Hover tilts it and gives it a small turn; it sinks a little
+/// and never takes a click. Its button acknowledges hover and sinks a little
 /// while its menu is open.
 struct FooterShakerMenu<Content: View>: View {
   let help: String
@@ -267,8 +267,8 @@ struct FooterShakerMenu<Content: View>: View {
     .fixedSize()
     .frame(width: FooterBento.button, height: FooterBento.button)
     .overlay {
-      // An extruded cog; hover tilts it and gives it a small turn.
-      FooterSolid(kind: .gear, lit: lit, moving: motion && hovered && !open)
+      // Flat cog; the surrounding plate carries hover and press feedback.
+      FooterFlatIcon(kind: .gear)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)

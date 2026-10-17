@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 import os
 
+/// Lets the launch window restore its viewport after the player is expanded.
+struct PlayerDetailsCollapsedKey: PreferenceKey {
+  static let defaultValue = false
+  static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
 /// The Bento layout of the main block: translucent tiles on the 8 pt grid,
 /// one big number or word per tile. Same controls as the classic stack
 /// (the footer stays as it is, under this; the header's controls move into
@@ -114,6 +120,7 @@ struct BentoView: View {
       // The colourway for what's drawn outside the tiles (ticker block here, footer via the preference).
       .environment(\.popupTint, flat ? nil : heroTint)
       .preference(key: PopupTintPreference.self, value: flat ? nil : heroTint)
+      .preference(key: PlayerDetailsCollapsedKey.self, value: !flat && size != .mini && detailsCollapsed)
   }
 
   private var stack: some View {
@@ -177,9 +184,8 @@ struct BentoView: View {
   /// Whether a block draws anything here (Edit Layout, size, settings).
   private func blockShown(_ key: String) -> Bool {
     let mini = size == .mini
-    if !flat && !mini && detailsCollapsed,
-       let hero = blockKeys.firstIndex(of: LayoutSection.bentoHero.key),
-       let index = blockKeys.firstIndex(of: key), index > hero { return false }
+    // Disclosure keeps the player, regardless of the user's block ordering.
+    if !flat && !mini && detailsCollapsed && key != LayoutSection.bentoHero.key { return false }
     switch key {
     case LayoutSection.macVolume.key: return (flat || mini) && macBlock != nil
     case LayoutSection.ticker.key: return !mini && tickerBlock != nil
@@ -422,7 +428,7 @@ struct BentoView: View {
       // LiveShown: the number (and its hint) follow a scrub as it's heard;
       // settings, and so the rest of the popup, change once on release.
       LiveShown(liveEdit: controller.liveEdit, path: \.bass, value: s.bass) { bass in
-        ScrubTile(title: "Strength", explanation: "Bass enhancement", symbol: "waveform.path", tint: tint(.bass),
+        ScrubTile(title: "Bass", symbol: "waveform.path", tint: tint(.bass),
                   value: bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
                   glassID: "dial.strength", mini: mini, param: controller.param("strength", \.bass, step: 0.01),
                   format: { ("", "\(Int(($0 * 100).rounded()))", "%") }) {
@@ -433,7 +439,7 @@ struct BentoView: View {
       .pointerHintTint(ink(tint(.bass)))
       // Also follows a drag of the EQ line (Boost).
       LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
-        ScrubTile(title: "Boost", explanation: "Overall gain", symbol: "speaker.wave.3", tint: tint(.peach),
+        ScrubTile(title: "Gain", symbol: "speaker.wave.3", tint: tint(.peach),
                   value: boost, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
                   glassID: "dial.boost", mini: mini, param: controller.param("boost", \.boostDb, step: 0.1),
                   format: { ("+", "\(Int($0.rounded()))", " dB") }) {
@@ -448,14 +454,14 @@ struct BentoView: View {
   /// Classic's Strength and Boost: the original slider rows, Limit under them.
   private var flatSliders: some View {
     VStack(spacing: 4) {
-      LabeledSlider(title: "Strength", symbol: "waveform.path",
+      LabeledSlider(title: "Bass", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                     range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
                     param: controller.param("strength", \.bass, step: 0.01))
         .pointerHint(Caption.strength(s.bass, scrub: false, shaker: s.character.bassStage == .shaker), live: true, track: false)
       // Follows a drag of the EQ line (Boost) as it happens.
       LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
-        LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
+        LabeledSlider(title: "Gain", symbol: "speaker.wave.3",
                       value: Binding(get: { boost }, set: { controller.settings.boostDb = $0 }),
                       range: 0...12, format: { String(format: "+%.0f dB", $0) },
                       param: controller.param("boost", \.boostDb, step: 0.1))
@@ -636,14 +642,16 @@ struct BentoView: View {
         } playing: { app in
           if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
         }
-        if let heroMacBlock {
+        if !detailsCollapsed, let heroMacBlock {
           heroMacBlock.padding(.top, 10)
         }
         HStack(spacing: 8) {
-          sourcePicker
-          if let heroLiveButton { heroLiveButton }
+          if !detailsCollapsed {
+            sourcePicker
+            if let heroLiveButton { heroLiveButton }
+          }
           Spacer(minLength: 0)
-          (heroIconsTight ?? heroIcons)
+          if !detailsCollapsed { (heroIconsTight ?? heroIcons) }
           collapseButton
         }
         .padding(.top, 8)
@@ -830,11 +838,13 @@ struct BentoView: View {
         NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 40, extras: true)
       }
       .frame(height: 48)
-      if s.artistMode && !controller.isMirror { ArtistTempoView() }
-      VStack(alignment: .leading, spacing: 6) {
-        soundRow(t, tools: nil, probe: false)
-          .frame(height: 24)
-        if flat { utilityBar() }
+      if flat || !detailsCollapsed {
+        if s.artistMode && !controller.isMirror { ArtistTempoView() }
+        VStack(alignment: .leading, spacing: 6) {
+          soundRow(t, tools: nil, probe: false)
+            .frame(height: 24)
+          if flat { utilityBar() }
+        }
       }
     }
   }
@@ -872,14 +882,16 @@ struct BentoView: View {
         NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 32, extras: false)
       }
       .frame(height: 40)
-      if s.artistMode && !controller.isMirror { ArtistTempoView() }
-      HStack(alignment: .center, spacing: 8) {
-        soundChip(t)
-        if live { abChip(compact: true) }
-        if flat { heroOutput; heroIcons }
-        powerButton(size: 24)
+      if flat || !detailsCollapsed {
+        if s.artistMode && !controller.isMirror { ArtistTempoView() }
+        HStack(alignment: .center, spacing: 8) {
+          soundChip(t)
+          if live { abChip(compact: true) }
+          if flat { heroOutput; heroIcons }
+          powerButton(size: 24)
+        }
+        .frame(height: 24)
       }
-      .frame(height: 24)
     }
   }
 
@@ -910,7 +922,7 @@ struct BentoView: View {
 
   private var collapseButton: some View {
     Button {
-      withAnimation(reduceMotion || powerSaver ? nil : PopupMotion.resize) {
+      withAnimation(reduceMotion || powerSaver ? nil : PopupMotion.expansion(opening: detailsCollapsed)) {
         detailsCollapsed.toggle()
       }
     } label: {
@@ -1292,10 +1304,10 @@ struct BentoView: View {
     let groups = stride(from: 0, to: items.count, by: 4).map { Array(items[$0..<min($0 + 4, items.count)]) }
     let selectedGroup = groups.firstIndex { $0.contains { $0.on } } ?? 0
     return PresetQuadShelf(groupIDs: groups.map { $0.map(\.id) }, selectedGroup: selectedGroup,
-                           compact: compact, powerSaver: powerSaver) { index, toggle in
-      CompactModeQuad(items: groups[index], showLabels: !compact,
+                           compact: compact, powerSaver: powerSaver) { index, level, backgroundAction in
+      CompactModeQuad(items: groups[index], showLabels: level != .mini, individualBacks: level == .mini,
                       accessibilityName: "Sound presets, group \(index + 1) of \(groups.count)",
-                      backgroundAction: toggle)
+                      backgroundAction: backgroundAction)
     }
     .pointerHintQuick()
   }
@@ -2356,6 +2368,7 @@ private struct CompactModeQuad: View {
   }
   let items: [Item]
   var showLabels = false
+  var individualBacks = false
   var accessibilityName = "Sound modes"
   var backgroundAction: (() -> Void)? = nil
   @Environment(\.labelLevel) private var labels
@@ -2363,11 +2376,22 @@ private struct CompactModeQuad: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    BentoTile(tint: .graphite, look: .quiet, padding: 4, hoverResponse: false) {
-      VStack(spacing: 2) {
-        HStack(spacing: 2) { ForEach(items.prefix(2)) { cell($0) } }
-        HStack(spacing: 2) { ForEach(items.dropFirst(2).prefix(2)) { cell($0) } }
+    Group {
+      if individualBacks {
+        choices
+      } else {
+        BentoTile(tint: .graphite, look: .quiet, padding: 4, hoverResponse: false) { choices }
       }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(accessibilityName)
+  }
+
+  private var choices: some View {
+    VStack(spacing: individualBacks ? 8 : 2) {
+      HStack(spacing: individualBacks ? 8 : 2) { ForEach(items.prefix(2)) { cell($0) } }
+      HStack(spacing: individualBacks ? 8 : 2) { ForEach(items.dropFirst(2).prefix(2)) { cell($0) } }
+    }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background {
         if let backgroundAction {
@@ -2378,18 +2402,23 @@ private struct CompactModeQuad: View {
             Color.clear.contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .padding(-4)
+          .padding(individualBacks ? 0 : -4)
           .accessibilityHidden(true)
         }
       }
-    }
-    .accessibilityElement(children: .contain)
-    .accessibilityLabel(accessibilityName)
   }
 
   private func cell(_ item: Item) -> some View {
     let shape = RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
     return Button(action: item.action) {
+      if individualBacks {
+        BentoTile(tint: item.on ? item.tint : .graphite, look: item.on ? .lit : .quiet,
+                  padding: 0, interactive: true) {
+          ModeGlyph(symbol: item.symbol, tint: item.on ? item.tint : .graphite, on: item.on, size: 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
+      } else {
       VStack(spacing: 3) {
         ModeGlyph(symbol: item.symbol, tint: item.on ? item.tint : .graphite, on: item.on, size: showLabels ? 19 : 22)
         if showLabels {
@@ -2406,6 +2435,7 @@ private struct CompactModeQuad: View {
         .modifier(BentoHoverSurface(radius: BentoRadius.inner, control: true))
         .background(shape.fill(item.tint.pastel.opacity(item.on ? (scheme == .dark ? 0.18 : 0.30) : 0)))
         .contentShape(shape)
+      }
     }
     .buttonStyle(BentoPressStyle())
     .pointerHint(item.hint)

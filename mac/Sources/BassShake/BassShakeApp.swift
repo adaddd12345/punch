@@ -896,7 +896,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
 
   func showWindow() {
     if window == nil {
-      let host = NSHostingController(rootView: MainWindowView(controller: controller).environmentObject(updates))
+      let host = NSHostingController(rootView: MainWindowView(controller: controller, restoreViewport: { [weak self] in
+        guard let w = self?.window else { return }
+        let available = (w.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+        w.setContentSize(NSSize(width: 360, height: max(240, min(760, available - 60))))
+      }).environmentObject(updates))
       let w = NSWindow(contentViewController: host)
       w.title = "The Bass Shaker"
       w.styleMask = [.titled, .closable]
@@ -926,6 +930,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
 /// Same controls as the menu-bar popup, plus a pointer to where the app lives.
 struct MainWindowView: View {
   @ObservedObject var controller: AudioController
+  var restoreViewport: () -> Void = {}
 
   var body: some View {
     VStack(spacing: 0) {
@@ -944,6 +949,11 @@ struct MainWindowView: View {
       Divider()
       }
       TakeoverRoot(local: controller, ownsDrawer: false)
+    }
+    .onPreferenceChange(PlayerDetailsCollapsedKey.self) { collapsed in
+      // OverflowScroll's first expanded proposal can still be the small
+      // collapsed viewport. Restore room after the new controls enter layout.
+      if !collapsed { DispatchQueue.main.async { restoreViewport() } }
     }
   }
 }

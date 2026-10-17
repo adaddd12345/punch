@@ -26,15 +26,15 @@ struct TestShelfRoot: View {
   var body: some View {
     VStack(spacing: 0) {
       PresetQuadShelf(groupIDs: (0..<6).map { group in (0..<4).map { "\(group)-\($0)" } },
-                      selectedGroup: fixture.selectedGroup, compact: false, powerSaver: fixture.powerSaver) { index, toggle in
-        VStack(spacing: 2) {
-          HStack { cell(index, 0); cell(index, 1) }
-          HStack { cell(index, 2); cell(index, 3) }
+                      selectedGroup: fixture.selectedGroup, compact: false, powerSaver: fixture.powerSaver) { index, level, toggle in
+        VStack(spacing: level == .mini ? 8 : 2) {
+          HStack(spacing: 8) { cell(index, 0, level); cell(index, 1, level) }
+          HStack(spacing: 8) { cell(index, 2, level); cell(index, 3, level) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(4)
-        .background(Color.gray.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
-        .modifier(FixtureGlass(identity: false))
+        .padding(level == .mini ? 0 : 4)
+        .background(Color.gray.opacity(level == .mini ? 0 : 0.2), in: RoundedRectangle(cornerRadius: 12))
+        .modifier(FixtureGlass(identity: level == .mini))
         .onAppear { fixture.toggle = toggle }
       }
       .fixedSize(horizontal: false, vertical: true)
@@ -52,16 +52,19 @@ struct TestShelfRoot: View {
     .background(Color(nsColor: .windowBackgroundColor))
   }
 
-  private func cell(_ group: Int, _ index: Int) -> some View {
+  private func cell(_ group: Int, _ index: Int, _ level: PresetShelfLevel) -> some View {
     Button {} label: {
       VStack {
         Image(systemName: "waveform")
-        Text("Preset \(group * 4 + index + 1)").font(.system(size: 10))
+        if level != .mini { Text("Preset \(group * 4 + index + 1)").font(.system(size: 10)) }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .buttonStyle(.plain)
-    .modifier(FixtureGlass(identity: true))
+    .background(Color.gray.opacity(level == .mini ? 0.2 : 0), in: RoundedRectangle(cornerRadius: 10))
+    .modifier(FixtureGlass(identity: level != .mini))
+    .help("Preset \(group * 4 + index + 1)")
+    .accessibilityLabel("Preset \(group * 4 + index + 1)")
   }
 }
 
@@ -111,88 +114,69 @@ private struct FixtureGlassContainer: ViewModifier {
     defer { fixture.toggle = nil; window.orderOut(nil); window.contentView = nil }
     pump(0.8)
 
-    let collapsed: CGFloat = 139
-    let expanded: CGFloat = 739
-    check(near(fixture.height, collapsed), "collapsed shelf is one row plus controls (observed \(fixture.height))")
-    check(fixture.toggle != nil, "production plate builder exposes toggle")
+    let mini: CGFloat = 99
+    let named: CGFloat = 139
+    check(near(fixture.height, mini), "default mini shelf has two short icon rows (observed \(fixture.height))")
+    check(fixture.toggle != nil, "production builder exposes background action")
     guard let scroll = descendants(host).compactMap({ $0 as? NSScrollView }).first,
-          let toggle = fixture.toggle else { throw CheckFailure.failed }
+          let background = fixture.toggle else { throw CheckFailure.failed }
     let clip = scroll.contentView
-    print("Initial shelf \(fixture.height), viewport \(clip.bounds), document \(scroll.documentView?.frame ?? .zero)")
-    check(clip.bounds.origin.x > 500, "initial selection in group 5 is scrolled into view")
-    check(descendants(host).filter { $0 is DragScrollProbeView }.count == 1, "collapsed shelf has one production drag probe")
+    print("Initial mini shelf \(fixture.height), viewport \(clip.bounds), document \(scroll.documentView?.frame ?? .zero)")
+    check(clip.bounds.origin.x > 500, "initial selected group is scrolled into view")
+    check(descendants(host).filter { $0 is DragScrollProbeView }.count == 1, "mini has one drag probe")
+    if CommandLine.arguments.count > 1 { try render(host, directory: CommandLine.arguments[1], name: "mini") }
 
     clip.scroll(to: NSPoint(x: 123, y: clip.bounds.origin.y))
     scroll.reflectScrolledClipView(clip)
     pump(0.15)
     let retainedOffset = clip.bounds.origin.x
-    let markerBefore = markerY(host)
-    fixture.samples = []
-    toggle()
-    pump(0.08)
-    let markerDuring = markerY(host)
-    if CommandLine.arguments.count > 1 { try render(host, directory: CommandLine.arguments[1], name: "opening-80ms") }
-    check(descendants(host).filter { $0 is DragScrollProbeView }.isEmpty, "hidden carousel removes drag probe during reveal")
-    pump(0.6)
-    check(near(fixture.height, expanded), "expanded shelf exposes all six groups (observed \(fixture.height))")
-    check(near(clip.bounds.origin.x, retainedOffset), "expansion keeps hidden carousel scroll offset")
-    let systemReduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    let markerAfter = markerY(host)
-    check(markerBefore != nil && markerDuring != nil && markerAfter != nil, "presentation follower is visible in cached native frames")
-    print("Presentation marker pixels: before=\(String(describing: markerBefore)), 80ms=\(String(describing: markerDuring)), after=\(String(describing: markerAfter))")
-    // onGeometryChange reports target layout, not presentation interpolation.
-    // Record an intermediate render instead of asserting intermediate model
-    // heights or claiming an FPS measurement from geometry callbacks.
-    check(fixture.samples.allSatisfy { $0.isFinite && $0 >= collapsed - 1 && $0 <= expanded + 1 }, "normal reveal has bounded finite heights")
-    print("Expansion measured \(fixture.samples.count) heights; intermediate=\(fixture.samples.filter { $0 > collapsed + 2 && $0 < expanded - 2 }.count)")
-    if CommandLine.arguments.count > 1 { try render(host, directory: CommandLine.arguments[1], name: "expanded") }
+    background(); pump(0.5)
+    check(near(fixture.height, named), "mini background advances one level to names")
+    check(near(clip.bounds.origin.x, retainedOffset), "showing names preserves carousel offset")
+    check(descendants(host).filter { $0 is DragScrollProbeView }.count == 1, "named carousel retains one drag probe")
+    if CommandLine.arguments.count > 1 { try render(host, directory: CommandLine.arguments[1], name: "named") }
 
-    toggle()
-    pump(0.7)
-    check(near(fixture.height, collapsed), "collapse returns to original row height")
-    check(near(clip.bounds.origin.x, retainedOffset), "collapse restores exact native viewport offset")
-    check(descendants(host).filter { $0 is DragScrollProbeView }.count == 1, "collapse reinstalls exactly one drag probe")
-    if CommandLine.arguments.count > 1 { try render(host, directory: CommandLine.arguments[1], name: "collapsed") }
+    background(); pump(0.5)
+    check(near(fixture.height, mini), "named background retreats exactly one level to mini")
+    check(near(clip.bounds.origin.x, retainedOffset), "mini return retains native viewport")
+    check(descendants(host).filter { $0 is DragScrollProbeView }.count == 1, "mini return has exactly one drag probe")
 
     fixture.samples = []
-    toggle(); pump(0.07)
-    toggle(); pump(0.06)
-    toggle(); pump(0.05)
-    toggle(); pump(0.7)
-    check(near(fixture.height, collapsed), "rapid four-toggle reversal settles collapsed")
-    check(near(clip.bounds.origin.x, retainedOffset), "rapid reversal retains carousel position")
-    check(fixture.samples.allSatisfy { $0.isFinite && $0 >= collapsed - 1 && $0 <= expanded + 1 }, "rapid reversal stays bounded")
-    check(descendants(host).filter { $0 is DragScrollProbeView }.count == 1, "rapid reversal leaves one drag probe")
+    background(); pump(0.07)
+    background(); pump(0.06)
+    background(); pump(0.05)
+    background(); pump(0.7)
+    check(near(fixture.height, mini), "rapid four-toggle background reversal settles mini")
+    check(near(clip.bounds.origin.x, retainedOffset), "rapid reversal retains offset")
+    check(fixture.samples.allSatisfy { $0.isFinite && $0 >= mini - 1 && $0 <= named + 1 }, "rapid reversal is bounded")
+    check(descendants(host).filter { $0 is DragScrollProbeView }.count == 1, "rapid reversal leaves one probe")
 
-    toggle(); pump(0.4)
     fixture.selectedGroup = 1
-    pump(0.15)
-    check(near(clip.bounds.origin.x, retainedOffset), "choosing in expanded stack does not move hidden carousel prematurely")
-    toggle(); pump(0.5)
+    pump(0.4)
     let secondGroupOffset = max(120, (clip.bounds.width - 8) / 2) + 8
-    check(near(clip.bounds.origin.x, secondGroupOffset), "collapse reveals the newly selected group")
+    check(near(clip.bounds.origin.x, secondGroupOffset), "external selected-group change reveals the new group")
+    background(); pump(0.5)
+    check(near(fixture.height, named), "background shows names for newly selected group")
+    check(near(clip.bounds.origin.x, secondGroupOffset), "showing names retains newly selected group")
+    background(); pump(0.5)
 
-    // The system Reduce Motion environment is read-only. Observe it without
-    // changing user preferences; Power Saver exercises the same nil-animation
-    // path deterministically below.
-    print("System Reduce Motion: \(systemReduceMotion); user setting left unchanged")
+    print("System Reduce Motion: \(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion); user setting unchanged")
     fixture.powerSaver = true
     pump(0.15)
     fixture.samples = []
-    toggle(); pump(0.15)
-    check(near(fixture.height, expanded), "Power Saver reaches expanded height immediately")
-    check(!fixture.samples.contains { $0 > collapsed + 2 && $0 < expanded - 2 }, "Power Saver has no animated intermediate heights")
-    toggle(); pump(0.15)
-
+    background(); pump(0.15)
+    check(near(fixture.height, named), "Power Saver reaches named height immediately")
+    check(!fixture.samples.contains { $0 > mini + 2 && $0 < named - 2 }, "Power Saver has no animated intermediate heights")
+    background(); pump(0.15)
     DragScrollGate.suppressThisClick()
-    toggle(); pump(0.15)
-    check(near(fixture.height, collapsed), "drag-release gate prevents accidental expansion")
+    background(); pump(0.15)
+    check(near(fixture.height, mini), "drag-release gate prevents accidental expansion")
     DragScrollGate.clear()
-    check(failures.isEmpty, "all earlier regression assertions pass")
     if !failures.isEmpty {
       print("FAILED: \(failures.count) of \(assertions) preset shelf checks")
       exit(1)
     }
+    print("Scope: mini/named background transitions only. Native down/up/all controls verified separately in installed-app CUA; no fixture AX or synthetic mouse claim.")
     print("PASS: \(assertions) preset shelf checks using production SwiftUI/drag code; no app audio or preferences")
   }
 
@@ -202,17 +186,6 @@ private struct FixtureGlassContainer: ViewModifier {
     guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { throw CheckFailure.failed }
     view.cacheDisplay(in: view.bounds, to: bitmap)
     try bitmap.representation(using: .png, properties: [:])!.write(to: folder.appendingPathComponent("preset-shelf-\(name).png"))
-  }
-  static func markerY(_ view: NSView) -> Int? {
-    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
-    view.cacheDisplay(in: view.bounds, to: bitmap)
-    for y in 0..<bitmap.pixelsHigh {
-      guard let color = bitmap.colorAt(x: bitmap.pixelsWide / 2, y: y)?.usingColorSpace(.sRGB) else { continue }
-      // Display P3 ↔ sRGB conversion can add green to saturated magenta.
-      // Keep the threshold distinct from the neutral glass and white text.
-      if color.redComponent > 0.7 && color.blueComponent > 0.7 && color.greenComponent < 0.6 { return y }
-    }
-    return nil
   }
   enum CheckFailure: Error { case failed }
 }

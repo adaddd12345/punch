@@ -1041,8 +1041,8 @@ struct PopoverView: View {
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
         HStack(spacing: 4) {
-          // A knob: hover turns its pointer a notch; its tick marks stay put.
-          FooterSolid(kind: .knob, tint: controller.dj.anyActive ? Color.white : nil)
+          // A small flat DJ wearing headphones above the decks.
+          FooterFlatIcon(kind: .dj, tint: controller.dj.anyActive ? Color.white : nil)
           if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
         .footerChip(iconOnly: labels == .icons)
@@ -1058,7 +1058,7 @@ struct PopoverView: View {
             Image(systemName: "waveform").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16)
               .symbolEffect(.variableColor.iterative, isActive: visible && !controller.settings.powerSaver && !reduceMotion)
           } else {
-            FooterSolid(kind: .grid)
+            FooterFlatIcon(kind: .grid)
           }
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
@@ -1082,7 +1082,7 @@ struct PopoverView: View {
             Image(systemName: "hourglass").font(.system(size: 11, weight: .semibold))
               .frame(width: 16, height: 16)
           } else {
-            FooterSolid(kind: .check)
+            FooterFlatIcon(kind: .check)
           }
         }
       }
@@ -1098,10 +1098,10 @@ struct PopoverView: View {
   /// Quit, past a rule: it ends the whole app, so it never shares a group with menus.
   private var powerGroup: some View {
     FooterGroup {
-      // The word with full labels; otherwise an extruded power ring. Red under the pointer.
+      // The word with full labels; otherwise a flat power symbol. Red under the pointer.
       Button { NSApp.terminate(nil) } label: {
         if labels == .full { Text("Quit").fixedSize().padding(.horizontal, 8) }
-        else { FooterSolid(kind: .power) }
+        else { FooterFlatIcon(kind: .power) }
       }
       .accessibilityLabel("Quit")
       .buttonStyle(FooterButtonStyle(danger: true))

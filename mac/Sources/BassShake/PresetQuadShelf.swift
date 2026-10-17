@@ -1,5 +1,9 @@
 import SwiftUI
 
+enum PresetShelfLevel: Int, CaseIterable {
+  case mini, named, all
+}
+
 /// Two persistent surfaces share one top-anchored reveal. Keeping the carousel
 /// alive preserves its native scroll offset; changing an HStack into a VStack
 /// would instead clamp that offset while the document width was animating.
@@ -8,9 +12,9 @@ struct PresetQuadShelf<Plate: View>: View {
   let selectedGroup: Int
   let compact: Bool
   let powerSaver: Bool
-  @ViewBuilder var plate: (Int, @escaping () -> Void) -> Plate
+  @ViewBuilder var plate: (Int, PresetShelfLevel, @escaping () -> Void) -> Plate
 
-  @State private var expanded = false
+  @State private var level: PresetShelfLevel = .mini
   @State private var leadingGroup = 0
   @State private var positionedInitially = false
   @State private var initialPositionQueued = false
@@ -19,10 +23,12 @@ struct PresetQuadShelf<Plate: View>: View {
   @Namespace private var scrollSpace
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-  private var plateHeight: CGFloat { compact ? 78 : 112 }
+  private var expanded: Bool { level == .all }
+  private var namedHeight: CGFloat { compact ? 104 : 112 }
+  private var carouselHeight: CGFloat { level == .mini ? 72 : namedHeight }
   private var lastLeadingGroup: Int { max(0, groupIDs.count - 2) }
   private var expandedHeight: CGFloat {
-    CGFloat(groupIDs.count) * plateHeight + CGFloat(max(0, groupIDs.count - 1)) * 8
+    CGFloat(groupIDs.count) * namedHeight + CGFloat(max(0, groupIDs.count - 1)) * 8
   }
   private var motion: Animation? { reduceMotion || powerSaver ? nil : PopupMotion.resize }
   private var fade: Animation? { reduceMotion || powerSaver ? nil : .easeOut(duration: 0.16) }
@@ -33,7 +39,7 @@ struct PresetQuadShelf<Plate: View>: View {
         controls(proxy: proxy)
         ZStack(alignment: .top) {
           PresetShelfSurface {
-            carousel(proxy: proxy).frame(height: plateHeight)
+            carousel(proxy: proxy).frame(height: carouselHeight)
           }
             .opacity(expanded ? 0 : 1)
             .animation(fade, value: expanded)
@@ -43,7 +49,7 @@ struct PresetQuadShelf<Plate: View>: View {
           PresetShelfSurface {
             VStack(spacing: 8) {
               ForEach(groupIDs.indices, id: \.self) { i in
-                plate(i, toggleExpanded).frame(height: plateHeight)
+                plate(i, .all, backgroundPressed).frame(height: namedHeight)
               }
             }
             .background { backgroundToggle }
@@ -57,7 +63,7 @@ struct PresetQuadShelf<Plate: View>: View {
         // Heights are known from the plates, so there is no measurement /
         // animation feedback loop. The parent overflow scroll consumes the
         // animated result and supplies scrolling on shorter displays.
-        .frame(height: expanded ? expandedHeight : plateHeight, alignment: .top)
+        .frame(height: expanded ? expandedHeight : carouselHeight, alignment: .top)
         .clipped()
       }
       .onChange(of: selectedGroup) { _, group in
@@ -87,19 +93,23 @@ struct PresetQuadShelf<Plate: View>: View {
 
   private func controls(proxy: ScrollViewProxy) -> some View {
     HStack(spacing: 4) {
-      Button(action: toggleExpanded) {
+      Button { advanceLevel() } label: {
         HStack(spacing: 5) {
-          Text(expanded ? "Collapse Presets" : "All Presets")
-          Image(systemName: expanded ? "chevron.up" : "chevron.down")
+          Text(level == .mini ? "Show Names" : "All Presets")
+          Image(systemName: "chevron.down")
         }
         .font(.system(size: 10, weight: .semibold))
         .frame(height: 22)
       }
       .buttonStyle(.borderless)
-      .accessibilityIdentifier("preset-shelf-toggle")
-      .accessibilityLabel(expanded ? "Collapse sound presets" : "Show all sound presets")
-      .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-      .help(expanded ? "Return to the preset carousel" : "Show every preset group vertically")
+      .disabled(level == .all)
+      .accessibilityIdentifier("preset-shelf-expand")
+      .accessibilityLabel(level == .mini ? "Show preset names" : "Show all sound presets")
+      .accessibilityValue(level == .mini ? "Icons only" : level == .named ? "Icons and names" : "All presets")
+      .help(level == .mini ? "Show names below the preset icons" : "Show every preset group vertically")
+      pageButton(level == .all ? "Show preset carousel" : "Show preset icons only",
+                 symbol: "chevron.up", disabled: level == .mini) { retreatLevel() }
+        .accessibilityIdentifier("preset-shelf-collapse")
       Spacer(minLength: 4)
       HStack(spacing: 4) {
         pageButton("Previous preset groups", symbol: "chevron.left", disabled: edges.atStart) {
@@ -121,8 +131,8 @@ struct PresetQuadShelf<Plate: View>: View {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 8) {
           ForEach(groupIDs.indices, id: \.self) { i in
-            plate(i, toggleExpanded)
-              .frame(width: max(120, (geometry.size.width - 8) / 2), height: plateHeight)
+            plate(i, level == .mini ? .mini : .named, backgroundPressed)
+              .frame(width: max(120, (geometry.size.width - 8) / 2), height: carouselHeight)
               .background {
                 GeometryReader { frame in
                   Color.clear.preference(key: PresetQuadFrames.self,
@@ -179,7 +189,7 @@ struct PresetQuadShelf<Plate: View>: View {
   }
 
   private var backgroundToggle: some View {
-    Button(action: toggleExpanded) { Color.clear.contentShape(Rectangle()) }
+    Button(action: backgroundPressed) { Color.clear.contentShape(Rectangle()) }
       .buttonStyle(.plain)
       .accessibilityHidden(true)
   }
@@ -198,11 +208,25 @@ struct PresetQuadShelf<Plate: View>: View {
     .help(title)
   }
 
-  private func toggleExpanded() {
-    guard !DragScrollGate.suppressTap else { return }
+  private func advanceLevel() {
+    guard let next = PresetShelfLevel(rawValue: level.rawValue + 1) else { return }
+    changeLevel(to: next)
+  }
+
+  private func retreatLevel() {
+    guard let previous = PresetShelfLevel(rawValue: level.rawValue - 1) else { return }
+    changeLevel(to: previous)
+  }
+
+  private func backgroundPressed() {
+    if level == .mini { advanceLevel() } else { retreatLevel() }
+  }
+
+  private func changeLevel(to next: PresetShelfLevel) {
+    guard !DragScrollGate.suppressTap, next != level else { return }
     let animation: Animation? = reduceMotion || powerSaver
-      ? nil : PopupMotion.expansion(opening: !expanded)
-    withAnimation(animation) { expanded.toggle() }
+      ? nil : PopupMotion.expansion(opening: next.rawValue > level.rawValue)
+    withAnimation(animation) { level = next }
   }
 
   private func goTo(_ index: Int, proxy: ScrollViewProxy) {

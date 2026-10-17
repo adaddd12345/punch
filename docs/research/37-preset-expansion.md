@@ -107,3 +107,32 @@ closing, zero bounce and no start delay, with a 160 ms surface fade. Paging
 keeps the existing 240 ms timing. The same 22 native checks pass. At 80 ms the
 rendered follower is now at 660 pixels rather than 984 (302 collapsed, 1502
 expanded), confirming a more gradual reveal while retaining immediate response.
+
+## Three-level preset shelf and player disclosure
+
+The preset shelf now starts with eight separate mini icon bentos, arranged in
+two rows of four. Native hover help exposes each name. The next level shows
+names under the icons; the third shows all four-way groups vertically. Separate
+expand and collapse controls move one level at a time. Background gaps expand
+mini to named, or collapse a larger level by one step. The same retained
+carousel and 400/280 ms motion remain in use.
+
+The player-card disclosure is separate: it hides every non-player block plus
+the tempo, sound, Mac volume/output and utility rows inside the hero. The media
+headline and transport, disclosure button and app footer remain available.
+It does not invoke window close, hide or app termination. Reopening restores
+the controls; Classic and the dedicated Mini app layout keep their behavior.
+
+The footer now uses flat monochrome symbols with a custom headphones-and-decks
+DJ outline. Bass and Gain replace Strength and Boost; removing the redundant
+caption lines makes those two scrub cards shorter without changing their DSP
+parameters or ranges.
+
+Validation: the updated native shelf fixture passes 20 checks. The release
+app builds and passes strict code-signature verification. Installed-app checks
+confirmed all three preset levels and player collapse/reopen with the media
+controls retained. Reopening initially left the standalone window too small;
+restoring its available viewport after expansion fixes that, verified again
+in the installed build. Footer glyphs were rendered and visually inspected.
+Native hover help is present in code; tooltip appearance was not separately
+exercised through automation.
