@@ -1058,7 +1058,7 @@ struct PopoverView: View {
             Image(systemName: "waveform").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16)
               .symbolEffect(.variableColor.iterative, isActive: visible && !controller.settings.powerSaver && !reduceMotion)
           } else {
-            FooterFlatIcon(kind: .grid)
+            FooterFlatIcon(kind: .beats)
           }
           if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
@@ -1082,7 +1082,7 @@ struct PopoverView: View {
             Image(systemName: "hourglass").font(.system(size: 11, weight: .semibold))
               .frame(width: 16, height: 16)
           } else {
-            FooterFlatIcon(kind: .check)
+            FooterFlatIcon(kind: .diagnose)
           }
         }
       }

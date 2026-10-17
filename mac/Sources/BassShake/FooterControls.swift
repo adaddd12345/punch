@@ -267,8 +267,8 @@ struct FooterShakerMenu<Content: View>: View {
     .fixedSize()
     .frame(width: FooterBento.button, height: FooterBento.button)
     .overlay {
-      // Flat cog; the surrounding plate carries hover and press feedback.
-      FooterFlatIcon(kind: .gear)
+      // Hand, shaker and wrench; the plate carries hover and press feedback.
+      FooterFlatIcon(kind: .settings)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)
