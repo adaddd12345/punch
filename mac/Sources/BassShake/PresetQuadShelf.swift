@@ -25,7 +25,7 @@ struct PresetQuadShelf<Plate: View>: View {
     CGFloat(groupIDs.count) * plateHeight + CGFloat(max(0, groupIDs.count - 1)) * 8
   }
   private var motion: Animation? { reduceMotion || powerSaver ? nil : PopupMotion.resize }
-  private var fade: Animation? { reduceMotion || powerSaver ? nil : .easeOut(duration: 0.12) }
+  private var fade: Animation? { reduceMotion || powerSaver ? nil : .easeOut(duration: 0.16) }
 
   var body: some View {
     ScrollViewReader { proxy in
@@ -200,7 +200,9 @@ struct PresetQuadShelf<Plate: View>: View {
 
   private func toggleExpanded() {
     guard !DragScrollGate.suppressTap else { return }
-    withAnimation(motion) { expanded.toggle() }
+    let animation: Animation? = reduceMotion || powerSaver
+      ? nil : PopupMotion.expansion(opening: !expanded)
+    withAnimation(animation) { expanded.toggle() }
   }
 
   private func goTo(_ index: Int, proxy: ScrollViewProxy) {

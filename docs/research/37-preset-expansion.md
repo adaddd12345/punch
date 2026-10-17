@@ -98,3 +98,12 @@ confirming visible interpolation (not an FPS benchmark). SwiftUI's geometry
 observer reported final model heights only; presentation screenshots, rather
 than that observer, were used to verify movement. Glass fixture and installed
 app images were inspected with no residual hidden-surface drawing.
+
+## Slower reveal tuning
+
+User feedback found the first 240 ms opening too immediate. The preset shelf
+now uses shared `PopupMotion.expansion(opening:)`: 400 ms opening, 280 ms
+closing, zero bounce and no start delay, with a 160 ms surface fade. Paging
+keeps the existing 240 ms timing. The same 22 native checks pass. At 80 ms the
+rendered follower is now at 660 pixels rather than 984 (302 collapsed, 1502
+expanded), confirming a more gradual reveal while retaining immediate response.
