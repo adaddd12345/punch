@@ -698,16 +698,60 @@ struct TakeControlButton: View {
   let id: String
   let name: String
   var compact = false
+  var fillsWidth = false
 
   var body: some View {
     Button { TakeControl.shared.start(id) } label: {
-      Label(compact ? "Take Control" : "Take Control of \(name)", systemImage: "hand.point.up.left.fill")
-        .font(.system(size: 11, weight: .semibold, design: .rounded))
-        .lineLimit(1)
+      HStack(spacing: 6) {
+        Image(systemName: "slider.horizontal.3")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(.secondary)
+        Text(compact ? "Take Control" : "Take Control of \(name)")
+          .font(.system(size: 11, weight: .semibold, design: .rounded))
+          .lineLimit(1)
+        if fillsWidth {
+          Spacer(minLength: 4)
+          Image(systemName: "arrow.right")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+        }
+      }
+      .padding(.horizontal, fillsWidth ? 10 : 8)
+      .frame(maxWidth: fillsWidth ? .infinity : nil)
+      .frame(height: fillsWidth ? 26 : 22)
+      .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
-    .controlSize(.small)
+    .buttonStyle(TakeControlActionStyle())
     .accessibilityLabel("Take Control of \(name)")
     .pointerHint("Take Control", does: "This popup then changes that Mac's sound until you Switch Back.")
+  }
+}
+
+/// A quiet inset action, using the same material values as the remote chips.
+private struct TakeControlActionStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    Response(label: configuration.label, pressed: configuration.isPressed)
+  }
+
+  private struct Response<Label: View>: View {
+    let label: Label
+    let pressed: Bool
+    @State private var hovered = false
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.powerSaver) private var powerSaver
+
+    var body: some View {
+      let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+      let base = contrast == .increased ? 0.14 : 0.06
+      label
+        .background(shape.fill(Color.primary.opacity(base + (pressed ? 0.055 : hovered ? 0.025 : 0))))
+        .overlay(shape.strokeBorder(Color.primary.opacity(contrast == .increased ? 0.18 : 0.06), lineWidth: 0.5))
+        .opacity(pressed ? 0.8 : 1)
+        .onHover { hovered = $0 }
+        .animation(pressed || reduceMotion || powerSaver ? nil : .easeOut(duration: 0.12), value: pressed)
+        .animation(reduceMotion || powerSaver ? nil : .easeOut(duration: 0.12), value: hovered)
+    }
   }
 }
 

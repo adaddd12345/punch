@@ -24,28 +24,37 @@ struct RemoteMacsBlock: View {
 struct RemoteMacTile: View {
   @ObservedObject var model: RemotePeerModel
   let size: ViewSize
+  @State private var expanded = true
   @State private var dragStart: Double?
+  @GestureState private var volumeHeld = false
   @State private var barWidth: CGFloat = 300
   @Environment(\.colorScheme) private var scheme
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.labelLevel) private var labels
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
 
   private var s: RemoteState? { model.state }
   private var live: Bool { model.connected && s != nil }
 
   var body: some View {
-    BentoTile(tint: .steel, padding: 0, glassID: "remote.\(model.id)") {
+    BentoTile(tint: .steel, padding: 0, clipped: true, glassID: "remote.\(model.id)") {
       VStack(alignment: .leading, spacing: 6) {
         header
-        volumeRow
-        // Only live data: a stale song with a play button would mislead.
-        if size == .full, live, let st = s, st.playingTitle != nil || st.canPlayPause { playingRow(st) }
-        chips
-        // Take Control: the whole popup drives this Mac until Switch Back.
-        if live && size != .mini {
-          TakeControlButton(id: model.id, name: model.name, compact: true)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        if expanded {
+          VStack(alignment: .leading, spacing: 6) {
+            volumeRow
+            // Only live data: a stale song with a play button would mislead.
+            if size == .full, live, let st = s, st.playingTitle != nil || st.canPlayPause { playingRow(st) }
+            chips
+            // The whole popup drives this Mac until Switch Back.
+            if live && size != .mini {
+              TakeControlButton(id: model.id, name: model.name, compact: true, fillsWidth: true)
+            }
+          }
+          .transition(.opacity)
         }
+        // A refused command or pairing problem must remain visible when folded.
         if let n = model.note {
           Text(n)
             .font(.system(size: 10, weight: .medium))
@@ -56,37 +65,56 @@ struct RemoteMacTile: View {
       }
       .padding(8)
     }
-    .animation(.easeOut(duration: 0.15), value: model.note)
+    .animation(reduceMotion || powerSaver ? nil : .easeOut(duration: 0.15), value: model.note)
+    .onChange(of: volumeHeld) { _, held in if !held { finishVolumeDrag() } }
+    .onChange(of: live) { _, connected in if !connected { finishVolumeDrag() } }
+    .onDisappear { finishVolumeDrag() }
     .pointerHint(model.name, does: "Changes here happen on \(model.name), not this Mac.")
   }
 
   // MARK: Rows
 
   private var header: some View {
-    HStack(spacing: 6) {
-      Circle()
-        .fill(dotColor)
-        .frame(width: 6, height: 6)
-        .accessibilityLabel(linkText)
-      Image(systemName: "laptopcomputer")
-        .font(.system(size: 11, weight: .semibold))
-        .foregroundStyle(.secondary)
-        .accessibilityHidden(true)
-      Text(model.name)
-        .font(.system(size: 12, weight: .semibold, design: .rounded))
-        .lineLimit(1)
-        .layoutPriority(1)
-      Text(live ? (s?.output ?? "") : linkText)
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
-      Spacer(minLength: 4)
+    HStack(spacing: 4) {
+      Button(action: toggleExpanded) {
+        HStack(spacing: 6) {
+          Circle()
+            .fill(dotColor)
+            .frame(width: 6, height: 6)
+          Image(systemName: "laptopcomputer")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+          Text(model.name)
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .lineLimit(1)
+            .layoutPriority(1)
+          Text(live ? (s?.output ?? "") : linkText)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+          Spacer(minLength: 2)
+          Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
+            .frame(width: 12, height: 16)
+        }
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(RemoteDisclosureStyle())
+      .accessibilityLabel("\(model.name), \(linkText)")
+      .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+      .accessibilityHint(expanded ? "Hide this Mac's controls" : "Show this Mac's controls")
+      .help(expanded ? "Collapse \(model.name)" : "Expand \(model.name)")
+
+      // Kept outside the disclosure's hit area: power never folds the card.
       Button { live ? model.toggleEnabled() : model.retry() } label: {
         Image(systemName: live ? "power" : "arrow.clockwise")
           .font(.system(size: 11, weight: .bold))
           .foregroundStyle(live && s?.enabled == true ? Color.accentColor : Color.secondary)
-          .frame(width: 22, height: 20)
+          .frame(width: 24, height: 24)
           .contentShape(Rectangle())
       }
       .buttonStyle(BentoPressStyle())
@@ -94,7 +122,21 @@ struct RemoteMacTile: View {
                           : "Reconnect to \(model.name)")
       .help(live ? "The Bass Shaker on \(model.name): \(s?.enabled == true ? "on" : "off")" : "Try to connect now")
     }
-    .frame(height: 20)
+    .frame(height: 24)
+  }
+
+  private func toggleExpanded() {
+    if expanded { finishVolumeDrag() }
+    withAnimation(reduceMotion || powerSaver ? nil : PopupMotion.resize) {
+      expanded.toggle()
+    }
+  }
+
+  /// Closing the disclosure or cancelling a drag still flushes its final value.
+  private func finishVolumeDrag() {
+    guard let start = dragStart else { return }
+    dragStart = nil
+    model.setVolume(model.dragVolume ?? start, dragging: false)
   }
 
   private var volumeRow: some View {
@@ -122,17 +164,14 @@ struct RemoteMacTile: View {
 
   private func volumeDrag(_ st: RemoteState, level: Double) -> some Gesture {
     DragGesture(minimumDistance: 2)
+      .updating($volumeHeld) { _, held, _ in held = true }
       .onChanged { g in
         guard live, st.canSetVolume else { return }
         if dragStart == nil { dragStart = level }
         let v = (dragStart ?? 0) + Double(g.translation.width / max(1, barWidth))
         model.setVolume(v, dragging: true)
       }
-      .onEnded { _ in
-        guard let start = dragStart else { return }
-        dragStart = nil
-        model.setVolume(model.dragVolume ?? start, dragging: false)
-      }
+      .onEnded { _ in finishVolumeDrag() }
   }
 
   private func volumeContent(_ st: RemoteState, level: Double) -> some View {
@@ -307,6 +346,32 @@ struct RemoteMacTile: View {
       case .notPaired, .revoked, .version, .keyChanged, .localNetworkDenied: return "Can't connect"
       default: return "Reconnecting…"
       }
+    }
+  }
+}
+
+/// A disclosure acknowledges the pointer without scaling its name or moving
+/// the neighbouring power control.
+private struct RemoteDisclosureStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    Response(label: configuration.label, pressed: configuration.isPressed)
+  }
+
+  private struct Response<Label: View>: View {
+    let label: Label
+    let pressed: Bool
+    @State private var hovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.powerSaver) private var powerSaver
+
+    var body: some View {
+      label
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous)
+          .fill(Color.primary.opacity(pressed ? 0.07 : hovered ? 0.035 : 0)))
+        .opacity(pressed ? 0.78 : 1)
+        .onHover { hovered = $0 }
+        .animation(pressed || reduceMotion || powerSaver ? nil : .easeOut(duration: 0.12), value: pressed)
+        .animation(reduceMotion || powerSaver ? nil : .easeOut(duration: 0.12), value: hovered)
     }
   }
 }
