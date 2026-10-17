@@ -748,6 +748,8 @@ struct Settings: Codable, Equatable {
   var userPresets: [UserPreset] = []
   var character: SoundCharacter = .neutral          // from the selected preset
   var studioEars = false
+  /// Reveal musician controls in Beats; visibility only, never changes playback rate.
+  var artistMode = false
   var mode: ListeningMode = .off
   /// What was selected before a mode took over, restored when it ends.
   var beforeMode: Snapshot?
@@ -994,6 +996,7 @@ struct Settings: Codable, Equatable {
     userPresets = ((try? c.decodeIfPresent([Lossy<UserPreset>].self, forKey: .userPresets)) ?? nil)?.compactMap(\.value) ?? []
     character = (try? c.decodeIfPresent(SoundCharacter.self, forKey: .character)) ?? d.character
     studioEars = (try? c.decodeIfPresent(Bool.self, forKey: .studioEars)) ?? d.studioEars
+    artistMode = (try? c.decodeIfPresent(Bool.self, forKey: .artistMode)) ?? d.artistMode
     mode = (try? c.decodeIfPresent(ListeningMode.self, forKey: .mode)) ?? d.mode
     beforeMode = try? c.decodeIfPresent(Snapshot.self, forKey: .beforeMode)
     noiseOn = (try? c.decodeIfPresent(Bool.self, forKey: .noiseOn)) ?? d.noiseOn

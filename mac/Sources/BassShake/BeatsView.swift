@@ -10,13 +10,15 @@ import SwiftUI
 /// Fixed heights, so changing beat, layout or state never moves the tray.
 struct BeatsView: View {
   @ObservedObject var player: BeatPlayer
+  @ObservedObject var controller: AudioController
   let side: Bool
   /// Rows or grid, under the popup (remembered by the caller).
   @State private var grid: Bool
   let onGridChange: (Bool) -> Void
 
-  init(player: BeatPlayer, side: Bool, grid: Bool, onGridChange: @escaping (Bool) -> Void) {
+  init(player: BeatPlayer, controller: AudioController, side: Bool, grid: Bool, onGridChange: @escaping (Bool) -> Void) {
     self.player = player
+    self.controller = controller
     self.side = side
     _grid = State(initialValue: grid)
     self.onGridChange = onGridChange
@@ -173,25 +175,37 @@ struct BeatsView: View {
 
   private func bpmControl(_ drop: BeatDrop) -> some View {
     HStack(spacing: 2) {
-      stepButton("minus", label: "Slower") { player.setBPM(player.bpm - 1) }
-      Text("\(Int(player.bpm)) BPM")
-        .font(Drawer.smallFont.weight(.semibold))
-        .monospacedDigit()
-        .lineLimit(1)
-        .fixedSize()
-        .frame(minWidth: 52, minHeight: Drawer.hit)
-        .foregroundStyle(player.bpm == drop.bpm ? Color.primary : accent)
-        .contentShape(Rectangle())
-        .onTapGesture { player.resetBPM() }
-        .help("Tempo. Click to go back to \(Int(drop.bpm)) BPM.")
-        .accessibilityElement()
-        .accessibilityLabel("Tempo")
-        .accessibilityValue("\(Int(player.bpm)) BPM")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint("Goes back to \(Int(drop.bpm)) BPM")
-        .accessibilityAction { player.resetBPM() }
-        .accessibilityAdjustableAction { dir in player.setBPM(player.bpm + (dir == .increment ? 1 : -1)) }
-      stepButton("plus", label: "Faster") { player.setBPM(player.bpm + 1) }
+      if controller.settings.artistMode {
+        stepButton("minus", label: "Slower") { player.setBPM(player.bpm - 1) }
+        Text("\(Int(player.bpm)) BPM")
+          .font(Drawer.smallFont.weight(.semibold))
+          .monospacedDigit()
+          .lineLimit(1)
+          .fixedSize()
+          .frame(minWidth: 52, minHeight: Drawer.hit)
+          .foregroundStyle(player.bpm == drop.bpm ? Color.primary : accent)
+          .contentShape(Rectangle())
+          .onTapGesture { player.resetBPM() }
+          .help("Beats tempo; pitch stays the same. Click to return to \(Int(drop.bpm)) BPM.")
+          .accessibilityElement()
+          .accessibilityLabel("Tempo")
+          .accessibilityValue("\(Int(player.bpm)) BPM")
+          .accessibilityAddTraits(.isButton)
+          .accessibilityHint("Goes back to \(Int(drop.bpm)) BPM")
+          .accessibilityAction { player.resetBPM() }
+          .accessibilityAdjustableAction { dir in player.setBPM(player.bpm + (dir == .increment ? 1 : -1)) }
+        stepButton("plus", label: "Faster") { player.setBPM(player.bpm + 1) }
+      } else {
+        // Keep the actual rate visible when hiding the controls. A visibility
+        // preference must not silently reset a beat that is already playing.
+        Text("\(Int(player.bpm)) BPM")
+          .font(Drawer.smallFont.weight(.semibold))
+          .monospacedDigit()
+          .foregroundStyle(.secondary)
+          .fixedSize()
+          .padding(.horizontal, 6)
+          .help("Enable Artist Mode in Settings to adjust Beats tempo.")
+      }
     }
   }
 

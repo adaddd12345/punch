@@ -530,7 +530,7 @@ struct PopoverView: View {
     // fits; the slim side card only beside a popup on a side Dock.
     let side = LiveDrawer.shared.sideOnly
     LiveDrawer.shared.appearance = drawerAppearance
-    LiveDrawer.shared.show(BeatsView(player: beats, side: side, grid: controller.settings.beatsGrid) { [controller] g in
+    LiveDrawer.shared.show(BeatsView(player: beats, controller: controller, side: side, grid: controller.settings.beatsGrid) { [controller] g in
                              if controller.settings.beatsGrid != g { controller.settings.beatsGrid = g }
                            },
                            side: side, width: side ? BeatsView.sideWidth : nil,

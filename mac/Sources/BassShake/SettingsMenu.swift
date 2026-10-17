@@ -20,6 +20,8 @@ struct SettingsMenuContent: View {
 
   var body: some View {
     soundMenu
+    Toggle("Artist Mode", isOn: bind(\.artistMode))
+      .help("Show pitch-preserving tempo controls in Beats. Applies to Beats playback only.")
     devicesMenu
     LightsOutMenu(controller: controller)
     lookMenu
