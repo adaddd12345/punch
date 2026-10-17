@@ -1105,35 +1105,13 @@ struct ShakerIcon: View {
   }
 
   static func path(in rect: CGRect) -> NSBezierPath {
-    let s = min(rect.width, rect.height) / 18
-    func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: rect.minX + x * s, y: rect.minY + y * s) }
-    let path = NSBezierPath()
-    path.windingRule = .evenOdd
-    // Cap: dome with three holes.
-    path.move(to: pt(5.5, 5.0))
-    path.curve(to: pt(9, 1.5), controlPoint1: pt(5.5, 3.0), controlPoint2: pt(7.0, 1.5))
-    path.curve(to: pt(12.5, 5.0), controlPoint1: pt(11.0, 1.5), controlPoint2: pt(12.5, 3.0))
-    path.line(to: pt(5.5, 5.0))
-    path.close()
-    for (x, y) in [(7.3, 3.7), (9.0, 3.0), (10.7, 3.7)] {
-      path.appendOval(in: NSRect(x: rect.minX + (CGFloat(x) - 0.7) * s, y: rect.minY + (CGFloat(y) - 0.7) * s,
-                                 width: 1.4 * s, height: 1.4 * s))
-    }
-    // Body outline (tapered), wall 1.5.
-    let outer = NSBezierPath()
-    outer.move(to: pt(6.25, 6.0)); outer.line(to: pt(11.75, 6.0))
-    outer.line(to: pt(13.25, 15.0)); outer.curve(to: pt(12.0, 16.5), controlPoint1: pt(13.4, 15.9), controlPoint2: pt(12.9, 16.5))
-    outer.line(to: pt(6.0, 16.5)); outer.curve(to: pt(4.75, 15.0), controlPoint1: pt(5.1, 16.5), controlPoint2: pt(4.6, 15.9))
-    outer.close()
-    path.append(outer)
-    let inner = NSBezierPath()
-    inner.move(to: pt(7.5, 7.5)); inner.line(to: pt(10.5, 7.5)); inner.line(to: pt(11.3, 11.6))
-    // Salt level: a wavy top edge; everything below it stays filled.
-    inner.curve(to: pt(9.0, 11.6), controlPoint1: pt(10.5, 11.0), controlPoint2: pt(9.8, 12.1))
-    inner.curve(to: pt(6.7, 11.6), controlPoint1: pt(8.2, 11.1), controlPoint2: pt(7.4, 11.0))
-    inner.close()
-    path.append(inner)
-    return path
+    // Generated from the same approved SVG as MenuBarIcon*.png. Keep the
+    // template silhouette identical when running the bare SwiftPM binary.
+    let scale = min(rect.width, rect.height) / 18
+    var transform = CGAffineTransform(a: scale, b: 0, c: 0, d: scale,
+                                      tx: rect.midX - 9 * scale, ty: rect.midY - 9 * scale)
+    let projected = MenuBarShakerPath.unit.copy(using: &transform)!
+    return NSBezierPath(cgPath: projected)
   }
 }
 
