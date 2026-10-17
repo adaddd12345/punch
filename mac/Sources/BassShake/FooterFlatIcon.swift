@@ -15,10 +15,6 @@ struct FooterFlatIcon: View {
     }
     .frame(width: 16, height: 16)
     .accessibilityHidden(true)
-    // Settings uses a reversible ease-out; the loupe owns its inspection sequence.
-    // A steep start and long tail keep both gestures quiet and responsive.
-    .animation(motionAllowed ? .timingCurve(0.16, 1, 0.3, 1, duration: engaged ? 0.46 : 0.28) : nil,
-               value: motionAllowed && engaged)
     // Recreate only when motion eligibility changes, cancelling in-flight layers.
     // Ordinary enter/leave keeps identity so the toss can reverse continuously.
     .id(motionAllowed)
@@ -42,19 +38,54 @@ struct FooterFlatIcon: View {
 
   private var serviceGlyph: some View {
     let lifted = motionAllowed && engaged
-    return ZStack {
-      ShakerServiceGlyph(part: .hand).stroke(style: Self.stroke)
-      ShakerServiceGlyph(part: .shaker).stroke(style: Self.stroke)
-        .rotationEffect(.degrees(lifted ? -6 : 0), anchor: UnitPoint(x: 8 / 24, y: 14.5 / 24))
-        .offset(x: lifted ? -2 : 0, y: lifted ? -1.2 : 0)
-      ShakerServiceGlyph(part: .wrench).stroke(style: Self.stroke)
-        .rotationEffect(.degrees(lifted ? 7 : 0), anchor: UnitPoint(x: 17 / 24, y: 14 / 24))
-        .offset(x: lifted ? 2 : 0, y: lifted ? -1.2 : 0)
-    }
+    return SettingsTossGlyph(lift: lifted ? 1 : 0)
+      .stroke(style: Self.stroke)
+      .animation(motionAllowed ? FooterSettingsTossMotion.animation(lifted: lifted) : nil, value: lifted)
   }
 
   // Judge at native size: enlarged outlines hide how dense these marks can read.
   private static let stroke = StrokeStyle(lineWidth: 0.85, lineCap: .round, lineJoin: .round)
+}
+
+/// A short release with a visible coast to the apex, without a spring or delayed phase.
+/// Native timing curves retarget from the current pose when the pointer reverses.
+enum FooterSettingsTossMotion {
+  static let liftDuration = 0.44
+  static let returnDuration = 0.26
+  static let liftCurve = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.12, y: 0.68),
+                                         endControlPoint: UnitPoint(x: 0.26, y: 1))
+  static let returnCurve = UnitCurve.bezier(startControlPoint: UnitPoint(x: 0.20, y: 0.72),
+                                           endControlPoint: UnitPoint(x: 0.30, y: 1))
+
+  static func animation(lifted: Bool) -> Animation {
+    .timingCurve(lifted ? liftCurve : returnCurve,
+                 duration: lifted ? liftDuration : returnDuration)
+  }
+}
+
+/// Keep the original two tools close to the palm: more lift, less sideways splay.
+/// Drawing one interpolated path also preserves the thin stroke during movement.
+private struct SettingsTossGlyph: Shape {
+  var lift: CGFloat
+  var animatableData: CGFloat {
+    get { lift }
+    set { lift = newValue }
+  }
+
+  func path(in rect: CGRect) -> Path {
+    var result = ShakerServiceGlyph(part: .hand).path(in: rect)
+    func tool(_ part: ShakerServiceGlyph.Part, anchor: CGPoint, x: CGFloat, degrees: CGFloat) -> Path {
+      let pivot = CGPoint(x: rect.minX + rect.width * anchor.x / 24,
+                          y: rect.minY + rect.height * anchor.y / 24)
+      let transform = CGAffineTransform(translationX: -pivot.x, y: -pivot.y)
+        .concatenating(CGAffineTransform(rotationAngle: degrees * lift * .pi / 180))
+        .concatenating(CGAffineTransform(translationX: pivot.x + x * lift, y: pivot.y - 1.8 * lift))
+      return ShakerServiceGlyph(part: part).path(in: rect).applying(transform)
+    }
+    result.addPath(tool(.shaker, anchor: CGPoint(x: 8, y: 14.5), x: -0.8, degrees: -4))
+    result.addPath(tool(.wrench, anchor: CGPoint(x: 17, y: 14), x: 0.8, degrees: 4))
+    return result
+  }
 }
 
 /// The sleeve's spine and paired notes remain open at menu-bar scale.

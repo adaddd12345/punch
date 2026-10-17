@@ -11,6 +11,8 @@ struct PopoverView: View {
   /// BentoView's hero tint, for the footer glyphs (PopupTintPreference).
   @State private var popupTint: BentoTint?
   @State private var visible = false
+  @State private var showDoctorReport = false
+  @State private var doctorRequestedHere = false
   @State private var editor: PresetEditor.Mode?
   @State private var showDrivers = false
   @State private var showLive = false
@@ -254,7 +256,7 @@ struct PopoverView: View {
                       heroIconsTight: size == .full && labels == .full ? AnyView(windowTools(words: false)) : nil,
                       flat: !controller.settings.bento,
                       macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
-                      heroMacBlock: AnyView(VStack(alignment: .leading, spacing: 6) {
+                      heroMacBlock: AnyView(VStack(alignment: .leading, spacing: 8) {
                         if controller.settings.showMacVolume {
                           MacVolumeTile(model: controller.macVolume, size: .compact, liquidGlass: false, embedded: true)
                         } else {
@@ -409,8 +411,13 @@ struct PopoverView: View {
     .onReceive(NotificationCenter.default.publisher(for: NSPopover.willShowNotification)) { _ in
       if role == .menuBar { popupOpening += 1 }
     }
+    .onChange(of: controller.doctorReport) { _, report in
+      if report == nil { showDoctorReport = false }
+      else { presentDoctorReport() }
+    }
     .onAppear {
       visible = true
+      DispatchQueue.main.async { presentDoctorReport() }
       popupOpening += 1
       updateTaper = updates.justUpdatedTo != nil
       reshuffle.canStart = { [weak controller] in
@@ -504,6 +511,8 @@ struct PopoverView: View {
     }
     .onDisappear {
       visible = false
+      showDoctorReport = false
+      doctorRequestedHere = false
       reshuffle.detach()
       ticker.stop()
       if role != .launchWindow { controller.artworkReaction.stop(owner: ObjectIdentifier(window)) }
@@ -896,7 +905,7 @@ struct PopoverView: View {
              text: "Ear Protector caught a sudden loud sound and turned it down for a few seconds.",
              action: ("Mute Now", { controller.muteOutput(); controller.earAlertVisible = false }),
              secondary: ("OK", { controller.earAlertVisible = false }))
-    case _ where controller.doctorReport != nil:
+    case _ where controller.doctorReport != nil && size == .mini && !dockHeaderShown:
       Banner(symbol: "stethoscope", tint: .green,
              text: (controller.doctorReport ?? []).joined(separator: "\n"),
              action: ("OK", { controller.doctorReport = nil }),
@@ -1071,10 +1080,21 @@ struct PopoverView: View {
     }
   }
 
+  /// Only the requesting controls (or the active window for menu commands)
+  /// present the result; another open copy must not steal its popover.
+  private func presentDoctorReport() {
+    guard visible, !controller.isMirror, controller.doctorReport != nil,
+          size != .mini || dockHeaderShown,
+          doctorRequestedHere || window.window?.isKeyWindow == true else { return }
+    showDoctorReport = true
+    doctorRequestedHere = false
+  }
+
   /// Tools: Check & Fix and the ⋯ shaker menu.
   private var toolsGroup: some View {
     FooterGroup {
       Button {
+        doctorRequestedHere = true
         controller.checkAndFix()
       } label: {
         Group {
@@ -1089,6 +1109,16 @@ struct PopoverView: View {
       .buttonStyle(FooterButtonStyle())
       .accessibilityLabel("Check and fix sound issues")
       .pointerHint(Caption.checkAndFix())
+      .popover(isPresented: Binding(
+        get: { showDoctorReport && controller.doctorReport != nil },
+        set: {
+          showDoctorReport = $0
+          if !$0 { controller.doctorReport = nil; doctorRequestedHere = false }
+        }), arrowEdge: .bottom) {
+        DoctorReportCard(report: controller.doctorReport ?? [],
+                         dismiss: { controller.doctorReport = nil },
+                         restart: controller.status == .audioServiceStuck ? controller.restartAudioService : nil)
+      }
       FooterShakerMenu(help: "Settings") {
         SettingsMenuContent(controller: controller, updates: updates, panel: $menuPanel)
       }
@@ -1226,6 +1256,32 @@ private struct TakeoverNotice: View {
       Banner(symbol: "laptopcomputer", tint: .orange, text: n,
              action: ("OK", { withAnimation(.easeOut(duration: 0.15)) { take.notice = nil } }), secondary: nil)
     }
+  }
+}
+
+/// Native popover anchors the result to Check & Fix without shifting the popup's tiles.
+private struct DoctorReportCard: View {
+  let report: [String]
+  let dismiss: () -> Void
+  var restart: (() -> Void)?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      Label("Sound Check", systemImage: "stethoscope")
+        .font(.system(size: 12, weight: .semibold))
+      Text(report.joined(separator: "\n"))
+        .font(.system(size: 11))
+        .fixedSize(horizontal: false, vertical: true)
+        .textSelection(.enabled)
+      HStack(spacing: 8) {
+        if let restart { Button("Restart macOS Audio", action: restart) }
+        Spacer(minLength: 0)
+        Button("OK", action: dismiss).keyboardShortcut(.defaultAction)
+      }
+      .controlSize(.small)
+    }
+    .padding(14)
+    .frame(width: 300, alignment: .leading)
   }
 }
 

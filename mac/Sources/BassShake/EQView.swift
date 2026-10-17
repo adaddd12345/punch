@@ -60,7 +60,11 @@ struct EQView: View {
   @State private var qCommit: DispatchWorkItem?
   /// Response curves of the bands as drawn, memoized per (bands, count).
   @State private var curves = CurveCache()
-  @FocusState private var focused: Bool
+  /// Keyboard ownership follows a graph press; SwiftUI focusable consumes
+  /// the graph's pointer drag on macOS, so it must not wrap this surface.
+  @State private var focused = false
+  @State private var keyboardMonitor: Any?
+  @State private var keyboardWindow: NSWindow?
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.colorScheme) private var scheme
   @Environment(\.pointerHintsOn) private var hintsOn
@@ -163,12 +167,6 @@ struct EQView: View {
           }
         }
       }
-      .focusable()
-      .focusEffectDisabled()   // no blue outline round the EQ box
-      .focused($focused)
-      .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow, .space, .delete]) { press in
-        handleKey(press)
-      }
       .gesture(dragGesture(size: size, frameOrigin: geo.frame(in: .global).origin))
       .simultaneousGesture(TapGesture(count: 2).onEnded { resetHovered() })
       // Outside the drag: as an inner gesture, the hint's own drag would win
@@ -199,8 +197,8 @@ struct EQView: View {
       .onChange(of: dragHeld) { _, held in
         if !held { finishDrag() }
       }
-      .onAppear { installScrollMonitor() }
-      .onDisappear { finishDrag(); removeScrollMonitor() }
+      .onAppear { installScrollMonitor(); installKeyboardMonitor() }
+      .onDisappear { finishDrag(); removeScrollMonitor(); removeKeyboardMonitor() }
       // Outside accessibilityRepresentation so the context remains readable
       // alongside the band's accessible sliders. It never intercepts a drag.
       .overlay(alignment: .bottom) {
@@ -476,6 +474,7 @@ struct EQView: View {
     DragGesture(minimumDistance: 0, coordinateSpace: .global)
       .updating($dragHeld) { _, held, _ in held = true }
       .onChanged { v in
+        keyboardWindow = NSApp.currentEvent?.window ?? keyboardWindow ?? NSApp.keyWindow
         if kbActive { kbActive = false }
         if lineDrag != nil { dragLine(v, size: size, frameOrigin: frameOrigin); return }
         if grabbed == nil {
@@ -539,6 +538,7 @@ struct EQView: View {
   /// Release, cancellation, and popup dismissal all settle the same edit.
   /// Idempotent because GestureState can reset before onEnded is delivered.
   private func finishDrag() {
+    let didHold = grabbed != nil || lineDrag != nil
     if let i = grabbed, controller.isPreviewing(Self.dragKey) {
       let final = shown.bands
       controller.endPreview(Self.dragKey) {
@@ -549,6 +549,7 @@ struct EQView: View {
     dragOrigin = nil
     othersCurve = []
     if lineDrag != nil { endLine() }
+    if didHold { focused = true }
     setLineCursor(false)
   }
 
@@ -645,22 +646,22 @@ struct EQView: View {
     return r > 0 ? "+\(r)" : (r < 0 ? "\u{2212}\(-r)" : "0")
   }
 
-  private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+  private func handleKey(_ key: KeyEquivalent, _ modifiers: EventModifiers) -> KeyPress.Result {
     commitQ()
     let bands = shown.bands
     guard !bands.isEmpty else { return .ignored }
     kbActive = true
     kbBand = min(kbBand, bands.count - 1)
     var b = bands[kbBand]
-    let alt = press.modifiers.contains(.option), fine = press.modifiers.contains(.shift)
-    switch press.key {
+    let alt = modifiers.contains(.option), fine = modifiers.contains(.shift)
+    switch key {
     case .leftArrow where !alt: kbBand = (kbBand + bands.count - 1) % bands.count; return .handled
     case .rightArrow where !alt: kbBand = (kbBand + 1) % bands.count; return .handled
     case .leftArrow, .rightArrow:
-      let f = press.key == .rightArrow ? 1.06 : 1 / 1.06
+      let f = key == .rightArrow ? 1.06 : 1 / 1.06
       b.freq = min(EQBand.freqRange.upperBound, max(EQBand.freqRange.lowerBound, b.freq * f))
     case .upArrow, .downArrow:
-      let step = (fine ? 0.1 : 0.5) * (press.key == .upArrow ? 1 : -1)
+      let step = (fine ? 0.1 : 0.5) * (key == .upArrow ? 1 : -1)
       b.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, b.gain + step))
     default:
       b.gain = 0
@@ -686,6 +687,48 @@ struct EQView: View {
     b.gain = 0
     controller.update(band: i, to: b, animated: true)
     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+  }
+
+  /// Window-scoped keyboard editing without a focus responder over the Canvas.
+  /// Other controls take ownership on press; Tab returns to normal navigation.
+  private func installKeyboardMonitor() {
+    guard keyboardMonitor == nil else { return }
+    keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown]) { event in
+      if event.type != .keyDown {
+        // A title-bar activation does not change the control being edited.
+        let inContent = event.locationInWindow.y <= (event.window?.contentView?.bounds.height ?? 0)
+        // Every content press releases ownership; a graph drag reacquires
+        // it on release. Never keep a stale graph rect after layout changes.
+        if event.window !== keyboardWindow || inContent { focused = false }
+        keyboardWindow = event.window
+        return event
+      }
+      guard focused, keyboardWindow != nil, event.window === keyboardWindow,
+            !(keyboardWindow?.firstResponder is NSTextView) else { return event }
+      if event.keyCode == 48 { focused = false; return event }
+      guard !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control) else { return event }
+      let key: KeyEquivalent
+      switch event.keyCode {
+      case 123: key = .leftArrow
+      case 124: key = .rightArrow
+      case 125: key = .downArrow
+      case 126: key = .upArrow
+      case 49: key = .space
+      case 51, 117: key = .delete
+      default: return event
+      }
+      var modifiers: EventModifiers = []
+      if event.modifierFlags.contains(.option) { modifiers.insert(.option) }
+      if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
+      return handleKey(key, modifiers) == .handled ? nil : event
+    }
+  }
+
+  private func removeKeyboardMonitor() {
+    if let keyboardMonitor { NSEvent.removeMonitor(keyboardMonitor) }
+    keyboardMonitor = nil
+    keyboardWindow = nil
+    focused = false
   }
 
   private func installScrollMonitor() {

@@ -9,6 +9,7 @@ enum PresetShelfLevel: Int, CaseIterable {
 /// would instead clamp that offset while the document width was animating.
 struct PresetQuadShelf<Plate: View>: View {
   let groupIDs: [[String]]
+  var groupTitles: [String?] = []
   let selectedGroup: Int
   let compact: Bool
   let powerSaver: Bool
@@ -25,17 +26,22 @@ struct PresetQuadShelf<Plate: View>: View {
 
   private var expanded: Bool { level == .all }
   private var namedHeight: CGFloat { compact ? 104 : 112 }
+  private let categoryHeadingHeight: CGFloat = 24
   private var carouselHeight: CGFloat { level == .mini ? 72 : namedHeight }
   private var lastLeadingGroup: Int { max(0, groupIDs.count - 2) }
+  private func title(for index: Int) -> String? {
+    groupTitles.indices.contains(index) ? groupTitles[index] : nil
+  }
   private var expandedHeight: CGFloat {
     CGFloat(groupIDs.count) * namedHeight + CGFloat(max(0, groupIDs.count - 1)) * 8
+      + CGFloat(groupIDs.indices.filter { title(for: $0) != nil }.count) * categoryHeadingHeight
   }
   private var motion: Animation? { reduceMotion || powerSaver ? nil : PopupMotion.resize }
   private var fade: Animation? { reduceMotion || powerSaver ? nil : .easeOut(duration: 0.16) }
 
   var body: some View {
     ScrollViewReader { proxy in
-      VStack(spacing: 5) {
+      VStack(spacing: 8) {
         controls(proxy: proxy)
         ZStack(alignment: .top) {
           PresetShelfSurface {
@@ -49,7 +55,17 @@ struct PresetQuadShelf<Plate: View>: View {
           PresetShelfSurface {
             VStack(spacing: 8) {
               ForEach(groupIDs.indices, id: \.self) { i in
-                plate(i, .all, backgroundPressed).frame(height: namedHeight)
+                VStack(alignment: .leading, spacing: 0) {
+                  if let title = title(for: i) {
+                    Text(title)
+                      .font(.system(size: 10, weight: .semibold))
+                      .foregroundStyle(.secondary)
+                      .padding(.horizontal, 4)
+                      .frame(height: categoryHeadingHeight, alignment: .center)
+                      .accessibilityAddTraits(.isHeader)
+                  }
+                  plate(i, .all, backgroundPressed).frame(height: namedHeight)
+                }
               }
             }
             .background { backgroundToggle }
@@ -99,7 +115,7 @@ struct PresetQuadShelf<Plate: View>: View {
           Image(systemName: "chevron.down")
         }
         .font(.system(size: 10, weight: .semibold))
-        .frame(height: 22)
+        .frame(height: 24)
       }
       .buttonStyle(.borderless)
       .disabled(level == .all)
@@ -199,7 +215,7 @@ struct PresetQuadShelf<Plate: View>: View {
     Button(action: action) {
       Image(systemName: symbol)
         .font(.system(size: 11, weight: .semibold))
-        .frame(width: 24, height: 22)
+        .frame(width: 24, height: 24)
         .contentShape(Rectangle())
     }
     .buttonStyle(.borderless)

@@ -33,6 +33,21 @@ struct FixtureView: View {
   static func main() throws {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory); app.finishLaunching()
+    // Sample the production curve, not a separately approximated animation.
+    // A toss must launch immediately and visibly lose speed before its apex.
+    let duration = FooterSettingsTossMotion.liftDuration
+    let curve = FooterSettingsTossMotion.liftCurve
+    let at80 = curve.value(at: 0.08 / duration)
+    let at200 = curve.value(at: 0.20 / duration)
+    let at360 = curve.value(at: 0.36 / duration)
+    let launchSpeed = at80 / 0.08
+    let midairSpeed = (at200 - at80) / 0.12
+    let apexSpeed = (at360 - at200) / 0.16
+    precondition(at80 > 0.5 && at80 < 0.75, "release should be prompt without arriving instantly")
+    precondition(launchSpeed > midairSpeed * 2 && midairSpeed > apexSpeed * 2,
+                 "toss must decelerate clearly through midair and the apex")
+    print(String(format: "PASS: production toss decelerates (launch %.2f, midair %.2f, apex %.2f progress/s)",
+                 launchSpeed, midairSpeed, apexSpeed))
     for kind in [FooterFlatIcon.Kind.settings, .diagnose] {
       prefix = kind == .settings ? "settings" : "diagnose"
       print("Checking \(prefix)")
@@ -46,7 +61,15 @@ struct FixtureView: View {
       let rest = try snapshot(host, "rest")
       model.lifted = true; pump(0.06)
       let early = try snapshot(host, "early")
-      pump(0.41)
+      if kind == .settings {
+        pump(0.10)
+        _ = try snapshot(host, "midair")
+        pump(0.14)
+        _ = try snapshot(host, "coast")
+        pump(0.17)
+      } else {
+        pump(0.41)
+      }
       let peak = try snapshot(host, "peak")
       precondition(rest != peak, "hover must visibly change the artwork")
       print("PASS: hover visibly changes artwork")

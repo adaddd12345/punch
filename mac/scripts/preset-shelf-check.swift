@@ -114,8 +114,8 @@ private struct FixtureGlassContainer: ViewModifier {
     defer { fixture.toggle = nil; window.orderOut(nil); window.contentView = nil }
     pump(0.8)
 
-    let mini: CGFloat = 99
-    let named: CGFloat = 139
+    let mini: CGFloat = 104 // 24 pt controls + 8 pt gap + 72 pt icon rows.
+    let named: CGFloat = 144 // Same header/gap + 112 pt named plates.
     check(near(fixture.height, mini), "default mini shelf has two short icon rows (observed \(fixture.height))")
     check(fixture.toggle != nil, "production builder exposes background action")
     guard let scroll = descendants(host).compactMap({ $0 as? NSScrollView }).first,
@@ -154,10 +154,10 @@ private struct FixtureGlassContainer: ViewModifier {
     fixture.selectedGroup = 1
     pump(0.4)
     let secondGroupOffset = max(120, (clip.bounds.width - 8) / 2) + 8
-    check(near(clip.bounds.origin.x, secondGroupOffset), "external selected-group change reveals the new group")
+    check(near(clip.bounds.origin.x, secondGroupOffset), "external selected-group change reveals the new group (observed \(clip.bounds.origin.x), expected \(secondGroupOffset))")
     background(); pump(0.5)
     check(near(fixture.height, named), "background shows names for newly selected group")
-    check(near(clip.bounds.origin.x, secondGroupOffset), "showing names retains newly selected group")
+    check(near(clip.bounds.origin.x, secondGroupOffset), "showing names retains newly selected group (observed \(clip.bounds.origin.x), expected \(secondGroupOffset))")
     background(); pump(0.5)
 
     print("System Reduce Motion: \(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion); user setting unchanged")
