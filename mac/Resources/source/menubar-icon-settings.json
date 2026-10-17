@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "azimuth": 71,
+  "elevation": 31,
+  "width": 100,
+  "depth": 101,
+  "height": 100,
+  "cornerRadius": 5.5,
+  "speakerRadius": 32.5,
+  "hubRadius": 10.2,
+  "speakerX": 50,
+  "speakerY": 49,
+  "holeRadius": 2.6,
+  "holeSpread": 1.25,
+  "holeCount": 7,
+  "topGap": 9,
+  "sideGap": 11,
+  "viewMode": "mono",
+  "hiddenEdges": true
+}
