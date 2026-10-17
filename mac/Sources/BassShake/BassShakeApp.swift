@@ -162,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   /// to application-defined behaviour so it stays open, and NSPopover's own
   /// animation gives the quick fade in and out.
   private var statusItem: NSStatusItem?
+  private var menuBarContent: MenuBarContentController?
   private let popover = NSPopover()
 
   /// Where the popover hangs from: the menu-bar icon, or (Show in Dock) an
@@ -192,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     item.autosaveName = "BassShakeStatusItem"
     item.isVisible = controller.settings.menuBarIconShown
     statusItem = item
+    menuBarContent = MenuBarContentController(item: item, controller: controller)
     popover.delegate = self
     UNUserNotificationCenter.current().delegate = self
 
@@ -238,7 +240,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       .map { glyph, on, moon in MenuBarIcon.Key(glyph: on ? glyph : nil, moon: moon) }
       .removeDuplicates()
       .receive(on: DispatchQueue.main)
-      .sink { [weak self] key in self?.statusItem?.button?.image = MenuBarIcon.image(for: key) }
+      .sink { [weak self] key in
+        self?.statusItem?.button?.image = MenuBarIcon.image(for: key)
+        self?.menuBarContent?.refreshLayout()
+      }
       .store(in: &cancellables)
     controller.$settings.map(\.menuBarIconShown).removeDuplicates()
       .receive(on: RunLoop.main)
@@ -407,7 +412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   /// The icon shows state without opening anything: dimmed when off, "A/B"
   /// while comparing with the original, "!" when something needs attention.
   private func updateStatusIcon(enabled: Bool, bypassed: Bool, status: AudioController.Status) {
-    guard let b = statusItem?.button else { return }
+    guard statusItem?.button != nil else { return }
     var tip = "The Bass Shaker: On"
     var title = ""
     var problem: String?
@@ -424,12 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     default:
       if !enabled { tip = "The Bass Shaker: Off" } else if bypassed { title = "A/B"; tip = "The Bass Shaker: Original sound (A/B)" }
     }
-    b.title = title
-    b.font = NSFont.systemFont(ofSize: 10, weight: .bold)
-    b.imagePosition = title.isEmpty ? .imageOnly : .imageLeading
-    b.alphaValue = enabled ? 1 : 0.45
-    b.toolTip = tip
-    b.setAccessibilityValue(tip)
+    menuBarContent?.updateStatus(badge: title, toolTip: tip)
     // The Dock tile shows the same "!" / "A/B" (system badge; a custom tile
     // view would replace the 3D icon's own rendering).
     badgeTitle = title
@@ -777,6 +777,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     mute.state = v.silent ? .on : .off
     menu.addItem(.separator())
     add(controller.pinned ? "Unpin" : "Pin Open", #selector(menuPin))
+    menu.addItem(menuBarContentMenuItem())
     menu.addItem(appIconMenuItem())
     if forDock {
       add("Show in Menu Bar", #selector(menuShowInMenuBar), on: controller.settings.menuBarIconShown)
@@ -793,6 +794,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     force.target = self
     force.toolTip = "Ends The Bass Shaker immediately, even if it's stuck. Your Mac's sound goes back to normal."
     return menu
+  }
+
+  /// The same content choices are available without opening the popup.
+  private func menuBarContentMenuItem() -> NSMenuItem {
+    let item = NSMenuItem(title: "Menu Bar Content", action: nil, keyEquivalent: "")
+    let sub = NSMenu()
+    for mode in MenuBarContent.allCases {
+      let choice = sub.addItem(withTitle: mode.title, action: #selector(menuBarContentSelected(_:)), keyEquivalent: "")
+      choice.target = self
+      choice.representedObject = mode.rawValue
+      choice.state = controller.settings.menuBarContent == mode ? .on : .off
+    }
+    item.submenu = sub
+    return item
+  }
+
+  @objc private func menuBarContentSelected(_ sender: NSMenuItem) {
+    guard let raw = sender.representedObject as? String, let mode = MenuBarContent(rawValue: raw) else { return }
+    controller.settings.menuBarContent = mode
   }
 
   /// App Icon colourways, each with a small thumbnail when the artwork ships.
@@ -881,8 +901,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
       w.title = "The Bass Shaker"
       w.styleMask = [.titled, .closable]
       w.isReleasedWhenClosed = false
-      w.center()
       w.setFrameAutosaveName("BassShakeMain")
+      // A ScrollView has no useful initial fitting height. Give the launch
+      // window a screen-bounded viewport instead of capturing its first,
+      // nearly collapsed measurement. Preset expansion scrolls within it.
+      let available = (w.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+      w.setContentSize(NSSize(width: 360, height: max(240, min(760, available - 60))))
+      w.center()
       w.delegate = self
       window = w
     }

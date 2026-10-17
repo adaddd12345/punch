@@ -127,10 +127,11 @@ struct NowItem: Equatable, Identifiable {
 /// Up to three other playing apps become small tiles.
 ///
 /// Layer B (Automation, only for Spotify / Music, only while one of them is
-/// running AND on screen here AND the popup is visible): an AppleScript poll
+/// running AND shown in the popup or menu bar): an AppleScript poll
 /// every ~2 s for the title, artist, state and cover, and play/pause/next on
 /// click. Denied: that app silently stays at layer A. The only network use is
 /// Spotify's own artwork URL (ephemeral session: nothing cached on disk).
+/// Menu-bar-only polling never asks for permission or downloads artwork.
 ///
 /// Browsers (Chrome / Brave / Edge / Vivaldi / Arc / Safari, same gates): the
 /// tabs' titles and URLs by AppleScript (no JavaScript), and, when the app is
@@ -226,6 +227,9 @@ final class NowPlaying: ObservableObject {
   private var cancellables = Set<AnyCancellable>()
   private var wanted = false
   private var windows = 0
+  private var menuBarVisible = false
+  private var popupActive = false
+  private var timerInterval: TimeInterval = 0
   private var active = false
   private var timer: Timer?
   private var activeSince: TimeInterval = 0
@@ -315,18 +319,29 @@ final class NowPlaying: ObservableObject {
   private lazy var artSession = URLSession(configuration: .ephemeral, delegate: ArtRedirectGuard(), delegateQueue: nil)
   private let log = Logger(subsystem: "app.bassshake.BassShake", category: "nowplaying")
 
-  /// Idempotent. Called from the popup (no Core Audio here).
+  /// Idempotent. Attached at launch and by popup views (no Core Audio here).
   func attach(_ c: AudioController) {
     guard controller == nil else { return }
     controller = c
     gate.controller = c
     // Full/Compact (both layouts): What's Playing. Mini (both layouts): the
-    // playing channel, on by default; song and cover still need What's Playing.
+    // playing channel, on by default. A selected menu-bar Now Playing item
+    // also keeps popup discovery available for its consent/setup flow.
     c.$settings
       .map { ($0.showNowPlaying && $0.viewSize != .mini) || ($0.showPlayingChannel && $0.viewSize == .mini)
-        || $0.backgroundStyle == .artwork }
+        || $0.backgroundStyle == .artwork || ($0.menuBarContent == .nowPlaying && $0.menuBarIconShown) }
       .removeDuplicates()
       .sink { [weak self] on in DispatchQueue.main.async { self?.setWanted(on) } }
+      .store(in: &cancellables)
+    // Details can be disabled while both surfaces are hidden. Clear metadata
+    // on the settings change rather than waiting for the next visible tick.
+    c.$settings
+      .map(Self.detailsEnabled)
+      .removeDuplicates()
+      .sink { [weak self] allowed in
+        guard !allowed else { return }
+        DispatchQueue.main.async { self?.clearDetails() }
+      }
       .store(in: &cancellables)
     c.live.$muted
       .removeDuplicates()
@@ -352,6 +367,15 @@ final class NowPlaying: ObservableObject {
       .removeDuplicates()
       .sink { [weak self] r in DispatchQueue.main.async { if self?.pauseRoute != r { self?.pauseRoute = r } } }
       .store(in: &cancellables)
+  }
+
+  /// The status-item coordinator owns this demand, including hiding and sleep.
+  /// It keeps app discovery alive without requesting Live Channels audio taps.
+  func setMenuBarVisible(_ on: Bool) {
+    guard menuBarVisible != on else { return }
+    menuBarVisible = on
+    if !on && !wanted { clearContent() }
+    update()
   }
 
   func windowAppeared() { windows += 1; update() }
@@ -404,42 +428,76 @@ final class NowPlaying: ObservableObject {
   private func setWanted(_ on: Bool) {
     guard on != wanted else { return }
     wanted = on
-    if !on {
-      resetSpotifyOutput()
-      if closing { teardown() }
-      measured = false
-      deferredClick = nil
-      hero = nil
-      others = []
-      tracks = [:]
-      items = [:]
-      itemsMemo = [:]
-      tracksMemo = [:]
-      itemSeen = [:]
-      stillCache.removeAll()
-      stillLoading.removeAll()
-      iconCache.removeAll()
-      iconLoading.removeAll()
-      lastHeard = [:]
-      known = [:]
-      firstSeen = [:]
-      failures = [:]
-      lastLoud = [:]
-      lastLevel = [:]
-      if !audible.isEmpty { audible = [] }
-      if !pausedByUs.isEmpty { pausedByUs = [:] }
-      artCache.removeAll()
-      artLoading.removeAll()
-    }
+    if !on && !menuBarVisible { clearContent() }
     update()
   }
 
+  private func clearContent() {
+    clearDetails()
+    if closing { teardown() }
+    measured = false
+    deferredClick = nil
+    hero = nil
+    others = []
+    lastHeard = [:]
+    known = [:]
+    firstSeen = [:]
+    failures = [:]
+    lastLoud = [:]
+    lastLevel = [:]
+    if !audible.isEmpty { audible = [] }
+    if !pausedByUs.isEmpty { pausedByUs = [:] }
+  }
+
+  private func clearDetails() {
+    resetSpotifyOutput()
+    if !tracks.isEmpty { tracks = [:] }
+    if !items.isEmpty { items = [:] }
+    itemsMemo.removeAll()
+    tracksMemo.removeAll()
+    itemSeen.removeAll()
+    stillCache.removeAll()
+    stillLoading.removeAll()
+    iconCache.removeAll()
+    iconLoading.removeAll()
+    artCache.removeAll()
+    artLoading.removeAll()
+    waitSince.removeAll()
+    answered.removeAll()
+    if !detailsPending.isEmpty { detailsPending = [] }
+    lastPoll = 0
+  }
+
   private func update() {
-    let on = wanted && windows > 0
-    guard on != active else { return }
+    let popupWasActive = popupActive
+    popupActive = wanted && windows > 0
+    let on = popupActive || menuBarVisible
+    if popupActive && !popupWasActive {
+      denied.removeAll()
+      refreshAccess()
+      if active { refreshAutomation() }
+      lastPoll = 0
+      waitSince = [:]
+      answered = []
+    }
+    // A user-issued media key still gets its bounded verification after closing.
+    if !popupActive && popupWasActive && pending != nil && timer != nil && wanted {
+      active = false
+      closing = true
+      return
+    }
+    if closing && !popupActive { return }
+    if popupActive && closing {
+      closing = false
+      active = true
+      configureTimer()
+      return
+    }
+    guard on != active else {
+      if on { configureTimer(); tick() }
+      return
+    }
     active = on
-    // Reopened while a key check finishes: keep its timer, meter and data.
-    if on && closing { closing = false; return }
     smooth = [:]
     challenger = nil
     lastTick = 0
@@ -452,11 +510,9 @@ final class NowPlaying: ObservableObject {
       denied.removeAll()
       waitSince = [:]
       answered = []
-      refreshAccess()
       refreshAutomation()
-      let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in self?.tick() }
-      RunLoop.main.add(t, forMode: .common)
-      timer = t
+      configureTimer()
+      tick()
     } else {
       deferredClick = nil
       // Closed mid-check: finish the check first (a missed key still gets undone / muted).
@@ -465,8 +521,20 @@ final class NowPlaying: ObservableObject {
     }
   }
 
-  /// Everything off for a closed popup. The pause marks stay (a reopen shows Play).
+  private func configureTimer() {
+    let interval: TimeInterval = popupActive ? 0.1 : 1.0
+    guard timer == nil || timerInterval != interval else { return }
+    timer?.invalidate()
+    timerInterval = interval
+    let t = Timer(timeInterval: interval, repeats: true) { [weak self] _ in self?.tick() }
+    t.tolerance = interval * 0.1
+    RunLoop.main.add(t, forMode: .common)
+    timer = t
+  }
+
+  /// Everything off when neither surface needs it. Pause marks survive reopening.
   private func teardown() {
+    active = false
     resetSpotifyOutput()
     closing = false
     timer?.invalidate()
@@ -484,7 +552,7 @@ final class NowPlaying: ObservableObject {
     deferredClick = nil
   }
 
-  // MARK: - Layer A: who is playing (10 Hz, main, no HAL)
+  // MARK: - Layer A: who is playing (10 Hz popup / 1 Hz menu bar, main, no HAL)
 
   private func tick() {
     guard let live = controller?.live else { return }
@@ -495,13 +563,13 @@ final class NowPlaying: ObservableObject {
       lastTick = now
       updateAudible(live.levels, now: now, dt: dt)
       checkPending(now: now)
-      if pending == nil { teardown() }
+      if pending == nil { teardown(); update() }
       return
     }
     if notice != nil, now - noticeAt >= Self.noticeSeconds { notice = nil }
     // Meter only while the window was really on screen lately (2 s, so a brief
     // occlusion flicker doesn't rebuild the HAL meter).
-    let seen = now - lastVisible < 2.0
+    let seen = popupActive && now - lastVisible < 2.0
     updateSpotifyOutput(live, now: now, visible: seen)
     if seen != wasSeen {
       wasSeen = seen
@@ -526,14 +594,14 @@ final class NowPlaying: ObservableObject {
         activeSince = now; smooth = [:]; challenger = nil; lastTick = 0; lastLevel = [:]; lastLoud = [:]
       }
     }
-    guard seen else { return }
+    guard seen || menuBarVisible else { return }
     let dt = lastTick == 0 ? 0.1 : min(0.5, now - lastTick)
     lastTick = now
-    let levels = live.levels
+    let levels: [String: Double] = seen ? live.levels : [:]
     // The playing bars (NowPlayingBars), at this tick's 10 Hz, only while seen.
-    NowLevels.shared.feed(levels, metering: metering && !levels.isEmpty)
+    if seen { NowLevels.shared.feed(levels, metering: metering && !levels.isEmpty) }
     // The meter takes a moment to build: don't pick a hero from silence.
-    if levels.isEmpty && now - activeSince < 1.0 { return }
+    if seen && levels.isEmpty && now - activeSince < 1.0 { return }
     updateAudible(levels, now: now, dt: dt)
 
     // A process lifetime is also a song-cache lifetime. A relaunched player
@@ -633,16 +701,14 @@ final class NowPlaying: ObservableObject {
 
     checkPending(now: now)
 
-    // What's Playing turned off while Mini's channel runs on: no song or cover.
-    if !mayAsk && !tracks.isEmpty { tracks = [:] }
-    if !mayAsk && !items.isEmpty { items = [:] }
-    // Nothing read earlier comes back when details return: the next poll answers.
-    if !mayAsk { itemsMemo.removeAll(); tracksMemo.removeAll() }
+    // Mini's app-only channel never retains song or browser metadata.
+    if !mayAsk && (!tracks.isEmpty || !items.isEmpty || !tracksMemo.isEmpty || !itemsMemo.isEmpty) {
+      clearDetails()
+    }
     // Before the poll: an app new on screen moves the poll up to this tick.
     refreshPending(now: now)
-    // Layer B, only while the popup is really visible.
-    // Not before the one-time note is acknowledged: the Automation prompt would hide it.
-    if now - lastPoll >= Self.pollEvery, now - lastVisible < 1.0, mayAsk {
+    // Menu-bar reads reuse explicit details consent but never request new grants.
+    if now - lastPoll >= Self.pollEvery, popupRecentlyVisible || menuBarVisible, mayAsk {
       lastPoll = now
       pollPlayers()
       pollBrowsers()
@@ -944,8 +1010,19 @@ final class NowPlaying: ObservableObject {
   /// Mini's playing channel runs without What's Playing: then it never asks (app and icon only).
   private var mayAsk: Bool {
     guard let s = controller?.settings else { return false }
-    // Song & Video Details off: apps only (no scripts, Accessibility reads or stills).
-    return (s.showNowPlaying || s.backgroundStyle == .artwork) && s.nowPlayingNoteSeen && s.playingDetails
+    return Self.detailsEnabled(s)
+  }
+
+  private static func detailsEnabled(_ s: Settings) -> Bool {
+    // Consent follows the selected feature. Visibility controls polling demand
+    // separately, so its popup can complete setup even before the item appears.
+    let menuBar = s.menuBarContent == .nowPlaying && s.menuBarIconShown
+    return (s.showNowPlaying || s.backgroundStyle == .artwork || menuBar)
+      && s.nowPlayingNoteSeen && s.playingDetails
+  }
+
+  private var popupRecentlyVisible: Bool {
+    popupActive && ProcessInfo.processInfo.systemUptime - lastVisible < 1.0
   }
 
   private func isRunning(_ app: NowApp) -> Bool {
@@ -981,16 +1058,18 @@ final class NowPlaying: ObservableObject {
     polling = true
     let serial = commandSerial
     let pids = Dictionary(uniqueKeysWithValues: players.compactMap { p in RunningApps.pid(p.rawValue).map { (p, $0) } })
-    let autoAsk = Set(players.map(\.rawValue).filter { !gate.wasAsked($0) })
+    let autoAsk = Set(players.map(\.rawValue).filter { popupRecentlyVisible && !gate.wasAsked($0) })
     let allowed = Set(players.map(\.rawValue).filter { gate.status[$0] == AutomationGate.allowed })
     scriptQueue.async { [bridge] in
       var results: [NowPlayer: NowPlayingScripts.State] = [:]
       var codes: [String: Int] = [:]
       for p in players {
+        guard DispatchQueue.main.sync(execute: { self.active && self.detailsAllowed(p.rawValue) }) else { continue }
         // Re-checked right before the script: an event to a quit app would relaunch it.
         guard p.isLive else { results[p] = .stopped; continue }
         let known = allowed.contains(p.rawValue)
-        let r = Self.gated(p.rawValue, ask: autoAsk.contains(p.rawValue), known: known) { bridge.state(p) }
+        let ask = autoAsk.contains(p.rawValue) && DispatchQueue.main.sync { self.popupRecentlyVisible }
+        let r = Self.gated(p.rawValue, ask: ask, known: known) { bridge.state(p) }
         if !known { codes[p.rawValue] = r.code }
         // Not allowed (yet): nothing read; a failed poll (not a stop), unless denied.
         results[p] = r.value ?? (r.code == AutomationGate.denied ? .denied : .unavailable)
@@ -1039,7 +1118,7 @@ final class NowPlaying: ObservableObject {
         // Do not refresh this evidence from a cached or optimistic play state.
         // A failed poll hides the hint immediately even while its song remains.
         if case .track(let title, let artist, let playing, _, _) = r,
-           !stale, !title.isEmpty || !artist.isEmpty {
+           popupRecentlyVisible, !stale, !title.isEmpty || !artist.isEmpty {
           spotifyOutput.confirm(playing: playing, pid: pid, at: now)
           if !playing { eqPlayback.setMissingSpotifyAudio(false) }
         } else {
@@ -1094,7 +1173,7 @@ final class NowPlaying: ObservableObject {
   }
 
   private func loadArt(_ p: NowPlayer, key: String, url: String?) {
-    guard !artLoading.contains(key) else { return }
+    guard popupRecentlyVisible, !artLoading.contains(key) else { return }
     switch p {
     case .spotify:
       // The only network request in What's Playing: Spotify's own cover image
@@ -1114,7 +1193,10 @@ final class NowPlaying: ObservableObject {
       scriptQueue.async { [weak self, bridge] in
         // The cover is cached by the ID of the track it was read from, which may
         // not be `key` if the song changed since the poll.
-        let r = NowPlayer.music.isLive ? bridge.musicArtwork() : nil
+        let allowed = DispatchQueue.main.sync {
+          self?.popupRecentlyVisible == true && self?.detailsAllowed(p.rawValue) == true
+        }
+        let r = allowed && NowPlayer.music.isLive ? bridge.musicArtwork() : nil
         let img = r.flatMap { Self.thumbnail($0.data) }
         DispatchQueue.main.async { self?.artLoaded(img, key: key, cacheKey: r?.id ?? key, id: p.rawValue) }
       }
@@ -1129,7 +1211,7 @@ final class NowPlaying: ObservableObject {
 
   private func artLoaded(_ img: NSImage?, key: String, cacheKey: String, id: String) {
     artLoading.remove(key)
-    guard wanted else { return }   // turned off while loading: drop it
+    guard active, detailsAllowed(id) else { return }   // consent revoked or both surfaces stopped
     guard let img else { return }
     if artCache.count >= 24 { artCache.removeAll() }
     artCache[cacheKey] = img
@@ -1174,19 +1256,21 @@ final class NowPlaying: ObservableObject {
     }
     guard !browsers.isEmpty, !browserBusy else { return }
     browserBusy = true
-    let autoAsk = Set(browsers.map(\.0.rawValue).filter { !gate.wasAsked($0) })
+    let autoAsk = Set(browsers.map(\.0.rawValue).filter { popupRecentlyVisible && !gate.wasAsked($0) })
     // Allowed already: no TCC round trip per poll (a later denial still comes back as -1743).
     let allowed = Set(browsers.map(\.0.rawValue).filter { gate.status[$0] == AutomationGate.allowed })
     browserQueue.async { [browserBridge] in
       var results: [(NowBrowser, String, NowPlayingScripts.TabsState, (names: [String], windows: Int)?)] = []
       var codes: [String: Int] = [:]
       for (b, appID) in browsers {
+        guard DispatchQueue.main.sync(execute: { self.active && self.detailsAllowed(b.rawValue) }) else { continue }
         // Quit: the one `.stopped` that clears its tabs at once.
         guard b.isLive else { results.append((b, appID, .stopped, nil)); continue }
         // Keep the last metadata while a user command takes the script lock.
         if NowPlayingScripts.urgentWaiting { results.append((b, appID, .unavailable, nil)); continue }
         let known = allowed.contains(b.rawValue)
-        let r = Self.gated(b.rawValue, ask: autoAsk.contains(b.rawValue), known: known) { browserBridge.tabs(b) }
+        let ask = autoAsk.contains(b.rawValue) && DispatchQueue.main.sync { self.popupRecentlyVisible }
+        let r = Self.gated(b.rawValue, ask: ask, known: known) { browserBridge.tabs(b) }
         if !known { codes[b.rawValue] = r.code }
         // Not allowed (yet) while it runs: nothing read, a failed poll (tabs kept for now).
         var state = r.value ?? (r.code == AutomationGate.denied ? .denied : .unavailable)
@@ -1283,7 +1367,7 @@ final class NowPlaying: ObservableObject {
   /// YouTube's still for a video (the only network use for browsers; ephemeral,
   /// redirects held to i.ytimg.com).
   private func loadStill(_ vid: String) {
-    guard !stillLoading.contains(vid), let u = BrowserTabs.stillURL(vid) else { return }
+    guard popupRecentlyVisible, !stillLoading.contains(vid), let u = BrowserTabs.stillURL(vid) else { return }
     stillLoading.insert(vid)
     artSession.dataTask(with: u) { [weak self] data, resp, _ in
       let okStatus = (resp as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
@@ -1294,7 +1378,7 @@ final class NowPlaying: ObservableObject {
 
   private func stillLoaded(_ img: NSImage?, vid: String) {
     stillLoading.remove(vid)
-    guard wanted, let img else { return }
+    guard active, mayAsk, let img else { return }
     if stillCache.count >= 24 { stillCache.removeAll() }
     stillCache[vid] = img
     var next = items
@@ -1312,7 +1396,7 @@ final class NowPlaying: ObservableObject {
   /// else favicon.ico (SiteIcon: https, ephemeral, no cookies, 3 s, size caps,
   /// same-domain redirects). Failures aren't retried this session.
   private func loadIcon(_ host: String, page: URL?) {
-    guard !iconLoading.contains(host), !iconFailed.contains(host) else { return }
+    guard popupRecentlyVisible, !iconLoading.contains(host), !iconFailed.contains(host) else { return }
     iconLoading.insert(host)
     iconLoader.load(host: host, page: page) { [weak self] img in
       DispatchQueue.main.async { self?.iconLoaded(img, host: host) }
@@ -1321,7 +1405,7 @@ final class NowPlaying: ObservableObject {
 
   private func iconLoaded(_ img: NSImage?, host: String) {
     guard iconLoading.remove(host) != nil else { return }   // turned off while loading
-    guard wanted else { return }
+    guard active, mayAsk else { return }
     guard let img else { iconFailed.insert(host); return }
     if iconCache.count >= 64 { iconCache.removeAll() }
     iconCache[host] = img

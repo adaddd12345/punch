@@ -1277,35 +1277,26 @@ struct BentoView: View {
     let builtIn = ordered.map { p in
       CompactModeQuad.Item(identity: "builtIn:" + p.name, title: p.name, symbol: p.symbol, tint: tint(BentoTint.forPreset(p.name)),
         on: s.mode == .off && s.userPresetID == nil && s.presetName == p.name,
-        hint: { Caption.preset(p) }, action: { controller.apply(preset: p) })
+        hint: { Caption.preset(p) }, action: {
+          if !DragScrollGate.suppressTap { controller.apply(preset: p) }
+        })
     }
     let saved = s.visibleUserPresets.map { p in
       CompactModeQuad.Item(identity: p.id.uuidString, title: p.name, symbol: p.icon, tint: tint(.forUserPreset(p)),
         on: s.mode == .off && s.userPresetID == p.id,
-        hint: { Caption.userPreset(p.name) }, action: { controller.apply(userPreset: p) })
+        hint: { Caption.userPreset(p.name) }, action: {
+          if !DragScrollGate.suppressTap { controller.apply(userPreset: p) }
+        })
     }
     let items = builtIn + saved
     let groups = stride(from: 0, to: items.count, by: 4).map { Array(items[$0..<min($0 + 4, items.count)]) }
     let selectedGroup = groups.firstIndex { $0.contains { $0.on } } ?? 0
-    return GeometryReader { geometry in
-      ScrollViewReader { proxy in
-        ScrollView(.horizontal, showsIndicators: false) {
-          HStack(spacing: 8) {
-            ForEach(groups.indices, id: \.self) { i in
-              CompactModeQuad(items: groups[i], showLabels: !compact, accessibilityName: "Sound presets")
-                .frame(width: max(120, (geometry.size.width - 8) / 2))
-                .id(i)
-            }
-          }
-        }
-        .onChange(of: selectedGroup, initial: true) { _, group in
-          withAnimation(reduceMotion || powerSaver ? nil : .easeOut(duration: 0.18)) {
-            proxy.scrollTo(group, anchor: .leading)
-          }
-        }
-      }
+    return PresetQuadShelf(groupIDs: groups.map { $0.map(\.id) }, selectedGroup: selectedGroup,
+                           compact: compact, powerSaver: powerSaver) { index, toggle in
+      CompactModeQuad(items: groups[index], showLabels: !compact,
+                      accessibilityName: "Sound presets, group \(index + 1) of \(groups.count)",
+                      backgroundAction: toggle)
     }
-    .frame(height: compact ? 78 : 112)
     .pointerHintQuick()
   }
 
@@ -2366,6 +2357,7 @@ private struct CompactModeQuad: View {
   let items: [Item]
   var showLabels = false
   var accessibilityName = "Sound modes"
+  var backgroundAction: (() -> Void)? = nil
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -2377,6 +2369,19 @@ private struct CompactModeQuad: View {
         HStack(spacing: 2) { ForEach(items.dropFirst(2).prefix(2)) { cell($0) } }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background {
+        if let backgroundAction {
+          // Above BentoTile's painted backing but below every preset button.
+          // Negative padding includes the plate's 4 pt perimeter; only the
+          // perimeter, gutters and unused cells receive this separate action.
+          Button(action: backgroundAction) {
+            Color.clear.contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .padding(-4)
+          .accessibilityHidden(true)
+        }
+      }
     }
     .accessibilityElement(children: .contain)
     .accessibilityLabel(accessibilityName)

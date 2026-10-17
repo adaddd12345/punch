@@ -460,12 +460,14 @@ struct NowPlayingNote: View {
 
   var body: some View {
     let s = controller.settings
-    if s.showNowPlaying && !s.nowPlayingNoteSeen {
+    if (s.showNowPlaying || s.menuBarContent == .nowPlaying) && !s.nowPlayingNoteSeen {
       VStack(alignment: .leading, spacing: 8) {
         Label {
           VStack(alignment: .leading, spacing: 4) {
             Text("What's Playing is on").font(.system(size: 11, weight: .bold, design: .rounded))
-            Text(message(mini: mini, channel: s.showPlayingChannel))
+            Text(s.menuBarContent == .nowPlaying
+                 ? "The menu bar shows the app you hear. Song and video details use your App Details permissions, even with this popup closed. macOS may ask to access supported apps after you continue."
+                 : message(mini: mini, channel: s.showPlayingChannel))
               .font(.system(size: 11, weight: .medium))
               .fixedSize(horizontal: false, vertical: true)
           }
@@ -478,6 +480,7 @@ struct NowPlayingNote: View {
             .controlSize(.small).lineLimit(1).fixedSize()
           Button("Turn Off") {
             controller.settings.showNowPlaying = false
+            if controller.settings.menuBarContent == .nowPlaying { controller.settings.menuBarContent = .icon }
             controller.settings.nowPlayingNoteSeen = true
           }
           .controlSize(.small).lineLimit(1).fixedSize()

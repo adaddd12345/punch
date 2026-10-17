@@ -893,6 +893,8 @@ struct Settings: Codable, Equatable {
   /// The menu-bar icon carries the Mac's volume: a stack of 10 pills beside the
   /// shaker, a slash while muted or at 0 (⋯ › Look).
   var menuBarVolume = true
+  /// Optional content beside the shaker in the macOS menu bar.
+  var menuBarContent: MenuBarContent = .icon
   /// What's Playing art (⋯ › Look › Artwork › Style): the plain cover, or Vinyl
   /// Peek (a sleeve with a choice of record materials peeking out).
   var artworkStyle: ArtworkStyle = .cover
@@ -1066,6 +1068,7 @@ struct Settings: Codable, Equatable {
     showPlayingChannel = (try? c.decodeIfPresent(Bool.self, forKey: .showPlayingChannel)) ?? d.showPlayingChannel
     playingDetails = (try? c.decodeIfPresent(Bool.self, forKey: .playingDetails)) ?? d.playingDetails
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
+    menuBarContent = (try? c.decodeIfPresent(MenuBarContent.self, forKey: .menuBarContent)) ?? d.menuBarContent
     artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
     vinylMaterial = (try? c.decodeIfPresent(VinylMaterial.self, forKey: .vinylMaterial)) ?? d.vinylMaterial
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect

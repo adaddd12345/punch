@@ -216,6 +216,11 @@ struct SettingsMenuContent: View {
         // Waves (or a slash) beside the menu-bar shaker; scrolling over it works either way.
         Toggle("Volume on Menu Bar Icon", isOn: bind(\.menuBarVolume))
           .disabled(!controller.settings.menuBarIconShown)
+        Picker("Menu Bar Content", selection: bind(\.menuBarContent)) {
+          ForEach(MenuBarContent.allCases) { Text($0.title).tag($0) }
+        }
+        .disabled(!controller.settings.menuBarIconShown)
+        .help("Now Playing uses your App Details permissions. Stock quotes may be delayed.")
       }
     }
   }

@@ -15,6 +15,13 @@ built to beat Boom 2 on reliability, feel and looks.
   with a haptic tick.
 - **Meters that tell the truth**, coloured by level zone. Red means you are
   riding the limiter, and peaks can never clip.
+- **Choose your menu-bar content:** Settings → Layout → Menu Bar Content
+  (or right-click the shaker) offers Icon Only, Now Playing, Volume Slider,
+  and Stock Ticker. Song details follow your app permissions; quotes are
+  labelled delayed or stale. [Apple API research and behaviour](docs/research/36-menu-bar-content.md).
+- **Browse every preset:** use the bento chevrons or drag the preset row.
+  Click its dark background or All Presets to show a vertical stack of
+  four-preset groups; collapse it to return to the carousel.
 
 ## Download the beta
 
