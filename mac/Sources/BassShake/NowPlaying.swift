@@ -286,6 +286,7 @@ final class NowPlaying: ObservableObject {
   /// YouTube stills by video id.
   private var stillCache: [String: NSImage] = [:]
   private var stillLoading: Set<String> = []
+  private var stillRetryAfter: [String: TimeInterval] = [:]
   /// Site icons by host (bounded), hosts that had none (kept for the session), and in flight.
   private var iconCache: [String: NSImage] = [:]
   private var iconFailed: Set<String> = []
@@ -458,6 +459,7 @@ final class NowPlaying: ObservableObject {
     itemSeen.removeAll()
     stillCache.removeAll()
     stillLoading.removeAll()
+    stillRetryAfter.removeAll()
     iconCache.removeAll()
     iconLoading.removeAll()
     artCache.removeAll()
@@ -1213,7 +1215,7 @@ final class NowPlaying: ObservableObject {
     artLoading.remove(key)
     guard active, detailsAllowed(id) else { return }   // consent revoked or both surfaces stopped
     guard let img else { return }
-    if artCache.count >= 24 { artCache.removeAll() }
+    if artCache.count >= 12 { artCache.removeAll() }
     artCache[cacheKey] = img
     if var t = tracks[id], t.artKey == cacheKey, t.artwork == nil {
       t.artwork = img
@@ -1221,12 +1223,14 @@ final class NowPlaying: ObservableObject {
     }
   }
 
-  /// Small cover (covers can be 3000 px; the hero shows 52 pt). ImageIO is thread-safe.
+  /// Preserve enough source detail for a 336 pt Retina header, bounded to
+  /// 768 pixels. Compact views downscale this same source. ImageIO is thread-safe.
   private static func thumbnail(_ data: Data) -> NSImage? {
-    guard !data.isEmpty, let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+    guard !data.isEmpty, data.count <= 8 * 1_024 * 1_024,
+          let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
     let opts: [CFString: Any] = [
       kCGImageSourceCreateThumbnailFromImageAlways: true,
-      kCGImageSourceThumbnailMaxPixelSize: 192,
+      kCGImageSourceThumbnailMaxPixelSize: 768,
       kCGImageSourceCreateThumbnailWithTransform: true,
     ]
     guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return nil }
@@ -1367,19 +1371,41 @@ final class NowPlaying: ObservableObject {
   /// YouTube's still for a video (the only network use for browsers; ephemeral,
   /// redirects held to i.ytimg.com).
   private func loadStill(_ vid: String) {
-    guard popupRecentlyVisible, !stillLoading.contains(vid), let u = BrowserTabs.stillURL(vid) else { return }
+    guard popupRecentlyVisible, !stillLoading.contains(vid),
+          ProcessInfo.processInfo.systemUptime >= (stillRetryAfter[vid] ?? 0) else { return }
     stillLoading.insert(vid)
-    artSession.dataTask(with: u) { [weak self] data, resp, _ in
+    loadStillVariant(vid, large: true)
+  }
+
+  private func loadStillVariant(_ vid: String, large: Bool) {
+    guard active, mayAsk, popupRecentlyVisible,
+          let u = large ? BrowserTabs.largeStillURL(vid) : BrowserTabs.stillURL(vid) else {
+      stillLoading.remove(vid)
+      return
+    }
+    artSession.dataTask(with: URLRequest(url: u, timeoutInterval: 4)) { [weak self] data, resp, _ in
       let okStatus = (resp as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
       let img = okStatus ? data.flatMap { Self.thumbnail($0) } : nil
-      DispatchQueue.main.async { self?.stillLoaded(img, vid: vid) }
+      // Some unavailable variants return a tiny placeholder with HTTP 200.
+      let usable = img.flatMap { large && $0.size.width < 640 ? nil : $0 }
+      DispatchQueue.main.async {
+        guard let self else { return }
+        if usable == nil && large { self.loadStillVariant(vid, large: false) }
+        else { self.stillLoaded(usable, vid: vid) }
+      }
     }.resume()
   }
 
   private func stillLoaded(_ img: NSImage?, vid: String) {
     stillLoading.remove(vid)
-    guard active, mayAsk, let img else { return }
-    if stillCache.count >= 24 { stillCache.removeAll() }
+    guard active, mayAsk else { return }
+    guard let img else {
+      if stillRetryAfter.count >= 24 { stillRetryAfter.removeAll() }
+      stillRetryAfter[vid] = ProcessInfo.processInfo.systemUptime + 60
+      return
+    }
+    stillRetryAfter[vid] = nil
+    if stillCache.count >= 12 { stillCache.removeAll() }
     stillCache[vid] = img
     var next = items
     for (k, list) in next {

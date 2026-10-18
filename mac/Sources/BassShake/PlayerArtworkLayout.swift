@@ -79,6 +79,10 @@ struct PlayerArtworkStage: View {
       let height = geometry.size.height
       let expanded = layout == .expanded && artwork != nil
       ZStack {
+        if let artwork, artwork.size.width.isFinite, artwork.size.height.isFinite,
+           artwork.size.width > artwork.size.height * 1.25, artwork.size.height > 0 {
+          LandscapeArtworkStage(image: artwork, layout: layout, width: width, height: height)
+        } else {
         if expanded, let artwork {
           EffectArtworkImage(image: artwork, size: max(width, height))
             .overlay { ArtworkFoil(size: max(width, height), radius: 0, engaged: false) }
@@ -105,11 +109,74 @@ struct PlayerArtworkStage: View {
                  size: min(height * 0.9, width * 0.66) * (style == .vinyl ? 4 / 3 : 1),
                  spinning: spinning, paused: paused, cornerRadius: min(14, height * 0.07))
         }
+        }
       }
       .frame(width: width, height: height)
       .clipShape(RoundedRectangle(cornerRadius: expanded ? BentoRadius.hero : 0, style: .continuous))
     }
     .accessibilityHidden(true)
+  }
+}
+
+/// Wide stills keep their whole composition. Expanded adds an atmospheric
+/// taper behind the frame, so text inside a thumbnail never fades away.
+private struct LandscapeArtworkStage: View {
+  let image: NSImage
+  let layout: PlayerArtworkLayout
+  let width: CGFloat
+  let height: CGFloat
+  @Environment(\.artworkStyle) private var style
+  @Environment(\.vinylMaterial) private var material
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @State private var palette: ArtPalette = .neutral
+  @State private var requestedPalette: ObjectIdentifier?
+
+  var body: some View {
+    let ratio = image.size.width / image.size.height
+    let record = style == .vinyl
+    let coverWidth = min(width / (1 + (record ? 0.23 / ratio : 0)), height * 0.9 * ratio)
+    let coverHeight = coverWidth / ratio
+    let diameter = coverHeight * 0.92
+    let peek = record ? diameter * 0.25 : 0
+    let shape = RoundedRectangle(cornerRadius: min(12, coverHeight * 0.07), style: .continuous)
+    ZStack {
+      if layout == .expanded && !reduceTransparency {
+        Image(nsImage: image).resizable().scaledToFill()
+          .frame(width: width, height: height).clipped()
+          .blur(radius: powerSaver ? 0 : 18).opacity(0.28)
+          .mask(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .top, endPoint: .bottom))
+      }
+      ZStack(alignment: .leading) {
+        if record {
+          VinylRecord(material: material, record: palette.record(dark: scheme == .dark),
+                      label: palette.label(dark: scheme == .dark), diameter: diameter,
+                      dark: scheme == .dark, spinning: false)
+            .frame(width: diameter, height: diameter)
+            .offset(x: coverWidth - diameter * 0.75)
+        }
+        EffectArtworkImage(image: image, size: coverWidth, aspectRatio: ratio)
+          .clipShape(shape)
+          .overlay {
+            ArtworkFoil(size: coverWidth, radius: 0, engaged: false)
+              .frame(width: coverWidth, height: coverHeight).clipped().clipShape(shape)
+          }
+          .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+          .modifier(SoftShadow(on: !powerSaver, color: .black.opacity(0.2), radius: 6, y: 3))
+      }
+      .frame(width: coverWidth + peek, height: coverHeight, alignment: .leading)
+    }
+    .frame(width: width, height: height)
+    .task(id: ObjectIdentifier(image)) {
+      let source = image
+      let identity = ObjectIdentifier(source)
+      requestedPalette = identity
+      palette = ArtPalettes.shared.cached(source) ?? .neutral
+      ArtPalettes.shared.palette(for: source) { result in
+        if requestedPalette == identity { palette = result }
+      }
+    }
   }
 }
 

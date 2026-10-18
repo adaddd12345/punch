@@ -172,6 +172,9 @@ enum BrowserTabs {
   /// YouTube's own still for a video (320×180).
   static func stillURL(_ id: String) -> URL? { URL(string: "https://i.ytimg.com/vi/\(id)/mqdefault.jpg") }
 
+  /// Optional full-size still; older uploads can lack it, so callers fall back.
+  static func largeStillURL(_ id: String) -> URL? { URL(string: "https://i.ytimg.com/vi/\(id)/maxresdefault.jpg") }
+
   /// https on i.ytimg.com only.
   static func isYouTubeStill(_ u: URL) -> Bool {
     u.scheme?.lowercased() == "https" && u.host?.lowercased() == "i.ytimg.com"

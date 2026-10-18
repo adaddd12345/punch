@@ -17,11 +17,12 @@ extension EnvironmentValues {
   }
 }
 
-/// A square, aspect-filled artwork leaf. Callers retain their own clipping,
+/// An aspect-filled artwork leaf (square by default). Callers retain their own clipping,
 /// border, shadow, transition, playback overlays, and hit targets.
 struct EffectArtworkImage: View {
   let image: NSImage
   let size: CGFloat
+  var aspectRatio: CGFloat = 1
   @Environment(\.artworkEffect) private var effect
   @Environment(\.displayScale) private var scale
   @State private var rendered: Rendered?
@@ -33,18 +34,18 @@ struct EffectArtworkImage: View {
     let image: NSImage
   }
   private var request: ArtworkEffectImages.Key {
-    ArtworkEffectImages.Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: effect)
+    ArtworkEffectImages.Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: effect, aspectRatio: aspectRatio)
   }
 
   var body: some View {
     let current = request
-    let cached = ArtworkEffectImages.shared.cached(image, size: size, scale: scale, effect: effect)
+    let cached = ArtworkEffectImages.shared.cached(image, size: size, scale: scale, effect: effect, aspectRatio: aspectRatio)
     let output = rendered?.key == current && rendered?.source === image ? rendered?.image : cached
     Image(nsImage: output ?? image)
       .resizable()
       .interpolation(output != nil && effect == .halftone ? .none : .high)
       .aspectRatio(contentMode: .fill)
-      .frame(width: size, height: size)
+      .frame(width: size, height: size / aspectRatio)
       .onAppear { load() }
       .onChange(of: current) { _, _ in load() }
   }
@@ -52,7 +53,7 @@ struct EffectArtworkImage: View {
   private func load() {
     let current = request
     requested = current
-    ArtworkEffectImages.shared.image(for: image, size: size, scale: scale, effect: effect) { output in
+    ArtworkEffectImages.shared.image(for: image, size: size, scale: scale, effect: effect, aspectRatio: aspectRatio) { output in
       // An earlier cover/size/effect may complete after a newer request.
       guard requested == current else { return }
       rendered = output.map { Rendered(key: current, source: image, image: $0) }
@@ -77,18 +78,21 @@ enum ArtworkEffectRenderer {
     renderContent(ArtworkContentCrop.cropped(image) ?? image, size: size, scale: scale, effect: effect)
   }
 
-  static func renderContent(_ image: CGImage, size: CGFloat, scale: CGFloat, effect: ArtworkEffect) -> CGImage? {
-    guard let side = pixelSide(size: size, scale: scale), image.width > 0, image.height > 0,
+  static func renderContent(_ image: CGImage, size: CGFloat, scale: CGFloat, effect: ArtworkEffect,
+                            aspectRatio: CGFloat = 1) -> CGImage? {
+    guard aspectRatio.isFinite, aspectRatio > 0,
+          let side = pixelSide(size: size, scale: scale),
+          let rows = pixelSide(size: size / aspectRatio, scale: scale), image.width > 0, image.height > 0,
           let space = CGColorSpace(name: CGColorSpace.sRGB),
-          let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8,
+          let context = CGContext(data: nil, width: side, height: rows, bitsPerComponent: 8,
                                   bytesPerRow: side * 4, space: space,
                                   bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue)
     else { return nil }
     // Match SwiftUI's existing centre crop, including wide video stills.
-    let factor = max(CGFloat(side) / CGFloat(image.width), CGFloat(side) / CGFloat(image.height))
+    let factor = max(CGFloat(side) / CGFloat(image.width), CGFloat(rows) / CGFloat(image.height))
     let width = CGFloat(image.width) * factor, height = CGFloat(image.height) * factor
     context.interpolationQuality = .high
-    context.draw(image, in: CGRect(x: (CGFloat(side) - width) / 2, y: (CGFloat(side) - height) / 2,
+    context.draw(image, in: CGRect(x: (CGFloat(side) - width) / 2, y: (CGFloat(rows) - height) / 2,
                                    width: width, height: height))
     guard effect == .halftone, let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else {
       return context.makeImage()
@@ -99,9 +103,9 @@ enum ArtworkEffectRenderer {
     let cell = max(1, Int((scale * (size < 28 ? 0.5 : 1)).rounded()))
     let bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
     let steps = 4.0
-    for y in stride(from: 0, to: side, by: cell) {
+    for y in stride(from: 0, to: rows, by: cell) {
       for x in stride(from: 0, to: side, by: cell) {
-        let endY = min(side, y + cell), endX = min(side, x + cell)
+        let endY = min(rows, y + cell), endX = min(side, x + cell)
         var red = 0.0, green = 0.0, blue = 0.0, alpha = 0.0
         for py in y..<endY {
           for px in x..<endX {
@@ -146,6 +150,7 @@ final class ArtworkEffectImages {
     let size: CGFloat
     let scale: CGFloat
     let effect: ArtworkEffect
+    var aspectRatio: CGFloat = 1
   }
   private struct Entry {
     weak var source: NSImage?
@@ -160,17 +165,20 @@ final class ArtworkEffectImages {
   private let maximumCost = 8 * 1_024 * 1_024
   private let maximumEntries = 96
 
-  func cached(_ image: NSImage, size: CGFloat, scale: CGFloat, effect: ArtworkEffect) -> NSImage? {
-    let key = Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: effect)
+  func cached(_ image: NSImage, size: CGFloat, scale: CGFloat, effect: ArtworkEffect, aspectRatio: CGFloat = 1) -> NSImage? {
+    let key = Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: effect, aspectRatio: aspectRatio)
     guard let entry = cache[key], entry.source === image else { return nil }
     return entry.output
   }
 
   /// Completion is always on the main thread, immediately for a cached bitmap.
   func image(for image: NSImage, size: CGFloat, scale: CGFloat, effect: ArtworkEffect,
+             aspectRatio: CGFloat = 1,
              done: @escaping (NSImage?) -> Void) {
-    guard let side = ArtworkEffectRenderer.pixelSide(size: size, scale: scale) else { done(nil); return }
-    let key = Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: effect)
+    guard aspectRatio.isFinite, aspectRatio > 0,
+          let side = ArtworkEffectRenderer.pixelSide(size: size, scale: scale),
+          let rows = ArtworkEffectRenderer.pixelSide(size: size / aspectRatio, scale: scale) else { done(nil); return }
+    let key = Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: effect, aspectRatio: aspectRatio)
     if let entry = cache[key], entry.source === image { done(entry.output); return }
     if pending[key] != nil { pending[key]!.append(done); return }
     pending[key] = [done]
@@ -178,14 +186,17 @@ final class ArtworkEffectImages {
     let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     queue.async {
       let bitmap = source.flatMap { original -> CGImage? in
-        let cropped = ArtworkContentCrop.cropped(original)
+        // Landscape presentations preserve the raw composition, including
+        // intentional letterboxing; the compact square keeps its bar cleanup.
+        let cropped = aspectRatio == 1 ? ArtworkContentCrop.cropped(original) : nil
         // No bars and no effect: retain the original NSImage rendering exactly.
         guard effect != .none || cropped != nil else { return nil }
-        return ArtworkEffectRenderer.renderContent(cropped ?? original, size: size, scale: scale, effect: effect)
+        return ArtworkEffectRenderer.renderContent(cropped ?? original, size: size, scale: scale,
+                                                   effect: effect, aspectRatio: aspectRatio)
       }
       DispatchQueue.main.async { [self] in
-        let output = bitmap.map { NSImage(cgImage: $0, size: NSSize(width: size, height: size)) }
-        insert(Entry(source: image, output: output, cost: output == nil ? 0 : side * side * 4), for: key)
+        let output = bitmap.map { NSImage(cgImage: $0, size: NSSize(width: size, height: size / aspectRatio)) }
+        insert(Entry(source: image, output: output, cost: output == nil ? 0 : side * rows * 4), for: key)
         let waiting = pending.removeValue(forKey: key) ?? []
         waiting.forEach { $0(output) }
       }
