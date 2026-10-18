@@ -259,14 +259,45 @@ struct VinylImages {
 }
 
 enum VinylArtCache {
-  private static let cache = NSCache<NSString, Box>()
+  private static let cache: NSCache<NSString, Box> = {
+    let cache = NSCache<NSString, Box>()
+    cache.countLimit = 40
+    cache.totalCostLimit = 32 * 1_024 * 1_024
+    return cache
+  }()
   private final class Box { let v: VinylImages; init(_ v: VinylImages) { self.v = v } }
+  private static let queue = DispatchQueue(label: "app.bassshake.vinyl-resin", qos: .utility)
+  private static var pending: [String: [(VinylImages) -> Void]] = [:]
+
+  /// Coalesce simultaneous hero/preview requests. Only immutable colour and
+  /// geometry values cross to the worker; layers are always updated on main.
+  static func request(record: ArtRGB, label: ArtRGB, diameter: CGFloat, scale: CGFloat,
+                      dark: Bool, done: @escaping (VinylImages) -> Void) {
+    dispatchPrecondition(condition: .onQueue(.main))
+    let diameter = diameter.isFinite && diameter > 0 ? min(384, max(8, diameter)) : 34
+    let scale = scale.isFinite && scale > 0 ? min(2, max(1, scale)) : 2
+    let key = "\(record.key)-\(label.key)-\(diameter)-\(scale)-\(dark)"
+    if let hit = cache.object(forKey: key as NSString) { done(hit.v); return }
+    if pending[key] != nil { pending[key]!.append(done); return }
+    pending[key] = [done]
+    queue.async {
+      let result = images(record: record, label: label, diameter: diameter, scale: scale, dark: dark)
+      DispatchQueue.main.async {
+        let callbacks = pending.removeValue(forKey: key) ?? []
+        callbacks.forEach { $0(result) }
+      }
+    }
+  }
 
   static func images(record: ArtRGB, label: ArtRGB, diameter: CGFloat, scale: CGFloat, dark: Bool) -> VinylImages {
+    let diameter = diameter.isFinite && diameter > 0 ? min(384, max(8, diameter)) : 34
+    let scale = scale.isFinite && scale > 0 ? min(2, max(1, scale)) : 2
     let key = "\(record.key)-\(label.key)-\(diameter)-\(scale)-\(dark)" as NSString
     if let b = cache.object(forKey: key) { return b.v }
     let v = render(record: record, label: label, diameter: diameter, scale: scale, dark: dark)
-    cache.setObject(Box(v), forKey: key)
+    let cost = v.disc.bytesPerRow * v.disc.height + v.sheen.bytesPerRow * v.sheen.height
+      + v.shadow.bytesPerRow * v.shadow.height
+    cache.setObject(Box(v), forKey: key, cost: cost)
     return v
   }
 
@@ -283,15 +314,26 @@ enum VinylArtCache {
     let gaps: [Double] = small ? [0.6, 0.8] : [0.55, 0.66, 0.77, 0.88]
     let trackTone: [Double] = [0.0, 0.035, -0.025, 0.02, -0.015]
     let labelR = Double(VinylLabelGeometry.diameterRatio), holeR = Double(VinylLabelGeometry.holeRatio)
-    let alphaBase = dark ? 0.86 : 0.82
+    let alphaBase = dark ? 0.91 : 0.87
+    // Both pigments come from the cover: a deep base and its second sampled
+    // colour suspended in the resin. Monochrome covers remain monochrome.
+    let base = record.scaled(dark ? 0.86 : 0.82)
+    let pigment = label.mix(record, 0.26)
+    let grooveCount = min(110.0, Double(diameter) * 0.42)
 
     func discSample(_ x: Double, _ y: Double) -> (ArtRGB, Double) {
       let dx = x - R, dy = y - R
       let r = (dx * dx + dy * dy).squareRoot() / R
       if r > 1 || r < holeR { return (ArtRGB.black, 0) }
       let th = atan2(dy, dx)
-      var c = record
-      var a = alphaBase
+      // Broad, overlapping pours rather than a flat tint or rainbow sheen.
+      // These rotate with the pressing while the highlights remain in place.
+      let flow = 0.5 + 0.5 * sin(2 * th + 5.2 * r + 0.7 * sin(3 * th - 2 * r))
+      let ribbon = pow(flow, 3)
+      let undertow = 0.5 + 0.5 * sin(th - 7 * r + 0.9)
+      var c = base.mix(pigment, 0.12 + 0.53 * ribbon)
+      c = c.mix(record, 0.22 * undertow)
+      var a = alphaBase - 0.10 * ribbon
       // Run-out (smooth, a little clearer) and lead-in (smooth): grooves between.
       let groove = smooth(labelR + 0.04, labelR + 0.08, r) * (1 - smooth(0.93, 0.95, r))
       var tone = 0.0
@@ -300,11 +342,15 @@ enum VinylArtCache {
       tone += trackTone[min(t, trackTone.count - 1)] * groove
       // Track gaps: smooth bands that catch a little more light.
       for g in gaps { tone += 0.13 * exp(-pow((r - g) / 0.011, 2)) * groove }
-      // Cloudy acrylic: a slow swirl of density that shows the record turning.
-      let m = 0.6 * sin(2 * th + 3.2 * r) + 0.4 * sin(3 * th - 5.5 * r + 1.1)
-      tone += 0.08 * m
-      a += 0.07 * m
-      if r < labelR + 0.05 { a -= 0.04 }
+      // Fine concentric cuts sit above the deeper coloured pours. Their
+      // amplitude stays low enough to avoid a noisy or glittering edge.
+      if !small {
+        tone += 0.024 * sin(r * grooveCount * 2 * .pi) * groove
+      }
+      tone += 0.045 * (undertow - 0.5)
+      // A narrow recessed run-out separates matte ink from luminous resin.
+      tone -= 0.16 * exp(-pow((r - labelR - 0.018) / 0.018, 2))
+      tone += 0.065 * exp(-pow((r - labelR - 0.045) / 0.012, 2))
       // Light piped through the acrylic glows at its edge, then a crisp dark lip.
       let glow = exp(-pow((r - 0.955) / 0.022, 2))
       tone += 0.12 * glow
@@ -325,14 +371,14 @@ enum VinylArtCache {
       // grooves inside a broader soft wedge (and its faint opposite).
       let th0 = -0.6
       let cosd = cos(th - th0)
-      let streak = pow(max(0, cosd), 40)
-      let wedge = pow(max(0, cosd), 5) + 0.5 * pow(max(0, -cosd), 8)
+      let streak = pow(max(0, cosd), 30)
+      let wedge = pow(max(0, cosd), 5) + 0.65 * pow(max(0, -cosd), 9)
       let onVinyl = smooth(labelR, labelR + 0.07, r) * (1 - smooth(0.97, 1, r))
-      var w = ((dark ? 0.42 : 0.5) * streak + (dark ? 0.10 : 0.13) * wedge) * onVinyl * (0.5 + 0.5 * r)
+      var w = ((dark ? 0.35 : 0.41) * streak + (dark ? 0.14 : 0.18) * wedge) * onVinyl * (0.5 + 0.5 * r)
       // A soft sky from above, and a thin rim catch on the lit side.
       w += (dark ? 0.05 : 0.08) * max(0, -dy / R) * onVinyl
       w += 0.45 * exp(-pow((r - 0.985) / 0.012, 2)) * pow(max(0, cosd), 2)
-      // The label is paper: a softer, broader sheen.
+      // Keep the printed centre matte, independent of the resin reflection.
       if r < labelR { w = 0 }
       return min(1, w)
     }
@@ -501,9 +547,24 @@ final class VinylRecordView: NSView {
     guard k != key else { return }
     let first = key.isEmpty
     key = k
-    let im = material == .artwork
-      ? VinylArtCache.images(record: record, label: label, diameter: diameter, scale: scale, dark: dark)
-      : NativeVinylMaterials.images(material: material, diameter: diameter, scale: scale, dark: dark)
+    if material == .artwork {
+      VinylArtCache.request(record: record, label: label, diameter: diameter, scale: scale, dark: dark) { [weak self] image in
+        guard let self, self.key == k else { return }
+        self.apply(image, scale: scale, first: self.discLayer.contents == nil)
+      }
+      if first && discLayer.contents == nil {
+        // Only a real cache miss needs this tiny matching silhouette. Reopening
+        // a known cover uses its finished material immediately, without a flash.
+        apply(VinylArtCache.images(record: record, label: label, diameter: 24, scale: 1, dark: dark),
+              scale: scale, first: true)
+      }
+    } else {
+      apply(NativeVinylMaterials.images(material: material, diameter: diameter, scale: scale, dark: dark),
+            scale: scale, first: first)
+    }
+  }
+
+  private func apply(_ im: VinylImages, scale: CGFloat, first: Bool) {
     pad = im.pad
     CATransaction.begin()
     // A new tint cross-fades (0.3 s); the first one just appears.

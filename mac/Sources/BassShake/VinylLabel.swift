@@ -1,9 +1,9 @@
 import AppKit
 
-/// Shared proportions for the printed paper, run-out and spindle, independent
-/// of the pressing's material. A 100 mm label on a 12-inch record is about 33%.
+/// A generous printed centre, shared across pressings. The enlarged label
+/// gives the cover room to read while leaving most of the disc for its material.
 enum VinylLabelGeometry {
-  static let diameterRatio: CGFloat = 0.33
+  static let diameterRatio: CGFloat = 0.38
   static let holeRatio: CGFloat = 0.024
   static let artworkMinimum: CGFloat = 24
 
@@ -12,10 +12,12 @@ enum VinylLabelGeometry {
     return min(256, max(8, Int((min(diameter, 1_024) * diameterRatio * min(scale, 4)).rounded(.up))))
   }
 
-  /// All of the source remains visible, including lettering on wide thumbnails.
+  /// Expand to the label diameter without stretching. Square artwork bleeds
+  /// into the circular trim; wide thumbnails keep their full width, with the
+  /// sampled gradient filling above and below.
   static func artworkRect(width: Int, height: Int, side: CGFloat) -> CGRect {
     guard width > 0, height > 0, side.isFinite, side > 0 else { return .zero }
-    let fit = side * 0.92 / hypot(CGFloat(width), CGFloat(height))
+    let fit = side / max(CGFloat(width), CGFloat(height))
     let size = CGSize(width: CGFloat(width) * fit, height: CGFloat(height) * fit)
     return CGRect(x: (side - size.width) / 2, y: (side - size.height) / 2,
                   width: size.width, height: size.height)
@@ -76,8 +78,8 @@ final class VinylLabels {
     }
   }
 
-  /// Fade only the outside two percent of the inset print. The pixels inside
-  /// remain unchanged; no blur, picture-frame stroke or crop is introduced.
+  /// Feather only the print boundary into the surrounding pigment. The centre
+  /// stays sharp; the circular paper trim owns the final silhouette.
   private static func feathered(_ image: CGImage, width: Int, height: Int) -> CGImage? {
     guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
           let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
@@ -86,7 +88,7 @@ final class VinylLabels {
           let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
     context.interpolationQuality = .high
     context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-    let edge = max(1, Double(min(width, height)) * 0.025)
+    let edge = max(1, Double(min(width, height)) * 0.055)
     for y in 0..<height {
       for x in 0..<width {
         let distance = Double(min(x, width - 1 - x, y, height - 1 - y)) + 0.5

@@ -4,11 +4,12 @@ import Testing
 @testable import BassShake
 
 struct VinylLabelTests {
-  @Test func wholeArtworkFitsInsidePaper() {
+  @Test func expandedArtworkFillsPaperWithoutStretching() {
     for dimensions in [(400, 400), (1_600, 900), (600, 900)] {
       let rect = VinylLabelGeometry.artworkRect(width: dimensions.0, height: dimensions.1, side: 100)
       #expect(abs(rect.width / rect.height - CGFloat(dimensions.0) / CGFloat(dimensions.1)) < 0.0001)
-      #expect(hypot(rect.maxX - 50, rect.maxY - 50) <= 46.001)
+      #expect(max(rect.width, rect.height) == 100)
+      #expect(rect.midX == 50 && rect.midY == 50)
     }
     #expect(VinylLabelGeometry.pixels(diameter: .nan, scale: 2) == nil)
     #expect(VinylLabelGeometry.pixels(diameter: 200, scale: .infinity) == nil)
@@ -22,6 +23,17 @@ struct VinylLabelTests {
     #expect(bytes[(64 * 128 + 64) * 4 + 3] == 0)
     #expect(bytes[3] == 0)
     #expect(bytes[(64 * 128 + 32) * 4 + 3] == 255)
+  }
+
+  @Test @MainActor func reopeningCachedMaterialDoesNotWaitForWorker() {
+    let record = ArtRGB(0.12, 0.36, 0.48), label = ArtRGB(0.42, 0.68, 0.55)
+    let cached = VinylArtCache.images(record: record, label: label, diameter: 16, scale: 1, dark: false)
+    var delivered = false
+    VinylArtCache.request(record: record, label: label, diameter: 16, scale: 1, dark: false) { image in
+      delivered = true
+      #expect(image.disc === cached.disc)
+    }
+    #expect(delivered)
   }
 
   /// An opt-in, deterministic proof of the actual renderer, not a new preview
@@ -45,10 +57,11 @@ struct VinylLabelTests {
     canvas.fill(CGRect(x: 0, y: 0, width: 680, height: 360))
     for (index, source) in [square, wide].enumerated() {
       let origin = CGFloat(20 + index * 340)
-      let material: VinylMaterial = index == 0 ? .space : .chrome
-      let pressing = NativeVinylMaterials.images(material: material, diameter: 160, scale: 2, dark: false)
+      let palette = ArtPalettes.extract(source)
+      let pressing = VinylArtCache.images(record: palette.record(dark: false), label: palette.label(dark: false),
+        diameter: 160, scale: 2, dark: false)
       canvas.draw(pressing.disc, in: CGRect(x: origin, y: 20, width: 320, height: 320))
-      let label = try #require(VinylLabels.render(source, fallback: ArtRGB(0.5, 0.6, 0.7), pixels: 106, contrast: false))
+      let label = try #require(VinylLabels.render(source, fallback: ArtRGB(0.5, 0.6, 0.7), pixels: 122, contrast: false))
       let side = 320 * VinylLabelGeometry.diameterRatio
       canvas.draw(label, in: CGRect(x: origin + (320 - side) / 2, y: 20 + (320 - side) / 2, width: side, height: side))
       canvas.draw(pressing.sheen, in: CGRect(x: origin, y: 20, width: 320, height: 320))
