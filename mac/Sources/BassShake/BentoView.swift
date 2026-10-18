@@ -38,6 +38,8 @@ struct BentoView: View {
   /// heroIcons without words, for the sound chip's row when the words leave
   /// the preset's name no room (nil: heroIcons has no words to drop).
   var heroIconsTight: AnyView? = nil
+  /// Full player's evenly divided A/B / Labels / Size / Pin rail.
+  var heroFullTools: AnyView? = nil
   /// Classic: the same blocks, stripped back. No plates or glass (a faint
   /// grouped surface at most), the original EQ, sliders, preset pills and
   /// power switch. Full and Compact only (Classic Mini is PopoverView's).
@@ -66,7 +68,7 @@ struct BentoView: View {
   /// lastDetail survives this view being rebuilt (process memory only).
   private static var remembered: Detail?
   /// Classic's power switch, measured: its slot in each hero layout.
-  @State private var flatPowerSize: CGSize = .zero
+  @State private var flatPowerSize = CGSize(width: 44, height: 24)
   private func showDetail(_ d: Detail) { lastDetail = d; Self.remembered = d }
   private static let defaultAllow = Settings().nightGuardDb
   private static let defaultHaze = Settings().lateNightHaze
@@ -576,17 +578,19 @@ struct BentoView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     // One switch for both layouts, over their empty slots: the idle/playing
     // swap (mid popup resize) never tears down its NSSwitch.
-    .overlay(alignment: .topTrailing) {
-      FlatPowerSlot(on: s.showNowPlaying,
-                    idle: (0, compact ? 24 : 32),
-                    playing: (s.playerArtworkLayout == .compact ? (compact ? 52 : 64)
-                      : PlayerArtworkLayout.headerHeight + (compact ? 12 : 16), 24)) {
+    .overlayPreferenceValue(FlatPowerAnchor.self) { anchor in
+      GeometryReader { geometry in
+        let slot = anchor.map { geometry[$0] }
         flatPower
           .background(GeometryReader { g in
             Color.clear
               .onAppear { flatPowerSize = g.size }
               .onChange(of: g.size) { _, n in flatPowerSize = n }
           })
+          .position(x: slot?.midX ?? geometry.size.width,
+                    y: slot?.midY ?? 0)
+          .opacity(slot == nil ? 0 : 1)
+          .allowsHitTesting(slot != nil)
       }
     }
     .pointerHintTint(ink(t))
@@ -594,31 +598,35 @@ struct BentoView: View {
     .animation(.easeOut(duration: 0.2), value: editedBase)
   }
 
-  /// Classic Full, nothing playing: logo, preset word, A/B, power switch; the
-  /// note line under the word; then output and window tools.
-  private func flatIdleFull(_ t: BentoTint, dark: Bool) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .center, spacing: 8) {
-        appLogo(26)
-        bigWord(t, dark: dark, font: 20, chevron: 9, scale: 0.6)
-        if live { abChip(compact: false) }
-        powerButton(size: 32)
-      }
-      .frame(height: 32)
-      // The note shares the tools' row (under the word), so the hero never
-      // changes height: 32 + 8 + 24.
-      HStack(alignment: .center, spacing: 8) {
-        if live && (editedBase != nil || !modesLine.isEmpty) {
-          noteLine
-            .padding(.leading, 34)
-            .transition(.opacity)
-        } else {
-          Spacer(minLength: 0)
+  /// Full keeps the same preset and utility geometry with or without media.
+  /// Older embedding callers may omit the dedicated rail.
+  @ViewBuilder private func flatIdleFull(_ t: BentoTint, dark: Bool) -> some View {
+    if let heroFullTools {
+      fullSoundControls(t, rail: heroFullTools)
+    } else {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
+          appLogo(26)
+          bigWord(t, dark: dark, font: 20, chevron: 9, scale: 0.6)
+          if live { abChip(compact: false) }
+          powerButton(size: 32)
         }
-        heroOutput
-        heroIcons
+        .frame(height: 32)
+        // The note shares the tools' row (under the word), so the hero never
+        // changes height: 32 + 8 + 24.
+        HStack(alignment: .center, spacing: 8) {
+          if live && (editedBase != nil || !modesLine.isEmpty) {
+            noteLine
+              .padding(.leading, 34)
+              .transition(.opacity)
+          } else {
+            Spacer(minLength: 0)
+          }
+          heroOutput
+          heroIcons
+        }
+        .frame(height: 24)
       }
-      .frame(height: 24)
     }
   }
 
@@ -676,7 +684,9 @@ struct BentoView: View {
             if let heroLiveButton { heroLiveButton }
           }
           Spacer(minLength: 0)
-          if !detailsCollapsed { (heroIconsTight ?? heroIcons) }
+          if !detailsCollapsed && (size != .full || heroFullTools == nil) {
+            (heroIconsTight ?? heroIcons)
+          }
           collapseButton
         }
         .padding(.top, 8)
@@ -713,17 +723,20 @@ struct BentoView: View {
 
   // MARK: Hero layouts
 
-  /// Full, nothing playing: the big preset word (a menu) with A/B and Power,
-  /// an optional note line, then output and window tools.
-  private func idleFull(_ t: BentoTint, dark: Bool) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-      HStack(alignment: .center, spacing: 8) {
-        bigWord(t, dark: dark, font: 38, chevron: 12, scale: 0.5)
-        if live { abChip(compact: false) }
-        powerButton(size: 40)
+  /// Bento Full shares the same two-row controls as the Classic player.
+  @ViewBuilder private func idleFull(_ t: BentoTint, dark: Bool) -> some View {
+    if let heroFullTools {
+      fullSoundControls(t, rail: heroFullTools)
+    } else {
+      VStack(alignment: .leading, spacing: 0) {
+        HStack(alignment: .center, spacing: 8) {
+          bigWord(t, dark: dark, font: 38, chevron: 12, scale: 0.5)
+          if live { abChip(compact: false) }
+          powerButton(size: 40)
+        }
+        .frame(height: 48)
+        if hasNote { noteLine.padding(.top, 6) }
       }
-      .frame(height: 48)
-      if hasNote { noteLine.padding(.top, 6) }
     }
   }
 
@@ -872,11 +885,30 @@ struct BentoView: View {
         VStack(alignment: .leading, spacing: flat ? 16 : 8) {
           if s.artistMode && !controller.isMirror { ArtistTempoView() }
           VStack(alignment: .leading, spacing: 6) {
-            soundRow(t, tools: nil, probe: false)
-              .frame(height: 24)
-            if flat { utilityBar() }
+            if let heroFullTools {
+              fullSoundControls(t, rail: heroFullTools)
+            } else {
+              soundRow(t, tools: nil, probe: false)
+                .frame(height: 24)
+              if flat { utilityBar() }
+            }
           }
         }
+      }
+    }
+  }
+
+  /// Same geometry whether media is playing or the preset leads the page.
+  private func fullSoundControls(_ t: BentoTint, rail: AnyView) -> some View {
+    VStack(spacing: 6) {
+      HStack(spacing: 8) {
+        soundChip(t, height: 28)
+        powerButton(size: 28)
+      }
+      .frame(height: 28)
+      rail
+      if flat && !s.showMacVolume {
+        HStack(spacing: 8) { heroOutput; Spacer(minLength: 0) }
       }
     }
   }
@@ -1046,7 +1078,7 @@ struct BentoView: View {
 
   /// The preset as a chip (What's Playing, Compact): glyph, name, Edited,
   /// modes, chevron. A menu of presets.
-  private func soundChip(_ t: BentoTint) -> some View {
+  private func soundChip(_ t: BentoTint, height: CGFloat = 24) -> some View {
     presetMenu {
       HStack(alignment: .center, spacing: 6) {
         chipWords(t)
@@ -1058,7 +1090,7 @@ struct BentoView: View {
         }
       }
       .padding(.horizontal, 8)
-      .frame(maxWidth: .infinity, minHeight: 24, maxHeight: 24, alignment: .leading)
+      .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
       .background(chipShape.fill(.artworkControl))
     }
     .frame(maxWidth: .infinity)
@@ -1260,6 +1292,7 @@ struct BentoView: View {
       // Its slot: the switch itself is flatHero's overlay.
       Color.clear
         .frame(width: flatPowerSize.width, height: flatPowerSize.height)
+        .anchorPreference(key: FlatPowerAnchor.self, value: .bounds) { $0 }
         .accessibilityHidden(true)
     } else {
       bentoPower(size: d)
@@ -2994,19 +3027,11 @@ enum BentoRadius {
   static func hairline(_ scale: CGFloat) -> CGFloat { 1 / max(1, scale) }
 }
 
-/// Classic's power switch at its row in the hero, idle or playing (the hero
-/// follows the stack's lead, as NowPlayingSwitch does). Rows are (top, height).
-private struct FlatPowerSlot<C: View>: View {
-  @ObservedObject var stack: NowStack = .shared
-  let on: Bool
-  let idle: (top: CGFloat, height: CGFloat)
-  let playing: (top: CGFloat, height: CGFloat)
-  @ViewBuilder let content: () -> C
-
-  var body: some View {
-    let row = on && stack.lead != nil ? playing : idle
-    content()
-      .frame(height: row.height)
-      .padding(.top, row.top)
+/// Keeps the native switch alive across player changes while following its
+/// actual layout slot, including Tempo and variable-height artwork headers.
+private struct FlatPowerAnchor: PreferenceKey {
+  static var defaultValue: Anchor<CGRect>? { nil }
+  static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+    value = nextValue() ?? value
   }
 }
