@@ -42,7 +42,7 @@ struct AppearancePanelView: View {
         Spacer()
       }
       ScrollView(.vertical) {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 12) {
           backgrounds
           artwork
           vinyl
@@ -95,7 +95,7 @@ struct AppearancePanelView: View {
     section("Artwork") {
       HStack(spacing: 8) {
         ForEach(ArtworkStyle.allCases) { style in
-          choice(style.title, selected: controller.settings.artworkStyle == style,
+          choice(style.title, selected: controller.settings.artworkStyle == style, labelLines: 1,
                  action: { controller.settings.artworkStyle = style }) {
             previewSurface {
               NowArt(artwork: cover, icon: Self.sampleCover, size: 58,
@@ -112,10 +112,11 @@ struct AppearancePanelView: View {
 
   private var vinyl: some View {
     section("Vinyl") {
-      LazyVGrid(columns: vinylColumns, spacing: 10) {
+      LazyVGrid(columns: vinylColumns, spacing: 8) {
         ForEach(VinylMaterial.allCases) { material in
           choice(material.title,
                  selected: controller.settings.artworkStyle == .vinyl && controller.settings.vinylMaterial == material,
+                 labelLines: 1,
                  action: {
                    controller.settings.vinylMaterial = material
                    controller.settings.artworkStyle = .vinyl
@@ -134,7 +135,7 @@ struct AppearancePanelView: View {
       HStack(spacing: 8) {
         ForEach(ArtworkEffect.allCases) { effect in
           choice(effect == .none ? "Original" : effect.title,
-                 selected: controller.settings.artworkEffect == effect,
+                 selected: controller.settings.artworkEffect == effect, labelLines: 1,
                  action: { controller.settings.artworkEffect = effect }) {
             previewSurface {
               EffectArtworkImage(image: cover, size: 58)
@@ -159,7 +160,7 @@ struct AppearancePanelView: View {
   }
 
   private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 10) {
+    VStack(alignment: .leading, spacing: 8) {
       Text(title).font(.system(size: 12, weight: .semibold, design: .rounded))
         .accessibilityAddTraits(.isHeader)
       content()
@@ -172,7 +173,7 @@ struct AppearancePanelView: View {
     }
   }
 
-  private func choice<Preview: View>(_ title: String, selected: Bool,
+  private func choice<Preview: View>(_ title: String, selected: Bool, labelLines: Int = 2,
                                      action: @escaping () -> Void,
                                      @ViewBuilder preview: () -> Preview) -> some View {
     Button(action: action) {
@@ -197,14 +198,14 @@ struct AppearancePanelView: View {
         Text(title)
           .font(.system(size: 10, weight: selected ? .semibold : .medium))
           .multilineTextAlignment(.center)
-          .lineLimit(2)
+          .lineLimit(labelLines)
           .fixedSize(horizontal: false, vertical: true)
-          .frame(height: 25, alignment: .top)
+          .frame(minHeight: labelLines == 1 ? 12 : 25, alignment: .top)
           .frame(maxWidth: .infinity)
       }
       .contentShape(Rectangle())
     }
-    .buttonStyle(.plain)
+    .buttonStyle(AppearanceChoicePressStyle())
     .accessibilityElement(children: .ignore)
     .accessibilityAddTraits(.isButton)
     .accessibilityLabel(title)
@@ -216,7 +217,7 @@ struct AppearancePanelView: View {
   private func previewSurface<Content: View>(@ViewBuilder content: () -> Content) -> some View {
     RoundedRectangle(cornerRadius: 10, style: .continuous)
       .fill(Color.primary.opacity(0.06))
-      .frame(height: 80)
+      .frame(height: 68)
       .overlay { content().environment(\.powerSaver, true).environment(\.drawPaused, true) }
   }
 
@@ -256,5 +257,12 @@ private struct AppearanceRecordPreview: View {
       .task(id: id) {
         ArtPalettes.shared.palette(for: image) { value in extracted = (id, value) }
       }
+  }
+}
+
+/// A press acknowledges selection without moving the grid or its material previews.
+private struct AppearanceChoicePressStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label.opacity(configuration.isPressed ? 0.72 : 1)
   }
 }

@@ -1304,8 +1304,8 @@ struct BentoView: View {
 
   // MARK: - Presets
 
-  /// Four choices per plate. The active sound scrolls into view, and every
-  /// saved or built-in preset stays available without a second chip strip.
+  /// Carousel pages keep four choices; All joins them into compact categories.
+  /// The active sound scrolls into view without a second preset strip.
   private var presets: some View {
     let preferred = ["Bass Shake", "Bass Shake Classic", "Podcast", "Soft Lofi"]
     let ordered = preferred.compactMap { name in Preset.all.first { $0.name == name } }
@@ -1360,9 +1360,11 @@ struct BentoView: View {
     let selectedGroup = groups.firstIndex { $0.contains { $0.on } } ?? 0
     return PresetQuadShelf(groupIDs: groups.map { $0.map(\.id) },
                            groupTitles: categorizedGroups.map(\.heading), selectedGroup: selectedGroup,
-                           compact: compact, powerSaver: powerSaver) { index, level, backgroundAction in
-      CompactModeQuad(items: groups[index], showLabels: level != .mini, individualBacks: level == .mini,
-                      accessibilityName: "\(categorizedGroups[index].category), group \(index + 1) of \(groups.count)",
+                           compact: compact, powerSaver: powerSaver) { indices, level, backgroundAction in
+      CompactModeQuad(items: indices.flatMap { groups[$0] }, showLabels: level != .mini,
+                      individualBacks: level == .mini, dense: level == .all,
+                      accessibilityName: level == .all ? categorizedGroups[indices[0]].category
+                        : "\(categorizedGroups[indices[0]].category), group \(indices[0] + 1) of \(groups.count)",
                       backgroundAction: backgroundAction)
     }
     .pointerHintQuick()
@@ -2440,8 +2442,8 @@ private struct ScrubTile<Accessory: View>: View {
   }
 }
 
-/// Four independent controls share one plate in Compact. Each keeps its own
-/// colour, hit target, hint and accessible name; no nested glass surfaces.
+/// Carousel pages use two columns; full categories use four compact columns.
+/// Each choice keeps its own hit target, hint and accessible name.
 private struct CompactModeQuad: View {
   @Environment(\.popupChrome) private var chrome
   struct Item: Identifiable {
@@ -2457,6 +2459,7 @@ private struct CompactModeQuad: View {
   let items: [Item]
   var showLabels = false
   var individualBacks = false
+  var dense = false
   var accessibilityName = "Sound modes"
   var backgroundAction: (() -> Void)? = nil
   @Environment(\.labelLevel) private var labels
@@ -2476,9 +2479,11 @@ private struct CompactModeQuad: View {
   }
 
   private var choices: some View {
-    VStack(spacing: individualBacks ? 8 : 2) {
-      choiceRow(start: 0)
-      choiceRow(start: 2)
+    VStack(spacing: dense ? PresetShelfDensity.rowGap : (individualBacks ? 8 : 2)) {
+      ForEach(0..<(dense ? (items.count + PresetShelfDensity.columns - 1) / PresetShelfDensity.columns : 2), id: \.self) { row in
+        choiceRow(start: row * (dense ? PresetShelfDensity.columns : 2))
+          .frame(height: dense ? PresetShelfDensity.rowHeight : nil)
+      }
     }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background {
@@ -2497,8 +2502,8 @@ private struct CompactModeQuad: View {
   }
 
   private func choiceRow(start: Int) -> some View {
-    HStack(spacing: individualBacks ? 8 : 2) {
-      ForEach(start..<(start + 2), id: \.self) { index in
+    HStack(spacing: dense ? 4 : (individualBacks ? 8 : 2)) {
+      ForEach(start..<(start + (dense ? PresetShelfDensity.columns : 2)), id: \.self) { index in
         if items.indices.contains(index) {
           cell(items[index])
         } else {
@@ -2521,17 +2526,21 @@ private struct CompactModeQuad: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous))
       } else {
-      VStack(spacing: 3) {
-        ModeGlyph(symbol: item.symbol, tint: item.on ? item.tint : .graphite, on: item.on, size: showLabels ? 19 : 22)
-        if showLabels {
-          Text(item.title)
-            .font(.system(size: 10, weight: .semibold, design: .rounded))
-            .foregroundStyle(Color.primary.opacity(labels == .icons ? 0.62 : 1))
-            .lineLimit(2)
-            .multilineTextAlignment(.center)
-            .minimumScaleFactor(0.85)
+        VStack(spacing: 3) {
+          ModeGlyph(symbol: item.symbol, tint: item.on ? item.tint : .graphite,
+                    on: item.on, size: showLabels ? 19 : 22)
+          if showLabels {
+            Text(item.title)
+              .font(.system(size: 10, weight: .semibold, design: .rounded))
+              .foregroundStyle(dense ? Color.primary : Color.primary.opacity(labels == .icons ? 0.62 : 1))
+              .lineLimit(2)
+              .multilineTextAlignment(.center)
+              .minimumScaleFactor(dense ? 1 : 0.85)
+              // Full categories keep a two-line name lane: one-line choices
+              // align with longer names without shrinking their type.
+              .frame(height: dense ? 26 : nil)
+          }
         }
-      }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 2)
         .modifier(BentoHoverSurface(radius: BentoRadius.inner, control: true))

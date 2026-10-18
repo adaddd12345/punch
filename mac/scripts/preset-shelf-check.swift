@@ -26,7 +26,8 @@ struct TestShelfRoot: View {
   var body: some View {
     VStack(spacing: 0) {
       PresetQuadShelf(groupIDs: (0..<6).map { group in (0..<4).map { "\(group)-\($0)" } },
-                      selectedGroup: fixture.selectedGroup, compact: false, powerSaver: fixture.powerSaver) { index, level, toggle in
+                      selectedGroup: fixture.selectedGroup, compact: false, powerSaver: fixture.powerSaver) { indices, level, toggle in
+        let index = indices[0]
         VStack(spacing: level == .mini ? 8 : 2) {
           HStack(spacing: 8) { cell(index, 0, level); cell(index, 1, level) }
           HStack(spacing: 8) { cell(index, 2, level); cell(index, 3, level) }
@@ -160,6 +161,11 @@ private struct FixtureGlassContainer: ViewModifier {
     check(near(clip.bounds.origin.x, secondGroupOffset), "showing names retains newly selected group (observed \(clip.bounds.origin.x), expected \(secondGroupOffset))")
     background(); pump(0.5)
 
+    check(PresetShelfDensity.categories(groupCount: 6, titles: ["Classics", "General", nil, "Sound Like", "Listening Modes", nil]) == [[0], [1, 2], [3], [4, 5]], "expanded categories join pages without mixing category membership")
+    check(PresetShelfDensity.height(itemCount: 5) == PresetShelfDensity.height(itemCount: 8), "five listening modes share the same two useful rows as eight choices")
+    check(PresetShelfDensity.height(itemCount: 1) == 60, "a single saved preset reserves only one useful row")
+    check(PresetShelfDensity.categories(groupCount: 3, titles: []) == [[0], [1], [2]], "unlabelled shelf pages remain separate categories")
+    check(PresetShelfDensity.categories(groupCount: 0, titles: []).isEmpty, "deleting every saved page leaves no expanded empty category")
     print("System Reduce Motion: \(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion); user setting unchanged")
     fixture.powerSaver = true
     pump(0.15)

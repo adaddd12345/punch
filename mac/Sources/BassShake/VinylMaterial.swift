@@ -99,13 +99,14 @@ enum NativeVinylMaterials {
   private static func stops(_ values: [(Double, UInt32, Double)]) -> [Stop] {
     values.map { Stop(position: $0.0, ink: Ink($0.1, $0.2)) }
   }
-  private static func sample(_ ramp: [Stop], _ value: Double) -> Ink {
+  private static func sample(_ ramp: [Stop], _ value: Double, smooth: Bool = false) -> Ink {
     guard let first = ramp.first, let last = ramp.last else { return .clear }
     if value <= first.position { return first.ink }
     if value >= last.position { return last.ink }
     for i in 1..<ramp.count where value <= ramp[i].position {
       let a = ramp[i - 1], b = ramp[i]
-      return a.ink.mix(b.ink, (value - a.position) / (b.position - a.position))
+      let t = (value - a.position) / (b.position - a.position)
+      return a.ink.mix(b.ink, smooth ? t * t * (3 - 2 * t) : t)
     }
     return last.ink
   }
@@ -126,16 +127,20 @@ enum NativeVinylMaterials {
     return colour.opacity(max(0, 1 - distance / end))
   }
 
-  private static let clearBase = stops([(0, 0xe7f7fa, 0x34 / 255.0), (0.42, 0xb4c7d2, 0x18 / 255.0),
-                                         (0.72, 0xeefcff, 0x42 / 255.0), (1, 0xc6dce5, 0x28 / 255.0)])
-  private static let clearCoat = stops([(0, 0xffffff, 0x05 / 255.0), (30, 0xc8e4ed, 0x25 / 255.0),
-    (52, 0xffffff, 0x75 / 255.0), (80, 0xffffff, 0x03 / 255.0), (170, 0xd7e7ec, 0x22 / 255.0),
-    (205, 0xffffff, 0x36 / 255.0), (250, 0xadbdc2, 0x21 / 255.0), (360, 0xffffff, 0x05 / 255.0)])
-  private static let chromeLight = stops([(0, 0x15232c, 1), (24, 0x99aab6, 1), (42, 0xfcffff, 1),
-    (51, 0xd8e2e7, 1), (69, 0x75828e, 1), (91, 0x273744, 1), (118, 0x94a2ac, 1),
-    (145, 0xe9f5fa, 1), (158, 0xfafafa, 1), (181, 0x8d9ba5, 1), (205, 0x293946, 1),
-    (218, 0x182b39, 1), (250, 0x8498a3, 1), (281, 0xd5e2ea, 1), (295, 0xffffff, 1),
-    (323, 0x8696a0, 1), (360, 0x15232c, 1)])
+  // Clear transmits its backing. The rim and a restrained softbox reflection,
+  // rather than a milky face, explain the thickness of the pressing.
+  private static let clearBase = stops([(0, 0xdce9ec, 0.08), (0.42, 0x9fb6c0, 0.035),
+                                        (0.72, 0xedf6f8, 0.12), (1, 0xaec7cf, 0.08)])
+  private static let clearCoat = stops([(0, 0xffffff, 0), (30, 0xc8e4ed, 0.04),
+    (52, 0xffffff, 0.27), (80, 0xffffff, 0), (170, 0xd7e7ec, 0.035),
+    (205, 0xffffff, 0.10), (250, 0xadbdc2, 0.025), (360, 0xffffff, 0)])
+  // Two unequal studio reflections. Broad neutral transitions avoid the
+  // repeated blue-white pinwheel of an angular decorative gradient.
+  private static let chromeLight = stops([(0, 0x525b61, 1), (34, 0x9ca6ac, 1),
+    (55, 0xeff3f4, 1), (77, 0xd8dfe2, 1), (113, 0x7d898f, 1),
+    (151, 0x39454d, 1), (178, 0x535f67, 1), (224, 0xc2ccd0, 1),
+    (246, 0xe1e6e7, 1), (278, 0xa6b1b6, 1), (319, 0x414b53, 1),
+    (360, 0x525b61, 1)])
   private static let pastelBase = stops([(0, 0x89d4ed, 0xb5 / 255.0), (42, 0x69c2e7, 0xb8 / 255.0),
     (70, 0xa6e0e7, 0xac / 255.0), (115, 0xc6cce9, 0xb8 / 255.0), (175, 0xf39bbd, 0xc2 / 255.0),
     (215, 0xe786ab, 0xc7 / 255.0), (269, 0xe7a7cb, 0xb2 / 255.0), (316, 0xa9cde5, 0xb2 / 255.0),
@@ -143,12 +148,8 @@ enum NativeVinylMaterials {
   private static let spaceBase = stops([(0, 0x087dc8, 0x76 / 255.0), (47, 0x0051a1, 0x8a / 255.0),
     (96, 0x2daee7, 0x7a / 255.0), (155, 0x073a81, 0x9a / 255.0), (212, 0x057bcf, 0x7d / 255.0),
     (278, 0x24b4d9, 0x70 / 255.0), (320, 0x153987, 0xa3 / 255.0), (360, 0x087dc8, 0x76 / 255.0)])
-  private static let opalBase = stops([(0, 0xa0d8bb, 0x89 / 255.0), (40, 0x96d1b5, 0x8d / 255.0),
-    (76, 0xe8cb9e, 0x9c / 255.0), (121, 0xdfcbb6, 0x9a / 255.0), (161, 0xc0d6b9, 0x84 / 255.0),
-    (208, 0x86cbb7, 0x91 / 255.0), (244, 0xc5deaf, 0x80 / 255.0), (284, 0x72bca1, 0x8c / 255.0),
-    (321, 0xafd8b8, 0x82 / 255.0), (360, 0xa0d8bb, 0x89 / 255.0)])
-  private static let opalCoat = stops([(0, 0, 0), (32, 0xdef4d5, 0x1c / 255.0),
-    (50, 0x91c5b0, 0x1b / 255.0), (76, 0, 0), (186, 0xf9eacb, 0x1d / 255.0), (210, 0, 0), (360, 0, 0)])
+  private static let opalBase = stops([(0, 0xeee9dd, 0.96), (0.38, 0xdcded8, 0.95),
+                                        (0.72, 0xf2eee4, 0.96), (1, 0xd4dbd8, 0.95)])
   private static let reflection = stops([(0, 0xffffff, 0), (13, 0xffffff, 0x08 / 255.0),
     (28, 0xffffff, 0x91 / 255.0), (43, 0xffffff, 0x12 / 255.0), (52, 0xffffff, 0),
     (164, 0xffffff, 0), (190, 0xffffff, 0x55 / 255.0), (210, 0xffffff, 0), (360, 0xffffff, 0)])
@@ -157,10 +158,10 @@ enum NativeVinylMaterials {
     switch material {
     case .artwork: return Ink(0x343c42)
     case .clear: return sample(clearBase, linear(x, y, angle: 125))
-    case .chrome: return Ink(0x40505b)
+    case .chrome: return Ink(0x677178)
     case .pastel: return sample(pastelBase, conic(angle, from: 28))
     case .space: return sample(spaceBase, conic(angle, from: 5))
-    case .opal: return sample(opalBase, conic(angle, from: -20))
+    case .opal: return sample(opalBase, linear(x, y, angle: 128), smooth: true)
     }
   }
   private static func light(_ material: VinylMaterial, x: Double, y: Double, angle: Double, radius: Double) -> Ink {
@@ -171,17 +172,22 @@ enum NativeVinylMaterials {
     switch material {
     case .artwork: strength = 0.32
     case .clear:
-      coat = sample(clearCoat, conic(angle, from: -55)); strength = 0.35
+      coat = sample(clearCoat, conic(angle, from: -55), smooth: true)
+      let rim = pow(max(0, (radius - 0.90) / 0.10), 2)
+      let direction = (sin((angle + 42) * .pi / 180) + 1) / 2
+      coat = Ink(0x4d6b78, rim * (0.08 + direction * 0.16)).over(coat)
+      coat = Ink(0xffffff, rim * (1 - direction) * 0.28).over(coat)
+      strength = 0.14
     case .chrome:
-      let desired = sample(chromeLight, conic(angle, from: -40))
+      let desired = sample(chromeLight, conic(angle, from: -48), smooth: true)
       // Keep the hard environmental reflection in the stationary light layer.
       // A small transmission leaves the underlying physical grooves visible.
-      let a = 0.94, base = Ink(0x40505b)
+      let a = 0.86, base = Ink(0x677178)
       coat = Ink(r: min(1, max(0, (desired.r - base.r * (1 - a)) / a)),
                  g: min(1, max(0, (desired.g - base.g * (1 - a)) / a)),
                  b: min(1, max(0, (desired.b - base.b * (1 - a)) / a)), a: a)
       coat = bloom(x, y, cx: 0.32, cy: 0.15, end: 0.65, colour: Ink(0xc4e2f6, 0x27 / 255.0)).over(coat)
-      strength = 0.13
+      strength = 0.06
     case .pastel:
       coat = bloom(x, y, cx: 0.75, cy: 0.78, end: 0.64, colour: Ink(0xe79bcb, 0x18 / 255.0))
       coat = bloom(x, y, cx: 0.21, cy: 0.27, end: 0.62, colour: Ink(0xe7f9ff, 0x16 / 255.0)).over(coat)
@@ -191,10 +197,16 @@ enum NativeVinylMaterials {
       coat = bloom(x, y, cx: 0.23, cy: 0.14, end: 0.67, colour: Ink(0x72e4ff, 0x25 / 255.0)).over(coat)
       strength = 0.27
     case .opal:
-      coat = sample(opalCoat, conic(angle, from: 175))
-      coat = bloom(x, y, cx: 0.73, cy: 0.05, end: 0.61, colour: Ink(0xfff0bd, 0x22 / 255.0)).over(coat)
-      coat = bloom(x, y, cx: 0.58, cy: 0.36, end: 0.55, colour: Ink(0xb29bd6, 0x3b / 255.0)).over(coat)
-      strength = 0.39
+      // Nacre has a pale body beneath selective interference colours. Unequal
+      // overlapping patches read as orient, rather than a mint rainbow wheel.
+      coat = bloom(x, y, cx: 0.20, cy: 0.28, end: 0.62, colour: Ink(0x83c4be, 0.37))
+      coat = bloom(x, y, cx: 0.72, cy: 0.22, end: 0.54, colour: Ink(0xd3a8cd, 0.35)).over(coat)
+      coat = bloom(x, y, cx: 0.72, cy: 0.80, end: 0.65, colour: Ink(0xe5c185, 0.29)).over(coat)
+      coat = bloom(x, y, cx: 0.28, cy: 0.73, end: 0.47, colour: Ink(0x95b4cf, 0.26)).over(coat)
+      coat = bloom(x, y, cx: 0.37, cy: 0.13, end: 0.50, colour: Ink(0xffffff, 0.24)).over(coat)
+      let fold = sin((x * 1.4 + y + sin(y * 5) * 0.08) * .pi * 3)
+      coat = Ink(0xd1bad9, pow(max(0, fold), 2) * 0.07).over(coat)
+      strength = 0.16
     }
     return sample(reflection, conic(angle, from: -32)).opacity(strength).over(coat)
   }
@@ -353,7 +365,7 @@ enum NativeVinylMaterials {
       // reflection supplies its own directional highlight, including Chrome.
       let edge: Ink
       switch material {
-      case .clear: edge = Ink(0x527889, 0.17)
+      case .clear: edge = Ink(0x527889, 0.25)
       case .chrome: edge = Ink(0x14252f, 0.16)
       case .pastel: edge = Ink(0x6b829d, 0.12)
       case .space: edge = Ink(0x123a62, 0.18)
@@ -375,11 +387,11 @@ enum NativeVinylMaterials {
   private static func drawGrooves(_ c: CGContext, material: VinylMaterial) {
     let strength: Double
     switch material {
-    case .clear: strength = 0.52
+    case .clear: strength = 0.22
     case .chrome: strength = 0.32
     case .pastel: strength = 0.40
     case .space: strength = 0.46
-    case .opal: strength = 0.39
+    case .opal: strength = 0.29
     case .artwork: strength = 0.32
     }
     for radius in stride(from: 62.0, to: 196, by: 1.65) {
@@ -402,7 +414,7 @@ enum NativeVinylMaterials {
     case .chrome: pair = (Ink(0x68777e), Ink(0x26343d)); ink = Ink(0xf2fafb); angle = 145
     case .pastel: pair = (Ink(0xf6e3df, 0xf2 / 255.0), Ink(0xd3e3ec, 0xed / 255.0)); ink = Ink(0x6c5865); angle = 145
     case .space: pair = (Ink(0xb64e5c, 0xe8 / 255.0), Ink(0x63223d, 0xe8 / 255.0)); ink = Ink(0xffe4d8); angle = 135
-    case .opal: pair = (Ink(0xedf1db, 0xed / 255.0), Ink(0xc5d7ca, 0xed / 255.0)); ink = Ink(0x526057); angle = 145
+    case .opal: pair = (Ink(0xf3eee4), Ink(0xd9d8d0)); ink = Ink(0x66635d); angle = 145
     case .artwork: pair = (Ink(0xd1d4d2), Ink(0x919c9b)); ink = Ink(0x354343); angle = 145
     }
     let box = CGRect(x: 147.2, y: 147.2, width: 105.6, height: 105.6)

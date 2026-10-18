@@ -13,7 +13,7 @@ struct PresetQuadShelf<Plate: View>: View {
   let selectedGroup: Int
   let compact: Bool
   let powerSaver: Bool
-  @ViewBuilder var plate: (Int, PresetShelfLevel, @escaping () -> Void) -> Plate
+  @ViewBuilder var plate: ([Int], PresetShelfLevel, @escaping () -> Void) -> Plate
 
   @State private var level: PresetShelfLevel = .mini
   @State private var leadingGroup = 0
@@ -32,9 +32,18 @@ struct PresetQuadShelf<Plate: View>: View {
   private func title(for index: Int) -> String? {
     groupTitles.indices.contains(index) ? groupTitles[index] : nil
   }
+  /// Carousel pages remain four choices; the full shelf joins consecutive
+  /// pages under the same heading into one content-sized category plate.
+  private var expandedGroups: [[Int]] {
+    PresetShelfDensity.categories(groupCount: groupIDs.count, titles: groupTitles)
+  }
+  private func expandedPlateHeight(_ indices: [Int]) -> CGFloat {
+    PresetShelfDensity.height(itemCount: indices.reduce(0) { $0 + groupIDs[$1].count })
+  }
   private var expandedHeight: CGFloat {
-    CGFloat(groupIDs.count) * namedHeight + CGFloat(max(0, groupIDs.count - 1)) * 8
-      + CGFloat(groupIDs.indices.filter { title(for: $0) != nil }.count) * categoryHeadingHeight
+    expandedGroups.reduce(0) { total, indices in
+      total + expandedPlateHeight(indices) + (title(for: indices[0]) == nil ? 0 : categoryHeadingHeight)
+    } + CGFloat(max(0, expandedGroups.count - 1)) * 8
   }
   private var motion: Animation? { reduceMotion || powerSaver ? nil : PopupMotion.resize }
   private var fade: Animation? { reduceMotion || powerSaver ? nil : .easeOut(duration: 0.16) }
@@ -54,9 +63,9 @@ struct PresetQuadShelf<Plate: View>: View {
 
           PresetShelfSurface {
             VStack(spacing: 8) {
-              ForEach(groupIDs.indices, id: \.self) { i in
+              ForEach(expandedGroups, id: \.self) { indices in
                 VStack(alignment: .leading, spacing: 0) {
-                  if let title = title(for: i) {
+                  if let title = title(for: indices[0]) {
                     Text(title)
                       .font(.system(size: 10, weight: .semibold))
                       .foregroundStyle(.secondary)
@@ -64,7 +73,7 @@ struct PresetQuadShelf<Plate: View>: View {
                       .frame(height: categoryHeadingHeight, alignment: .center)
                       .accessibilityAddTraits(.isHeader)
                   }
-                  plate(i, .all, backgroundPressed).frame(height: namedHeight)
+                  plate(indices, .all, backgroundPressed).frame(height: expandedPlateHeight(indices))
                 }
               }
             }
@@ -147,7 +156,7 @@ struct PresetQuadShelf<Plate: View>: View {
       ScrollView(.horizontal, showsIndicators: false) {
         HStack(spacing: 8) {
           ForEach(groupIDs.indices, id: \.self) { i in
-            plate(i, level == .mini ? .mini : .named, backgroundPressed)
+            plate([i], level == .mini ? .mini : .named, backgroundPressed)
               .frame(width: max(120, (geometry.size.width - 8) / 2), height: carouselHeight)
               .background {
                 GeometryReader { frame in
@@ -273,5 +282,28 @@ private struct PresetQuadFrames: PreferenceKey {
   static let defaultValue: [Int: CGRect] = [:]
   static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
     value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+  }
+}
+
+/// One shared geometry rule keeps the animation's explicit height and the
+/// production control grid in agreement, including odd and saved counts.
+enum PresetShelfDensity {
+  static let columns = 4
+  static let rowHeight: CGFloat = 52
+  static let rowGap: CGFloat = 4
+  static let inset: CGFloat = 4
+  static func height(itemCount: Int) -> CGFloat {
+    let rows = (max(0, itemCount) + columns - 1) / columns
+    return CGFloat(rows) * rowHeight + CGFloat(max(0, rows - 1)) * rowGap + inset * 2
+  }
+  static func categories(groupCount: Int, titles: [String?]) -> [[Int]] {
+    var result: [[Int]] = []
+    for index in 0..<groupCount {
+      // Without heading metadata each page remains a separate category.
+      if result.isEmpty || !titles.indices.contains(index) || titles[index] != nil {
+        result.append([index])
+      } else { result[result.count - 1].append(index) }
+    }
+    return result
   }
 }
