@@ -163,13 +163,13 @@ struct WaveformView: View {
             .animation(.easeOut(duration: 0.3), value: model.idle)
           if style != .classic {
             HStack(spacing: 5) {
-              Text(style.title.uppercased())
+              Text(style.title)
               Text(String(format: "%.1f ms", model.duration * 1_000))
               Spacer(minLength: 2)
-              Text("POST FX · MONO")
-              Text(String(format: "AUTO ×%.1f", model.scale))
+              Text("Post FX · Mono")
+              Text(String(format: "Auto ×%.1f", model.scale))
             }
-            .font(.system(size: 7, weight: .medium, design: .monospaced))
+            .font(.system(size: 9, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .help(style.detail)

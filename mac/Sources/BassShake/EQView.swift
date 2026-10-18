@@ -333,10 +333,10 @@ struct EQView: View {
     EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
                                 dark: scheme == .dark, highContrast: contrast == .increased,
                                 prism: controller.settings.eqLineStyle == .prism)
-    ctx.draw(Text("0 dB").font(.system(size: 8, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
+    ctx.draw(Text("0 dB").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
              at: CGPoint(x: w - 4, y: y(0, h) + 6), anchor: .trailing)
     for (f, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")] {
-      ctx.draw(Text(label).font(.system(size: 8, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
+      ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
                at: CGPoint(x: x(f, w) + 3, y: h - 7), anchor: .leading)
     }
 
@@ -438,10 +438,10 @@ struct EQView: View {
                                 dark: dark, highContrast: contrast == .increased,
                                 prism: controller.settings.eqLineStyle == .prism)
     if controller.settings.eqLineStyle == .prism {
-      ctx.draw(Text("EQ + BOOST · dB").font(.system(size: 7, weight: .medium, design: .monospaced))
+      ctx.draw(Text("EQ + Boost · dB").font(.system(size: 9, weight: .medium, design: .rounded))
         .foregroundColor(.secondary.opacity(0.8)), at: CGPoint(x: 8, y: 8), anchor: .leading)
       for (frequency, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k Hz")] {
-        ctx.draw(Text(label).font(.system(size: 7, weight: .medium, design: .monospaced))
+        ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded))
           .foregroundColor(.secondary.opacity(0.75)),
                  at: CGPoint(x: x(frequency, w), y: h - 6), anchor: .center)
       }

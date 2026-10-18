@@ -74,7 +74,8 @@ struct AppearancePanelView: View {
                   switch category {
                   case .artwork:
                     layouts
-                    HStack(alignment: .top, spacing: 8) { artwork; finish }
+                    artwork
+                    finish
                     holographicFinish
                     vinyl
                   case .background:
@@ -366,8 +367,8 @@ struct AppearancePanelView: View {
     section("Finish") {
       HStack(spacing: 8) {
         ForEach(ArtworkEffect.allCases) { effect in
-          choice(effect == .none ? "Original" : "Dots",
-                 selected: controller.settings.artworkEffect == effect, labelLines: 1,
+          choice(effect.title,
+                 selected: controller.settings.artworkEffect == effect, labelLines: 2,
                  action: { controller.settings.artworkEffect = effect }) {
             previewSurface {
               EffectArtworkImage(image: cover, size: 46)

@@ -3,9 +3,17 @@ import SwiftUI
 
 /// Independent of Cover / Vinyl Peek: this changes only the artwork bitmap.
 enum ArtworkEffect: String, Codable, CaseIterable, Identifiable {
-  case none, halftone
+  case none, lines, halftone, slashLines
   var id: String { rawValue }
-  var title: String { self == .none ? "None" : "Halftone Dots" }
+  // Keep the stored "halftone" value so existing Dots selections migrate in place.
+  var title: String {
+    switch self {
+    case .none: return "Original"
+    case .lines: return "Lines"
+    case .halftone: return "Dots"
+    case .slashLines: return "Slash Lines"
+    }
+  }
 }
 
 private struct ArtworkEffectKey: EnvironmentKey { static let defaultValue = ArtworkEffect.none }
@@ -34,18 +42,23 @@ struct EffectArtworkImage: View {
     let image: NSImage
   }
   private var request: ArtworkEffectImages.Key {
-    ArtworkEffectImages.Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: effect, aspectRatio: aspectRatio)
+    ArtworkEffectImages.Key(image: ObjectIdentifier(image), size: size, scale: scale, effect: .none, aspectRatio: aspectRatio)
   }
 
   var body: some View {
     let current = request
-    let cached = ArtworkEffectImages.shared.cached(image, size: size, scale: scale, effect: effect, aspectRatio: aspectRatio)
+    let cached = ArtworkEffectImages.shared.cached(image, size: size, scale: scale, effect: .none, aspectRatio: aspectRatio)
     let output = rendered?.key == current && rendered?.source === image ? rendered?.image : cached
     Image(nsImage: output ?? image)
       .resizable()
-      .interpolation(output != nil && effect == .halftone ? .none : .high)
+      .interpolation(.high)
       .aspectRatio(contentMode: .fill)
       .frame(width: size, height: size / aspectRatio)
+      .overlay {
+        ArtworkFinishOverlay(effect: effect, width: size, height: size / aspectRatio)
+          .blendMode(.sourceAtop)
+      }
+      .compositingGroup()
       .onAppear { load() }
       .onChange(of: current) { _, _ in load() }
   }
@@ -53,7 +66,7 @@ struct EffectArtworkImage: View {
   private func load() {
     let current = request
     requested = current
-    ArtworkEffectImages.shared.image(for: image, size: size, scale: scale, effect: effect, aspectRatio: aspectRatio) { output in
+    ArtworkEffectImages.shared.image(for: image, size: size, scale: scale, effect: .none, aspectRatio: aspectRatio) { output in
       // An earlier cover/size/effect may complete after a newer request.
       guard requested == current else { return }
       rendered = output.map { Rendered(key: current, source: image, image: $0) }
@@ -61,9 +74,8 @@ struct EffectArtworkImage: View {
   }
 }
 
-/// Deterministic CPU rendering, once per cover and display size. The reference
-/// uses square ordered-dither cells with checker transitions, not circular
-/// newspaper dots. Tone chooses the pattern; the artwork supplies its colours.
+/// Cached still rendering for the inspection face. Live covers use the same
+/// pattern as a lightweight overlay, keeping the source image stationary.
 enum ArtworkEffectRenderer {
   /// Bounds are checked before integer conversion or bitmap allocation.
   static func pixelSide(size: CGFloat, scale: CGFloat) -> Int? {
@@ -94,48 +106,14 @@ enum ArtworkEffectRenderer {
     context.interpolationQuality = .high
     context.draw(image, in: CGRect(x: (CGFloat(side) - width) / 2, y: (CGFloat(rows) - height) / 2,
                                    width: width, height: height))
-    guard effect == .halftone, let bytes = context.data?.assumingMemoryBound(to: UInt8.self) else {
-      return context.makeImage()
-    }
-
-    // The 18–26 pt covers need finer cells to keep faces and lettering legible.
-    // At 2×, larger art uses crisp 2 px cells; the result is never a live shader.
-    let cell = max(1, Int((scale * (size < 28 ? 0.5 : 1)).rounded()))
-    let bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
-    let steps = 4.0
-    for y in stride(from: 0, to: rows, by: cell) {
-      for x in stride(from: 0, to: side, by: cell) {
-        let endY = min(rows, y + cell), endX = min(side, x + cell)
-        var red = 0.0, green = 0.0, blue = 0.0, alpha = 0.0
-        for py in y..<endY {
-          for px in x..<endX {
-            let index = (py * side + px) * 4
-            red += Double(bytes[index]); green += Double(bytes[index + 1]); blue += Double(bytes[index + 2])
-            alpha += Double(bytes[index + 3])
-          }
-        }
-        guard alpha > 0 else { continue }
-        // Work in unpremultiplied colour. Quantizing brightness scales all
-        // channels together, preserving hue/saturation instead of tinting green.
-        red /= alpha; green /= alpha; blue /= alpha
-        let brightness = max(red, max(green, blue))
-        let tone = brightness * steps
-        let lower = floor(tone)
-        let threshold = (Double(bayer[((y / cell) & 3) * 4 + ((x / cell) & 3)]) + 0.5) / 16
-        let printed = min(1, (lower + (tone - lower > threshold ? 1 : 0)) / steps)
-        let ratio = brightness > 0 ? printed / brightness : 0
-        for py in y..<endY {
-          for px in x..<endX {
-            let index = (py * side + px) * 4
-            // Preserve every original alpha sample, including soft cover edges.
-            let a = Double(bytes[index + 3])
-            bytes[index] = UInt8(min(a, max(0, (red * ratio * a).rounded())))
-            bytes[index + 1] = UInt8(min(a, max(0, (green * ratio * a).rounded())))
-            bytes[index + 2] = UInt8(min(a, max(0, (blue * ratio * a).rounded())))
-          }
-        }
-      }
-    }
+    context.saveGState()
+    context.scaleBy(x: scale, y: scale)
+    context.translateBy(x: 0, y: size / aspectRatio)
+    context.scaleBy(x: 1, y: -1)
+    context.setBlendMode(.sourceAtop)
+    ArtworkFinishPattern.draw(in: context, size: CGSize(width: size, height: size / aspectRatio),
+                              effect: effect, time: 0)
+    context.restoreGState()
     return context.makeImage()
   }
 }

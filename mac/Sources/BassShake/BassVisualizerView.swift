@@ -38,7 +38,7 @@ struct BassVisualizerArtwork: View {
 
   private func label(_ text: String, _ context: GraphicsContext, at point: CGPoint,
                      anchor: UnitPoint = .topLeading, opacity: Double = 0.58) {
-    context.draw(Text(text).font(.system(size: 8, weight: .medium, design: .monospaced))
+    context.draw(Text(text).font(.system(size: 9, weight: .medium, design: .rounded))
       .foregroundColor(.primary.opacity(opacity)), at: point, anchor: anchor)
   }
 
@@ -87,12 +87,12 @@ struct BassVisualizerArtwork: View {
                      style: StrokeStyle(lineWidth: compact ? 0.8 : 1, lineCap: .round, lineJoin: .round))
     }
     if !compact {
-      label("LOW 20–250 Hz", context, at: CGPoint(x: 0, y: 0), opacity: 0.75)
-      label("ENERGY −66…−6 dBFS", context, at: CGPoint(x: size.width, y: 0), anchor: .topTrailing)
-      label("HIGH 2–20 kHz", context,
+      label("Low 20–250 Hz", context, at: CGPoint(x: 0, y: 0), opacity: 0.75)
+      label("Energy −66…−6 dBFS", context, at: CGPoint(x: size.width, y: 0), anchor: .topTrailing)
+      label("High 2–20 kHz", context,
             at: CGPoint(x: 0, y: top + available * 0.66), opacity: 0.60)
-      label("\(Int(duration))s · POST FX · MONO", context, at: CGPoint(x: 0, y: size.height), anchor: .bottomLeading)
-      label("NOW", context, at: CGPoint(x: size.width, y: size.height), anchor: .bottomTrailing)
+      label("\(Int(duration)) s · Post FX · Mono", context, at: CGPoint(x: 0, y: size.height), anchor: .bottomLeading)
+      label("Now", context, at: CGPoint(x: size.width, y: size.height), anchor: .bottomTrailing)
     }
   }
 
@@ -125,9 +125,9 @@ struct BassVisualizerArtwork: View {
     }
     reference(context, y: baseline, width: size.width, opacity: 0.18)
     if !compact {
-      label("POST FX · MONO", context, at: .zero)
+      label("Post FX · Mono", context, at: .zero)
       label("−66…−6 dBFS", context, at: CGPoint(x: size.width, y: 0), anchor: .topTrailing)
-      for (text, frequency) in [("SUB", 35.0), ("BASS", 125.0), ("MIDS", 710.0), ("HIGHS", 6300.0)] {
+      for (text, frequency) in [("Sub", 35.0), ("Bass", 125.0), ("Mids", 710.0), ("Highs", 6300.0)] {
         let x = CGFloat(log10(frequency / 20) / 3) * size.width
         label(text, context, at: CGPoint(x: x, y: size.height), anchor: .bottom, opacity: 0.62)
       }
