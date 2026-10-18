@@ -76,7 +76,9 @@ struct DeviceBatteryLabel: View {
           Text("\(reading.percent)%").monospacedDigit()
         }
         .font(.system(size: 10, weight: .medium, design: .rounded))
-        .foregroundStyle(.artworkSecondary)
+        // .secondary, not .artworkSecondary: device-battery-check compiles this file alone.
+        // Inside the popup the theme maps .secondary to its measured secondary ink.
+        .foregroundStyle(.secondary)
         .lineLimit(1)
         .fixedSize()
         .opacity(hovered ? 1 : 0.85)
