@@ -28,7 +28,7 @@ enum FooterBento {
   /// An inner button's height (icon-only buttons are this square: a circle).
   static let button: CGFloat = 24
   /// Between buttons in a group.
-  static let gap: CGFloat = 2
+  static let gap: CGFloat = 4
   /// Either side of the inset rule between groups.
   static let groupGap: CGFloat = 6
   /// Between the blocks and the footer (or the Dock header): the blocks' edge
@@ -186,8 +186,7 @@ private struct FooterButtonBody: View {
     configuration.label
       .frame(minWidth: chip ? nil : FooterBento.button, minHeight: FooterBento.button)
       // A bare glyph rests quiet and comes up to full ink under the pointer.
-      .foregroundStyle(chip ? AnyShapeStyle(.primary)
-                       : danger && lit ? AnyShapeStyle(Color.red) : AnyShapeStyle(lit ? .primary : .secondary))
+      .foregroundStyle(danger && lit ? AnyShapeStyle(Color.red) : AnyShapeStyle(lit ? .primary : .secondary))
       .environment(\.footerHover, motion && enabled && hovered)
       .environment(\.footerLit, lit)
       .environment(\.footerTint, danger && lit ? Color.red : nil)
@@ -222,6 +221,7 @@ private struct FooterPlate: View {
 /// Opening a drawer is a quiet wash; processing / playback uses a solid active chip.
 struct FooterModePlate: ViewModifier {
   @Environment(\.popupChrome) private var chrome
+  @Environment(\.footerLit) private var lit
   let active: Bool
   let expanded: Bool
   @Environment(\.popupTint) private var tint
@@ -234,7 +234,9 @@ struct FooterModePlate: ViewModifier {
     let material = FooterMaterial(tint: tint?.ink, dark: dark)
     let wash = chrome?.accent ?? (dark ? tint?.pastel : tint?.ink) ?? Color.primary
     content
-      .foregroundStyle(active ? (chrome?.surface ?? Color.white) : (chrome?.ink ?? Color.primary))
+      // Glyphs rest at secondary like the rest of the shelf; full ink when open or pointed at.
+      .foregroundStyle(active ? (chrome?.surface ?? Color.white)
+                       : expanded || lit ? (chrome?.ink ?? Color.primary) : (chrome?.secondary ?? Color.secondary))
       .background {
         Capsule()
           .fill(active ? (chrome?.accent ?? material.activeFill) : expanded && !reduceTransparency ? wash.opacity(contrast == .increased ? 0.24 : 0.12) : .clear)
@@ -289,8 +291,11 @@ struct FooterShakerMenu<Content: View>: View {
     .fixedSize()
     .frame(width: FooterBento.button, height: FooterBento.button)
     .overlay {
-      // Hand, shaker and wrench; the plate carries hover and press feedback.
-      FooterFlatIcon(kind: .settings, engaged: lit, motionAllowed: motion)
+      // The standard More symbol; the plate carries hover and press feedback.
+      Image(systemName: "ellipsis.circle")
+        .font(.system(size: 13, weight: .regular))
+        .symbolRenderingMode(.hierarchical)
+        .foregroundStyle(lit ? .primary : .secondary)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
         .scaleEffect(motion && open ? FooterMotion.pressScale : 1)

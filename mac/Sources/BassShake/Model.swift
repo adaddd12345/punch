@@ -1200,3 +1200,28 @@ struct Lossy<T: Decodable>: Decodable {
   let value: T?
   init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
+
+extension Preset {
+  /// The flagship sounds: their own block of tiles; every other preset is a pill.
+  static let signatureNames = ["Bass Shake", "Podcast", "Soft Lofi"]
+  static var signature: [Preset] { signatureNames.compactMap { n in all.first { $0.name == n } } }
+  static var nonSignature: [Preset] { all.filter { !signatureNames.contains($0.name) } }
+
+  /// One line under a signature tile, true to its curve.
+  var tagline: String? {
+    switch name {
+    case "Bass Shake": return "Deep bass you can feel"
+    case "Podcast": return "Warm, close voices"
+    case "Soft Lofi": return "Full lows, softer highs"
+    default: return nil
+    }
+  }
+}
+
+extension Settings {
+  /// A built-in preset is the current sound: no saved sound on top, and no
+  /// listening mode replacing it (Late Night layers on, so it still counts).
+  func isCurrent(_ p: Preset) -> Bool {
+    userPresetID == nil && presetName == p.name && (mode == .off || mode.isLayered)
+  }
+}

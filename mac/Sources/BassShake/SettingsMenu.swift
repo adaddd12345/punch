@@ -9,6 +9,7 @@ import SwiftUI
 /// way: the Live / DJ / Beats tray (its own window) shuts and rearranging ends first.
 enum SettingsPanel: Equatable {
   case remote, mySounds, layout, hearingFit, micTest, latencyLab, markets, drivers, resetConfirm
+  case appearance, checkAndFix
 }
 
 /// This Mac's settings menu.
@@ -19,6 +20,8 @@ struct SettingsMenuContent: View {
   @ObservedObject private var login = LoginItemState.shared
 
   var body: some View {
+    Button("Check & Fix Sound Issues") { panel = .checkAndFix }
+    Divider()
     soundMenu
     Button("Beat Inbox…") { DownloadQueueWindow.show(controller: controller) }
     Toggle("Artist Mode", isOn: bind(\.artistMode))
@@ -64,6 +67,10 @@ struct SettingsMenuContent: View {
   /// Outputs and the microphone: per-device behaviour and the repair tools.
   private var devicesMenu: some View {
     Menu("Devices") {
+      if case .running(_, let sr) = controller.status {
+        Text(String(format: "Output at %.1f kHz", sr / 1000))
+        Divider()
+      }
       Button("Output Groups…") { OutputGroupsWindow.show() }
       Button("Connect AirPlay…") { OutputGroupsView.openSound() }
       Divider()
@@ -107,6 +114,8 @@ struct SettingsMenuContent: View {
   /// How the popup is drawn. Nothing here changes the sound.
   private var lookMenu: some View {
     Menu("Look") {
+      Button("Appearance…") { panel = .appearance }
+      Divider()
       Picker("Background", selection: Binding(get: { controller.settings.backgroundStyle },
                                                set: { controller.settings.setBackground($0) })) {
         ForEach(BackgroundStyle.allCases.filter { !$0.scene && !$0.morph }) { Text($0.title).tag($0) }

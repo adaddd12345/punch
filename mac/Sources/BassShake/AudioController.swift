@@ -373,7 +373,8 @@ final class AudioController: ObservableObject {
     if isMirror {
       mirrorLink?.mirrorSend(.setPreset(preset.name))
       mirrorLocally { s in
-        s.mode = .off; s.presetName = preset.name; s.userPresetID = nil; s.editedFrom = nil
+        if !s.mode.isLayered { s.mode = .off }
+        s.presetName = preset.name; s.userPresetID = nil; s.editedFrom = nil
         s.bass = preset.bass; s.character = preset.character; s.bands = EQBand.normalized(preset.bands())
       }
       return
@@ -394,7 +395,8 @@ final class AudioController: ObservableObject {
     if isMirror {
       mirrorLink?.mirrorSend(.applyUserPreset(p.id.uuidString))
       mirrorLocally { s in
-        s.mode = .off; s.presetName = nil; s.userPresetID = p.id; s.editedFrom = nil
+        if !s.mode.isLayered { s.mode = .off }
+        s.presetName = nil; s.userPresetID = p.id; s.editedFrom = nil
         s.bass = p.bass; s.boostDb = p.boostDb; s.character = p.character; s.bands = EQBand.normalized(p.bands)
       }
       return
@@ -838,6 +840,7 @@ final class AudioController: ObservableObject {
       mirrorLocally { $0.mode = mode }
       return
     }
+    let leavingLayered = settings.mode.isLayered
     var s = settings
     if s.mode == .off {
       s.beforeMode = .init(bands: morphTarget ?? s.bands, bass: s.bass, character: s.character,
@@ -857,7 +860,10 @@ final class AudioController: ObservableObject {
       // own sound: back to what this device had: the snapshot if the mode started on
       // this output, else the device's own remembered sound, else Bass Shake.
       let uid = currentDevice?.uid
-      if let b = s.beforeMode, b.deviceUID == nil || b.deviceUID == uid || !s.perDevice {
+      if leavingLayered && s.beforeMode == nil {
+        // A sound picked during Late Night replaced its snapshot: keep it.
+        target = morphTarget ?? s.bands
+      } else if let b = s.beforeMode, b.deviceUID == nil || b.deviceUID == uid || !s.perDevice {
         s.bass = b.bass; s.character = b.character; s.presetName = b.presetName; s.userPresetID = b.userPresetID
         target = b.bands
       } else if s.perDevice, let uid, let d = s.deviceSounds[uid] {
@@ -889,6 +895,9 @@ final class AudioController: ObservableObject {
   /// Picking a preset while a mode is on ends the mode without restoring.
   private func leaveModeQuietly() {
     guard settings.mode != .off else { return }
+    // Late Night layers on whatever plays: a new sound keeps it on, and ending
+    // it later keeps that sound (no snapshot to restore).
+    if settings.mode.isLayered { settings.beforeMode = nil; return }
     lightsOutModeWillChange(to: .off)
     stopPomodoro()
     settings.mode = .off

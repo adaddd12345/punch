@@ -360,39 +360,12 @@ enum OutputGroupsWindow {
 }
 
 struct OutputConnectionMenu: View {
+  @Environment(\.popupChrome) private var chrome
+  @Environment(\.appGlassEnabled) private var glass
   var body: some View {
     Divider()
-    Button("Output Groups…") { OutputGroupsWindow.show() }
+    Button("Output Groups…") { OutputGroupsWindow.show(chrome: chrome, glass: glass) }
     Button("Connect AirPlay…") { OutputGroupsView.openSound() }
   }
 }
 
-/// Direct access beside the output selector; kept separate from changing the
-/// current output so browsing speakers never redirects sound.
-struct SpeakerGroupButton: View {
-  @Environment(\.popupChrome) private var chrome
-  @Environment(\.appGlassEnabled) private var glass
-  var body: some View {
-    Button {
-      OutputGroupsWindow.show(chrome: chrome, glass: glass, chooseOutputs: true)
-    } label: {
-      ZStack {
-        Image(systemName: "megaphone.fill")
-          .font(.system(size: 14, weight: .regular))
-          .position(x: 12, y: 11)
-        Image(systemName: "hand.point.up.left.fill")
-          .font(.system(size: 8, weight: .regular))
-          .padding(1)
-          .background(.chromeSurface, in: Circle())
-          .position(x: 27, y: 20)
-      }
-      .frame(width: 34, height: 26)
-      .contentShape(RoundedRectangle(cornerRadius: 8))
-    }
-    .buttonStyle(.plain)
-    .foregroundStyle(.artworkPrimary)
-    .modifier(AppGlassSurface(radius: 8))
-    .accessibilityLabel("Choose multiple speakers")
-    .help("Play through multiple outputs")
-  }
-}

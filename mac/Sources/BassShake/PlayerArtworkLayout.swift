@@ -66,7 +66,7 @@ struct PlayerArtworkHeader<Controls: View>: View {
       controls()
         .frame(height: preview ? 44 : 60)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, preview ? 6 : 8)
+        .padding(.vertical, 4)
         .modifier(AppGlassSurface(radius: 14, interactive: false))
     }
 
@@ -117,9 +117,16 @@ struct PlayerArtworkStage: View {
                                  startRadius: height * 0.15, endRadius: width * 0.5))
         }
         if !expanded || style == .vinyl {
+          // Vinyl's sleeve sits at the slot's leading edge (VinylGeometry), an
+          // eighth of the slot left of centre. Centre the cover itself, under
+          // the centred title; the record peeks into the free space and its
+          // moves never slide the cover. Width cap 0.6 keeps the record inside.
+          let vinyl = style == .vinyl
+          let slot = min(height * 0.9, width * (vinyl ? 0.6 : 0.66)) * (vinyl ? 4 / 3 : 1)
           NowArt(artwork: artwork, favicon: favicon, icon: icon,
-                 size: min(height * 0.9, width * 0.66) * (style == .vinyl ? 4 / 3 : 1),
+                 size: slot,
                  spinning: spinning, paused: paused, cornerRadius: min(14, height * 0.07))
+            .offset(x: vinyl ? slot * 0.125 : 0)
         }
         }
       }
@@ -148,7 +155,8 @@ private struct LandscapeArtworkStage: View {
   var body: some View {
     let ratio = image.size.width / image.size.height
     let record = style == .vinyl
-    let coverWidth = min(width / (1 + (record ? 0.23 / ratio : 0)), height * 0.9 * ratio)
+    // The cover is centred and the record peeks right of it: room for twice the peek.
+    let coverWidth = min(width / (1 + (record ? 0.46 / ratio : 0)), height * 0.9 * ratio)
     let coverHeight = coverWidth / ratio
     let diameter = coverHeight * 0.92
     let peek = record ? diameter * 0.25 : 0
@@ -180,6 +188,7 @@ private struct LandscapeArtworkStage: View {
           .modifier(SoftShadow(on: !powerSaver, color: .black.opacity(0.15), radius: 4, y: 2))
       }
       .frame(width: coverWidth + peek, height: coverHeight, alignment: .leading)
+      .offset(x: peek / 2)
       .modifier(ArtworkCoverPerspective())
     }
     .frame(width: width, height: height)

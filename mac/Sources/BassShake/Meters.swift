@@ -140,23 +140,31 @@ final class MeterModel: ObservableObject {
 
 struct MeterView: View {
   @ObservedObject var model: MeterModel
+  @Environment(\.labelLevel) private var labels
 
+  /// The same three columns as the Bass and Gain rows below (LabeledSlider),
+  /// so bars, scale and tracks share one span and the ticks are true.
   var body: some View {
+    let label: CGFloat = labels == .icons ? 16 : 74
     VStack(spacing: 5) {
       ForEach(0..<2, id: \.self) { i in
         HStack(spacing: 6) {
           Text(i == 0 ? "L" : "R")
-            .font(.system(size: 9, weight: .semibold, design: .rounded))
+            .font(.system(size: 9, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
-            .frame(width: 8)
+            .frame(width: label, alignment: .leading)
           MeterBar(channel: model.channels[i])
             .frame(height: 7)
+          Color.clear.frame(width: 44, height: 1)
         }
       }
       HStack(spacing: 6) {
-        Spacer().frame(width: 8)
+        Color.clear.frame(width: label, height: 1)
         MeterScale()
+        // "LIMIT 12" can run a little wider than the column: it grows left, never truncates.
         LimitPill(active: model.limiting, reductionDb: model.gainReductionDb)
+          .fixedSize()
+          .frame(width: 44, alignment: .trailing)
       }
     }
   }
@@ -223,7 +231,7 @@ private struct LimitPill: View {
   @Environment(\.colorSchemeContrast) private var contrast
   var body: some View {
     Text(active ? String(format: "LIMIT %.0f", reductionDb) : "LIMIT")
-      .font(.system(size: 8, weight: .bold, design: .rounded))
+      .font(.system(size: 8, weight: .semibold, design: .rounded))
       .monospacedDigit()
       .padding(.horizontal, 5)
       .padding(.vertical, 1.5)

@@ -367,7 +367,7 @@ struct LatencyChip: View {
     if lab.onTheRoad {
       Button(action: onOpen) {
         HStack(spacing: 4) {
-          Image(systemName: "metronome").font(.system(size: 12, weight: .semibold)).symbolRenderingMode(.hierarchical)
+          Image(systemName: "metronome").font(.system(size: 13, weight: .regular)).symbolRenderingMode(.hierarchical)
           if !iconOnly, let saved = lab.savedForCurrentPair {
             Text(String(format: "%.0f ms", saved.extraMs))
               .font(.system(size: 10, weight: .semibold, design: .rounded))

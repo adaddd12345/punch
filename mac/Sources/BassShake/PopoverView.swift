@@ -141,6 +141,10 @@ struct PopoverView: View {
       case .markets: showMarkets = true
       case .drivers: showDrivers = true
       case .resetConfirm: break
+      case .appearance: setAppearance(true)
+      case .checkAndFix:
+        doctorRequestedHere = true
+        controller.checkAndFix()
       }
     }
   }
@@ -792,7 +796,7 @@ struct PopoverView: View {
     let on = controller.settings.limit
     return Button { controller.settings.limit.toggle() } label: {
       Text("Limit")
-        .font(.system(size: 11, weight: .bold, design: .rounded))
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
         .lineLimit(1)
         .fixedSize()
         .padding(.horizontal, 10)
@@ -948,7 +952,9 @@ struct PopoverView: View {
              text: "Ear Protector caught a sudden loud sound and turned it down for a few seconds.",
              action: ("Mute Now", { controller.muteOutput(); controller.earAlertVisible = false }),
              secondary: ("OK", { controller.earAlertVisible = false }))
-    case _ where controller.doctorReport != nil && size == .mini && !dockHeaderShown:
+    case _ where controller.doctorRunning:
+      Banner(symbol: "stethoscope", tint: .blue, text: "Checking your sound…", action: nil, secondary: nil)
+    case _ where controller.doctorReport != nil:
       Banner(symbol: "stethoscope", tint: .green,
              text: (controller.doctorReport ?? []).joined(separator: "\n"),
              action: ("OK", { controller.doctorReport = nil }),
@@ -1044,21 +1050,12 @@ struct PopoverView: View {
 
   /// One shelf along the bottom edge: status and modes, then tools, a short rule, Quit.
   private var localFooter: some View {
+    // Live, DJ, Beats (and Latency while it runs), then ⋯. Quit, Appearance and
+    // Check & Fix live in ⋯; battery and sample rate belong to the output row.
     FooterShelf {
       statusGroup
       Spacer(minLength: FooterBento.groupGap)
-      DeviceBatteryFooter(output: controller.currentDevice, active: visible && !controller.isMirror)
-      if labels == .full, case .running(_, let sr) = controller.status {
-        Text(String(format: "%.1f kHz", sr / 1000))
-          .font(.system(size: 9, weight: .medium, design: .rounded))
-          .lineLimit(1)
-          .minimumScaleFactor(0.85)
-          .foregroundStyle(.artworkSecondary)
-          .padding(.trailing, FooterBento.groupGap)
-      }
       toolsGroup
-      FooterRule()
-      powerGroup
     }
     .environment(\.footerSurface, footerSurface)
   }
@@ -1093,10 +1090,10 @@ struct PopoverView: View {
         setAppearance(false)
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
-        HStack(spacing: 4) {
-          // A small flat DJ wearing headphones above the decks.
-          FooterFlatIcon(kind: .dj)
-        }
+        Image(systemName: "dial.medium")
+          .font(.system(size: 13, weight: .regular))
+          .symbolRenderingMode(.hierarchical)
+          .frame(width: 16, height: 16)
         .footerChip(iconOnly: true)
         .modifier(FooterModePlate(active: controller.dj.anyActive, expanded: showDJ))
       }
@@ -1107,14 +1104,17 @@ struct PopoverView: View {
         setAppearance(false)
         if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
       } label: {
-        HStack(spacing: 4) {
+        Group {
           if beats.playing {
-            Image(systemName: "waveform").font(.system(size: 12, weight: .semibold)).frame(width: 16, height: 16)
+            Image(systemName: "waveform")
               .symbolEffect(.variableColor.iterative, isActive: visible && !controller.settings.powerSaver && !reduceMotion)
           } else {
-            FooterFlatIcon(kind: .beats)
+            Image(systemName: "music.note")
           }
         }
+        .font(.system(size: 13, weight: .regular))
+        .symbolRenderingMode(.hierarchical)
+        .frame(width: 16, height: 16)
         .footerChip(iconOnly: true)
         .modifier(FooterModePlate(active: beats.playing, expanded: showBeats))
       }
@@ -1141,45 +1141,9 @@ struct PopoverView: View {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { confirmSoundReset = true }
   }
 
-  /// Tools: Check & Fix and the ⋯ shaker menu.
+  /// Tools: the ⋯ menu (Check & Fix, Appearance and Quit are inside it).
   private var toolsGroup: some View {
     FooterGroup {
-      Button {
-        doctorRequestedHere = true
-        controller.checkAndFix()
-      } label: {
-        Group {
-          if controller.doctorRunning {
-            Image(systemName: "hourglass").font(.system(size: 11, weight: .semibold))
-              .frame(width: 16, height: 16)
-          } else {
-            FooterDiagnosticIcon()
-          }
-        }
-      }
-      .buttonStyle(FooterButtonStyle())
-      .accessibilityLabel("Check and fix sound issues")
-      .pointerHint(Caption.checkAndFix())
-      .popover(isPresented: Binding(
-        get: { showDoctorReport && controller.doctorReport != nil },
-        set: {
-          showDoctorReport = $0
-          if !$0 { controller.doctorReport = nil; doctorRequestedHere = false }
-        }), arrowEdge: .bottom) {
-        DoctorReportCard(report: controller.doctorReport ?? [],
-                         dismiss: { controller.doctorReport = nil },
-                         restart: controller.status == .audioServiceStuck ? controller.restartAudioService : nil,
-                         reset: (controller.doctorReport ?? []).contains("Everything looked fine.") ? requestDoctorReset : nil)
-      }
-      Button { setAppearance(!showAppearance) } label: {
-        FooterFlatIcon(kind: .appearance)
-          .footerChip(iconOnly: true)
-          .modifier(FooterModePlate(active: false, expanded: showAppearance))
-      }
-      .buttonStyle(FooterButtonStyle(chip: true))
-      .accessibilityLabel("Appearance")
-      .accessibilityValue(showAppearance ? "Open" : "Closed")
-      .help("Appearance: backgrounds, artwork and vinyl")
       FooterShakerMenu(help: "Settings") {
         SettingsMenuContent(controller: controller, updates: updates, panel: $menuPanel)
       }
@@ -1196,19 +1160,6 @@ struct PopoverView: View {
     }
     withAnimation(reduceMotion || controller.settings.powerSaver ? nil : .easeOut(duration: 0.22)) {
       showAppearance = shown
-    }
-  }
-
-  /// Quit, past a rule: it ends the whole app, so it never shares a group with menus.
-  private var powerGroup: some View {
-    FooterGroup {
-      // Destructive action stays at the far edge, with a red hover treatment.
-      Button { NSApp.terminate(nil) } label: {
-        FooterFlatIcon(kind: .power)
-      }
-      .accessibilityLabel("Quit")
-      .buttonStyle(FooterButtonStyle(danger: true))
-      .font(.system(size: 11))
     }
   }
 }
@@ -1244,6 +1195,7 @@ struct LabeledSlider: View {
         .foregroundStyle(.artworkSecondary)
         .frame(width: 44, alignment: .trailing)
     }
+    .frame(height: 24)
   }
 }
 

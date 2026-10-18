@@ -260,6 +260,8 @@ struct BentoView: View {
       dials
     case LayoutSection.classicSliders.key:
       flatSliders
+    case LayoutSection.bentoSignature.key, LayoutSection.classicSignature.key:
+      signatureRow
     case LayoutSection.bentoPresets.key, LayoutSection.classicPresets.key:
       if flat { PresetStrip(controller: controller, editor: $editor) } else { presets }
       if let mode = editor { editorView(mode) }
@@ -474,7 +476,7 @@ struct BentoView: View {
 
   /// Classic's Strength and Boost: the original slider rows, Limit under them.
   private var flatSliders: some View {
-    VStack(spacing: 4) {
+    VStack(spacing: 0) {
       LabeledSlider(title: "Bass", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                     range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
@@ -490,14 +492,15 @@ struct BentoView: View {
         .pointerHint(Caption.boost(s.boostDb, scrub: false), live: true, track: false)
       HStack(spacing: 6) {
         Spacer()
-        Toggle(isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 })) {
-          IconText(title: "Limit", symbol: "ear", size: 10)
-            .foregroundStyle(s.limit ? Color.orange : Color.secondary)
-        }
-        .toggleStyle(.switch)
-        .controlSize(.mini)
-        .pointerHint { [controller] in LimitHint.make(on: controller.settings.limit, meters: controller.meters) }
+        IconText(title: "Limit", symbol: "ear", size: 10)
+          .foregroundStyle(s.limit ? Color.orange : Color.secondary)
+        Toggle("Limit", isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 }))
+          .labelsHidden()
+          .toggleStyle(.switch)
+          .controlSize(.mini)
       }
+      .frame(height: 24)
+      .pointerHint { [controller] in LimitHint.make(on: controller.settings.limit, meters: controller.meters) }
     }
   }
 
@@ -635,7 +638,6 @@ struct BentoView: View {
   @ViewBuilder private var heroOutput: some View {
     if !s.showMacVolume {
       outputChip(iconOnly: true)
-      if !controller.isMirror { SpeakerGroupButton() }
     }
   }
 
@@ -1024,7 +1026,6 @@ struct BentoView: View {
     HStack(alignment: .center, spacing: 8) {
       if !flat && !s.showMacVolume {
         outputChip(iconOnly: false)
-        if !controller.isMirror { SpeakerGroupButton() }
       } else {
         if note { noteLine.transition(.opacity) } else { Spacer(minLength: 0) }
         heroOutput
@@ -1087,7 +1088,7 @@ struct BentoView: View {
         Spacer(minLength: 0)
         if live {
           Image(systemName: "chevron.down")
-            .font(.system(size: 8, weight: .bold))
+            .font(.system(size: 8, weight: .semibold))
             .foregroundStyle(.artworkSecondary)
         }
       }
@@ -1126,7 +1127,7 @@ struct BentoView: View {
   private enum ChipModes { case full, count, none }
 
   private var chipName: some View {
-    Text(heroWord).font(.system(size: 12, weight: .heavy, design: .rounded)).foregroundStyle(.artworkPrimary)
+    Text(heroWord).font(.system(size: 12, weight: .semibold, design: .rounded)).foregroundStyle(.artworkPrimary)
   }
 
   private func chipLine(_ t: BentoTint, glyph: Bool = true, edited: ChipEdited, modes: ChipModes) -> some View {
@@ -1336,9 +1337,9 @@ struct BentoView: View {
     let inner = RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
     return Button { controller.settings.limit.toggle() } label: {
       HStack(spacing: mini ? 4 : 3) {
-        Image(systemName: "ear").font(.system(size: mini ? 11 : 9, weight: .bold))
+        Image(systemName: "ear").font(.system(size: mini ? 11 : 9, weight: .semibold))
         if mini || labels != .icons {
-          Text("Limit").font(.system(size: mini ? 11 : 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize()
+          Text("Limit").font(.system(size: mini ? 11 : 10, weight: .semibold, design: .rounded)).lineLimit(1).fixedSize()
         }
       }
       .padding(.horizontal, 8)
@@ -1358,20 +1359,41 @@ struct BentoView: View {
 
   /// Carousel pages keep four choices; All joins them into compact categories.
   /// The active sound scrolls into view without a second preset strip.
+  /// Bass Shake, Podcast and Soft Lofi: the flagship sounds, one tile each.
+  private var signatureRow: some View {
+    let compact = size == .compact
+    return HStack(spacing: 8) {
+      ForEach(Preset.signature) { p in
+        ModeTile(title: p.name, symbol: p.symbol, tint: tint(BentoTint.forPreset(p.name)), on: s.isCurrent(p),
+                 compact: compact, alwaysFact: true, hint: { Caption.preset(p) }) {
+          if !DragScrollGate.suppressTap { controller.apply(preset: p) }
+        } fact: {
+          if let line = p.tagline {
+            Text(line)
+              .font(.system(size: 10, weight: .regular, design: .rounded))
+              .foregroundStyle(.artworkSecondary)
+              .lineLimit(1)
+              .minimumScaleFactor(0.85)
+          }
+        }
+      }
+    }
+    .frame(height: compact ? 56 : 72)
+    .pointerHintQuick()
+  }
+
   private var presets: some View {
-    let preferred = ["Bass Shake", "Bass Shake Classic", "Podcast", "Soft Lofi"]
-    let ordered = preferred.compactMap { name in Preset.all.first { $0.name == name } }
-      + Preset.all.filter { !preferred.contains($0.name) }
-    let builtIn = ordered.map { p in
+    // The signature sounds have their own tiles; the shelf holds the rest.
+    let builtIn = Preset.nonSignature.map { p in
       CompactModeQuad.Item(identity: "builtIn:" + p.name, title: p.name, symbol: p.symbol, tint: tint(BentoTint.forPreset(p.name)),
-        on: s.mode == .off && s.userPresetID == nil && s.presetName == p.name,
+        on: s.isCurrent(p),
         hint: { Caption.preset(p) }, action: {
           if !DragScrollGate.suppressTap { controller.apply(preset: p) }
         })
     }
     let saved = s.visibleUserPresets.map { p in
       CompactModeQuad.Item(identity: p.id.uuidString, title: p.name, symbol: p.icon, tint: tint(.forUserPreset(p)),
-        on: s.mode == .off && s.userPresetID == p.id,
+        on: (s.mode == .off || s.mode.isLayered) && s.userPresetID == p.id,
         hint: { Caption.userPreset(p.name) }, action: {
           if !DragScrollGate.suppressTap { controller.apply(userPreset: p) }
         })
@@ -1393,8 +1415,7 @@ struct BentoView: View {
     }
     let soundLike = Set(["Ambience"] + HeadphonePresets.all.map(\.name))
     let categories: [(String, [CompactModeQuad.Item])] = [
-      ("Classics", builtIn.filter { preferred.contains($0.title) }),
-      ("General", builtIn.filter { !preferred.contains($0.title) && !soundLike.contains($0.title) }),
+      ("General", builtIn.filter { !soundLike.contains($0.title) }),
       ("Sound Like", builtIn.filter { soundLike.contains($0.title) }),
       ("Listening Modes", effects),
       ("My Presets", saved)
@@ -1451,7 +1472,8 @@ struct BentoView: View {
         bassTile(compact: compact)
         // Two flagships, one per row: Bass here, Late Night below.
         HStack(spacing: 8) {
-          ModeTile(title: "Loudness", symbol: "speaker.wave.2.bubble", tint: tint(.peach), on: s.autoLoudness,
+          // "Auto": the built-in Loudness preset is a different thing.
+          ModeTile(title: "Auto Loudness", symbol: "speaker.wave.2.bubble", tint: tint(.peach), on: s.autoLoudness,
                    compact: compact,
                    hint: { [controller] in Caption.loudness(on: controller.settings.autoLoudness) }) {
             controller.settings.autoLoudness.toggle()
@@ -1464,17 +1486,26 @@ struct BentoView: View {
         .frame(maxWidth: .infinity)
       }
       .frame(height: side)
-      HStack(spacing: 8) {
-        HStack(spacing: 8) {
-          ForEach([ListeningMode.study, .sleep]) { m in modeTile(m, compact: compact) }
-        }
-        .frame(maxWidth: .infinity)
-        // Double wide: its Haze % beside the name, Compact too.
-        modeTile(.lateNight, compact: compact)
-          .frame(maxWidth: .infinity)
+      // The listening modes are lesser options: one slim row of pills. The rule
+      // splits the two that replace your sound from Late Night, which layers on.
+      HStack(spacing: 6) {
+        ForEach([ListeningMode.study, .sleep]) { m in modePill(m) }
+        Rectangle().fill(Color.primary.opacity(0.14)).frame(width: 0.5, height: 14)
+          .accessibilityHidden(true)
+        modePill(.lateNight)
+        Spacer(minLength: 0)
       }
-      .frame(height: side)
     }
+  }
+
+  private func modePill(_ m: ListeningMode) -> some View {
+    let haze = Int((s.lateNightHaze * 100).rounded())
+    return Chip(title: m == .lateNight && s.mode == m ? "Late Night \(haze)%" : m.title, selected: s.mode == m) {
+      Image(systemName: m.symbol).font(.system(size: 10, weight: .medium))
+    } action: {
+      toggleMode(m)
+    }
+    .pointerHint { modeHint(m) }
   }
 
   private func toggleNightGuard() {
@@ -1489,20 +1520,6 @@ struct BentoView: View {
     } else {
       withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
         controller.setMode(s.mode == m ? .off : m)
-      }
-    }
-  }
-
-  /// Study, Sleep or Late Night: on/off, or (lit, strip hidden) bring its strip forward.
-  private func modeTile(_ m: ListeningMode, compact: Bool) -> some View {
-    ModeTile(title: m.title, symbol: m.symbol, tint: tint(m == .study ? .lime : .lilac), on: s.mode == m,
-             compact: compact, wide: m == .lateNight, hint: { modeHint(m) }) {
-      toggleMode(m)
-    } fact: {
-      switch m {
-      case .study: StudyFact(endsAt: controller.pomodoroEndsAt, onBreak: controller.pomodoroOnBreak)
-      case .sleep: SleepFact(endsAt: controller.sleepEndsAt, ending: controller.lightsOut.ending)
-      default: BentoFactText(text: "Haze \(Int((s.lateNightHaze * 100).rounded()))%")
       }
     }
   }
@@ -2633,6 +2650,8 @@ private struct ModeTile<Fact: View>: View {
   var compact = false
   /// Double wide (Late Night): the fact sits beside the name when shown.
   var wide = false
+  /// The fact shows at rest too (a signature sound's one-line descriptor).
+  var alwaysFact = false
   /// Pointer Hint (polled while it shows, so it stays current).
   let hint: () -> PointerHint
   let action: () -> Void
@@ -2665,7 +2684,7 @@ private struct ModeTile<Fact: View>: View {
                 }
               } else {
                 titleText
-                if on && !compact && labels != .icons { fact().padding(.top, 1) }
+                if (on || alwaysFact) && !compact && labels != .icons { fact().padding(.top, 1) }
               }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -2787,7 +2806,7 @@ private struct BassTile: View {
               .foregroundStyle(.artworkSecondary)
               .opacity(hover || start != nil ? 1 : 0)
             Text(percent)
-              .font(.system(size: compact ? 11 : 13, weight: .bold, design: .rounded))
+              .font(.system(size: compact ? 11 : 13, weight: .medium, design: .rounded))
               .monospacedDigit()
               .contentTransition(.numericText())
               .lineLimit(1)

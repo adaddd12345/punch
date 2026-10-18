@@ -206,7 +206,8 @@ struct EarsStack: View {
       VStack(alignment: .leading, spacing: 8) {
         HStack(alignment: .center, spacing: 8) {
           outputChip
-          if allowConnections { SpeakerGroupButton() }
+          // The output's own battery, beside its name (not in the app's footer).
+          if allowConnections { DeviceBatteryLabel(output: devices.first { $0.id == currentID }, active: true) }
           if count > 0 { chevron.transition(.opacity) }
         }
         .frame(height: 24)

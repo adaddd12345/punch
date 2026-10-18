@@ -29,13 +29,16 @@ struct LiveChannelsButton: View {
         }
         if mutedCount > 0 {
           Image(systemName: "speaker.slash.fill")
-            .font(.system(size: 8, weight: .bold))
+            .font(.system(size: 10, weight: .regular))
             .foregroundStyle(Color.orange)
         }
-        Image(systemName: "chevron.down")
-          .font(.system(size: 8, weight: .bold))
-          .foregroundStyle(.tertiary)
-          .rotationEffect(.degrees(expanded ? 180 : 0))
+        // Icon-only (the footer): the open plate already shows the drawer's state.
+        if !iconOnly {
+          Image(systemName: "chevron.down")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .rotationEffect(.degrees(expanded ? 180 : 0))
+        }
       }
       .footerChip(iconOnly: iconOnly)
       .foregroundStyle(Color.primary)

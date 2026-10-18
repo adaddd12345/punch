@@ -51,7 +51,9 @@ struct LayoutSection: Identifiable, Equatable {
                                              tint: .aqua, height: 36, when: "With What's Playing on")
   static let bentoEQ = LayoutSection(key: "bento.eq", name: "EQ Curve", symbol: "slider.vertical.3", tint: .frost, height: 52)
   static let bentoDials = LayoutSection(key: "bento.dials", name: "Bass & Gain", symbol: "waveform.path", tint: .bass, height: 44)
-  static let bentoPresets = LayoutSection(key: "bento.presets", name: "Presets & Listening Modes", symbol: "square.grid.2x2", tint: .frost, height: 56)
+  static let bentoSignature = LayoutSection(key: "bento.signature", name: "Signature Sounds", symbol: "star.square.on.square",
+                                            tint: .bass, height: 48)
+  static let bentoPresets = LayoutSection(key: "bento.presets", name: "More Presets & Modes", symbol: "square.grid.2x2", tint: .frost, height: 56)
   static let bentoModeSettings = LayoutSection(key: "bento.modeSettings", name: "Mode Settings", symbol: "slider.horizontal.3",
                                                tint: .lilac, height: 36, when: "Night Guard, Study, Sleep")
   static let bentoLightsOut = LayoutSection(key: "bento.lightsOut", name: "Lights Out", symbol: "moon.fill", tint: .frost,
@@ -65,6 +67,8 @@ struct LayoutSection: Identifiable, Equatable {
   static let classicNowPlaying = LayoutSection(key: "classic.nowPlaying", name: "More Playing Apps", symbol: "music.note.list",
                                                tint: .aqua, height: 36, when: "With What's Playing on")
   static let classicEQ = LayoutSection(key: "classic.eq", name: "EQ Curve", symbol: "slider.vertical.3", tint: .frost, height: 56)
+  static let classicSignature = LayoutSection(key: "classic.signature", name: "Signature Sounds", symbol: "star.square.on.square",
+                                              tint: .bass, height: 48)
   static let classicPresets = LayoutSection(key: "classic.presets", name: "Presets", symbol: "square.stack", tint: .frost, height: 36)
   static let classicMeters = LayoutSection(key: "classic.meters", name: "Level Meters", symbol: "chart.bar.fill", tint: .mint,
                                            height: 36, when: "Full size only")
@@ -78,11 +82,11 @@ struct LayoutSection: Identifiable, Equatable {
                                            height: 32, locked: "Always shown: it has the ⋯ menu.")
 
   /// Default orders, top to bottom: Live Time first, Mac Volume right under the EQ.
-  static let bento: [LayoutSection] = [liveTime, bentoHero, bentoPresets, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials,
+  static let bento: [LayoutSection] = [liveTime, bentoHero, bentoSignature, bentoPresets, bentoNowPlaying, bentoEQ, macVolume, remoteMacs, bentoDials,
                                        bentoModeSettings, bentoLightsOut, ticker, bentoFooter]
   /// Bento's order, stripped back (Classic Full/Compact are BentoView, flat).
   static let classic: [LayoutSection] = [liveTime, classicHeader, classicNowPlaying, classicEQ, macVolume, remoteMacs, classicMeters,
-                                         classicSliders, classicPresets, classicModes, classicModeSettings, classicLightsOut,
+                                         classicSliders, classicSignature, classicPresets, classicModes, classicModeSettings, classicLightsOut,
                                          ticker, classicFooter]
 
   /// The defaults before Mac Volume moved under the EQ (it was first). A saved

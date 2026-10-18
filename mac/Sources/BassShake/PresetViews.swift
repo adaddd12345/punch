@@ -62,8 +62,9 @@ struct PresetStrip: View {
               Button("Delete", role: .destructive) { controller.deleteUserPreset(p.id) }
             }
           }
-          ForEach(Preset.all) { p in
-            Chip(title: p.name, selected: controller.settings.presetName == p.name) {
+          // The signature sounds have their own tiles (Signature Sounds block).
+          ForEach(Preset.nonSignature) { p in
+            Chip(title: p.name, selected: controller.settings.isCurrent(p)) {
               Image(systemName: p.symbol).font(.system(size: 9, weight: .semibold))
             } action: {
               controller.apply(preset: p)
@@ -391,13 +392,16 @@ struct PresetMenu<Label: View>: View {
             }
           }
         }
-        Section {
-          ForEach(Preset.all) { preset in
-            Button { controller.apply(preset: preset) } label: {
-              if s.mode == .off && s.userPresetID == nil && s.presetName == preset.name {
-                SwiftUI.Label(preset.name, systemImage: "checkmark")
-              } else {
-                Text(preset.name)
+        // Signature sounds first, then the rest.
+        ForEach([Preset.signature, Preset.nonSignature], id: \.first?.name) { group in
+          Section {
+            ForEach(group) { preset in
+              Button { controller.apply(preset: preset) } label: {
+                if s.isCurrent(preset) {
+                  SwiftUI.Label(preset.name, systemImage: "checkmark")
+                } else {
+                  Text(preset.name)
+                }
               }
             }
           }

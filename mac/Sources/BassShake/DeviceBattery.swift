@@ -51,7 +51,7 @@ final class DeviceBatteryMonitor: ObservableObject {
 
 /// This is display-only. No Bluetooth scanning, connections, microphone profile,
 /// route changes, or private battery selectors are involved.
-struct DeviceBatteryFooter: View {
+struct DeviceBatteryLabel: View {
   let output: OutputDevice?
   let active: Bool
   @Environment(\.drawPaused) private var drawPaused
@@ -66,12 +66,21 @@ struct DeviceBatteryFooter: View {
   var body: some View {
     ZStack {
       if active, !drawPaused, monitor.outputUID == output?.uid, let reading = monitor.reading {
-        DeviceBatteryGlyph(percent: reading.percent, charging: reading.charging)
-          .frame(width: 23, height: 12)
-          .padding(.horizontal, 3)
-          .frame(height: 26)
-          .opacity(hovered ? 1 : 0.78)
-          .contentShape(Rectangle())
+        // "64%" in the secondary ink; a battery symbol only when low or charging.
+        HStack(spacing: 3) {
+          if reading.charging {
+            Image(systemName: "battery.100.bolt").foregroundStyle(Color.green)
+          } else if reading.percent <= 20 {
+            Image(systemName: "battery.25").foregroundStyle(Color.red)
+          }
+          Text("\(reading.percent)%").monospacedDigit()
+        }
+        .font(.system(size: 10, weight: .medium, design: .rounded))
+        .foregroundStyle(.artworkSecondary)
+        .lineLimit(1)
+        .fixedSize()
+        .opacity(hovered ? 1 : 0.85)
+        .contentShape(Rectangle())
           .onHover { hovered = $0 }
           .help(reading.help)
           .accessibilityElement(children: .ignore)
