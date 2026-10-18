@@ -120,12 +120,12 @@ struct PopoverView: View {
     return role == .menuBar ? min(screen, space.maxHeight ?? screen) : screen
   }
 
-  /// Appearance in the Dock window may supply shared visual samples only
+  /// The Dock preview and bass visualizers may supply shared samples only
   /// while the popover/pinned owner is absent or covered. The analyser is a
   /// destructive reader, so the two visible windows must never compete.
   private var canReadAnalyzer: Bool {
     guard role == .launchWindow else { return true }
-    guard showAppearance else { return false }
+    guard showAppearance || controller.settings.waveformStyle.isBassVisualizer else { return false }
     guard let primary = LiveDrawer.shared.host, primary.isVisible else { return true }
     return !primary.occlusionState.contains(.visible)
   }
