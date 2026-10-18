@@ -74,3 +74,13 @@ enum NowPlayingShelf {
     return (open ? shown + hidden : shown, hidden)
   }
 }
+
+/// Hidden refresh reads only already-authorized metadata; no audio meters.
+enum NowPlayingRefreshPolicy {
+  static func background(wanted: Bool, details: Bool, sleeping: Bool) -> Bool {
+    wanted && details && !sleeping
+  }
+  static func interval(visible: Bool, powerSaver: Bool) -> TimeInterval {
+    visible ? (powerSaver ? 5 : 2) : (powerSaver ? 30 : 10)
+  }
+}

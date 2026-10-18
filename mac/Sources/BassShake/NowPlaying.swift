@@ -229,6 +229,13 @@ final class NowPlaying: ObservableObject {
   private var wanted = false
   private var windows = 0
   private var menuBarVisible = false
+  private var sleeping = false
+  private var backgroundRefresh: Bool {
+    NowPlayingRefreshPolicy.background(wanted: wanted, details: mayAsk, sleeping: sleeping)
+  }
+  private var artworkMayRefresh: Bool {
+    active && !sleeping && mayAsk && (popupRecentlyVisible || menuBarVisible || backgroundRefresh)
+  }
   private var popupActive = false
   private var timerInterval: TimeInterval = 0
   private var active = false
@@ -339,8 +346,10 @@ final class NowPlaying: ObservableObject {
       .map(Self.detailsEnabled)
       .removeDuplicates()
       .sink { [weak self] allowed in
-        guard !allowed else { return }
-        DispatchQueue.main.async { self?.clearDetails() }
+        DispatchQueue.main.async {
+          if !allowed { self?.clearDetails() }
+          self?.update()
+        }
       }
       .store(in: &cancellables)
     c.live.$muted
@@ -351,6 +360,15 @@ final class NowPlaying: ObservableObject {
           if self.muted != m { self.muted = m }
         }
       }
+      .store(in: &cancellables)
+    let workspace = NSWorkspace.shared.notificationCenter
+    workspace.publisher(for: NSWorkspace.willSleepNotification)
+      .receive(on: RunLoop.main)
+      .sink { [weak self] _ in self?.sleeping = true; self?.update() }
+      .store(in: &cancellables)
+    workspace.publisher(for: NSWorkspace.didWakeNotification)
+      .receive(on: RunLoop.main)
+      .sink { [weak self] _ in self?.sleeping = false; self?.update() }
       .store(in: &cancellables)
     // Back from System Settings (or any return to us): the lock may be gone.
     NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
@@ -465,9 +483,10 @@ final class NowPlaying: ObservableObject {
   }
 
   private func update() {
+    if sleeping { popupActive = false; teardown(); return }
     let popupWasActive = popupActive
     popupActive = wanted && windows > 0
-    let on = popupActive || menuBarVisible
+    let on = popupActive || menuBarVisible || backgroundRefresh
     if popupActive && !popupWasActive {
       denied.removeAll()
       refreshAccess()
@@ -518,7 +537,7 @@ final class NowPlaying: ObservableObject {
   }
 
   private func configureTimer() {
-    let interval: TimeInterval = popupActive ? 0.1 : 1.0
+    let interval: TimeInterval = popupActive ? 0.1 : (menuBarVisible ? 1.0 : 5.0)
     guard timer == nil || timerInterval != interval else { return }
     timer?.invalidate()
     timerInterval = interval
@@ -528,7 +547,7 @@ final class NowPlaying: ObservableObject {
     timer = t
   }
 
-  /// Everything off when neither surface needs it. Pause marks survive reopening.
+  /// Stop all work on sleep or when neither surfaces nor authorized metadata need it.
   private func teardown() {
     active = false
     resetSpotifyOutput()
@@ -590,7 +609,17 @@ final class NowPlaying: ObservableObject {
         activeSince = now; smooth = [:]; challenger = nil; lastTick = 0; lastLevel = [:]; lastLoud = [:]
       }
     }
-    guard seen || menuBarVisible else { return }
+    if !seen && !menuBarVisible {
+      // Keep the current title and cover warm while closed. Never inspect
+      // meters, run animations, prompt, or relaunch a player on this path.
+      if backgroundRefresh,
+         now - lastPoll >= NowPlayingRefreshPolicy.interval(visible: false, powerSaver: PowerSaver.isOn) {
+        lastPoll = now
+        pollPlayers()
+        pollBrowsers()
+      }
+      return
+    }
     let dt = lastTick == 0 ? 0.1 : min(0.5, now - lastTick)
     lastTick = now
     let levels: [String: Double] = seen ? live.levels : [:]
@@ -710,7 +739,7 @@ final class NowPlaying: ObservableObject {
     // Before the poll: an app new on screen moves the poll up to this tick.
     refreshPending(now: now)
     // Menu-bar reads reuse explicit details consent but never request new grants.
-    if now - lastPoll >= Self.pollEvery, popupRecentlyVisible || menuBarVisible, mayAsk {
+    if now - lastPoll >= NowPlayingRefreshPolicy.interval(visible: popupRecentlyVisible, powerSaver: PowerSaver.isOn), popupRecentlyVisible || menuBarVisible, mayAsk {
       lastPoll = now
       pollPlayers()
       pollBrowsers()
@@ -1041,6 +1070,7 @@ final class NowPlaying: ObservableObject {
     var seen = Set<NowPlayer>()
     return (shown + permitted).filter {
       seen.insert($0).inserted && detailsAllowed($0.rawValue) && $0.isRunning
+        && (popupRecentlyVisible || gate.status[$0.rawValue] == AutomationGate.allowed)
     }
   }
 
@@ -1172,7 +1202,7 @@ final class NowPlaying: ObservableObject {
   }
 
   private func loadArt(_ p: NowPlayer, key: String, url: String?) {
-    guard popupRecentlyVisible, !artLoading.contains(key) else { return }
+    guard artworkMayRefresh, !artLoading.contains(key) else { return }
     switch p {
     case .spotify:
       // The only network request in What's Playing: Spotify's own cover image
@@ -1193,7 +1223,7 @@ final class NowPlaying: ObservableObject {
         // The cover is cached by the ID of the track it was read from, which may
         // not be `key` if the song changed since the poll.
         let allowed = DispatchQueue.main.sync {
-          self?.popupRecentlyVisible == true && self?.detailsAllowed(p.rawValue) == true
+          self?.artworkMayRefresh == true && self?.detailsAllowed(p.rawValue) == true
         }
         let r = allowed && NowPlayer.music.isLive ? bridge.musicArtwork() : nil
         let img = r.flatMap { Self.thumbnail($0.data) }
@@ -1243,7 +1273,10 @@ final class NowPlaying: ObservableObject {
       a.bundleID.flatMap(NowBrowser.init(rawValue:)).map { ($0, a.id) }
     }
     gate.markSeen(shown.map(\.0.rawValue))
-    return shown.filter { b, _ in !denied.contains(b.rawValue) && gate.isOn(b.rawValue) && b.isRunning }
+    return shown.filter { b, _ in
+      !denied.contains(b.rawValue) && gate.isOn(b.rawValue) && b.isRunning
+        && (popupRecentlyVisible || gate.status[b.rawValue] == AutomationGate.allowed)
+    }
   }
 
   private func pollBrowsers() {
@@ -1368,14 +1401,14 @@ final class NowPlaying: ObservableObject {
   /// YouTube's still for a video (the only network use for browsers; ephemeral,
   /// redirects held to i.ytimg.com).
   private func loadStill(_ vid: String) {
-    guard popupRecentlyVisible, !stillLoading.contains(vid),
+    guard artworkMayRefresh, !stillLoading.contains(vid),
           ProcessInfo.processInfo.systemUptime >= (stillRetryAfter[vid] ?? 0) else { return }
     stillLoading.insert(vid)
     loadStillVariant(vid, large: true)
   }
 
   private func loadStillVariant(_ vid: String, large: Bool) {
-    guard active, mayAsk, popupRecentlyVisible,
+    guard artworkMayRefresh,
           let u = large ? BrowserTabs.largeStillURL(vid) : BrowserTabs.stillURL(vid) else {
       stillLoading.remove(vid)
       return
@@ -1419,7 +1452,7 @@ final class NowPlaying: ObservableObject {
   /// else favicon.ico (SiteIcon: https, ephemeral, no cookies, 3 s, size caps,
   /// same-domain redirects). Failures aren't retried this session.
   private func loadIcon(_ host: String, page: URL?) {
-    guard popupRecentlyVisible, !iconLoading.contains(host), !iconFailed.contains(host) else { return }
+    guard artworkMayRefresh, !iconLoading.contains(host), !iconFailed.contains(host) else { return }
     iconLoading.insert(host)
     iconLoader.load(host: host, page: page) { [weak self] img in
       DispatchQueue.main.async { self?.iconLoaded(img, host: host) }

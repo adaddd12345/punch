@@ -12,9 +12,10 @@ import SwiftUI
 //
 // The hold is read from window events (a local monitor), not a SwiftUI
 // gesture, so it never competes with the faders' and EQ's own drags: any
-// movement over 4 pt before 0.5 s cancels it, and a quick press is an
+// delivered drag event before 0.5 s cancels it, and a quick press is an
 // ordinary click. Native AppKit controls (switches, sliders, text fields)
-// never start it.
+// never start it. The EQ is also excluded: its SwiftUI canvas owns slow
+// precision drags, including holds before the pointer starts moving.
 //
 // Nothing here writes view state from geometry: block heights go into a plain
 // dictionary (no redraw), frozen when a drag begins. Mid-drag no block moves
@@ -60,6 +61,11 @@ final class Reshuffle: ObservableObject {
 
   static let hold: TimeInterval = 0.5
   static let slop: CGFloat = 4
+
+  static func allowsHold(on key: String?) -> Bool {
+    guard let key else { return false }
+    return key != "classic.eq" && key != "bento.eq"
+  }
 
   func hover(_ key: String, _ inside: Bool) {
     if inside { hovered = key } else if hovered == key { hovered = nil }
@@ -132,7 +138,8 @@ final class Reshuffle: ObservableObject {
         if hovered != nil && !overDone { clickAt = NSEvent.mouseLocation }
         return e
       }
-      guard canStart(), hovered != nil, !overNativeControl(e, in: w) else { return e }
+      guard canStart(), Self.allowsHold(on: hovered), !overNativeControl(e, in: w) else { return e }
+      let heldBlock = hovered
       let start = NSEvent.mouseLocation
       downAt = start
       let work = DispatchWorkItem { [weak self] in
@@ -142,7 +149,7 @@ final class Reshuffle: ObservableObject {
         // Still held, still in place, still over a block.
         let p = NSEvent.mouseLocation
         guard NSEvent.pressedMouseButtons & 1 != 0, hypot(p.x - start.x, p.y - start.y) <= Self.slop,
-              self.hovered != nil, self.canStart() else { return }
+              self.hovered == heldBlock, Self.allowsHold(on: self.hovered), self.canStart() else { return }
         // The press that started it must not click or drag anything on release.
         self.swallowUp = true
         withAnimation(.spring(response: 0.3, dampingFraction: 0.86)) { self.set(true) }
@@ -155,10 +162,9 @@ final class Reshuffle: ObservableObject {
         let p = NSEvent.mouseLocation
         if hypot(p.x - c.x, p.y - c.y) > Self.slop { clickAt = nil }
       }
-      if let start = downAt {
-        let p = NSEvent.mouseLocation
-        if hypot(p.x - start.x, p.y - start.y) > Self.slop { cancel() }
-      }
+      // Any delivered drag belongs to the control, even a sub-point nudge.
+      // Slop remains useful only for a stationary hold and reorder clicks.
+      if downAt != nil { cancel() }
       return swallowUp ? nil : e
     case .leftMouseUp:
       cancel()
