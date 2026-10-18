@@ -119,6 +119,16 @@ struct PopoverView: View {
     return role == .menuBar ? min(screen, space.maxHeight ?? screen) : screen
   }
 
+  /// Appearance in the Dock window may supply shared visual samples only
+  /// while the popover/pinned owner is absent or covered. The analyser is a
+  /// destructive reader, so the two visible windows must never compete.
+  private var canReadAnalyzer: Bool {
+    guard role == .launchWindow else { return true }
+    guard showAppearance else { return false }
+    guard let primary = LiveDrawer.shared.host, primary.isVisible else { return true }
+    return !primary.occlusionState.contains(.visible)
+  }
+
   /// A settings-menu item's panel. Every item alike: rearranging ends (else Esc stays
   /// swallowed by it) and the Live / DJ / Beats tray, its own window, shuts first
   /// (else it stayed up beside a panel it has nothing to do with).
@@ -502,7 +512,7 @@ struct PopoverView: View {
           }
         }
         var visualPulled = false
-        if s.waveform && s.enabled && role != .launchWindow {
+        if s.waveform && s.enabled && canReadAnalyzer {
           if s.spectrum {
             controller.spectrum.pull(controller)
             visualPulled = true

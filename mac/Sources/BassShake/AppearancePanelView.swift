@@ -122,7 +122,9 @@ struct AppearancePanelView: View {
           }
         }
       }
-      .frame(maxHeight: 600)
+      // GeometryReader needs an ideal height when the native host asks for its
+      // intrinsic size. It can still shrink to fit a short menu-bar popover.
+      .frame(idealHeight: 600, maxHeight: 600)
     }
     .frame(width: 336)
   }
