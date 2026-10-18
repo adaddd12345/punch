@@ -625,7 +625,10 @@ struct BentoView: View {
   /// The hero's output icon, only while Mac Volume (and the output row under
   /// it) is hidden: otherwise the picker would show twice.
   @ViewBuilder private var heroOutput: some View {
-    if !s.showMacVolume { outputChip(iconOnly: true) }
+    if !s.showMacVolume {
+      outputChip(iconOnly: true)
+      if !controller.isMirror { SpeakerGroupButton() }
+    }
   }
 
   /// Classic Compact, nothing playing: one 24 pt row.
@@ -987,6 +990,7 @@ struct BentoView: View {
     HStack(alignment: .center, spacing: 8) {
       if !flat && !s.showMacVolume {
         outputChip(iconOnly: false)
+        if !controller.isMirror { SpeakerGroupButton() }
       } else {
         if note { noteLine.transition(.opacity) } else { Spacer(minLength: 0) }
         heroOutput

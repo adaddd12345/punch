@@ -28,6 +28,12 @@ enum OutputGroupError: LocalizedError {
 
 /// HAL-only operations. Call on an audio/background queue, never while rendering.
 enum OutputGroups {
+  private static func connectedOutputs() -> [OutputDevice] {
+    Devices.allOutputs(includeGroups: false).filter {
+      ((try? HAL.get($0.id, .global(kAudioDevicePropertyDeviceIsAlive), default: UInt32(0))) ?? 0) != 0
+    }
+  }
+
   static func read(_ id: AudioObjectID) -> OutputGroup? {
     guard let uid = try? HAL.string(id, .global(kAudioDevicePropertyDeviceUID)),
           uid.hasPrefix(OutputGroup.prefix),
@@ -35,7 +41,7 @@ enum OutputGroups {
           (composition[kAudioAggregateDeviceIsStackedKey] as? NSNumber)?.intValue == 0,
           let rows = composition[kAudioAggregateDeviceSubDeviceListKey] as? [[String: Any]],
           (composition[kAudioAggregateDeviceTapListKey] as? [Any] ?? []).isEmpty else { return nil }
-    let physical = Devices.allOutputs(includeGroups: false)
+    let physical = connectedOutputs()
     let members = rows.compactMap { row -> OutputGroup.Member? in
       guard let uid = row[kAudioSubDeviceUIDKey] as? String else { return nil }
       let device = physical.first { $0.uid == uid }
@@ -57,6 +63,19 @@ enum OutputGroups {
     members.first { !$0.isBluetooth && !$0.isAirPlay } ?? members.first
   }
 
+  /// Resolve exactly what was picked against a fresh inventory. Never silently
+  /// create a smaller group when a selected Bluetooth device disappears.
+  static func selectedDevices(_ uids: Set<String>, from devices: [OutputDevice]) throws -> [OutputDevice] {
+    guard (2...8).contains(uids.count) else {
+      throw OutputGroupError.message("Choose between two and eight outputs.")
+    }
+    let selected = devices.filter { uids.contains($0.uid) }
+    guard selected.count == uids.count else {
+      throw OutputGroupError.message("A selected output disconnected. Reconnect it or update your selection.")
+    }
+    return selected
+  }
+
   static func create(name: String, members: [OutputDevice], primaryUID: String?) throws -> AudioObjectID {
     let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
     guard !name.isEmpty else { throw OutputGroupError.message("Give this group a name.") }
@@ -69,7 +88,7 @@ enum OutputGroups {
     guard rate > 0, members.allSatisfy({ abs(Devices.nominalSampleRate($0.id) - rate) < 0.5 }) else {
       throw OutputGroupError.message("These outputs use different sample rates. Choose the same Format for each in Audio MIDI Setup, then create the group again.")
     }
-    let live = Devices.allOutputs(includeGroups: false)
+    let live = connectedOutputs()
     guard members.allSatisfy({ live.contains($0) }) else {
       throw OutputGroupError.message("An output disconnected. Refresh the list and try again.")
     }

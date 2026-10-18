@@ -206,6 +206,7 @@ struct EarsStack: View {
       VStack(alignment: .leading, spacing: 8) {
         HStack(alignment: .center, spacing: 8) {
           outputChip
+          if allowConnections { SpeakerGroupButton() }
           if count > 0 { chevron.transition(.opacity) }
         }
         .frame(height: 24)
