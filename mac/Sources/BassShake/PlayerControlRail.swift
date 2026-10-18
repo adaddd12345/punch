@@ -56,7 +56,7 @@ struct PlayerControlRail: View {
           does: "Keeps this window open when you click somewhere else.")
       }
     }
-    .font(.system(size: 10, weight: .bold, design: .rounded))
+    .font(.system(size: 11, weight: .semibold, design: .rounded))
     .buttonStyle(WindowToolButtonStyle())
     .frame(maxWidth: .infinity)
     .accessibilityElement(children: .contain)

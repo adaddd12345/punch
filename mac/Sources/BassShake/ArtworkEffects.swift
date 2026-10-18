@@ -35,6 +35,8 @@ struct EffectArtworkImage: View {
   @Environment(\.displayScale) private var scale
   @State private var rendered: Rendered?
   @State private var requested: ArtworkEffectImages.Key?
+  /// White ink on a dark cover: the card palette's verdict, as the still uses.
+  @State private var lightInk: Bool?
 
   private struct Rendered {
     let key: ArtworkEffectImages.Key
@@ -55,7 +57,9 @@ struct EffectArtworkImage: View {
       .aspectRatio(contentMode: .fill)
       .frame(width: size, height: size / aspectRatio)
       .overlay {
-        ArtworkFinishOverlay(effect: effect, width: size, height: size / aspectRatio)
+        // Dark covers take white ink (the cover's card palette, already cached).
+        ArtworkFinishOverlay(effect: effect, width: size, height: size / aspectRatio,
+                             lightInk: lightInk ?? ArtworkCardPalettes.shared.cached(image)?.dark ?? false)
           .blendMode(.sourceAtop)
       }
       .compositingGroup()
@@ -66,6 +70,12 @@ struct EffectArtworkImage: View {
   private func load() {
     let current = request
     requested = current
+    lightInk = nil
+    // Not observable as a cache: ask, so a cover resolved later still flips the ink.
+    ArtworkCardPalettes.shared.palette(for: image) { palette in
+      guard requested == current else { return }
+      lightInk = palette?.dark ?? false
+    }
     ArtworkEffectImages.shared.image(for: image, size: size, scale: scale, effect: .none, aspectRatio: aspectRatio) { output in
       // An earlier cover/size/effect may complete after a newer request.
       guard requested == current else { return }
@@ -112,7 +122,10 @@ enum ArtworkEffectRenderer {
     context.scaleBy(x: 1, y: -1)
     context.setBlendMode(.sourceAtop)
     ArtworkFinishPattern.draw(in: context, size: CGSize(width: size, height: size / aspectRatio),
-                              effect: effect, time: 0)
+                              effect: effect, time: 0, scale: scale,
+                              // The same verdict as the live cover (card palette), so the ink
+                              // never changes as the inspection face replaces it.
+                              lightInk: effect != .none && (ArtworkCardPalette.extract(image)?.dark ?? false))
     context.restoreGState()
     return context.makeImage()
   }

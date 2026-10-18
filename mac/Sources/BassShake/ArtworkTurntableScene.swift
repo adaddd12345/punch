@@ -13,17 +13,21 @@ struct ArtworkTurntableScene: NSViewRepresentable {
   let powerSaver: Bool
   var perspective = false
   var glass = false
+  /// Closing ends a turn in flight on the nearest front pose.
+  var closing = false
 
   func makeNSView(context: Context) -> ArtworkTurntableView {
     let view = ArtworkTurntableView(frame: .zero)
     view.configure(image: image, reverse: reverse, turn: turn,
-                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize, perspective: perspective, glass: glass)
+                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize,
+                   perspective: perspective, glass: glass, closing: closing)
     return view
   }
 
   func updateNSView(_ view: ArtworkTurntableView, context: Context) {
     view.configure(image: image, reverse: reverse, turn: turn,
-                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize, perspective: perspective, glass: glass)
+                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize,
+                   perspective: perspective, glass: glass, closing: closing)
   }
 
   static func dismantleNSView(_ view: ArtworkTurntableView, coordinator: ()) {
@@ -35,19 +39,35 @@ struct ArtworkTurntableScene: NSViewRepresentable {
 /// Kept separate so front, edge-on and reverse can be rendered deterministically.
 enum ArtworkTurntableFactory {
   static let width: CGFloat = 2.4
-  static let depth: CGFloat = 0.003
+  /// Thick enough that the edge reads as a lit rim at edge-on, not a blink.
+  static let depth: CGFloat = 0.010
   static let turnDuration: TimeInterval = 0.52
-  static let openingDuration: TimeInterval = 0.86
+  /// The full turn, including the settle's invisible tail.
+  static let openingDuration: TimeInterval = 1.0
 
-  static func overscan(for size: CGSize) -> CGFloat { max(24, max(size.width, size.height) * 0.12) }
+  /// Holds the near edge at edge-on (about 1.3x with the lift).
+  static func overscan(for size: CGSize) -> CGFloat { max(24, max(size.width, size.height) * 0.17) }
 
-  /// A long lens keeps the turn quiet. Transparent overscan contains the near
-  /// corners without shrinking the intended front-facing artwork footprint.
+  /// Progress of one full turn (0...1, briefly past 1) at `t` seconds of a
+  /// 1 s turn. Turn over: eased in to the reverse in 0.38 s, still moving.
+  /// Turn back: a damped spring (response 0.5 s, damping 0.78) from that
+  /// speed, past the front by about 4 degrees and back. Fast through both
+  /// edge-ons, eased at both ends.
+  static func turnProgress(_ t: Double) -> Double {
+    let over = 0.38
+    if t <= 0 { return 0 }
+    if t < over { let u = t / over; return u * u * (2 - u) / 2 }
+    let s = t - over
+    return 1 - exp(-9.80 * s) * (cos(7.87 * s) + 0.911 * sin(7.87 * s)) / 2
+  }
+
+  /// A moderate lens gives the turn real depth. Transparent overscan contains
+  /// the near edge without shrinking the intended front-facing footprint.
   static func fit(_ camera: SCNNode, imageSize: CGSize, artworkSize: CGSize, viewport: CGSize) {
     guard artworkSize.width > 0, artworkSize.height > 0, viewport.width > 0, viewport.height > 0 else { return }
     let ratio = max(0.25, min(4, imageSize.width / max(1, imageSize.height)))
     let height = width / ratio
-    let distance = max(width, height) * 4
+    let distance = max(width, height) * 2.6
     let verticalExtent = height * viewport.height / artworkSize.height
     camera.camera?.projectionDirection = .vertical
     camera.camera?.fieldOfView = 2 * atan(verticalExtent / (2 * distance)) * 180 / .pi
@@ -59,7 +79,25 @@ enum ArtworkTurntableFactory {
     let scene: SCNScene
     let card: SCNNode
     let camera: SCNNode
+    let rim: SCNMaterial
+    let shadow: SCNNode
   }
+
+  /// A soft, centre-weighted blot, built once.
+  private static let shadowImage: CGImage? = {
+    let side = 64
+    let space = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let gradient = CGGradient(colorsSpace: space,
+                                    colors: [CGColor(red: 0, green: 0, blue: 0, alpha: 0.55),
+                                             CGColor(red: 0, green: 0, blue: 0, alpha: 0)] as CFArray,
+                                    locations: [0, 1]) else { return nil }
+    let centre = CGPoint(x: CGFloat(side) / 2, y: CGFloat(side) / 2)
+    context.drawRadialGradient(gradient, startCenter: centre, startRadius: 0,
+                               endCenter: centre, endRadius: CGFloat(side) / 2, options: [])
+    return context.makeImage()
+  }()
 
   private static let imageContext = CIContext(options: [.cacheIntermediates: false])
   /// Collapse detail before the blur. The reverse carries the cover's colour
@@ -104,7 +142,17 @@ enum ArtworkTurntableFactory {
     pigment.roughness.contents = 0.65
     pigment.metalness.contents = 0
     pigment.isDoubleSided = false
-    body.materials = [pigment]
+    // The extruded side (and its chamfers) catches light only near edge-on.
+    let rim = SCNMaterial()
+    rim.name = "Sleeve rim"
+    rim.diffuse.contents = reverse
+    rim.lightingModel = .physicallyBased
+    rim.roughness.contents = 0.65
+    rim.metalness.contents = 0
+    rim.emission.contents = glass ? NSColor.white : (reverse.blended(withFraction: 0.6, of: .white) ?? .white)
+    rim.emission.intensity = 0
+    // SCNShape elements: front, back, sides, front chamfer, back chamfer.
+    body.materials = [pigment, pigment, rim, rim, rim]
     let card = SCNNode(geometry: body)
     card.name = "Artwork body"
     scene.rootNode.addChildNode(card)
@@ -145,6 +193,23 @@ enum ArtworkTurntableFactory {
     back.eulerAngles.y = .pi
     card.addChildNode(back)
 
+    // One soft quad for the lift. It writes no depth and draws first, so the
+    // card always sits in front of it, even where the turn crosses its plane.
+    let blot = SCNPlane(width: width * 0.92, height: height * 0.92)
+    let soft = SCNMaterial()
+    soft.name = "Lift shadow"
+    soft.diffuse.contents = shadowImage
+    soft.lightingModel = .constant
+    soft.writesToDepthBuffer = false
+    soft.isDoubleSided = true
+    blot.materials = [soft]
+    let shadow = SCNNode(geometry: blot)
+    shadow.name = "Lift shadow"
+    shadow.position = SCNVector3(0, -height * 0.07, -0.4)
+    shadow.renderingOrder = -1
+    shadow.opacity = 0
+    scene.rootNode.addChildNode(shadow)
+
     let camera = SCNNode()
     let lens = SCNCamera()
     lens.fieldOfView = 32
@@ -172,7 +237,7 @@ enum ArtworkTurntableFactory {
     keyNode.light = key
     keyNode.position = SCNVector3(-3, 4, 6)
     scene.rootNode.addChildNode(keyNode)
-    return Study(scene: scene, card: card, camera: camera)
+    return Study(scene: scene, card: card, camera: camera, rim: rim, shadow: shadow)
   }
 }
 
@@ -182,6 +247,8 @@ final class ArtworkTurntableView: SCNView {
   private var glass = false
   private var perspective = false
   private var card: SCNNode?
+  private var rim: SCNMaterial?
+  private var contactShadow: SCNNode?
   private var turn: Int?
   private var generation = 0
   private var artworkSize = CGSize.zero
@@ -205,7 +272,8 @@ final class ArtworkTurntableView: SCNView {
   }
 
   func configure(image: NSImage, reverse: NSColor, turn requestedTurn: Int,
-                 reducedMotion: Bool, powerSaver: Bool, artworkSize: CGSize, perspective: Bool = false, glass: Bool = false) {
+                 reducedMotion: Bool, powerSaver: Bool, artworkSize: CGSize, perspective: Bool = false, glass: Bool = false,
+                 closing: Bool = false) {
     self.artworkSize = artworkSize
     backgroundColor = .clear
     allowsCameraControl = false
@@ -221,6 +289,8 @@ final class ArtworkTurntableView: SCNView {
       pointOfView = study.camera
       projectionViewport = .zero
       card = study.card
+      rim = study.rim
+      contactShadow = study.shadow
       source = image
       pigment = reverse
       turn = requestedTurn
@@ -229,6 +299,7 @@ final class ArtworkTurntableView: SCNView {
       return
     }
     updateProjection()
+    if closing { settle(); return }
     guard requestedTurn != turn, let card else { return }
     let previousTurn = turn ?? requestedTurn
     turn = requestedTurn
@@ -251,14 +322,27 @@ final class ArtworkTurntableView: SCNView {
       ])
     } else {
       card.opacity = 1
+      let span = target - start.y
+      let rim = self.rim, shadow = self.contactShadow
+      let rimPeak: CGFloat = glass ? 1 : 0.6
+      // The curve is authored for the 1 s turn; a shorter one plays it faster.
+      let pace = ArtworkTurntableFactory.openingDuration / duration
       action = .customAction(duration: duration) { node, elapsed in
-        let t = min(1, max(0, Double(elapsed) / duration))
-        let eased = t * t * t * (10 + t * (-15 + 6 * t))
-        // A quiet pitch reveals the thin edge; the centre never wanders.
-        let pitch = CGFloat(Double(start.x) * (1 - eased) + Double(restPitch) * eased + sin(t * .pi) * -0.018)
-        let yaw = start.y + (target - start.y) * CGFloat(eased)
-        let roll = CGFloat(Double(start.z) * (1 - eased))
+        let f = ArtworkTurntableFactory.turnProgress(Double(elapsed) * pace)
+        let held = min(1, max(0, f))
+        // Lift with the turn: a little larger, a soft shadow behind.
+        let lift = CGFloat(sin(.pi * held))
+        let yaw = start.y + span * CGFloat(f)
+        // A quiet pitch reveals the edge; the centre never wanders.
+        let pitch = start.x + (restPitch - start.x) * CGFloat(held) + lift * -0.018
+        let roll = start.z * CGFloat(1 - held)
         node.eulerAngles = SCNVector3(pitch, yaw, roll)
+        let scale = 1 + 0.05 * lift
+        node.scale = SCNVector3(scale, scale, scale)
+        // The rim brightens only near edge-on; one uniform per frame.
+        rim?.emission.intensity = pow(abs(sin(yaw - restYaw)), 12) * rimPeak
+        shadow?.opacity = 0.24 * lift
+        shadow?.scale = SCNVector3(max(0.3, abs(cos(yaw - restYaw))), 1, 1)
       }
     }
     isPlaying = true
@@ -267,6 +351,9 @@ final class ArtworkTurntableView: SCNView {
         guard let self, self.generation == currentGeneration else { return }
         self.card?.eulerAngles = SCNVector3(restPitch, target, 0)
         self.card?.opacity = 1
+        self.card?.scale = SCNVector3(1, 1, 1)
+        self.rim?.emission.intensity = 0
+        self.contactShadow?.opacity = 0
         self.isPlaying = false
         self.needsDisplay = true
       }
@@ -278,5 +365,40 @@ final class ArtworkTurntableView: SCNView {
     card?.removeAllActions()
     isPlaying = false
     turn = nil
+  }
+
+  /// Ends a turn in flight on the nearest front pose, without a further spin.
+  func settle() {
+    guard let card, card.action(forKey: "turn") != nil else { return }
+    generation += 1
+    let currentGeneration = generation
+    let from = card.presentation.eulerAngles
+    let fromScale = card.presentation.scale.x
+    card.removeAction(forKey: "turn")
+    card.eulerAngles = from
+    card.scale = SCNVector3(fromScale, fromScale, fromScale)
+    card.opacity = 1
+    let restPitch: CGFloat = perspective ? .pi / 60 : 0
+    let restYaw: CGFloat = perspective ? -.pi * 7 / 180 : 0
+    let target = ((from.y - restYaw) / (2 * .pi)).rounded() * 2 * .pi + restYaw
+    let rim = self.rim, shadow = self.contactShadow
+    let fromRim = rim?.emission.intensity ?? 0
+    let fromShadow = shadow?.presentation.opacity ?? 0
+    let duration: TimeInterval = 0.22
+    isPlaying = true
+    card.runAction(.customAction(duration: duration) { node, elapsed in
+      let t = min(1, max(0, Double(elapsed) / duration))
+      let e = CGFloat(t * t * (3 - 2 * t))
+      node.eulerAngles = SCNVector3(from.x + (restPitch - from.x) * e, from.y + (target - from.y) * e, from.z * (1 - e))
+      let scale = fromScale + (1 - fromScale) * e
+      node.scale = SCNVector3(scale, scale, scale)
+      rim?.emission.intensity = fromRim * (1 - e)
+      shadow?.opacity = fromShadow * (1 - e)
+    }, forKey: "settle") { [weak self] in
+      DispatchQueue.main.async {
+        guard let self, self.generation == currentGeneration else { return }
+        self.isPlaying = false
+      }
+    }
   }
 }

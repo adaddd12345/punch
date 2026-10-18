@@ -14,7 +14,7 @@ extension EnvironmentValues {
 /// Shared control material. Content stays opaque and readable; only the
 /// control's backing refracts. Accessibility and older systems get a solid fill.
 struct AppGlassSurface: ViewModifier {
-  var radius: CGFloat = 14
+  var radius: CGFloat = BentoRadius.tile
   var interactive = true
   var selected = false
   @Environment(\.appGlassEnabled) private var enabled
@@ -30,7 +30,8 @@ struct AppGlassSurface: ViewModifier {
         .interactive(interactive && !reduceMotion), in: shape)
     } else {
       content.background(selected ? AnyShapeStyle(.chromeRaised) : AnyShapeStyle(.chromeSurface), in: shape)
-        .overlay(shape.strokeBorder(.primary.opacity(selected ? 0.5 : 0.14), lineWidth: selected ? 1 : 0.5))
+        .overlay(shape.strokeBorder(.primary.opacity(selected ? 0.5 : contrast == .increased ? 0.34 : 0.14),
+                                    lineWidth: selected || contrast == .increased ? 1 : 0.5))
     }
   }
 }

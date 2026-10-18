@@ -194,15 +194,15 @@ private struct FooterButtonBody: View {
         if danger && lit { Capsule().fill(Color.red.opacity(pressed ? 0.22 : 0.14)).allowsHitTesting(false) }
         else { FooterPlate(opacity: lit ? (pressed ? 0.13 : 0.07) : 0) }
       }
-      .scaleEffect(motion && pressed ? FooterMotion.pressScale : 1)
+      .scaleEffect(motion && pressed ? PopupMotion.pressScale : 1)
       .contentShape(Capsule())
       // Clicks like a 28 pt control without growing its group.
       .verticalHitSlop((28 - FooterBento.button) / 2)
       .onHover { hovered = $0 && !drawPaused }
       .onChange(of: drawPaused) { _, paused in if paused { hovered = false } }
       .onDisappear { hovered = false }
-      .animation(powerSaver ? nil : (motion ? FooterMotion.spring : .easeOut(duration: 0.15)), value: lit)
-      .animation(motion ? FooterMotion.spring : nil, value: pressed)
+      .animation(PopupMotion.highlight(lit, powerSaver: powerSaver), value: lit)
+      .animation(motion ? PopupMotion.press(powerSaver: powerSaver) : nil, value: pressed)
   }
 }
 
@@ -298,9 +298,9 @@ struct FooterShakerMenu<Content: View>: View {
         .foregroundStyle(lit ? .primary : .secondary)
         .frame(width: FooterBento.button, height: FooterBento.button)
         .background { FooterPlate(opacity: lit ? (open ? 0.13 : 0.07) : 0) }
-        .scaleEffect(motion && open ? FooterMotion.pressScale : 1)
+        .scaleEffect(motion && open ? PopupMotion.pressScale : 1)
         .allowsHitTesting(false)
-        .animation(powerSaver ? nil : (motion ? FooterMotion.spring : .easeOut(duration: 0.15)), value: lit)
+        .animation(PopupMotion.highlight(lit, powerSaver: powerSaver), value: lit)
         .animation(motion ? FooterMotion.spring : nil, value: open)
     }
     .onHover { hovered = $0 && !drawPaused }
@@ -360,7 +360,7 @@ struct DockHeaderTitle: View {
           .offset(x: -6, y: -6)
           .opacity(hovered ? 1 : 0)
           .allowsHitTesting(hovered)
-          .help("Hide this header (⋯ › Look brings it back)")
+          .help("Hide this header (⋯ › Layout brings it back)")
           .accessibilityLabel("Hide Dock Header")
           .pointerHint("Hide Header", does: "Moves these controls back to the bottom.")
         }

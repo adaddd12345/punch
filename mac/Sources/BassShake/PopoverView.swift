@@ -760,7 +760,7 @@ struct PopoverView: View {
         .foregroundStyle(Color.primary)
       if p.live {
         Image(systemName: "chevron.down")
-          .font(.system(size: 9, weight: .bold))
+          .font(.system(size: 9, weight: .semibold))
           .foregroundStyle(.artworkSecondary)
       }
     }
@@ -774,7 +774,7 @@ struct PopoverView: View {
     let on = live && controller.bypassed
     return Button { controller.bypassed.toggle() } label: {
       Text("A/B")
-        .font(.system(size: 11, weight: .bold, design: .rounded))
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
         .lineLimit(1)
         .fixedSize()
         .frame(width: 40, height: 24)
@@ -906,7 +906,7 @@ struct PopoverView: View {
             .frame(width: 14)
           if words {
             Text(word)
-              .font(.system(size: 10, weight: .bold, design: .rounded))
+              .font(.system(size: 10, weight: .semibold, design: .rounded))
               .lineLimit(1)
               .fixedSize()
           }
@@ -1225,13 +1225,13 @@ private struct MiniDial<Accessory: View>: View {
           HStack(alignment: .firstTextBaseline, spacing: 1) {
             if !f.0.isEmpty {
               Text(f.0)
-                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(.artworkSecondary)
             }
             Text(f.1)
-              .font(.system(size: 17, weight: .bold, design: .rounded))
+              .font(.system(size: 17, weight: .medium, design: .rounded))
             Text(f.2)
-              .font(.system(size: 11, weight: .bold, design: .rounded))
+              .font(.system(size: 11, weight: .medium, design: .rounded))
               .foregroundStyle(.artworkSecondary)
           }
           .monospacedDigit()

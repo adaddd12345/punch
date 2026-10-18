@@ -65,7 +65,7 @@ struct PresetStrip: View {
           // The signature sounds have their own tiles (Signature Sounds block).
           ForEach(Preset.nonSignature) { p in
             Chip(title: p.name, selected: controller.settings.isCurrent(p)) {
-              Image(systemName: p.symbol).font(.system(size: 9, weight: .semibold))
+              Image(systemName: p.symbol).font(.system(size: 10, weight: .semibold))
             } action: {
               controller.apply(preset: p)
             }
@@ -175,6 +175,9 @@ struct Chip<Icon: View>: View {
   @Environment(\.bentoChips) private var bento
   @Environment(\.colorScheme) private var scheme
   @Environment(\.popupChrome) private var chrome
+  @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.drawPaused) private var drawPaused
+  @State private var hovered = false
 
   /// The popup's action accent, like the segment beside it. Outside the
   /// popup: Classic accent blue, Bento dark ink (white in dark mode).
@@ -209,15 +212,21 @@ struct Chip<Icon: View>: View {
       .padding(.vertical, 5)
       .foregroundStyle(selected ? selectedText : Color.primary)
       .background(Capsule().fill(selected ? selectedFill : restingFill))
+      .overlay(Capsule().fill(Color.primary.opacity(hovered && !selected ? 0.05 : 0)).allowsHitTesting(false))
     })
+    .onHover { hovered = $0 && !drawPaused }
+    .onChange(of: drawPaused) { _, paused in if paused { hovered = false } }
+    .onDisappear { hovered = false }
     .help(labels == .full ? "" : title)
     .accessibilityLabel(title)
     .accessibilityAddTraits(selected ? .isSelected : [])
-    .animation(.easeOut(duration: 0.15), value: selected)
+    .animation(PopupMotion.highlight(selected, powerSaver: powerSaver), value: selected)
+    .animation(PopupMotion.highlight(hovered, powerSaver: powerSaver), value: hovered)
   }
 
-  @ViewBuilder private func styled<B: View>(_ b: Button<B>) -> some View {
-    if bento { b.buttonStyle(BentoPressStyle()) } else { b.buttonStyle(.plain) }
+  /// One press everywhere (Classic used to give no feedback at all).
+  private func styled<B: View>(_ b: Button<B>) -> some View {
+    b.buttonStyle(BentoPressStyle())
   }
 }
 

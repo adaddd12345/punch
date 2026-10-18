@@ -155,11 +155,11 @@ struct BentoView: View {
           .transition(.opacity)
       }
     }
-    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.mode)
-    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: s.nightGuard)
-    .animation(.easeOut(duration: 0.2), value: live)
-    .animation(.spring(response: 0.3, dampingFraction: 0.86), value: lastDetail)
-    .animation(.spring(response: 0.3, dampingFraction: 0.85), value: editor)
+    .animation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver), value: s.mode)
+    .animation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver), value: s.nightGuard)
+    .animation(PopupMotion.highlight(live, powerSaver: powerSaver), value: live)
+    .animation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver), value: lastDetail)
+    .animation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver), value: editor)
     .onChange(of: s.nightGuard) { _, on in if on { showDetail(.nightGuard) } }
     .onChange(of: s.mode) { _, m in if m != .off { showDetail(.mode) } }
     .onChange(of: reshuffle.on) { _, on in
@@ -233,8 +233,9 @@ struct BentoView: View {
         if let mode = editor { editorView(mode) }
       } else {
         hero
-        // Classic: a hairline where the hero's plate would end.
-        if flat { Divider().opacity(0.5) }
+        // Classic: a hairline where the hero's plate would end, unless the
+        // sound controls' own surface already ends it.
+        if flat && heroFullTools == nil { Divider().opacity(0.5) }
         // The editor opens right under the hero when the presets tile is hidden,
         // so "Save Current Sound as Preset…" from the hero menu is seen.
         if !shows(.bentoPresets, .classicPresets), let mode = editor { editorView(mode) }
@@ -447,7 +448,7 @@ struct BentoView: View {
 
   private func bassDial(splitRow: Bool = false) -> some View {
     LiveShown(liveEdit: controller.liveEdit, path: \.bass, value: s.bass) { bass in
-      ScrubTile(title: "Bass", symbol: "waveform.path", tint: tint(.bass),
+      ScrubTile(title: "Strength", symbol: "waveform.path", tint: tint(.bass),
                 value: bass, range: 0...1, defaultValue: 0.55, detent: presetBass, tickStep: 0.05,
                 glassID: "dial.strength", mini: size == .mini, splitRow: splitRow,
                 param: controller.param("strength", \.bass, step: 0.01),
@@ -461,7 +462,7 @@ struct BentoView: View {
 
   private func gainDial(splitRow: Bool = false) -> some View {
     LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
-      ScrubTile(title: "Gain", symbol: "speaker.wave.3", tint: tint(.peach),
+      ScrubTile(title: "Boost", symbol: "speaker.wave.3", tint: tint(.peach),
                 value: boost, range: 0...12, defaultValue: 0, detent: presetBoost, tickStep: 1,
                 glassID: "dial.boost", mini: size == .mini, splitRow: splitRow,
                 accessorySpace: splitRow ? (labels == .icons ? 28 : 46) : 0,
@@ -477,27 +478,29 @@ struct BentoView: View {
   /// Classic's Strength and Boost: the original slider rows, Limit under them.
   private var flatSliders: some View {
     VStack(spacing: 0) {
-      LabeledSlider(title: "Bass", symbol: "waveform.path",
+      LabeledSlider(title: "Strength", symbol: "waveform.path",
                     value: Binding(get: { controller.settings.bass }, set: { controller.settings.bass = $0 }),
                     range: 0...1, format: { "\(Int(($0 * 100).rounded()))%" },
                     param: controller.param("strength", \.bass, step: 0.01))
         .pointerHint(Caption.strength(s.bass, scrub: false, shaker: s.character.bassStage == .shaker), live: true, track: false)
       // Follows a drag of the EQ line (Boost) as it happens.
       LiveShown(liveEdit: controller.liveEdit, path: \.boostDb, value: s.boostDb) { boost in
-        LabeledSlider(title: "Gain", symbol: "speaker.wave.3",
+        LabeledSlider(title: "Boost", symbol: "speaker.wave.3",
                       value: Binding(get: { boost }, set: { controller.settings.boostDb = $0 }),
                       range: 0...12, format: { String(format: "+%.0f dB", $0) },
                       param: controller.param("boost", \.boostDb, step: 0.1))
       }
         .pointerHint(Caption.boost(s.boostDb, scrub: false), live: true, track: false)
       HStack(spacing: 6) {
-        Spacer()
-        IconText(title: "Limit", symbol: "ear", size: 10)
-          .foregroundStyle(s.limit ? Color.orange : Color.secondary)
+        IconText(title: "Limit", symbol: "ear", size: 11)
+          .frame(width: labels == .icons ? 16 : 74, alignment: .leading)
+        Spacer(minLength: 0)
         Toggle("Limit", isOn: Binding(get: { controller.settings.limit }, set: { controller.settings.limit = $0 }))
           .labelsHidden()
           .toggleStyle(.switch)
           .controlSize(.mini)
+          .tint(chrome?.accent ?? .accentColor)
+          .frame(width: 44, alignment: .trailing)
       }
       .frame(height: 24)
       .pointerHint { [controller] in LimitHint.make(on: controller.settings.limit, meters: controller.meters) }
@@ -521,7 +524,7 @@ struct BentoView: View {
     var on: [String] = []
     if s.mode != .off { on.append(s.mode.title) }
     if s.studioEars { on.append("Studio Ears") }
-    if s.autoLoudness { on.append("Loudness") }
+    if s.autoLoudness { on.append("Auto Loudness") }
     if s.nightGuard { on.append("Night Guard") }
     return on.isEmpty ? "" : "+ " + on.joined(separator: " · ")
   }
@@ -558,7 +561,7 @@ struct BentoView: View {
   private var heroPad: CGFloat { 12 }
 
   /// Every picker chip in the hero: one shape, one fill. Dark fill means "on".
-  private var chipShape: RoundedRectangle { RoundedRectangle(cornerRadius: 8, style: .continuous) }
+  private var chipShape: RoundedRectangle { RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous) }
 
   /// The hero, in four groups that keep their order everywhere: media (art,
   /// title, transport), sound (preset, A/B, Power), output, window tools.
@@ -825,7 +828,7 @@ struct BentoView: View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
           ZStack(alignment: .leading) {
             Text(heroWord)
-              .font(.system(size: 17, weight: .heavy, design: .rounded))
+              .font(.system(size: 17, weight: .semibold, design: .rounded))
               .tracking(-0.4)
               .lineLimit(1)
               .minimumScaleFactor(0.7)
@@ -837,7 +840,7 @@ struct BentoView: View {
           .animation(.easeOut(duration: 0.25), value: heroWord)
           if live {
             Image(systemName: "chevron.down")
-              .font(.system(size: 10, weight: .heavy))
+              .font(.system(size: 10, weight: .semibold))
               .foregroundStyle(.artworkSecondary)
           }
         }
@@ -851,7 +854,7 @@ struct BentoView: View {
     let on = live && controller.bypassed
     return Button { controller.bypassed.toggle() } label: {
       Text("A/B")
-        .font(.system(size: 11, weight: .bold, design: .rounded))
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
         .lineLimit(1)
         .fixedSize()
         .frame(width: 32, height: 32)
@@ -914,7 +917,7 @@ struct BentoView: View {
       }
     }
     .padding(8)
-    .modifier(AppGlassSurface(radius: 14, interactive: false))
+    .modifier(AppGlassSurface(radius: BentoRadius.tile, interactive: false))
   }
 
   /// The sound chip's row. `probe`: the chip asks only for its name's width
@@ -1002,7 +1005,7 @@ struct BentoView: View {
       }
     } label: {
       Image(systemName: "chevron.down")
-        .font(.system(size: 10, weight: .bold))
+        .font(.system(size: 10, weight: .semibold))
         .rotationEffect(.degrees(detailsCollapsed ? 0 : 180))
         .foregroundStyle(.artworkPrimary)
         .frame(width: 28, height: 24)
@@ -1069,7 +1072,7 @@ struct BentoView: View {
           }
           if live {
             Image(systemName: "chevron.down")
-              .font(.system(size: chevron, weight: .heavy))
+              .font(.system(size: chevron, weight: .semibold))
               .foregroundStyle(.artworkSecondary)
           }
         }
@@ -1199,7 +1202,7 @@ struct BentoView: View {
         if !small { Text("Original").hidden() }
         Text(small || !on ? "A/B" : "Original")
       }
-      .font(.system(size: 11, weight: .bold, design: .rounded))
+      .font(.system(size: 11, weight: .semibold, design: .rounded))
       .lineLimit(1)
       .fixedSize()
       .padding(.horizontal, 8)
@@ -1260,7 +1263,7 @@ struct BentoView: View {
     } label: {
       HStack(spacing: 6) {
         Image(systemName: controller.currentOutputIsHeadphones ? "headphones" : "hifispeaker")
-          .font(.system(size: 10, weight: .bold))
+          .font(.system(size: 10, weight: .semibold))
           .frame(width: 14)
         if !iconOnly {
           Text(name)
@@ -1269,7 +1272,7 @@ struct BentoView: View {
             .truncationMode(.middle)
           Spacer(minLength: 0)
           Image(systemName: "chevron.down")
-            .font(.system(size: 8, weight: .bold))
+            .font(.system(size: 8, weight: .semibold))
             .foregroundStyle(.artworkSecondary)
         }
       }
@@ -1319,7 +1322,7 @@ struct BentoView: View {
       controller.settings.enabled.toggle()
     } label: {
       Image(systemName: "power")
-        .font(.system(size: (d * CGFloat(0.4)).rounded(), weight: .heavy, design: .rounded))
+        .font(.system(size: (d * CGFloat(0.4)).rounded(), weight: .semibold, design: .rounded))
         .frame(width: d, height: d)
         .foregroundStyle(live ? (chrome?.surface ?? heroTint.pastel) : Color.secondary)
         .background(Circle().fill(live ? (chrome?.accent ?? BentoInk.miniFill) : Color.primary.opacity(0.08)))
@@ -1373,7 +1376,7 @@ struct BentoView: View {
               .font(.system(size: 10, weight: .regular, design: .rounded))
               .foregroundStyle(.artworkSecondary)
               .lineLimit(1)
-              .minimumScaleFactor(0.85)
+              .minimumScaleFactor(0.95)
           }
         }
       }
@@ -1499,9 +1502,8 @@ struct BentoView: View {
   }
 
   private func modePill(_ m: ListeningMode) -> some View {
-    let haze = Int((s.lateNightHaze * 100).rounded())
-    return Chip(title: m == .lateNight && s.mode == m ? "Late Night \(haze)%" : m.title, selected: s.mode == m) {
-      Image(systemName: m.symbol).font(.system(size: 10, weight: .medium))
+    Chip(title: m.title, selected: s.mode == m) {
+      Image(systemName: m.symbol).font(.system(size: 10, weight: .semibold))
     } action: {
       toggleMode(m)
     }
@@ -1518,7 +1520,7 @@ struct BentoView: View {
     if s.mode == m && shownDetail != .mode {
       showDetail(.mode)
     } else {
-      withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+      withAnimation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver)) {
         controller.setMode(s.mode == m ? .off : m)
       }
     }
@@ -1697,12 +1699,12 @@ struct BentoView: View {
       Spacer(minLength: 4)
       if let end = controller.pomodoroEndsAt {
         Text(controller.pomodoroOnBreak ? "Break" : "Focus")
-          .font(.system(size: 10, weight: .bold, design: .rounded))
+          .font(.system(size: 10, weight: .semibold, design: .rounded))
           .lineLimit(1)
           .fixedSize()
           .miniCard()
         Text(end, style: .timer)
-          .font(.system(size: 13, weight: .heavy, design: .rounded))
+          .font(.system(size: 13, weight: .medium, design: .rounded))
           .monospacedDigit()
           .lineLimit(1)
           .fixedSize()
@@ -1870,7 +1872,7 @@ struct BentoTile<Content: View>: View {
               .fill(accent.opacity(look == .lit ? 0.16 : 0.025))
             if case .fader(let value) = look {
               GeometryReader { geometry in
-                Rectangle().fill(accent.opacity(0.08))
+                Rectangle().fill(accent.opacity(0.11))
                   .frame(width: geometry.size.width * min(1, max(0, value)))
               }
             }
@@ -2263,10 +2265,16 @@ private struct TileLabel: View {
 
 /// Mode tiles, pills and Power: press to 0.96, spring back.
 struct BentoPressStyle: ButtonStyle {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.powerSaver) private var powerSaver
+
   func makeBody(configuration: Configuration) -> some View {
-    configuration.label
-      .scaleEffect(configuration.isPressed ? 0.96 : 1)
-      .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+    let pressed = configuration.isPressed
+    let move = !reduceMotion && !powerSaver
+    return configuration.label
+      .scaleEffect(pressed && move ? PopupMotion.pressScale : 1)
+      .opacity(pressed && !move ? 0.8 : 1)
+      .animation(PopupMotion.press(powerSaver: powerSaver), value: pressed)
   }
 }
 
@@ -2403,7 +2411,7 @@ private struct ScrubTile<Accessory: View>: View {
           Spacer(minLength: 2)
           HStack(alignment: .firstTextBaseline, spacing: 0) {
             if !f.0.isEmpty { Text(f.0).font(.system(size: 9, weight: .semibold)).foregroundStyle(.artworkSecondary) }
-            Text(f.1).font(.system(size: 17, weight: .bold, design: .rounded))
+            Text(f.1).font(.system(size: 17, weight: .medium, design: .rounded))
               .contentTransition(.numericText())
             Text(f.2).font(.system(size: 9, weight: .semibold)).foregroundStyle(.artworkSecondary)
           }
@@ -2429,14 +2437,14 @@ private struct ScrubTile<Accessory: View>: View {
               HStack(alignment: .firstTextBaseline, spacing: 1) {
                 if !f.0.isEmpty {
                   Text(f.0)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.artworkSecondary)
                 }
                 Text(f.1)
-                  .font(.system(size: mini ? 24 : 28, weight: .bold, design: .rounded))
+                  .font(.system(size: mini ? 24 : 28, weight: .medium, design: .rounded))
                   .contentTransition(.numericText())
                 Text(f.2)
-                  .font(.system(size: 12, weight: .bold, design: .rounded))
+                  .font(.system(size: 12, weight: .medium, design: .rounded))
                   .foregroundStyle(.artworkSecondary)
               }
               .scaleEffect(dragging && motion ? 1.04 : 1, anchor: .leading)
@@ -2445,7 +2453,7 @@ private struct ScrubTile<Accessory: View>: View {
               .animation(.spring(response: 0.3, dampingFraction: 0.5), value: band)
               Spacer(minLength: 0)
               Image(systemName: "chevron.left.chevron.right")
-                .font(.system(size: 9, weight: .bold))
+                .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.artworkSecondary)
                 .opacity(hover || dragging ? 1 : 0)
             }
@@ -2708,7 +2716,10 @@ private struct ModeTile<Fact: View>: View {
   private var titleText: some View {
     Text(title)
       .font(.system(size: 11, weight: .semibold, design: .rounded))
-      .lineLimit(1)
+      // Square tiles wrap a two-word name ("Auto / Loudness") rather than cut it.
+      .lineLimit(wide ? 1 : 2)
+      .multilineTextAlignment(.leading)
+      .fixedSize(horizontal: false, vertical: true)
       .minimumScaleFactor(0.9)
       .opacity(!flat && labels == .icons ? (contrast == .increased ? 0.85 : 0.6) : 1)
   }
@@ -2743,7 +2754,7 @@ private struct ModeGlyph: View {
         Circle().fill(on ? (chrome?.accent ?? tint.ink) : Color.primary.opacity(0.08))
         Image(systemName: symbol)
           .symbolVariant(on ? .fill : .none)
-          .font(.system(size: size * 0.5, weight: .bold))
+          .font(.system(size: size * 0.5, weight: .semibold))
           .foregroundStyle(on ? (chrome?.surface ?? Color.white) : ink)
       }
       .frame(width: size, height: size)
@@ -2802,7 +2813,7 @@ private struct BassTile: View {
           Spacer(minLength: 0)
           if on {
             Image(systemName: "chevron.left.chevron.right")
-              .font(.system(size: 8, weight: .bold))
+              .font(.system(size: 8, weight: .semibold))
               .foregroundStyle(.artworkSecondary)
               .opacity(hover || start != nil ? 1 : 0)
             Text(percent)
@@ -2895,7 +2906,7 @@ private struct BassTile: View {
               Image(systemName: c.symbol).font(.system(size: 10, weight: .semibold))
             } else {
               Text(c.title)
-                .font(.system(size: compact ? 10 : 11, weight: sel ? .bold : .medium, design: .rounded))
+                .font(.system(size: compact ? 10 : 11, weight: sel ? .semibold : .medium, design: .rounded))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .opacity(labelOpacity)

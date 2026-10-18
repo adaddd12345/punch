@@ -11,7 +11,7 @@ struct ArtworkPlayerControls: View {
     VStack(spacing: 14) {
       ArtworkPlayerProgress(transport: transport)
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .modifier(AppGlassSurface(radius: 14, interactive: false))
+        .modifier(AppGlassSurface(radius: BentoRadius.tile, interactive: false))
       HStack(spacing: 28) {
         Button(action: transport.previous) {
           Image(systemName: transport.previousSystemImage)

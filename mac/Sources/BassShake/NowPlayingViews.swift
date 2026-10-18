@@ -327,7 +327,7 @@ struct ArtworkHeroControls: View {
       }
       .menuStyle(.borderlessButton).menuIndicator(.hidden)
       .frame(width: preview ? 32 : 40, height: preview ? 32 : 40)
-      .background(Circle().fill(secondaryInk.opacity(0.08)))
+      .modifier(HeroSecondaryBacking(ink: secondaryInk, size: preview ? 32 : 40))
       .contentShape(Circle())
       .accessibilityLabel("Playback options")
       .help("Playback options")
@@ -338,8 +338,24 @@ struct ArtworkHeroControls: View {
     Image(systemName: symbol).font(.system(size: preview ? 13 : 16, weight: .semibold))
       .foregroundStyle(secondaryInk)
       .frame(width: preview ? 32 : 40, height: preview ? 32 : 40)
-      .background(Circle().fill(secondaryInk.opacity(0.08)))
+      .modifier(HeroSecondaryBacking(ink: secondaryInk, size: preview ? 32 : 40))
       .contentShape(Circle())
+  }
+}
+
+/// i and ⋯ sit on the artwork's field: their own glass circle, like the play
+/// disc's neighbours. On a glass tile, a flat wash (never glass on glass).
+private struct HeroSecondaryBacking: ViewModifier {
+  let ink: Color
+  let size: CGFloat
+  @Environment(\.bentoGlass) private var bentoGlass
+
+  func body(content: Content) -> some View {
+    if bentoGlass != nil {
+      content.background(Circle().fill(ink.opacity(0.08)))
+    } else {
+      content.modifier(AppGlassSurface(radius: size / 2, interactive: false))
+    }
   }
 }
 

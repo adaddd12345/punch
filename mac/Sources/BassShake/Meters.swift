@@ -152,7 +152,7 @@ struct MeterView: View {
           Text(i == 0 ? "L" : "R")
             .font(.system(size: 9, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
-            .frame(width: label, alignment: .leading)
+            .frame(width: label, alignment: .trailing)
           MeterBar(channel: model.channels[i])
             .frame(height: 7)
           Color.clear.frame(width: 44, height: 1)
@@ -217,7 +217,7 @@ private struct MeterScale: View {
       ForEach(marks, id: \.self) { db in
         Text(db == 0 ? "0" : "\(Int(db))")
           .font(.system(size: 8, weight: .medium, design: .rounded))
-          .foregroundStyle(.tertiary)
+          .foregroundStyle(.secondary)
           .position(x: geo.size.width * CGFloat(MeterModel.position(db)), y: 5)
       }
     }

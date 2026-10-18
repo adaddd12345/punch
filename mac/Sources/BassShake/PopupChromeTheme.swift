@@ -6,7 +6,9 @@ import SwiftUI
 struct PopupChromePalette: Equatable {
   let artwork: ArtworkCardPalette
   var surface: Color { artwork.surface.color }
-  var raised: Color { artwork.surface.mix(artwork.ink, 0.08).color }
+  /// Raised lifts toward the light: ink on a dark card, white on a light one
+  /// (black ink only gains contrast there).
+  var raised: Color { artwork.surface.mix(artwork.dark ? artwork.ink : .white, artwork.dark ? 0.08 : 0.45).color }
   var ink: Color { artwork.ink.color }
   /// The measured secondary (at least 4.5:1 on a resting chip), so it reads
   /// as a distinct level instead of near-primary ink.
@@ -151,10 +153,10 @@ struct PopupChromeFill: View {
       switch look {
       case .fader(let value):
         GeometryReader { geometry in
-          Rectangle().fill(palette.accent.opacity(0.08))
+          Rectangle().fill(palette.accent.opacity(0.11))
             .frame(width: geometry.size.width * min(1, max(0, value)))
         }
-      case .lit, .strong: shape.fill(palette.accent.opacity(0.08))
+      case .lit, .strong: shape.fill(palette.accent.opacity(0.16))
       default: Color.clear
       }
       shape.strokeBorder(palette.ink.opacity(contrast == .increased ? 0.34 : (look == .lit ? 0.28 : 0.12)), lineWidth: 0.5)

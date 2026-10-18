@@ -1210,9 +1210,9 @@ extension Preset {
   /// One line under a signature tile, true to its curve.
   var tagline: String? {
     switch name {
-    case "Bass Shake": return "Deep bass you can feel"
+    case "Bass Shake": return "Bass you can feel"
     case "Podcast": return "Warm, close voices"
-    case "Soft Lofi": return "Full lows, softer highs"
+    case "Soft Lofi": return "Mellow, soft highs"
     default: return nil
     }
   }

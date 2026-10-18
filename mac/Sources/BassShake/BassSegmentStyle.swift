@@ -54,8 +54,8 @@ struct BassSegmentStyle: ButtonStyle {
         .scaleEffect(motion && pressed ? 0.985 : 1)
         .offset(y: motion && pressed ? 0.35 : 0)
         .contentShape(Rectangle())
-        .animation(motion ? .easeOut(duration: pressed ? 0.08 : 0.18) : nil, value: pressed)
-        .animation(motion ? .easeOut(duration: 0.16) : nil, value: hover)
+        .animation(motion ? PopupMotion.press(powerSaver: false) : nil, value: pressed)
+        .animation(motion ? PopupMotion.highlight(hover, powerSaver: false) : nil, value: hover)
         .onHover { hovered = $0 && !drawPaused }
         .onChange(of: drawPaused) { _, paused in if paused { hovered = false } }
         .onDisappear { hovered = false }

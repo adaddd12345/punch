@@ -179,6 +179,7 @@ struct PlayingPresetChip: View {
 /// playing app. Values come from PopoverView (which already observes the
 /// controller); only `PlayingApps` is observed here.
 struct EarsStack: View {
+  @Environment(\.popupChrome) private var chrome
   @ObservedObject var playing: PlayingApps
   let live: LiveChannels
   let devices: [OutputDevice]
@@ -294,7 +295,7 @@ struct EarsStack: View {
       .foregroundStyle(.artworkPrimary)
       .padding(.horizontal, 8)
       .frame(height: 24)
-      .background(chipShape.fill(expanded ? Color.accentColor.opacity(0.2) : Color.primary.opacity(fill)))
+      .background(chipShape.fill(expanded ? (chrome?.accent ?? Color.accentColor).opacity(0.2) : Color.primary.opacity(fill)))
       .contentShape(chipShape)
     }
     .buttonStyle(BentoPressStyle())

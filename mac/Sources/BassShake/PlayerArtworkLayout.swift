@@ -15,8 +15,9 @@ enum PlayerArtworkLayout: String, Codable, CaseIterable, Identifiable {
   }
 }
 
-/// Both the player and Appearance use this composition. Only the image fades;
-/// words and transport always sit on the surrounding readable surface.
+/// Both the player and Appearance use this composition. Art, words and
+/// transport sit straight on the artwork's colour field (its lobes keep the
+/// ink readable); Reduce Transparency and Increase Contrast get an opaque plate.
 struct PlayerArtworkHeader<Controls: View>: View {
   let layout: PlayerArtworkLayout
   let artwork: NSImage?
@@ -30,46 +31,69 @@ struct PlayerArtworkHeader<Controls: View>: View {
   var preview = false
   var entry: NowEntry? = nil
   @ViewBuilder let controls: () -> Controls
+  @Environment(\.artworkStyle) private var style
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.colorSchemeContrast) private var contrast
+
+  /// Wide stills fit their own height (no dead bands above and below); square
+  /// and portrait art keep the full stage. Expanded is a banner: always full.
+  private var stageAspect: CGFloat? {
+    guard layout != .expanded, let artwork, artwork.size.height > 0, artwork.size.width.isFinite,
+          artwork.size.width > artwork.size.height * 1.25 else { return nil }
+    let ratio = artwork.size.width / artwork.size.height
+    // The record peeks right of the centred cover: room for twice the peek.
+    return ratio + (style == .vinyl ? 0.46 : 0)
+  }
 
   var body: some View {
-    let inset: CGFloat = preview ? 8 : 10
-    VStack(spacing: 8) {
-      VStack(spacing: preview ? 10 : 14) {
-        PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
-                           spinning: spinning, paused: paused)
-          .frame(height: preview ? 136 : 200)
-          .inspectableArtwork(artwork, entry: entry)
-        VStack(spacing: preview ? 7 : 9) {
-          Text(title)
-            .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),
-                          weight: .bold, design: .rounded))
-            .foregroundStyle(.artworkPrimary)
-            .lineLimit(2)
-            .lineSpacing(-1)
-            .fixedSize(horizontal: false, vertical: true)
-          Text(subtitle)
-            .font(.system(size: preview ? 10.5 : 12, weight: .medium, design: .rounded))
-            .foregroundStyle(.artworkSecondary)
-            .lineLimit(1)
+    let plate = reduceTransparency || contrast == .increased
+    let full: CGFloat = preview ? 136 : 200
+    VStack(spacing: 0) {
+      Group {
+        if let stageAspect {
+          PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
+                             spinning: spinning, paused: paused)
+            .aspectRatio(stageAspect, contentMode: .fit)
+            .frame(maxHeight: full)
+        } else {
+          PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
+                             spinning: spinning, paused: paused)
+            .frame(height: full)
         }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        // Natural title height prevents a one-line song leaving a large hole
-        // and lets two-line titles grow without clipping the transport.
-        .frame(minHeight: preview ? 44 : 54)
-        .help([title, subtitle].filter { !$0.isEmpty }.joined(separator: " — "))
       }
-      .padding(inset)
+      .inspectableArtwork(artwork, entry: entry)
+      .padding(.bottom, preview ? 10 : 14)
+      VStack(spacing: preview ? 7 : 9) {
+        Text(title)
+          .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),
+                        weight: .bold, design: .rounded).leading(.tight))
+          .tracking(-0.3)
+          .foregroundStyle(.artworkPrimary)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(subtitle)
+          .font(.system(size: preview ? 10.5 : 12, weight: .regular, design: .rounded))
+          .foregroundStyle(.artworkSecondary)
+          .lineLimit(1)
+      }
+      .multilineTextAlignment(.center)
       .frame(maxWidth: .infinity)
-      .modifier(AppGlassSurface(radius: 14, interactive: false))
-
+      // Natural title height prevents a one-line song leaving a large hole
+      // and lets two-line titles grow without clipping the transport.
+      .frame(minHeight: preview ? 44 : 54)
+      .help([title, subtitle].filter { !$0.isEmpty }.joined(separator: " — "))
       controls()
         .frame(height: preview ? 44 : 60)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 4)
-        .modifier(AppGlassSurface(radius: 14, interactive: false))
+        .padding(.top, preview ? 8 : 12)
     }
-
+    .padding(plate ? (preview ? 8 : 10) : 0)
+    .frame(maxWidth: .infinity)
+    .background {
+      if plate {
+        RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous).fill(.chromeSurface)
+      }
+    }
   }
 }
 
@@ -131,7 +155,10 @@ struct PlayerArtworkStage: View {
         }
       }
       .frame(width: width, height: height)
-      .clipShape(RoundedRectangle(cornerRadius: expanded ? BentoRadius.hero : 0, style: .continuous))
+      // Only the expanded banner clips: a cover fitted to the stage keeps its
+      // shadow and Perspective tilt.
+      .clipShape(expanded ? AnyShape(RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous))
+                          : AnyShape(Rectangle().inset(by: -24)))
     }
     .accessibilityHidden(true)
   }
@@ -156,7 +183,7 @@ private struct LandscapeArtworkStage: View {
     let ratio = image.size.width / image.size.height
     let record = style == .vinyl
     // The cover is centred and the record peeks right of it: room for twice the peek.
-    let coverWidth = min(width / (1 + (record ? 0.46 / ratio : 0)), height * 0.9 * ratio)
+    let coverWidth = min(width / (1 + (record ? 0.46 / ratio : 0)), height * ratio)
     let coverHeight = coverWidth / ratio
     let diameter = coverHeight * 0.92
     let peek = record ? diameter * 0.25 : 0

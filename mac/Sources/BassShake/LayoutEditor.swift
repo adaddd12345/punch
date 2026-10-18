@@ -50,7 +50,7 @@ struct LayoutSection: Identifiable, Equatable {
   static let bentoNowPlaying = LayoutSection(key: "bento.nowPlaying", name: "More Playing Apps", symbol: "music.note.list",
                                              tint: .aqua, height: 36, when: "With What's Playing on")
   static let bentoEQ = LayoutSection(key: "bento.eq", name: "EQ Curve", symbol: "slider.vertical.3", tint: .frost, height: 52)
-  static let bentoDials = LayoutSection(key: "bento.dials", name: "Bass & Gain", symbol: "waveform.path", tint: .bass, height: 44)
+  static let bentoDials = LayoutSection(key: "bento.dials", name: "Strength & Boost", symbol: "waveform.path", tint: .bass, height: 44)
   static let bentoSignature = LayoutSection(key: "bento.signature", name: "Signature Sounds", symbol: "star.square.on.square",
                                             tint: .bass, height: 48)
   static let bentoPresets = LayoutSection(key: "bento.presets", name: "More Presets & Modes", symbol: "square.grid.2x2", tint: .frost, height: 56)
@@ -72,7 +72,7 @@ struct LayoutSection: Identifiable, Equatable {
   static let classicPresets = LayoutSection(key: "classic.presets", name: "Presets", symbol: "square.stack", tint: .frost, height: 36)
   static let classicMeters = LayoutSection(key: "classic.meters", name: "Level Meters", symbol: "chart.bar.fill", tint: .mint,
                                            height: 36, when: "Full size only")
-  static let classicSliders = LayoutSection(key: "classic.sliders", name: "Bass & Gain", symbol: "waveform.path", tint: .bass, height: 44)
+  static let classicSliders = LayoutSection(key: "classic.sliders", name: "Strength & Boost", symbol: "waveform.path", tint: .bass, height: 44)
   static let classicModes = LayoutSection(key: "classic.modes", name: "Modes", symbol: "square.grid.3x2", tint: .indigo, height: 44)
   static let classicModeSettings = LayoutSection(key: "classic.modeSettings", name: "Mode Settings", symbol: "slider.horizontal.3",
                                                  tint: .lilac, height: 36, when: "Night Guard, Study, Sleep")

@@ -453,7 +453,7 @@ struct NowStackTile: View {
           VStack(alignment: .leading, spacing: compact ? 0 : 1) {
             // In place, one Text each (never two titles at once).
             Text(text.title)
-              .font(.system(size: compact ? 11 : 12, weight: .heavy, design: .rounded))
+              .font(.system(size: compact ? 11 : 12, weight: .semibold, design: .rounded))
               .tracking(-0.2)
               .lineLimit(1)
               .truncationMode(.tail)
@@ -534,7 +534,7 @@ struct NowEntryArtButton: View {
             ZStack {
               shape.fill(muted && (mutedHere || muteGlyph) ? Color.orange.opacity(0.85) : Color.black.opacity(0.42))
               Image(systemName: symbol)
-                .font(.system(size: (size * 0.4).rounded(), weight: .heavy))
+                .font(.system(size: (size * 0.4).rounded(), weight: .semibold))
                 .foregroundStyle(Color.white)
             }
             .transition(.opacity)
@@ -606,7 +606,7 @@ struct NowDrawerTile: View {
       .frame(width: mini + CGFloat(max(covers.count - 1, 0)) * step, height: art, alignment: .leading)
       VStack(alignment: .leading, spacing: compact ? 0 : 1) {
         Text(previewTitle == nil ? "+\(entries.count)" : "More playing · \(entries.count)")
-          .font(.system(size: compact ? 11 : 12, weight: .heavy, design: .rounded))
+          .font(.system(size: compact ? 11 : 12, weight: .semibold, design: .rounded))
           .foregroundStyle(Color.primary)
         Text(previewTitle ?? "more playing")
           .font(.system(size: compact ? 9 : 10, weight: .medium, design: .rounded))
@@ -616,7 +616,7 @@ struct NowDrawerTile: View {
       .modifier(StillWhileMorphing())
       Spacer(minLength: 0)
       Image(systemName: "chevron.down")
-        .font(.system(size: 8, weight: .bold))
+        .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(.secondary)
     }
   }
@@ -624,7 +624,7 @@ struct NowDrawerTile: View {
   private var showLess: some View {
     HStack(spacing: 5) {
       Image(systemName: "chevron.up")
-        .font(.system(size: 8, weight: .bold))
+        .font(.system(size: 8, weight: .semibold))
       Text("Show less")
         .font(.system(size: compact ? 10 : 11, weight: .semibold, design: .rounded))
         .lineLimit(1)

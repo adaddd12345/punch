@@ -34,15 +34,34 @@ private struct ArtworkInspectionRequest: Identifiable {
   let reduceMotion: Bool
   let powerSaver: Bool
   let design: ArtworkInspectionDesign
+  /// Backing scale the face was rendered at; refreshes reuse it.
+  let scale: CGFloat
+}
+
+/// The face is rendered at the inspector's displayed width, never larger.
+private enum ArtworkInspectionRender {
+  static func ratio(_ image: NSImage) -> CGFloat? {
+    let size = image.size
+    guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { return nil }
+    return max(0.4, min(3, size.width / size.height))
+  }
+  static func width(_ ratio: CGFloat) -> CGFloat { min(300, 240 * ratio) }
 }
 
 private struct InspectArtworkKey: EnvironmentKey {
   static let defaultValue: ((NSImage, CGRect, ArtworkEffect, Bool, Bool, NowEntry?, ArtworkInspectionDesign) -> Void)? = nil
 }
+private struct PrefetchArtworkKey: EnvironmentKey {
+  static let defaultValue: ((NSImage, ArtworkEffect) -> Void)? = nil
+}
 private extension EnvironmentValues {
   var inspectArtwork: ((NSImage, CGRect, ArtworkEffect, Bool, Bool, NowEntry?, ArtworkInspectionDesign) -> Void)? {
     get { self[InspectArtworkKey.self] }
     set { self[InspectArtworkKey.self] = newValue }
+  }
+  var prefetchArtwork: ((NSImage, ArtworkEffect) -> Void)? {
+    get { self[PrefetchArtworkKey.self] }
+    set { self[PrefetchArtworkKey.self] = newValue }
   }
 }
 
@@ -70,6 +89,7 @@ private struct InspectableArtwork: ViewModifier {
   let image: NSImage?
   let entry: NowEntry?
   @Environment(\.inspectArtwork) private var inspect
+  @Environment(\.prefetchArtwork) private var prefetch
   @Environment(\.artworkEffect) private var effect
   @Environment(\.artworkStyle) private var style
   @Environment(\.vinylMaterial) private var material
@@ -92,6 +112,8 @@ private struct InspectableArtwork: ViewModifier {
             Color.clear.contentShape(Rectangle())
           }
           .buttonStyle(.plain)
+          // Warm the caches on approach so a click starts the turn at once.
+          .onHover { inside in if inside { prefetch?(image, effect) } }
           .accessibilityLabel("Inspect artwork")
           .help("Inspect artwork")
         }
@@ -114,19 +136,23 @@ private struct ArtworkInspectionRoot: ViewModifier {
   @State private var inspectionHeight: CGFloat?
   @State private var originalWindowFrame: NSRect?
   @State private var originalContentHeight: CGFloat?
+  /// True while the card turns: later height changes wait until it lands.
+  @State private var holdResize = false
+  @State private var pendingHeight: CGFloat?
+  @State private var fitted = false
 
   @ViewBuilder func body(content: Content) -> some View {
     if enabled {
       content
         .frame(height: request == nil ? nil : inspectionHeight, alignment: .top)
-        .blur(radius: revealed && !reduceTransparency ? 14 : 0)
+        .blur(radius: revealed && !reduceTransparency && request?.powerSaver != true ? 14 : 0)
         .allowsHitTesting(request == nil)
         .disabled(request != nil)
         .accessibilityHidden(request != nil)
         .environment(\.drawPaused, inheritedPause || request != nil)
         .overlay {
           if let request {
-            ArtworkInspectionOverlay(request: request, revealed: $revealed,
+            ArtworkInspectionOverlay(request: request, revealed: $revealed, holdResize: $holdResize,
                                      closing: closing, dismiss: dismiss)
               .environment(\.artworkStyle, request.design.style)
               .environment(\.vinylMaterial, request.design.material)
@@ -138,23 +164,38 @@ private struct ArtworkInspectionRoot: ViewModifier {
         }
         .background(InspectionWindowReader { window = $0 })
         .environment(\.inspectArtwork, present)
+        .environment(\.prefetchArtwork, prefetch)
         .onChange(of: window) { _, _ in registerKeyboard() }
         .onPreferenceChange(ArtworkPlayerHeightKey.self) { fitPlayer($0) }
+        .onChange(of: holdResize) { _, held in
+          guard !held, let height = pendingHeight else { return }
+          pendingHeight = nil
+          fitPlayer(height)
+        }
         .onDisappear { clear() }
     } else { content }
+  }
+
+  private var renderScale: CGFloat { window?.backingScaleFactor ?? 2 }
+
+  /// Warms the same cache entries `present` reads.
+  private func prefetch(_ image: NSImage, _ effect: ArtworkEffect) {
+    guard request == nil, let ratio = ArtworkInspectionRender.ratio(image) else { return }
+    ArtworkEffectImages.shared.image(for: image, size: ArtworkInspectionRender.width(ratio), scale: renderScale,
+                                    effect: effect, aspectRatio: ratio) { _ in }
+    ArtworkCardPalettes.shared.palette(for: image) { _ in }
   }
 
   private func present(_ image: NSImage, _ source: CGRect, _ effect: ArtworkEffect,
                        _ reduced: Bool, _ saver: Bool, _ entry: NowEntry?, _ design: ArtworkInspectionDesign) {
     guard request == nil, source.width > 0, source.height > 0,
-          image.size.width.isFinite, image.size.height.isFinite,
-          image.size.width > 0, image.size.height > 0 else { return }
+          let ratio = ArtworkInspectionRender.ratio(image) else { return }
     let token = UUID()
     loadingID = token
+    let scale = renderScale
     // Freeze the chosen finish and artwork for the whole inspection. A new song
     // arriving in the background must never change a face halfway through a turn.
-    let ratio = max(0.4, min(3, image.size.width / image.size.height))
-    ArtworkEffectImages.shared.image(for: image, size: min(384, 384 * ratio), scale: 2,
+    ArtworkEffectImages.shared.image(for: image, size: ArtworkInspectionRender.width(ratio), scale: scale,
                                     effect: effect, aspectRatio: ratio) { rendered in
       guard loadingID == token, request == nil else { return }
       let output = rendered ?? image
@@ -165,8 +206,9 @@ private struct ArtworkInspectionRoot: ViewModifier {
       originalContentHeight = window?.contentView?.bounds.height
       inspectionHeight = originalContentHeight
       if let window, window.styleMask.contains(.titled) { originalWindowFrame = window.frame }
+      holdResize = false; pendingHeight = nil; fitted = false
       request = ArtworkInspectionRequest(image: output, rawArtwork: image, entry: entry, effect: effect, source: source, reverse: reverse,
-                                         reduceMotion: reduced, powerSaver: saver, design: design)
+                                         reduceMotion: reduced, powerSaver: saver, design: design, scale: scale)
       closing = false
       registerKeyboard()
       }
@@ -185,25 +227,46 @@ private struct ArtworkInspectionRoot: ViewModifier {
 
   private func dismiss() {
     guard let request, !closing else { return }
-    let duration = request.reduceMotion ? 0.2 : 0.32
-    withAnimation(.easeInOut(duration: duration)) {
+    let id = request.id
+    let reduced = request.reduceMotion
+    let duration = reduced ? 0.2 : 0.30
+    pendingHeight = nil
+    // Closing settles faster than opening. The overlay leaves when the motion
+    // completes, not on a separate timer that can race its last frame.
+    withAnimation(reduced ? Animation.easeInOut(duration: duration) : Animation.smooth(duration: duration),
+                  completionCriteria: .logicallyComplete) {
       closing = true; revealed = false
+    } completion: {
+      guard self.request?.id == id, closing else { return }
+      clear()
+    }
+    // A titled window and its SwiftUI height move in lockstep on one curve.
+    withAnimation(reduced ? nil : (originalWindowFrame != nil ? Animation.easeInOut(duration: duration) : Animation.smooth(duration: duration))) {
       inspectionHeight = originalContentHeight
     }
-    if let frame = originalWindowFrame { resizeWindow(to: frame, duration: request.reduceMotion ? 0 : duration) }
+    if let frame = originalWindowFrame { resizeWindow(to: frame, duration: reduced ? 0 : duration) }
+    // Backstop only: the completion normally clears first.
     dismissal = Task { @MainActor in
-      do { try await Task.sleep(for: .seconds(duration)) } catch { return }
+      do { try await Task.sleep(for: .seconds(duration + 0.25)) } catch { return }
+      guard self.request?.id == id, closing else { return }
       clear()
     }
   }
 
   private func fitPlayer(_ contentHeight: CGFloat) {
-    guard request != nil, !closing, contentHeight.isFinite, contentHeight > 0 else { return }
+    guard let request, !closing, contentHeight.isFinite, contentHeight > 0 else { return }
+    // The first fit runs under the turn's slow start; later changes wait for
+    // the card to land, so nothing resizes beneath it mid-turn.
+    if holdResize && fitted { pendingHeight = contentHeight; return }
+    fitted = true
     let available = max(240, (window?.screen?.visibleFrame.height ?? 820) - 80)
     let height = min(740, available, ceil(contentHeight + 58))
     guard abs((inspectionHeight ?? 0) - height) > 1 else { return }
-    let duration = request?.reduceMotion == true ? 0 : 0.32
-    withAnimation(duration == 0 ? nil : .easeInOut(duration: duration)) { inspectionHeight = height }
+    let duration = request.reduceMotion ? 0 : 0.24
+    let titled = originalWindowFrame != nil
+    withAnimation(duration == 0 ? nil : (titled ? Animation.easeInOut(duration: duration) : PopupMotion.resize)) {
+      inspectionHeight = height
+    }
     // Popovers follow SwiftUI's preferred height. The ordinary Dock window
     // needs its native viewport updated, retaining its top edge and old size.
     if let window, originalWindowFrame != nil {
@@ -235,6 +298,9 @@ private struct ArtworkInspectionRoot: ViewModifier {
     if let frame = originalWindowFrame, let window { window.setFrame(frame, display: true) }
     originalWindowFrame = nil
     originalContentHeight = nil
+    holdResize = false
+    pendingHeight = nil
+    fitted = false
     revealed = false
     closing = false
   }
@@ -255,6 +321,7 @@ private struct ArtworkSlotKey: PreferenceKey {
 private struct ArtworkInspectionOverlay: View {
   let request: ArtworkInspectionRequest
   @Binding var revealed: Bool
+  @Binding var holdResize: Bool
   let closing: Bool
   let dismiss: () -> Void
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -275,10 +342,15 @@ private struct ArtworkInspectionOverlay: View {
   @State private var turning = false
   @State private var opening = true
   @State private var artHovered = false
+  @State private var hoverTurn: Task<Void, Never>?
+  /// When the last turn landed: a hover right after it is not intent.
+  @State private var restAt: CFTimeInterval = 0
   @FocusState private var closeFocused: Bool
 
-  init(request: ArtworkInspectionRequest, revealed: Binding<Bool>, closing: Bool, dismiss: @escaping () -> Void) {
-    self.request = request; _revealed = revealed; self.closing = closing; self.dismiss = dismiss
+  init(request: ArtworkInspectionRequest, revealed: Binding<Bool>, holdResize: Binding<Bool>,
+       closing: Bool, dismiss: @escaping () -> Void) {
+    self.request = request; _revealed = revealed; _holdResize = holdResize
+    self.closing = closing; self.dismiss = dismiss
     _selection = State(initialValue: request.entry)
     _face = State(initialValue: request.image)
     _labelArtwork = State(initialValue: request.rawArtwork)
@@ -385,21 +457,31 @@ private struct ArtworkInspectionOverlay: View {
       .environment(\.artworkCardPalette, palette)
       .environment(\.popupChrome, chrome ?? PopupChromePalette(source: palette))
       .background {
-        palette.surface.color.opacity(revealed && !closing ? (reduceTransparency ? 1 : 0.88) : 0)
+        // Power Saver skips the blur behind, so the surface carries more.
+        palette.surface.color.opacity(revealed && !closing
+          ? (reduceTransparency ? 1 : request.powerSaver ? 0.96 : 0.88) : 0)
       }
       .frame(width: geometry.size.width, height: geometry.size.height)
 
     }
     .task(id: closing) {
-      guard !closing else { return }
-      closeFocused = true
-      withAnimation(.easeInOut(duration: request.reduceMotion ? 0.2 : 0.32)) { revealed = true }
-      transport.select(entry)
-      // Wait for a laid-out renderer, then make one complete turn and land on
-      // the printed front. Hover repeats one full turn; click opens the source.
-      do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
       guard !closing, opening else { return }
-      if request.reduceMotion { opening = false } else { turning = true; turn = 2 }
+      closeFocused = true
+      // One clock: travel, backdrop and blur share a curve, and the turn starts
+      // in the same tick (the renderer already exists by the time a task runs).
+      // One complete turn lands on the printed front. Hover repeats it; click
+      // opens the source. Reduce Motion crossfades; Power Saver travels flat.
+      if request.reduceMotion {
+        withAnimation(.easeInOut(duration: 0.2)) { revealed = true }
+        opening = false
+      } else if request.powerSaver {
+        withAnimation(.smooth(duration: 0.30)) { revealed = true }
+        opening = false
+      } else {
+        withAnimation(.smooth(duration: 0.42)) { revealed = true }
+        turning = true; turn = 2
+      }
+      transport.select(entry)
     }
     .task(id: closing ? -1 : turn) {
       guard !closing, turn > 0 else { return }
@@ -407,12 +489,16 @@ private struct ArtworkInspectionOverlay: View {
       do { try await Task.sleep(for: .seconds(request.reduceMotion ? 0.2 : ArtworkTurntableFactory.openingDuration)) }
       catch { return }
       turning = false; opening = false
+      restAt = CACurrentMediaTime()
       refreshFace()
     }
-    .onChange(of: closing) { _, value in if value { faceToken = UUID() } }
+    .onChange(of: turning) { _, value in holdResize = value }
+    .onChange(of: closing) { _, value in
+      if value { faceToken = UUID(); hoverTurn?.cancel(); hoverTurn = nil }
+    }
     .onChange(of: imageIdentity) { _, _ in refreshFace() }
     .onChange(of: entry?.item?.url) { _, _ in transport.select(entry) }
-    .onDisappear { faceToken = UUID(); transport.stop() }
+    .onDisappear { faceToken = UUID(); hoverTurn?.cancel(); transport.stop() }
   }
 
   private var header: some View {
@@ -457,7 +543,7 @@ private struct ArtworkInspectionOverlay: View {
         }
         ArtworkTurntableScene(image: face, reverse: reverse, turn: turn, artworkSize: size,
                               reducedMotion: request.reduceMotion, powerSaver: request.powerSaver,
-                              perspective: perspective, glass: glass && !reduceTransparency)
+                              perspective: perspective, glass: glass && !reduceTransparency, closing: closing)
           .id(selection?.id ?? request.id.uuidString)
           .frame(width: width + overscan * 2, height: height + overscan * 2)
           .allowsHitTesting(false)
@@ -496,8 +582,16 @@ private struct ArtworkInspectionOverlay: View {
     .onHover { inside in
       let entered = inside && !artHovered
       artHovered = inside
-      guard entered, !opening, !turning, !closing, !request.reduceMotion else { return }
-      turning = true; turn += 2
+      hoverTurn?.cancel(); hoverTurn = nil
+      guard entered, !closing, !request.reduceMotion, !request.powerSaver else { return }
+      // Turn only for a pointer that rests on the cover, not one passing over
+      // it on the way to the close button, nor one the opening left there.
+      hoverTurn = Task { @MainActor in
+        do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+        guard artHovered, !opening, !turning, !closing,
+              CACurrentMediaTime() - restAt >= 0.5 else { return }
+        turning = true; turn += 2
+      }
     }
     .accessibilityLabel(entry?.item?.url == nil ? "Open \(entry?.app.name ?? "source")" : "Open original link")
     .help(entry?.item?.url?.absoluteString ?? "Open original source")
@@ -518,8 +612,8 @@ private struct ArtworkInspectionOverlay: View {
     guard !closing, !turning, let entry else { return }
     let image = now.describe(entry, state: false).artwork ?? now.icon(entry.app)
     let token = UUID(); faceToken = token
-    let ratio = max(0.4, min(3, image.size.width / max(1, image.size.height)))
-    ArtworkEffectImages.shared.image(for: image, size: min(384, 384 * ratio), scale: 2,
+    let ratio = ArtworkInspectionRender.ratio(image) ?? 1
+    ArtworkEffectImages.shared.image(for: image, size: ArtworkInspectionRender.width(ratio), scale: request.scale,
                                     effect: request.effect, aspectRatio: ratio) { output in
       guard faceToken == token, !turning else { return }
       face = output ?? image

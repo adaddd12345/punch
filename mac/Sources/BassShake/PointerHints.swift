@@ -747,7 +747,7 @@ enum Caption {
   }
 
   static func loudness(on: Bool) -> PointerHint {
-    PointerHint("Loudness", does: "Adds more bass and treble the lower your volume goes.")
+    PointerHint("Auto Loudness", does: "Adds more bass and treble the lower your volume goes.")
   }
 
   /// `click`: what a click does now ("Click to turn on", "Click for settings"…).
