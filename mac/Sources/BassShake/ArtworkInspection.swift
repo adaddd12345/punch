@@ -78,10 +78,13 @@ private struct ArtworkInspectionRoot: ViewModifier {
   @State private var registeredWindowID: ObjectIdentifier?
   @State private var loadingID: UUID?
   @State private var dismissal: Task<Void, Never>?
+  @State private var inspectionHeight: CGFloat?
+  @State private var originalWindowFrame: NSRect?
 
   @ViewBuilder func body(content: Content) -> some View {
     if enabled {
       content
+        .frame(height: request == nil ? nil : inspectionHeight, alignment: .top)
         .blur(radius: revealed && !reduceTransparency ? 14 : 0)
         .allowsHitTesting(request == nil)
         .disabled(request != nil)
@@ -97,6 +100,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
         .background(InspectionWindowReader { window = $0 })
         .environment(\.inspectArtwork, present)
         .onChange(of: window) { _, _ in registerKeyboard() }
+        .onPreferenceChange(ArtworkPlayerHeightKey.self) { fitPlayer($0) }
         .onDisappear { clear() }
     } else { content }
   }
@@ -122,6 +126,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
       request = ArtworkInspectionRequest(image: output, entry: entry, effect: effect, source: source, reverse: reverse,
                                          reduceMotion: reduced, powerSaver: saver)
       closing = false
+      if let window, window.styleMask.contains(.titled) { originalWindowFrame = window.frame }
       registerKeyboard()
       }
     }
@@ -147,6 +152,21 @@ private struct ArtworkInspectionRoot: ViewModifier {
     }
   }
 
+  private func fitPlayer(_ contentHeight: CGFloat) {
+    guard request != nil, !closing, contentHeight.isFinite, contentHeight > 0 else { return }
+    let available = max(240, (window?.screen?.visibleFrame.height ?? 820) - 80)
+    let height = min(740, available, ceil(contentHeight + 58))
+    guard abs((inspectionHeight ?? 0) - height) > 1 else { return }
+    inspectionHeight = height
+    // Popovers follow SwiftUI's preferred height. The ordinary Dock window
+    // needs its native viewport updated, retaining its top edge and old size.
+    if let window, originalWindowFrame != nil {
+      let top = window.frame.maxY
+      window.setContentSize(NSSize(width: window.contentView?.bounds.width ?? 360, height: height))
+      window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+    }
+  }
+
   private func clear() {
     dismissal?.cancel()
     dismissal = nil
@@ -154,9 +174,17 @@ private struct ArtworkInspectionRoot: ViewModifier {
     if let id = registeredWindowID { ArtworkInspectionKeyboard.handlers.removeValue(forKey: id) }
     registeredWindowID = nil
     request = nil
+    inspectionHeight = nil
+    if let frame = originalWindowFrame, let window { window.setFrame(frame, display: true) }
+    originalWindowFrame = nil
     revealed = false
     closing = false
   }
+}
+
+private struct ArtworkPlayerHeightKey: PreferenceKey {
+  static var defaultValue: CGFloat { 0 }
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 private struct ArtworkSlotKey: PreferenceKey {
@@ -182,6 +210,7 @@ private struct ArtworkInspectionOverlay: View {
   @State private var turn = 0
   @State private var turning = false
   @State private var opening = true
+  @State private var artHovered = false
   @FocusState private var closeFocused: Bool
 
   init(request: ArtworkInspectionRequest, revealed: Binding<Bool>, closing: Bool, dismiss: @escaping () -> Void) {
@@ -210,18 +239,17 @@ private struct ArtworkInspectionOverlay: View {
   var body: some View {
     GeometryReader { geometry in
       let ratio = face.size.width / max(1, face.size.height)
-      let maxHeight = min(280, max(160, geometry.size.height * 0.40))
-      let artWidth = min(340, max(1, geometry.size.width - 48), maxHeight * ratio)
+      let artWidth = min(300, max(1, geometry.size.width - 64), 240 * ratio)
       VStack(spacing: 0) {
         Color.clear.frame(height: 58).accessibilityHidden(true)
-        GeometryReader { viewport in
+        GeometryReader { _ in
           ScrollViewReader { scroll in
             ScrollView(.vertical) {
-              VStack(spacing: 24) {
+              VStack(spacing: 18) {
                 ArtworkPlayerSources(selectedID: entry?.id, section: .playing, select: select)
-                VStack(spacing: 20) {
+                VStack(spacing: 16) {
                   artworkButton(width: artWidth, height: artWidth / ratio)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
                     .anchorPreference(key: ArtworkSlotKey.self, value: .bounds) { $0 }
                   VStack(spacing: 6) {
@@ -243,10 +271,20 @@ private struct ArtworkInspectionOverlay: View {
                 .id("selected-artwork")
                 ArtworkPlayerSources(selectedID: entry?.id, section: .paused, select: select)
               }
+              .padding(16)
               .frame(maxWidth: 420)
-              .padding(.horizontal, geometry.size.width < 320 ? 16 : 24)
-              .padding(.top, 16).padding(.bottom, 28)
-              .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .center)
+              .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+              .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                  .strokeBorder(Color.primary.opacity(0.16), lineWidth: 1)
+                  .allowsHitTesting(false)
+              }
+              .padding(.horizontal, 12)
+              .padding(.top, 4).padding(.bottom, 12)
+              .background(GeometryReader { measured in
+                Color.clear.preference(key: ArtworkPlayerHeightKey.self, value: measured.size.height)
+              })
+              .frame(maxWidth: .infinity, alignment: .top)
             }
             .scrollIndicators(.automatic)
             .onChange(of: selection?.id) { _, _ in
@@ -282,7 +320,7 @@ private struct ArtworkInspectionOverlay: View {
       withAnimation(.easeInOut(duration: request.reduceMotion ? 0.2 : 0.25)) { revealed = true }
       transport.select(entry)
       // Wait for a laid-out renderer, then make one complete turn and land on
-      // the printed front. Direct clicks continue to use a half-turn.
+      // the printed front. Hover repeats one full turn; click opens the source.
       do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
       guard !closing, opening else { return }
       if request.reduceMotion { opening = false } else { turning = true; turn = 2 }
@@ -290,7 +328,7 @@ private struct ArtworkInspectionOverlay: View {
     .task(id: turn) {
       guard turn > 0 else { return }
       turning = true
-      do { try await Task.sleep(for: .seconds(request.reduceMotion ? 0.2 : (opening ? ArtworkTurntableFactory.openingDuration : ArtworkTurntableFactory.turnDuration))) }
+      do { try await Task.sleep(for: .seconds(request.reduceMotion ? 0.2 : ArtworkTurntableFactory.openingDuration)) }
       catch { return }
       turning = false; opening = false
       refreshFace()
@@ -336,6 +374,18 @@ private struct ArtworkInspectionOverlay: View {
         .allowsHitTesting(false)
     }
     .frame(width: width, height: height)
+    .overlay(alignment: .topTrailing) {
+      if entry != nil {
+        Image(systemName: "arrow.up.right")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundStyle(palette.ink.color)
+          .frame(width: 30, height: 30)
+          .background(palette.surface.color.opacity(0.9), in: Circle())
+          .padding(9)
+          .opacity(artHovered ? 1 : 0)
+          .animation(.easeOut(duration: 0.15), value: artHovered)
+      }
+    }
     .allowsHitTesting(false)
   }
 
@@ -343,23 +393,31 @@ private struct ArtworkInspectionOverlay: View {
   // it. Wheel/trackpad gestures over the cover must still scroll the player.
   private func artworkButton(width: CGFloat, height: CGFloat) -> some View {
     Button {
-      guard !turning else { return }
-      turning = true; turn += 1
+      guard let entry else { return }
+      if let url = entry.item?.url, ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+        NSWorkspace.shared.open(url)
+      } else { NowStack.focus(entry, model: now) }
     } label: {
       Color.clear.frame(width: width, height: height)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
     .buttonStyle(.plain)
-    .disabled(turning || opening || closing)
-    .accessibilityLabel(turn.isMultiple(of: 2) ? "Show reverse of artwork" : "Show artwork")
-    .help("Flip artwork")
+    .disabled(closing || entry == nil)
+    .onHover { inside in
+      let entered = inside && !artHovered
+      artHovered = inside
+      guard entered, !opening, !turning, !closing, !request.reduceMotion else { return }
+      turning = true; turn += 2
+    }
+    .accessibilityLabel(entry?.item?.url == nil ? "Open \(entry?.app.name ?? "source")" : "Open original link")
+    .help(entry?.item?.url?.absoluteString ?? "Open original source")
   }
 
   private func select(_ entry: NowEntry) {
     guard entry.id != selection?.id else { return }
     faceToken = UUID()
     selection = entry
-    turning = false; opening = false; turn = 0
+    turning = false; opening = false; artHovered = false; turn = 0
     face = now.describe(entry, state: false).artwork ?? now.icon(entry.app)
     transport.select(entry)
     refreshFace()
