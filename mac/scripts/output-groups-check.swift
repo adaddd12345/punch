@@ -21,7 +21,19 @@ import Foundation
       _ = try OutputGroups.selectedDevices([first.uid], from: [first])
       preconditionFailure("A group requires at least two selected outputs")
     } catch {}
+    precondition(try! OutputGroups.selectedDevices([first.uid], from: [first], minimum: 1) == [first])
+    do {
+      _ = try OutputGroups.selectedDevices([], from: [first], minimum: 1)
+      preconditionFailure("Quick Apply requires an output")
+    } catch {}
+    do {
+      _ = try OutputGroups.selectedDevices([second.uid], from: [first], minimum: 1)
+      preconditionFailure("Quick Apply must reject a disconnected selection")
+    } catch {}
+    let quick = OutputGroup(id: 3, uid: OutputGroup.prefix + "quick.test", name: "Quick outputs", members: [], primaryUID: "")
+    let saved = OutputGroup(id: 4, uid: OutputGroup.prefix + "saved", name: "My speakers", members: [], primaryUID: "")
+    precondition(quick.isQuick && !saved.isQuick)
     precondition(OutputGroups.preferredPrimary([first, second]) == first)
-    print("12 output mapping, selection, clock preference and player layout checks passed")
+    print("16 output mapping, quick selection, group identity, clock preference and player layout checks passed")
   }
 }

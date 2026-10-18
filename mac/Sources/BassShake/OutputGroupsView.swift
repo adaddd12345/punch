@@ -10,6 +10,8 @@ final class OutputGroupsModel: ObservableObject {
   @Published private(set) var currentID: AudioObjectID = 0
   @Published private(set) var busy = false
   @Published var message: String?
+  @Published private(set) var notice: String?
+  @Published private(set) var quick: OutputGroup?
   private let queue = DispatchQueue(label: "bassshake.output-groups")
   private var refreshing = false
   private var levelHolds: [String: TimeInterval] = [:]
@@ -19,6 +21,7 @@ final class OutputGroupsModel: ObservableObject {
     guard !refreshing, !busy else { return }
     refreshing = true
     queue.async {
+      OutputGroups.discardInactiveQuickRoutes()
       let devices = Devices.allOutputs(includeGroups: false)
       let groups = OutputGroups.all()
       let current = Devices.defaultOutput()
@@ -27,7 +30,8 @@ final class OutputGroupsModel: ObservableObject {
         if let value = try? HAL.get(d.id, Self.volume, default: Float32(0)) { levels[d.uid] = Double(value) }
       }
       DispatchQueue.main.async {
-        self.devices = devices; self.groups = groups; self.currentID = current
+        self.devices = devices; self.groups = groups.filter { !$0.isQuick }; self.currentID = current
+        self.quick = groups.first { $0.isQuick && $0.id == current }
         for (uid, until) in self.levelHolds where until > ProcessInfo.processInfo.systemUptime {
           if let value = self.levels[uid] { levels[uid] = value }
         }
@@ -44,6 +48,12 @@ final class OutputGroupsModel: ObservableObject {
     }, completion: completion)
   }
 
+  func apply(uids: Set<String>, primary: String?) {
+    perform({ try OutputGroups.apply(uids: uids, primaryUID: primary) }) {
+      self.notice = "Outputs applied"
+    }
+  }
+
   func remove(_ group: OutputGroup) { perform({ try OutputGroups.remove(group) }) }
 
   func select(_ group: OutputGroup) {
@@ -55,6 +65,8 @@ final class OutputGroupsModel: ObservableObject {
                                 transport: UInt32(kAudioDeviceTransportTypeAggregate))
       _ = try OutputGroups.destinations(for: output)
       try Devices.setDefaultOutput(group.id)
+    } completion: {
+      self.notice = "Using \(group.name)"
     }
   }
 
@@ -72,7 +84,7 @@ final class OutputGroupsModel: ObservableObject {
 
   private func perform(_ operation: @escaping () throws -> Void, completion: @escaping () -> Void = {}) {
     guard !busy else { return }
-    busy = true; message = nil
+    busy = true; message = nil; notice = nil
     queue.async {
       var failure: String?
       do { try operation() }
@@ -90,7 +102,8 @@ final class OutputGroupsModel: ObservableObject {
 
 struct OutputGroupsView: View {
   @StateObject private var model = OutputGroupsModel()
-  @State private var creating: Bool
+  @State private var saving = false
+  @State private var contentHeight: CGFloat = 420
   @State private var showTiming = false
   @State private var name = "My speakers"
   @State private var selection = Set<String>()
@@ -99,60 +112,83 @@ struct OutputGroupsView: View {
   @State private var active = false
   private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
-  init(chooseOutputs: Bool = false) {
-    _creating = State(initialValue: chooseOutputs)
+  init(chooseOutputs: Bool = false) {}
+
+  private var viewportHeight: CGFloat {
+    min(max(180, contentHeight), max(240, (NSScreen.main?.visibleFrame.height ?? 800) - 120))
+  }
+  private var validSelection: Bool {
+    (1...8).contains(selection.count) && selection.isSubset(of: Set(model.devices.map(\.uid)))
   }
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
         HStack {
-          VStack(alignment: .leading, spacing: 4) {
-            Text("Speakers").font(.system(size: 22, weight: .bold, design: .rounded))
-            Text("Play one mix through multiple outputs.").font(.subheadline).foregroundStyle(.artworkSecondary)
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Speakers").font(.system(size: 19, weight: .bold, design: .rounded))
+            Text(selection.isEmpty ? "Choose where to listen" : "\(selection.count) selected")
+              .font(.caption).foregroundStyle(.artworkSecondary)
           }
           Spacer()
-          Button(creating ? "Cancel" : "New Group") { creating.toggle() }
-            .disabled(model.busy)
+          Button { model.apply(uids: selection, primary: primary.isEmpty ? nil : primary) } label: {
+            Label(model.busy ? "Applying…" : "Quick Apply", systemImage: "checkmark")
+              .font(.system(size: 12, weight: .semibold, design: .rounded))
+              .padding(.horizontal, 10).frame(height: 30)
+              .modifier(AppGlassSurface(radius: 9))
+          }.buttonStyle(.plain).disabled(model.busy || !validSelection)
         }
         if let message = model.message {
-          Text(message).font(.callout).textSelection(.enabled).padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+          HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.circle")
+            VStack(alignment: .leading, spacing: 5) {
+              Text(message).textSelection(.enabled)
+              Button("Audio MIDI Setup…") { Self.openMIDI() }.buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+            Button { model.message = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+              .accessibilityLabel("Dismiss output error")
+          }.font(.system(size: 11, weight: .medium, design: .rounded))
+            .foregroundStyle(.artworkPrimary)
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(AppGlassSurface(radius: 12, interactive: false))
+        } else if let notice = model.notice {
+          Label(notice, systemImage: "checkmark.circle").font(.caption).foregroundStyle(.artworkSecondary)
         }
-        if creating { createCard }
-        ForEach(model.groups) { group in groupCard(group) }
-        if model.groups.isEmpty && !creating {
-          card {
-            Text("Your outputs, together").font(.headline)
-            Text("Combine speakers, headphones or connected AirPlay outputs. Choose a group from the player's output menu whenever you want it.")
-              .font(.callout).foregroundStyle(.artworkSecondary)
-            Button("Create a Group") { creating = true }
-          }
+        createCard
+        if let quick = model.quick { groupCard(quick) }
+        if !model.groups.isEmpty {
+          Text("Saved groups").font(.system(size: 12, weight: .semibold, design: .rounded))
+          ForEach(model.groups) { group in groupCard(group) }
         }
-        card {
-          HStack { Label("AirPlay & Bluetooth", systemImage: "airplayaudio").font(.headline); Spacer(); Button("Connect…") { Self.openSound() } }
-          Text("Connect in macOS Sound settings first, then select the output here.")
-            .font(.callout).foregroundStyle(.artworkSecondary)
-          DisclosureGroup("Timing & connections", isExpanded: $showTiming) {
-            VStack(alignment: .leading, spacing: 10) {
-              Label("Wired outputs respond fastest. Mixing wireless and wired speakers can sound out of sync.", systemImage: "waveform.path")
-              Label("macOS corrects clock drift. This does not remove Bluetooth or AirPlay buffering delays.", systemImage: "clock")
-              Label("Disconnected outputs stay in your group. Check the connected count before playing; recovery can briefly interrupt audio.", systemImage: "cable.connector.slash")
-              Text("For video, recording or live monitoring, prefer a wired group. There is no measured speaker-delay compensation yet.")
-            }.font(.caption).foregroundStyle(.artworkSecondary).padding(.top, 8)
-          }.font(.callout)
-        }
-        HStack {
-          Text("Groups are saved on this Mac and also work when The Bass Shaker is closed.")
-            .font(.caption).foregroundStyle(.artworkSecondary)
-          Spacer()
-          Button("Audio MIDI Setup…") { Self.openMIDI() }
-        }
-      }.padding(20)
+        DisclosureGroup("Connections & timing", isExpanded: $showTiming) {
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Connect Bluetooth or AirPlay in macOS first. Wired outputs have the least delay; drift correction does not remove wireless buffering.")
+            Text("Disconnected speakers remain in saved groups. Reconnecting can briefly interrupt audio.")
+            HStack {
+              Button("Connect…") { Self.openSound() }
+              Button("Audio MIDI Setup…") { Self.openMIDI() }
+            }
+          }.font(.caption).foregroundStyle(.artworkSecondary).padding(.top, 6)
+        }.font(.system(size: 11, weight: .medium, design: .rounded))
+      }
+      .padding(14)
+      .background(InboxOverlayScroller())
+      .background(GeometryReader { geometry in
+        Color.clear.preference(key: SpeakerContentHeight.self, value: geometry.size.height)
+      })
     }
-    .frame(minWidth: 440, idealWidth: 460, minHeight: 420, idealHeight: 580)
+    .scrollBounceBehavior(.basedOnSize)
+    .frame(minWidth: 380, idealWidth: 420)
+    .frame(height: viewportHeight)
     .modifier(ChromePopupSurface())
+    .onPreferenceChange(SpeakerContentHeight.self) { height in
+      guard height.isFinite, height > 0, abs(contentHeight - height) > 1 else { return }
+      contentHeight = height
+      let fitted = min(max(180, height), max(240, (NSScreen.main?.visibleFrame.height ?? 800) - 120))
+      DispatchQueue.main.async { OutputGroupsWindow.fit(height: fitted) }
+    }
+    .onChange(of: viewportHeight) { _, height in OutputGroupsWindow.fit(height: height) }
     .onAppear { active = true; model.refresh() }
     .onDisappear { active = false }
     .onReceive(refresh) { _ in if active { model.refresh() } }
@@ -165,50 +201,62 @@ struct OutputGroupsView: View {
   }
 
   private var createCard: some View {
-    card {
-      TextField("Group name, e.g. Desk + Speakers", text: $name).textFieldStyle(.roundedBorder)
-      HStack {
-        Text("Choose outputs").font(.headline)
-        Spacer()
-        Text("\(selection.count) selected").font(.caption).foregroundStyle(.artworkSecondary)
+    VStack(alignment: .leading, spacing: 10) {
+      LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+        ForEach(model.devices) { device in
+          Button {
+            if selection.contains(device.uid) { selection.remove(device.uid) }
+            else { selection.insert(device.uid) }
+            if !selection.contains(primary) { primary = "" }
+          } label: {
+            VStack(alignment: .leading, spacing: 5) {
+              HStack {
+                Image(systemName: device.symbolName).font(.system(size: 15, weight: .regular))
+                Spacer()
+                Image(systemName: selection.contains(device.uid) ? "checkmark.circle.fill" : "circle")
+                  .font(.system(size: 12))
+              }
+              Text(device.name).font(.system(size: 11, weight: .semibold, design: .rounded))
+                .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+              Text(device.isAirPlay ? "AirPlay" : device.isBluetooth ? "Bluetooth" : "Local")
+                .font(.system(size: 10, design: .rounded)).foregroundStyle(.artworkSecondary)
+            }.foregroundStyle(.artworkPrimary).padding(10)
+              .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+              .modifier(AppGlassSurface(radius: 12, selected: selection.contains(device.uid)))
+          }.buttonStyle(.plain).disabled(model.busy)
+            .accessibilityLabel(device.name)
+            .accessibilityValue(selection.contains(device.uid) ? "Selected" : "Not selected")
+        }
       }
-      ForEach(model.devices) { device in
-        Toggle(isOn: Binding(get: { selection.contains(device.uid) }, set: { on in
-          if on { selection.insert(device.uid) } else { selection.remove(device.uid) }
-          if !selection.contains(primary) { primary = "" }
-        })) {
-          HStack {
-            Image(systemName: device.symbolName).frame(width: 18)
-            Text(device.name).lineLimit(1)
-            Spacer()
-            Text(device.isAirPlay ? "AirPlay" : device.isBluetooth ? "Bluetooth" : "Local")
-              .font(.caption).foregroundStyle(.artworkSecondary)
-          }.padding(.vertical, 4)
-        }.toggleStyle(.checkbox)
-      }
-      if model.devices.count < 2 {
-        Text("Connect another output to make a group.").font(.callout).foregroundStyle(.artworkSecondary)
+      if model.devices.isEmpty {
+        Text("Connect an output to get started.").font(.caption).foregroundStyle(.artworkSecondary)
       }
       if !selection.isSubset(of: Set(model.devices.map(\.uid))) {
-        Label("An output disconnected. Reconnect it, or clear the selection.", systemImage: "exclamationmark.circle")
-          .font(.caption)
-        Button("Clear selection") { selection.removeAll(); primary = "" }
+        HStack {
+          Label("An output disconnected", systemImage: "cable.connector.slash")
+          Spacer()
+          Button("Clear") { selection.removeAll(); primary = "" }
+        }.font(.caption)
       }
-      Picker("Timing source", selection: $primary) {
-        Text("Automatic · prefer wired").tag("")
-        ForEach(model.devices.filter { selection.contains($0.uid) }) { Text($0.name).tag($0.uid) }
-      }
-      .font(.callout)
-      Text("macOS keeps the other outputs on this clock with drift correction. Creating a group leaves your current output selected.")
-        .font(.caption).foregroundStyle(.artworkSecondary)
-      HStack {
-        Spacer()
-        Button(model.busy ? "Creating…" : "Create Group") {
-          model.create(name: name, uids: selection, primary: primary.isEmpty ? nil : primary) {
-            creating = false; name = "My speakers"; selection.removeAll(); primary = ""
-          }
-        }.buttonStyle(.bordered)
-          .disabled(model.busy || selection.count < 2 || selection.count > 8 || !selection.isSubset(of: Set(model.devices.map(\.uid))) || name.trimmingCharacters(in: .whitespaces).isEmpty)
+      if selection.count > 1 {
+        HStack {
+          Picker("Clock", selection: $primary) {
+            Text("Automatic").tag("")
+            ForEach(model.devices.filter { selection.contains($0.uid) }) { Text($0.name).tag($0.uid) }
+          }.font(.system(size: 11, design: .rounded))
+          Button(saving ? "Cancel" : "Save group…") { saving.toggle() }
+            .font(.system(size: 11, design: .rounded)).disabled(model.busy)
+        }
+        if saving {
+          HStack(spacing: 8) {
+            TextField("Group name", text: $name).textFieldStyle(.roundedBorder)
+            Button("Save") {
+              model.create(name: name, uids: selection, primary: primary.isEmpty ? nil : primary) {
+                saving = false; name = "My speakers"
+              }
+            }.disabled(model.busy || !validSelection || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          }.font(.system(size: 12, design: .rounded))
+        }
       }
     }
   }
@@ -220,12 +268,12 @@ struct OutputGroupsView: View {
           withAnimation(.easeOut(duration: 0.18)) { expanded = expanded == group.uid ? nil : group.uid }
         } label: {
           VStack(alignment: .leading, spacing: 4) {
-            Text(group.name).font(.headline)
+            Text(group.isQuick ? "Current outputs" : group.name).font(.system(size: 12, weight: .semibold, design: .rounded))
             Text("\(group.connected.count) of \(group.members.count) connected\(expanded == group.uid ? " · Hide levels" : " · Show levels")")
               .font(.caption).foregroundStyle(.artworkSecondary)
           }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
         }.buttonStyle(.plain)
-        Button(group.id == model.currentID ? "In Use" : "Use Group") { model.select(group) }
+        Button(group.id == model.currentID ? "In Use" : "Quick Apply") { model.select(group) }
           .disabled(model.busy || group.id == model.currentID || group.connected.isEmpty)
       }
       if group.connected.count < group.members.count {
@@ -259,9 +307,9 @@ struct OutputGroupsView: View {
   }
 
   private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 12, content: content)
-      .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-      .modifier(AppGlassSurface(radius: 20, interactive: false))
+    VStack(alignment: .leading, spacing: 8, content: content)
+      .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+      .modifier(AppGlassSurface(radius: 12, interactive: false))
   }
 
   static func openSound() {
@@ -272,9 +320,21 @@ struct OutputGroupsView: View {
   }
 }
 
+private struct SpeakerContentHeight: PreferenceKey {
+  static var defaultValue: CGFloat = 0
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 enum OutputGroupsWindow {
   private static var window: NSWindow?
   private static var host: NSHostingController<AnyView>?
+  static func fit(height: CGFloat) {
+    guard let window, height.isFinite, height > 0 else { return }
+    window.contentMinSize = NSSize(width: 380, height: 180)
+    let top = window.frame.maxY
+    window.setContentSize(NSSize(width: window.contentLayoutRect.width, height: height))
+    window.setFrameOrigin(NSPoint(x: window.frame.minX, y: top - window.frame.height))
+  }
   static func show(chrome: PopupChromePalette? = nil, glass: Bool = true, chooseOutputs: Bool = false) {
     let content = AnyView(OutputGroupsView(chooseOutputs: chooseOutputs)
       .environment(\.popupChrome, chrome)
@@ -291,7 +351,7 @@ enum OutputGroupsWindow {
     made.title = "Output Groups"
     made.styleMask = [.titled, .closable, .miniaturizable, .resizable]
     made.isReleasedWhenClosed = false
-    made.setContentSize(NSSize(width: 460, height: 580))
+    made.setContentSize(NSSize(width: 420, height: 420))
     made.center()
     window = made
     made.makeKeyAndOrderFront(nil)
@@ -316,16 +376,17 @@ struct SpeakerGroupButton: View {
     Button {
       OutputGroupsWindow.show(chrome: chrome, glass: glass, chooseOutputs: true)
     } label: {
-      ZStack(alignment: .bottomTrailing) {
+      ZStack {
         Image(systemName: "megaphone.fill")
-          .font(.system(size: 13, weight: .semibold))
-          .offset(x: -3, y: -2)
+          .font(.system(size: 14, weight: .regular))
+          .position(x: 12, y: 11)
         Image(systemName: "hand.point.up.left.fill")
-          .font(.system(size: 9, weight: .semibold))
-          .padding(1.5)
+          .font(.system(size: 8, weight: .regular))
+          .padding(1)
           .background(.chromeSurface, in: Circle())
+          .position(x: 27, y: 20)
       }
-      .frame(width: 28, height: 24)
+      .frame(width: 34, height: 26)
       .contentShape(RoundedRectangle(cornerRadius: 8))
     }
     .buttonStyle(.plain)

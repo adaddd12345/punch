@@ -18,6 +18,7 @@ struct OutputGroup: Identifiable, Equatable {
     var device: OutputDevice?
     var id: String { uid }
   }
+  var isQuick: Bool { uid.hasPrefix(Self.prefix + "quick.") }
   var connected: [OutputDevice] { members.compactMap(\.device) }
 }
 
@@ -65,9 +66,9 @@ enum OutputGroups {
 
   /// Resolve exactly what was picked against a fresh inventory. Never silently
   /// create a smaller group when a selected Bluetooth device disappears.
-  static func selectedDevices(_ uids: Set<String>, from devices: [OutputDevice]) throws -> [OutputDevice] {
-    guard (2...8).contains(uids.count) else {
-      throw OutputGroupError.message("Choose between two and eight outputs.")
+  static func selectedDevices(_ uids: Set<String>, from devices: [OutputDevice], minimum: Int = 2) throws -> [OutputDevice] {
+    guard (minimum...8).contains(uids.count) else {
+      throw OutputGroupError.message(minimum == 1 ? "Choose between one and eight outputs." : "Choose between two and eight outputs.")
     }
     let selected = devices.filter { uids.contains($0.uid) }
     guard selected.count == uids.count else {
@@ -76,7 +77,7 @@ enum OutputGroups {
     return selected
   }
 
-  static func create(name: String, members: [OutputDevice], primaryUID: String?) throws -> AudioObjectID {
+  static func create(name: String, members: [OutputDevice], primaryUID: String?, quick: Bool = false) throws -> AudioObjectID {
     let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
     guard !name.isEmpty else { throw OutputGroupError.message("Give this group a name.") }
     guard (2...8).contains(members.count), Set(members.map(\.uid)).count == members.count,
@@ -86,7 +87,7 @@ enum OutputGroups {
     let primary = members.first { $0.uid == primaryUID } ?? preferredPrimary(members)!
     let rate = Devices.nominalSampleRate(primary.id)
     guard rate > 0, members.allSatisfy({ abs(Devices.nominalSampleRate($0.id) - rate) < 0.5 }) else {
-      throw OutputGroupError.message("These outputs use different sample rates. Choose the same Format for each in Audio MIDI Setup, then create the group again.")
+      throw OutputGroupError.message("These outputs use different sample rates. Choose the same Format for each in Audio MIDI Setup, then try again.")
     }
     let live = connectedOutputs()
     guard members.allSatisfy({ live.contains($0) }) else {
@@ -94,7 +95,7 @@ enum OutputGroups {
     }
     let dict: [String: Any] = [
       kAudioAggregateDeviceNameKey: name,
-      kAudioAggregateDeviceUIDKey: OutputGroup.prefix + UUID().uuidString,
+      kAudioAggregateDeviceUIDKey: OutputGroup.prefix + (quick ? "quick." : "") + UUID().uuidString,
       kAudioAggregateDeviceIsPrivateKey: 0,
       kAudioAggregateDeviceIsStackedKey: 0,
       kAudioAggregateDeviceMainSubDeviceKey: primary.uid,
@@ -111,6 +112,37 @@ enum OutputGroups {
       throw OutputGroupError.message("macOS could not connect every output. The group was not saved.")
     }
     return id
+  }
+
+  /// Quick routing uses a native multi-output device, but never enters the
+  /// saved-group list. Keep the active route alive when this window closes.
+  static func apply(uids: Set<String>, primaryUID: String?) throws {
+    let members = try selectedDevices(uids, from: connectedOutputs(), minimum: 1)
+    if members.count == 1 {
+      try Devices.setDefaultOutput(members[0].id)
+      return
+    }
+    let id = try create(name: "Quick outputs", members: members, primaryUID: primaryUID, quick: true)
+    do {
+      guard let group = read(id) else { throw OutputGroupError.message("Outputs changed. Try again.") }
+      let output = OutputDevice(id: id, uid: group.uid, name: group.name,
+                                transport: UInt32(kAudioDeviceTransportTypeAggregate))
+      _ = try destinations(for: output)
+      try Devices.setDefaultOutput(id)
+    } catch {
+      // A failed application must not leave a saved or orphaned group behind.
+      if Devices.defaultOutput() != id { AudioHardwareDestroyAggregateDevice(id) }
+      throw error
+    }
+  }
+
+  /// Only discard our inactive quick routes. Never destroy the current output
+  /// or any named group; the current route also survives an app restart.
+  static func discardInactiveQuickRoutes() {
+    for group in all() where group.isQuick {
+      guard Devices.defaultOutput() != group.id else { continue }
+      try? remove(group)
+    }
   }
 
   static func remove(_ group: OutputGroup) throws {

@@ -911,6 +911,8 @@ struct BentoView: View {
         HStack(spacing: 8) { heroOutput; Spacer(minLength: 0) }
       }
     }
+    .padding(8)
+    .modifier(AppGlassSurface(radius: 14, interactive: false))
   }
 
   /// The sound chip's row. `probe`: the chip asks only for its name's width

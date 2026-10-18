@@ -13,7 +13,6 @@ enum PlayerArtworkLayout: String, Codable, CaseIterable, Identifiable {
     case .expanded: return "An artwork banner that fades into your controls."
     }
   }
-  static let headerHeight: CGFloat = 376
 }
 
 /// Both the player and Appearance use this composition. Only the image fades;
@@ -33,39 +32,44 @@ struct PlayerArtworkHeader<Controls: View>: View {
   @ViewBuilder let controls: () -> Controls
 
   var body: some View {
-    let artHeight: CGFloat = preview ? 136 : 208
-    // Keep the sleeve close to its title; give the transport its own breathing
-    // room instead of repeating the same gap between unlike groups.
-    VStack(spacing: 0) {
-      PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
-                         spinning: spinning, paused: paused)
-        .frame(height: artHeight + edgeInset)
-        .padding(.horizontal, -edgeInset)
-        .offset(y: -edgeInset / 2)
-        .frame(height: artHeight)
-        .inspectableArtwork(artwork, entry: entry)
-        .padding(.bottom, 6)
-      VStack(spacing: 6) {
-        Text(title)
-          .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),
-                        weight: .bold, design: .rounded))
-          .foregroundStyle(.artworkPrimary)
-          .lineLimit(2)
-          .lineSpacing(-1)
-          .fixedSize(horizontal: false, vertical: true)
-        Text(subtitle)
-          .font(.system(size: preview ? 10.5 : 12, weight: .medium))
-          .foregroundStyle(.artworkSecondary)
-          .lineLimit(1)
+    let inset: CGFloat = preview ? 8 : 10
+    VStack(spacing: 8) {
+      VStack(spacing: preview ? 6 : 8) {
+        PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
+                           spinning: spinning, paused: paused)
+          .frame(height: preview ? 136 : 200)
+          .inspectableArtwork(artwork, entry: entry)
+        VStack(spacing: 6) {
+          Text(title)
+            .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),
+                          weight: .bold, design: .rounded))
+            .foregroundStyle(.artworkPrimary)
+            .lineLimit(2)
+            .lineSpacing(-1)
+            .fixedSize(horizontal: false, vertical: true)
+          Text(subtitle)
+            .font(.system(size: preview ? 10.5 : 12, weight: .medium, design: .rounded))
+            .foregroundStyle(.artworkSecondary)
+            .lineLimit(1)
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        // Natural title height prevents a one-line song leaving a large hole
+        // and lets two-line titles grow without clipping the transport.
+        .frame(minHeight: preview ? 44 : 54)
+        .help([title, subtitle].filter { !$0.isEmpty }.joined(separator: " — "))
       }
-      .multilineTextAlignment(.center)
+      .padding(inset)
       .frame(maxWidth: .infinity)
-      .frame(height: preview ? 64 : 80, alignment: .top)
-      .help([title, subtitle].filter { !$0.isEmpty }.joined(separator: " — "))
-      .padding(.bottom, preview ? 14 : 22)
-      controls().frame(height: preview ? 44 : 60)
+      .modifier(AppGlassSurface(radius: 14, interactive: false))
+
+      controls()
+        .frame(height: preview ? 44 : 60)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, preview ? 6 : 8)
+        .modifier(AppGlassSurface(radius: 14, interactive: false))
     }
-    .frame(height: preview ? 264 : PlayerArtworkLayout.headerHeight)
+
   }
 }
 
