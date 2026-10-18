@@ -26,6 +26,10 @@ final class WaveformModel: ObservableObject {
   /// Nothing (audible) is coming in: the view fades the trace out instead
   /// of leaving a dead line that makes the EQ look frozen.
   @Published private(set) var idle = true
+  @Published private(set) var bassVisualizer: BassVisualizerFrame = .silence
+  private let bassAnalysis = BassVisualizerAnalysis()
+  private var analyzingBass = false
+  private var lastPullTime: Double?
   private var envelope: Float = 0
 
   private var ring = [Float](repeating: 0, count: 32768)
@@ -36,6 +40,26 @@ final class WaveformModel: ObservableObject {
   private var validSamples = 0
 
   func pull(_ controller: AudioController) {
+    let needsBass = controller.settings.waveformStyle.isBassVisualizer
+    if needsBass != analyzingBass {
+      analyzingBass = needsBass
+      bassAnalysis.reset()
+      bassVisualizer = .silence
+      envelope = 0
+    }
+    let now = ProcessInfo.processInfo.systemUptime
+    let resumed = lastPullTime.map { now - $0 > 0.5 } ?? true
+    lastPullTime = now
+    if analyzingBass && resumed {
+      // A closed panel can leave a full engine FIFO containing old audio.
+      // Discard it once; the next existing ticker pull measures fresh samples.
+      for _ in 0..<8 {
+        if controller.readAnalyzer(&buf) < buf.count { break }
+      }
+      validSamples = 0; ringPos = 0; envelope = 0
+      bassAnalysis.reset(); bassVisualizer = .silence; idle = true
+      return
+    }
     let rate: Double
     if case .running(_, let sampleRate) = controller.status, sampleRate.isFinite, sampleRate > 0 {
       rate = sampleRate
@@ -49,6 +73,8 @@ final class WaveformModel: ObservableObject {
       validSamples = 0
       envelope = 0
       captureRate = rate
+      bassAnalysis.reset()
+      bassVisualizer = .silence
     }
     var got = 0
     while true {
@@ -66,7 +92,10 @@ final class WaveformModel: ObservableObject {
       // Keep the last measurement coherent while fading it. A fabricated
       // amplitude decay would no longer agree with RMS or occupancy.
       idleFrames += 1
-      if !idle && idleFrames > 2 { idle = true }
+      if idleFrames > 2 {
+        if !idle { idle = true }
+        if bassVisualizer != .silence { bassAnalysis.reset(); bassVisualizer = .silence }
+      }
       return
     }
     idleFrames = 0
@@ -92,6 +121,10 @@ final class WaveformModel: ObservableObject {
     let peak = samples.reduce(Float(0)) { max($0, abs($1)) }
     let quiet = peak < 1e-4   // a running but silent tap
     if idle != quiet { idle = quiet }
+    if analyzingBass {
+      bassVisualizer = bassAnalysis.measure(samples: samples, sampleRate: rate)
+      return // The frequency styles do not need the legacy occupancy raster.
+    }
     envelope = max(peak, envelope * 0.94)               // ~1.5 s fall at 30 fps
     let zoom = 0.85 / max(envelope, 0.004)             // at most ~48 dB of zoom
     let measured = WaveformMeasurements.measure(samples: samples, columns: Self.columns,
@@ -117,26 +150,33 @@ struct WaveformView: View {
   private var traceColor: Color { color == .accent ? (chrome?.accent ?? color.color) : color.color }
 
   var body: some View {
-    VStack(spacing: 2) {
-      WaveformArtwork(mins: model.mins, maxs: model.maxs, rms: model.rms,
-                      density: model.density, densityBins: WaveformModel.densityBins,
-                      scale: model.scale, color: traceColor, style: style, duration: model.duration)
-        .opacity(model.idle ? 0 : 1)
-        .animation(.easeOut(duration: 0.3), value: model.idle)
-      if style != .classic {
-        HStack(spacing: 5) {
-          Text(style.title.uppercased())
-          Text(String(format: "%.1f ms", model.duration * 1_000))
-          Spacer(minLength: 2)
-          Text("POST FX · MONO")
-          Text(String(format: "AUTO ×%.1f", model.scale))
+    Group {
+      if style.isBassVisualizer {
+        BassVisualizerArtwork(frame: model.bassVisualizer, color: traceColor,
+                              style: style == .bassPulse ? .pressure : .columns)
+      } else {
+        VStack(spacing: 2) {
+          WaveformArtwork(mins: model.mins, maxs: model.maxs, rms: model.rms,
+                          density: model.density, densityBins: WaveformModel.densityBins,
+                          scale: model.scale, color: traceColor, style: style, duration: model.duration)
+            .opacity(model.idle ? 0 : 1)
+            .animation(.easeOut(duration: 0.3), value: model.idle)
+          if style != .classic {
+            HStack(spacing: 5) {
+              Text(style.title.uppercased())
+              Text(String(format: "%.1f ms", model.duration * 1_000))
+              Spacer(minLength: 2)
+              Text("POST FX · MONO")
+              Text(String(format: "AUTO ×%.1f", model.scale))
+            }
+            .font(.system(size: 7, weight: .medium, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .help(style.detail)
+          }
         }
-        .font(.system(size: 7, weight: .medium, design: .monospaced))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .help(style.detail)
       }
     }
-    .accessibilityHidden(true)
+    .accessibilityHidden(!style.isBassVisualizer)
   }
 }

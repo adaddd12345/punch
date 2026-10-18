@@ -120,11 +120,11 @@ struct EQView: View {
       if separateWaveformLane {
         Rectangle().fill(Color.primary.opacity(0.10)).frame(height: 1)
           .padding(.horizontal, 12)
-        // This x axis is time. Keeping it outside the response surface avoids
-        // suggesting that waveform positions correspond to EQ frequencies.
+        // Measured output has its own lane and level scale, separate from
+        // the editable gain response above it.
         WaveformView(model: controller.waveform, color: controller.settings.scopeColor,
                      style: controller.settings.waveformStyle)
-          .frame(height: 52)
+          .frame(height: controller.settings.waveformStyle.laneHeight)
           .padding(.horizontal, 12)
           .padding(.vertical, 4)
           .allowsHitTesting(false)

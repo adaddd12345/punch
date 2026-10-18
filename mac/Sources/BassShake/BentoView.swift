@@ -83,7 +83,7 @@ struct BentoView: View {
   private var s: Settings { controller.settings }
   /// Measured time-domain plots have their own lane below the frequency plot.
   private var waveformLaneHeight: CGFloat {
-    s.waveform && s.enabled && !s.spectrum && s.waveformStyle != .classic && !powerSaver ? 61 : 0
+    s.waveform && s.enabled && !s.spectrum && s.waveformStyle != .classic && !powerSaver ? s.waveformStyle.laneHeight + 9 : 0
   }
   /// What's Playing. Not observed here: only its own small views observe it.
   private var nowPlaying: NowPlaying { NowPlaying.shared }

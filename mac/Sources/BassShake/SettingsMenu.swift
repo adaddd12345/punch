@@ -158,7 +158,7 @@ struct SettingsMenuContent: View {
       Picker("Scope Color", selection: bind(\.scopeColor)) {
         ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
       }
-      Picker("Waveform", selection: Binding(get: { controller.settings.waveformStyle }, set: {
+      Picker("Sound Visualizer", selection: Binding(get: { controller.settings.waveformStyle }, set: {
         controller.settings.waveformStyle = $0
         controller.settings.setEQVisualByHand(.scope)
       })) {

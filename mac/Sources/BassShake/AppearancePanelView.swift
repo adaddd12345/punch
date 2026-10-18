@@ -35,7 +35,7 @@ struct AppearancePanelView: View {
   }
   private var waveformLaneHeight: CGFloat {
     let s = controller.settings
-    return s.waveform && s.enabled && !s.spectrum && s.waveformStyle != .classic && !powerSaver ? 61 : 0
+    return s.waveform && s.enabled && !s.spectrum && s.waveformStyle != .classic && !powerSaver ? s.waveformStyle.laneHeight + 9 : 0
   }
   private var pinnedHeight: CGFloat { 36 + (showsLiveEQ ? 148 + waveformLaneHeight : 0) }
 
@@ -133,7 +133,7 @@ struct AppearancePanelView: View {
     let s = controller.settings
     let status = !s.enabled ? "Processing off" : !s.waveform ? "Visual off"
       : powerSaver && !s.spectrum ? "Scope paused · Power Saver" : "Playing audio"
-    let visual = s.eqVisual == .scope ? "\(s.waveformStyle.title) waveform" : s.eqVisual.title
+    let visual = s.eqVisual == .scope ? s.waveformStyle.title : s.eqVisual.title
     return VStack(spacing: 6) {
       HStack {
         Text("EQ preview").font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -270,12 +270,12 @@ struct AppearancePanelView: View {
 
   private var equalizer: some View {
     VStack(alignment: .leading, spacing: 12) {
-      section("Waveform") {
-        Text("Choose how the sound moves.")
+      section("Sound visualizer") {
+        Text("See bass, detail, or the raw signal.")
           .font(.system(size: 11))
           .foregroundStyle(chrome?.secondary ?? Color.secondary)
         LazyVGrid(columns: waveformColumns, spacing: 10) {
-          ForEach(WaveformStyle.allCases) { style in
+          ForEach([WaveformStyle.bassPulse, .bassSpectrum, .classic, .silk, .reed, .fold]) { style in
             choice(style.title,
                    selected: controller.settings.eqVisual == .scope && controller.settings.waveformStyle == style,
                    labelLines: 1,
@@ -284,11 +284,17 @@ struct AppearancePanelView: View {
                      controller.settings.setEQVisualByHand(.scope)
                    }) {
               previewSurface {
-                WaveformArtwork(mins: Self.previewSignal.mins, maxs: Self.previewSignal.maxs,
-                                rms: Self.previewSignal.rms, density: Self.previewSignal.density,
-                                color: eqPreviewColor, style: style)
-                  .padding(.horizontal, 10)
-                  .padding(.vertical, 10)
+                if style.isBassVisualizer {
+                  BassVisualizerArtwork(frame: Self.bassPreview, color: eqPreviewColor,
+                                        style: style == .bassPulse ? .pressure : .columns, compact: true)
+                    .padding(8)
+                } else {
+                  WaveformArtwork(mins: Self.previewSignal.mins, maxs: Self.previewSignal.maxs,
+                                  rms: Self.previewSignal.rms, density: Self.previewSignal.density,
+                                  color: eqPreviewColor, style: style)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
+                }
               }
             }
             .help(style.detail)
@@ -454,6 +460,24 @@ struct AppearancePanelView: View {
       .frame(height: 52)
       .overlay { content().environment(\.powerSaver, true).environment(\.drawPaused, true) }
   }
+
+  /// A labelled settings thumbnail, measured from a local synthetic kick/hi-hat signal.
+  private static let bassPreview: BassVisualizerFrame = {
+    let analyzer = BassVisualizerAnalysis()
+    let rate = 48_000.0
+    var result = BassVisualizerFrame.silence
+    for frame in 0...90 {
+      let time = Double(frame) / 30
+      let kick = 0.3 * exp(-time.truncatingRemainder(dividingBy: 0.5) * 12)
+      let hat = 0.035 * exp(-time.truncatingRemainder(dividingBy: 0.25) * 24)
+      let samples = (0..<2880).map { i -> Float in
+        let t = Double(i) / rate
+        return Float(kick * sin(2 * .pi * 60 * t) + hat * sin(2 * .pi * 6_000 * t))
+      }
+      result = analyzer.measure(samples: samples, sampleRate: rate, timestamp: time)
+    }
+    return result
+  }()
 
   /// A local original sleeve keeps image/effect choices legible before metadata
   /// arrives. This is only preview content and is never saved as playing artwork.

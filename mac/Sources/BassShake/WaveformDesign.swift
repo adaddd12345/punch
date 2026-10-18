@@ -3,15 +3,19 @@ import SwiftUI
 /// Stable stored keys retain compatibility with the earlier visual studies.
 /// The new views show measurements, each with a defined time/amplitude map.
 enum WaveformStyle: String, Codable, CaseIterable, Identifiable {
-  case classic, silk, reed, fold
+  case classic, silk, reed, fold, bassPulse, bassSpectrum
 
   var id: String { rawValue }
+  var isBassVisualizer: Bool { self == .bassPulse || self == .bassSpectrum }
+  var laneHeight: CGFloat { isBassVisualizer ? 112 : 52 }
   var title: String {
     switch self {
     case .classic: return "Classic"
     case .silk: return "Extrema"
     case .reed: return "Energy"
     case .fold: return "Density"
+    case .bassPulse: return "Bass Pulse"
+    case .bassSpectrum: return "Bass Bands"
     }
   }
   var detail: String {
@@ -19,6 +23,8 @@ enum WaveformStyle: String, Codable, CaseIterable, Identifiable {
     case .classic: return "Original trace joining each column's range midpoint."
     case .silk: return "The actual minimum and maximum sample in each time column."
     case .reed: return "Measured RMS and absolute sample peak per column; zero is at the bottom."
+    case .bassPulse: return "Three seconds of measured bass (20–250 Hz) and treble (2–20 kHz) energy on one fixed level scale."
+    case .bassSpectrum: return "Measured output energy in 24 frequency bands, on a fixed −66 to −6 dBFS RMS scale."
     case .fold: return "Sample occupancy in 24 amplitude bins; brightness follows the square root of each bin's share."
     }
   }
@@ -96,6 +102,7 @@ struct WaveformArtwork: View {
       case .silk: drawExtrema(context, frame)
       case .reed: drawEnergy(context, frame)
       case .fold: drawDensity(context, frame)
+      case .bassPulse, .bassSpectrum: break // Requires raw-sample frequency analysis, never extrema.
       }
     }
   }
