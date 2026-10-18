@@ -159,6 +159,13 @@ private struct ArtworkInspectionRoot: ViewModifier {
   }
 }
 
+private struct ArtworkSlotKey: PreferenceKey {
+  static var defaultValue: Anchor<CGRect>? { nil }
+  static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+    value = nextValue() ?? value
+  }
+}
+
 private struct ArtworkInspectionOverlay: View {
   let request: ArtworkInspectionRequest
   @Binding var revealed: Bool
@@ -174,6 +181,7 @@ private struct ArtworkInspectionOverlay: View {
   @State private var faceToken = UUID()
   @State private var turn = 0
   @State private var turning = false
+  @State private var opening = true
   @FocusState private var closeFocused: Bool
 
   init(request: ArtworkInspectionRequest, revealed: Binding<Bool>, closing: Bool, dismiss: @escaping () -> Void) {
@@ -205,43 +213,59 @@ private struct ArtworkInspectionOverlay: View {
       let maxHeight = min(280, max(160, geometry.size.height * 0.40))
       let artWidth = min(340, max(1, geometry.size.width - 48), maxHeight * ratio)
       VStack(spacing: 0) {
-        header
-        ScrollViewReader { scroll in
-          ScrollView(.vertical) {
-            VStack(spacing: 24) {
-              ArtworkPlayerSources(selectedID: entry?.id, section: .playing, select: select)
-              VStack(spacing: 20) {
-                artwork(width: artWidth, height: artWidth / ratio)
-                VStack(spacing: 6) {
-                  Text(text?.title ?? "Artwork")
-                    .font(.system(size: 23, weight: .bold, design: .rounded))
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                  if let subtitle = text?.subtitle, !subtitle.isEmpty {
-                    Text(subtitle).font(.system(size: 12, weight: .medium, design: .rounded))
-                      .foregroundStyle(.secondary).lineLimit(2)
+        Color.clear.frame(height: 58).accessibilityHidden(true)
+        GeometryReader { viewport in
+          ScrollViewReader { scroll in
+            ScrollView(.vertical) {
+              VStack(spacing: 24) {
+                ArtworkPlayerSources(selectedID: entry?.id, section: .playing, select: select)
+                VStack(spacing: 20) {
+                  artworkButton(width: artWidth, height: artWidth / ratio)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity)
+                    .anchorPreference(key: ArtworkSlotKey.self, value: .bounds) { $0 }
+                  VStack(spacing: 6) {
+                    Text(text?.title ?? "Artwork")
+                      .font(.system(size: 23, weight: .bold, design: .rounded))
+                      .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    if let subtitle = text?.subtitle, !subtitle.isEmpty {
+                      Text(subtitle).font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary).lineLimit(2)
+                    }
+                  }
+                  .multilineTextAlignment(.center)
+                  .frame(maxWidth: .infinity)
+                  .help(text.map { "\($0.title) — \($0.subtitle)" } ?? "Artwork preview")
+                  if let entry {
+                    ArtworkPlayerControls(transport: transport, entry: entry).id(entry.id)
                   }
                 }
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .help(text.map { "\($0.title) — \($0.subtitle)" } ?? "Artwork preview")
-                if let entry {
-                  ArtworkPlayerControls(transport: transport, entry: entry).id(entry.id)
-                }
+                .id("selected-artwork")
+                ArtworkPlayerSources(selectedID: entry?.id, section: .paused, select: select)
               }
-              .id("selected-artwork")
-              ArtworkPlayerSources(selectedID: entry?.id, section: .paused, select: select)
+              .frame(maxWidth: 420)
+              .padding(.horizontal, geometry.size.width < 320 ? 16 : 24)
+              .padding(.top, 16).padding(.bottom, 28)
+              .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .center)
             }
-            .frame(maxWidth: 420)
-            .padding(.horizontal, geometry.size.width < 320 ? 16 : 24)
-            .padding(.top, 12).padding(.bottom, 28)
-            .frame(maxWidth: .infinity)
-          }
-          .scrollIndicators(.automatic)
-          .onChange(of: selection?.id) { _, _ in
-            scroll.scrollTo("selected-artwork", anchor: .top)
+            .scrollIndicators(.automatic)
+            .onChange(of: selection?.id) { _, _ in
+              scroll.scrollTo("selected-artwork", anchor: .center)
+            }
           }
         }
       }
+      .overlayPreferenceValue(ArtworkSlotKey.self) { anchor in
+        GeometryReader { overlay in
+          if let anchor {
+            let slot = overlay[anchor]
+            artwork(width: artWidth, height: artWidth / ratio)
+              .position(x: slot.midX, y: slot.midY)
+          }
+        }
+        .zIndex(100)
+      }
+      .overlay(alignment: .top) { header }
       .foregroundStyle(palette.ink.color)
       .environment(\.colorScheme, palette.dark ? .dark : .light)
       .environment(\.artworkCardPalette, palette)
@@ -251,19 +275,24 @@ private struct ArtworkInspectionOverlay: View {
       .opacity(revealed && !closing ? 1 : 0)
       .scaleEffect(revealed || request.reduceMotion ? 1 : 0.98)
       .frame(width: geometry.size.width, height: geometry.size.height)
-      .clipped()
+
     }
     .task {
       closeFocused = true
       withAnimation(.easeInOut(duration: request.reduceMotion ? 0.2 : 0.25)) { revealed = true }
       transport.select(entry)
+      // Wait for a laid-out renderer, then make one complete turn and land on
+      // the printed front. Direct clicks continue to use a half-turn.
+      do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+      guard !closing, opening else { return }
+      if request.reduceMotion { opening = false } else { turning = true; turn = 2 }
     }
     .task(id: turn) {
       guard turn > 0 else { return }
       turning = true
-      do { try await Task.sleep(for: .seconds(request.reduceMotion ? 0.2 : ArtworkTurntableFactory.turnDuration)) }
+      do { try await Task.sleep(for: .seconds(request.reduceMotion ? 0.2 : (opening ? ArtworkTurntableFactory.openingDuration : ArtworkTurntableFactory.turnDuration))) }
       catch { return }
-      turning = false
+      turning = false; opening = false
       refreshFace()
     }
     .onChange(of: imageIdentity) { _, _ in refreshFace() }
@@ -289,28 +318,48 @@ private struct ArtworkInspectionOverlay: View {
   }
 
   private func artwork(width: CGFloat, height: CGFloat) -> some View {
+    let size = CGSize(width: width, height: height)
+    let overscan = ArtworkTurntableFactory.overscan(for: size)
+    return ZStack {
+      // Broad, static illumination: no perpetual animation or extra texture.
+      Circle()
+        .fill(RadialGradient(colors: [Color.white.opacity(palette.dark ? 0.11 : 0.16),
+                                     Color.white.opacity(0.035), .clear],
+                             center: .center, startRadius: 0, endRadius: width * 0.72))
+        .frame(width: width * 1.5, height: width * 1.5)
+        .offset(y: -18)
+        .allowsHitTesting(false)
+      ArtworkTurntableScene(image: face, reverse: reverse, turn: turn, artworkSize: size,
+                            reducedMotion: request.reduceMotion, powerSaver: request.powerSaver)
+        .id(selection?.id ?? request.id.uuidString)
+        .frame(width: width + overscan * 2, height: height + overscan * 2)
+        .allowsHitTesting(false)
+    }
+    .frame(width: width, height: height)
+    .allowsHitTesting(false)
+  }
+
+  // Keep interaction in the scroll view while lifting only the rendering above
+  // it. Wheel/trackpad gestures over the cover must still scroll the player.
+  private func artworkButton(width: CGFloat, height: CGFloat) -> some View {
     Button {
       guard !turning else { return }
       turning = true; turn += 1
     } label: {
-      ArtworkTurntableScene(image: face, reverse: reverse, turn: turn,
-                            reducedMotion: request.reduceMotion, powerSaver: request.powerSaver)
-        .allowsHitTesting(false)
-        .frame(width: width, height: height)
+      Color.clear.frame(width: width, height: height)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
     .buttonStyle(.plain)
-    .disabled(turning || closing)
+    .disabled(turning || opening || closing)
     .accessibilityLabel(turn.isMultiple(of: 2) ? "Show reverse of artwork" : "Show artwork")
     .help("Flip artwork")
-    .frame(maxWidth: .infinity)
   }
 
   private func select(_ entry: NowEntry) {
     guard entry.id != selection?.id else { return }
     faceToken = UUID()
     selection = entry
-    turning = false; turn = 0
+    turning = false; opening = false; turn = 0
     face = now.describe(entry, state: false).artwork ?? now.icon(entry.app)
     transport.select(entry)
     refreshFace()

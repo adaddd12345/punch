@@ -7,19 +7,20 @@ struct ArtworkTurntableScene: NSViewRepresentable {
   let image: NSImage
   let reverse: NSColor
   let turn: Int
+  let artworkSize: CGSize
   let reducedMotion: Bool
   let powerSaver: Bool
 
   func makeNSView(context: Context) -> ArtworkTurntableView {
     let view = ArtworkTurntableView(frame: .zero)
     view.configure(image: image, reverse: reverse, turn: turn,
-                   reducedMotion: reducedMotion, powerSaver: powerSaver)
+                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize)
     return view
   }
 
   func updateNSView(_ view: ArtworkTurntableView, context: Context) {
     view.configure(image: image, reverse: reverse, turn: turn,
-                   reducedMotion: reducedMotion, powerSaver: powerSaver)
+                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize)
   }
 
   static func dismantleNSView(_ view: ArtworkTurntableView, coordinator: ()) {
@@ -33,6 +34,23 @@ enum ArtworkTurntableFactory {
   static let width: CGFloat = 2.4
   static let depth: CGFloat = 0.009
   static let turnDuration: TimeInterval = 0.7
+  static let openingDuration: TimeInterval = 1.15
+
+  static func overscan(for size: CGSize) -> CGFloat { max(24, max(size.width, size.height) * 0.12) }
+
+  /// A long lens keeps the turn quiet. Transparent overscan contains the near
+  /// corners without shrinking the intended front-facing artwork footprint.
+  static func fit(_ camera: SCNNode, imageSize: CGSize, artworkSize: CGSize, viewport: CGSize) {
+    guard artworkSize.width > 0, artworkSize.height > 0, viewport.width > 0, viewport.height > 0 else { return }
+    let ratio = max(0.25, min(4, imageSize.width / max(1, imageSize.height)))
+    let height = width / ratio
+    let distance = max(width, height) * 4
+    let verticalExtent = height * viewport.height / artworkSize.height
+    camera.camera?.projectionDirection = .vertical
+    camera.camera?.fieldOfView = 2 * atan(verticalExtent / (2 * distance)) * 180 / .pi
+    camera.position = SCNVector3(0, 0, distance)
+    camera.camera?.zFar = Double(distance + max(width, height) * 2)
+  }
 
   struct Study {
     let scene: SCNScene
@@ -92,12 +110,12 @@ enum ArtworkTurntableFactory {
     let camera = SCNNode()
     let lens = SCNCamera()
     lens.fieldOfView = 32
-    lens.projectionDirection = ratio > 1 ? .horizontal : .vertical
+    lens.projectionDirection = .vertical
     lens.zNear = 0.1
     lens.zFar = 30
     camera.camera = lens
-    // Perspective stays quiet while keeping the object almost frame-filling.
-    camera.position = SCNVector3(0, 0, Float(max(width, height) / 0.52))
+    fit(camera, imageSize: image.size, artworkSize: CGSize(width: 320, height: 320 / ratio),
+        viewport: CGSize(width: 320, height: 320 / ratio))
     scene.rootNode.addChildNode(camera)
 
     let ambient = SCNLight()
@@ -126,12 +144,29 @@ final class ArtworkTurntableView: SCNView {
   private var card: SCNNode?
   private var turn: Int?
   private var generation = 0
+  private var artworkSize = CGSize.zero
+  private var projectionViewport = CGSize.zero
+  private var projectionArtwork = CGSize.zero
 
   override var acceptsFirstResponder: Bool { false }
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+  override func layout() {
+    super.layout()
+    updateProjection()
+  }
+
+  private func updateProjection() {
+    guard let source, let pointOfView, bounds.width > 0, bounds.height > 0,
+          projectionViewport != bounds.size || projectionArtwork != artworkSize else { return }
+    projectionViewport = bounds.size; projectionArtwork = artworkSize
+    ArtworkTurntableFactory.fit(pointOfView, imageSize: source.size, artworkSize: artworkSize, viewport: bounds.size)
+    needsDisplay = true
+  }
+
   func configure(image: NSImage, reverse: NSColor, turn requestedTurn: Int,
-                 reducedMotion: Bool, powerSaver: Bool) {
+                 reducedMotion: Bool, powerSaver: Bool, artworkSize: CGSize) {
+    self.artworkSize = artworkSize
     backgroundColor = .clear
     allowsCameraControl = false
     autoenablesDefaultLighting = false
@@ -143,14 +178,16 @@ final class ArtworkTurntableView: SCNView {
       let study = ArtworkTurntableFactory.make(image: image, reverse: reverse)
       scene = study.scene
       pointOfView = study.camera
+      projectionViewport = .zero
       card = study.card
       source = image
       pigment = reverse
       turn = requestedTurn
       study.card.eulerAngles.y = CGFloat(requestedTurn) * .pi
-      needsDisplay = true
+      updateProjection()
       return
     }
+    updateProjection()
     guard requestedTurn != turn, let card else { return }
     let previousTurn = turn ?? requestedTurn
     turn = requestedTurn
@@ -161,6 +198,7 @@ final class ArtworkTurntableView: SCNView {
     card.removeAllActions()
     card.eulerAngles = start
     let target = CGFloat(requestedTurn) * CGFloat.pi
+    let duration = abs(requestedTurn - previousTurn) == 2 ? ArtworkTurntableFactory.openingDuration : ArtworkTurntableFactory.turnDuration
     let action: SCNAction
     if reducedMotion {
       action = .sequence([
@@ -170,8 +208,8 @@ final class ArtworkTurntableView: SCNView {
       ])
     } else {
       card.opacity = 1
-      action = .customAction(duration: ArtworkTurntableFactory.turnDuration) { node, elapsed in
-        let t = min(1, max(0, Double(elapsed) / ArtworkTurntableFactory.turnDuration))
+      action = .customAction(duration: duration) { node, elapsed in
+        let t = min(1, max(0, Double(elapsed) / duration))
         let eased = t * t * t * (10 + t * (-15 + 6 * t))
         // A quiet pitch reveals the thin edge; the centre never wanders.
         let pitch = CGFloat(Double(start.x) * (1 - eased) + sin(t * .pi) * -0.05)
