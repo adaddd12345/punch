@@ -101,6 +101,7 @@ struct ArtworkCardPalette: Equatable {
 }
 
 /// Main-thread API; extraction runs once per cover off the rendering thread.
+/// Each in-flight request retains its image so its identity cannot be reused.
 final class ArtworkCardPalettes {
   static let shared = ArtworkCardPalettes()
   private struct Entry { weak var image: NSImage?; let palette: ArtworkCardPalette? }
@@ -108,15 +109,22 @@ final class ArtworkCardPalettes {
   private var pending: [ObjectIdentifier: [(ArtworkCardPalette?) -> Void]] = [:]
   private let queue = DispatchQueue(label: "app.bassshake.artwork-card", qos: .utility)
 
+  /// A finished palette, read synchronously (themes resolve a cache hit in
+  /// the same render instead of showing a fallback frame first).
+  func cached(_ image: NSImage) -> ArtworkCardPalette? {
+    guard let e = cache[ObjectIdentifier(image)], e.image === image else { return nil }
+    return e.palette
+  }
+
   func palette(for image: NSImage, done: @escaping (ArtworkCardPalette?) -> Void) {
     let id = ObjectIdentifier(image)
     if let e = cache[id], e.image === image { done(e.palette); return }
     if pending[id] != nil { pending[id]!.append(done); return }
     pending[id] = [done]
     let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-    queue.async {
+    queue.async { [image] in
       let palette = cg.flatMap(ArtworkCardPalette.extract)
-      DispatchQueue.main.async { [self] in
+      DispatchQueue.main.async { [self, image] in
         if cache.count > 64 { cache = cache.filter { $0.value.image != nil } }
         cache[id] = Entry(image: image, palette: palette)
         let callbacks = pending.removeValue(forKey: id) ?? []

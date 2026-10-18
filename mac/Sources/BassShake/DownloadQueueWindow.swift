@@ -73,7 +73,8 @@ private struct DownloadQueueWorkspace: View {
   @ObservedObject var controller: AudioController
   let sourceURL: URL?
   var body: some View {
-    PopupChromeTheme(model: .shared, background: controller.settings.backgroundStyle) {
+    // Its backdrop is `.local` (no Bleed), so the theme doesn't hold either.
+    PopupChromeTheme(background: controller.settings.backgroundStyle, holdsCover: false) {
       DownloadQueueView(sourceURL: sourceURL)
         .popupBackdrop(controller.settings.backgroundStyle, active: true)
         .background(Color(nsColor: .windowBackgroundColor))

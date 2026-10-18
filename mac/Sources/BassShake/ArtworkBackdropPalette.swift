@@ -23,15 +23,48 @@ struct ArtworkBackdropPalette: Equatable {
                   floor + (color.b - low) * scale)
   }
 
+  /// The popup's scrim over an artwork backdrop (ChromeBackdropScrim):
+  /// black under white ink, white under black ink.
+  static func scrim(dark: Bool) -> Double { dark ? 0.28 : 0.08 }
+
+  /// The dominant colour already carries the card's ink; a brighter lobe
+  /// (a yellow second family, the light field) might not. Seen through the
+  /// artwork scrim, each lobe keeps 4.5:1 with that ink, moving only as far
+  /// toward the scrim's colour as it must.
+  private static func readable(for card: ArtworkCardPalette, behindInk: Bool, dominant: ArtRGB,
+                               secondary: ArtRGB, depth: ArtRGB, light: ArtRGB) -> Self {
+    guard behindInk else { return Self(dominant: dominant, secondary: secondary, depth: depth, light: light) }
+    let veil: ArtRGB = card.dark ? .black : .white
+    let scrim = Self.scrim(dark: card.dark)
+    func passes(_ c: ArtRGB) -> Bool { ArtworkCardPalette.contrast(card.ink, c.mix(veil, scrim)) >= 4.5 }
+    func fix(_ c: ArtRGB) -> ArtRGB {
+      if passes(c) { return c }
+      var lo = 0.0, hi = 1.0
+      for _ in 0..<16 {
+        let mid = (lo + hi) / 2
+        if passes(c.mix(veil, mid)) { hi = mid } else { lo = mid }
+      }
+      return c.mix(veil, hi)
+    }
+    return Self(dominant: dominant, secondary: fix(secondary), depth: fix(depth), light: fix(light))
+  }
+
+  /// Raw cover families (the vinyl label), not adjusted for any ink.
   static func extract(_ image: CGImage) -> ArtworkBackdropPalette? {
-    guard let card = ArtworkCardPalette.extract(image) else { return nil }
+    ArtworkCardPalette.extract(image).flatMap { extract(image, card: $0, behindInk: false) }
+  }
+
+  /// `card` is the cover's already-extracted card palette: the dominant
+  /// family and ink come from it, never from a second pass. `behindInk`: a
+  /// popup backdrop, where every lobe must keep the card's ink readable.
+  static func extract(_ image: CGImage, card: ArtworkCardPalette, behindInk: Bool = true) -> ArtworkBackdropPalette? {
     let dominant = card.surface
     let hsv = dominant.hsv
     // A neutral cover stays neutral even if it contains a small colourful logo.
     // Tonal depth comes from the image, not the system's light/dark appearance.
     guard hsv.s >= 0.14 else {
       let v = hsv.v
-      return Self(dominant: dominant,
+      return readable(for: card, behindInk: behindInk, dominant: dominant,
                   secondary: tone(dominant, saturation: hsv.s, brightness: v * 0.88 + 0.065),
                   depth: tone(dominant, saturation: hsv.s, brightness: v * 0.70),
                   light: tone(dominant, saturation: hsv.s, brightness: v + 0.12))
@@ -90,7 +123,7 @@ struct ArtworkBackdropPalette: Equatable {
     } else {
       secondary = tone(dominant, saturation: hsv.s * 0.96, brightness: hsv.v * 1.05 + 0.03)
     }
-    return Self(dominant: dominant, secondary: secondary,
+    return readable(for: card, behindInk: behindInk, dominant: dominant, secondary: secondary,
                 depth: tone(dominant, saturation: hsv.s * 1.04, brightness: hsv.v * 0.68),
                 light: tone(dominant, saturation: hsv.s * 0.88, brightness: hsv.v * 1.12 + 0.04))
   }
@@ -122,9 +155,17 @@ final class ArtworkBackdropPalettes {
     }
     if pending[id] != nil { pending[id]!.append(done); return }
     pending[id] = [done]
-    let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+    // The card palette first (usually already cached by the theme), so the
+    // dominant colour and ink are extracted once per cover.
+    ArtworkCardPalettes.shared.palette(for: image) { [self] card in
+      resolve(image, id: id, card: card)
+    }
+  }
+
+  private func resolve(_ image: NSImage, id: ObjectIdentifier, card: ArtworkCardPalette?) {
+    let cg = card == nil ? nil : image.cgImage(forProposedRect: nil, context: nil, hints: nil)
     queue.async { [image] in
-      let palette = cg.flatMap(ArtworkBackdropPalette.extract)
+      let palette = cg.flatMap { cg in card.flatMap { ArtworkBackdropPalette.extract(cg, card: $0) } }
       DispatchQueue.main.async { [self, image] in
         cache = cache.filter { $0.value.image != nil }
         if cache.count >= 64, let oldest = cache.min(by: { $0.value.touched < $1.value.touched })?.key {

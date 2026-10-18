@@ -130,6 +130,7 @@ struct LiveChannelsPanel: View {
 }
 
 private struct LiveChannelRow: View {
+  @Environment(\.popupChrome) private var chrome
   let app: LiveApp
   let level: Double?
   let muted: Bool
@@ -163,8 +164,8 @@ private struct LiveChannelRow: View {
           .interpolation(.high)
           .frame(width: 11, height: 11)
           .frame(width: 28, height: 18)
-          .foregroundStyle(shakerOn ? Color.white : Color.secondary)
-          .background(Capsule().fill(shakerOn ? Color.accentColor : Color.primary.opacity(0.08)))
+          .foregroundStyle(shakerOn ? chrome?.surface ?? Color.white : Color.secondary)
+          .background(Capsule().fill(shakerOn ? chrome?.accent ?? Color.accentColor : Color.primary.opacity(0.08)))
           .overlay {
             if !shakerOn {
               Image(systemName: "line.diagonal").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
@@ -178,7 +179,7 @@ private struct LiveChannelRow: View {
         Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
           .font(.system(size: 9, weight: .bold))
           .frame(width: 28, height: 18)
-          .foregroundStyle(muted ? Color.white : Color.primary)
+          .foregroundStyle(muted ? MeterModel.warningInk : Color.primary)
           .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
       }
       .buttonStyle(.plain)
@@ -273,8 +274,8 @@ private struct MutedIdleRow: View {
         Image(systemName: "speaker.slash.fill")
           .font(.system(size: 9, weight: .bold))
           .frame(width: 28, height: 18)
-          .foregroundStyle(Color.white)
-          .background(Capsule().fill(Color.orange.opacity(0.7)))
+          .foregroundStyle(MeterModel.warningInk)
+          .background(Capsule().fill(Color.orange))
       }
       .buttonStyle(.plain)
       .help("Unmute \(name). Mutes last until you unmute or quit The Bass Shaker.")
@@ -362,6 +363,7 @@ struct MutedNotice: View {
 /// Beats in Live: our own stem player, with its own volume (it plays clean,
 /// outside the EQ, so it has no Bass Shaker or meter controls).
 private struct BeatsLiveRow: View {
+  @Environment(\.popupChrome) private var chrome
   @ObservedObject var player: BeatPlayer
   let title: String
   @State private var hover = false
@@ -370,9 +372,9 @@ private struct BeatsLiveRow: View {
     HStack(spacing: 8) {
       Image(systemName: "square.grid.2x2.fill")
         .font(.system(size: 10, weight: .bold))
-        .foregroundStyle(.white)
+        .foregroundStyle(chrome?.surface ?? Color.white)
         .frame(width: 18, height: 18)
-        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor))
+        .background(RoundedRectangle(cornerRadius: 5).fill(chrome?.accent ?? Color.accentColor))
       VStack(alignment: .leading, spacing: 1) {
         Text("Beats")
           .font(.system(size: 11, weight: .semibold, design: .rounded))

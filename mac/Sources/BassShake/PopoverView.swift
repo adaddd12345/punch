@@ -76,26 +76,14 @@ struct PopoverView: View {
         OverflowScroll { OnboardingView(controller: controller) }
           .frame(width: 360)
           .frame(maxHeight: onboardingHeight)
-      } else if showRemote {
-        RemotePanelView(controller: controller, remote: RemoteControl.shared) { withAnimation { showRemote = false } }
-      } else if showMySounds {
-        MySoundsView(controller: controller) { withAnimation { showMySounds = false } }
-      } else if showLayoutEditor {
-        LayoutEditorView(controller: controller, mini: size == .mini) { withAnimation { showLayoutEditor = false } }
-      } else if showMicTest {
-        MicTestView(controller: controller) { withAnimation { showMicTest = false } }
-      } else if showHearingFit {
-        HearingFitView(controller: controller) { withAnimation { showHearingFit = false } }
-      } else if showLatencyLab {
-        LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
-      } else if showMarkets {
-        MarketBriefingView(layers: controller.settings.tickerLayers, initialQuoteKey: marketQuote,
-                           backgroundStyle: controller.settings.backgroundStyle,
-                           maxHeight: role == .menuBar ? min(500, space.maxHeight ?? 500) : 500) {
-          withAnimation { showMarkets = false; marketQuote = nil }
-        }
       } else {
-        controls
+        // One theme for every panel (the drawer has its own, same inputs):
+        // My Sounds, Remote, Layout and the rest match the controls.
+        PopupChromeTheme(background: controller.settings.backgroundStyle,
+                         artworkEnabled: !controller.isMirror,
+                         holdsCover: controller.settings.artworkBackgroundBleed) {
+          panels
+        }
       }
     }
     .environment(\.appGlassEnabled, controller.settings.liquidGlass && !controller.settings.powerSaver)
@@ -220,14 +208,33 @@ struct PopoverView: View {
     MutedNotice(live: controller.live)
   }
 
-  private var controlStack: some View {
-    PopupChromeTheme(model: NowPlaying.shared, background: controller.settings.backgroundStyle,
-                     artworkEnabled: !controller.isMirror) {
-      themedControlStack
+  /// Every panel the popup can show in place of the controls.
+  @ViewBuilder private var panels: some View {
+    if showRemote {
+      RemotePanelView(controller: controller, remote: RemoteControl.shared) { withAnimation { showRemote = false } }
+    } else if showMySounds {
+      MySoundsView(controller: controller) { withAnimation { showMySounds = false } }
+    } else if showLayoutEditor {
+      LayoutEditorView(controller: controller, mini: size == .mini) { withAnimation { showLayoutEditor = false } }
+    } else if showMicTest {
+      MicTestView(controller: controller) { withAnimation { showMicTest = false } }
+    } else if showHearingFit {
+      HearingFitView(controller: controller) { withAnimation { showHearingFit = false } }
+    } else if showLatencyLab {
+      LatencyLabView(lab: latencyLab) { withAnimation { showLatencyLab = false } }
+    } else if showMarkets {
+      MarketBriefingView(layers: controller.settings.tickerLayers, initialQuoteKey: marketQuote,
+                         backgroundStyle: controller.settings.backgroundStyle,
+                         maxHeight: role == .menuBar ? min(500, space.maxHeight ?? 500) : 500) {
+        withAnimation { showMarkets = false; marketQuote = nil }
+      }
+    } else {
+      controls
     }
   }
 
-  private var themedControlStack: some View {
+  /// Themed by PopupChromeTheme in body, with every other panel.
+  private var controlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
       let isClassicMini = !controller.settings.bento && size == .mini
       // Opened from the Dock: the footer's controls in a header (icon, name, groups).

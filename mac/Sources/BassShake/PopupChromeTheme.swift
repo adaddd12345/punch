@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// One color contract for controls. Backgrounds may be expressive; every
@@ -7,8 +8,9 @@ struct PopupChromePalette: Equatable {
   var surface: Color { artwork.surface.color }
   var raised: Color { artwork.surface.mix(artwork.ink, 0.08).color }
   var ink: Color { artwork.ink.color }
-  var secondaryRGB: ArtRGB { artwork.ink.mix(artwork.surface, 0.06) }
-  var secondary: Color { secondaryRGB.color }
+  /// The measured secondary (at least 4.5:1 on a resting chip), so it reads
+  /// as a distinct level instead of near-primary ink.
+  var secondary: Color { artwork.secondary.color }
   var actionRGB: ArtRGB { artwork.surface.mix(artwork.ink, 0.82) }
   var accent: Color { actionRGB.color }
   var tint: BentoTint { artwork.tint }
@@ -23,7 +25,7 @@ struct PopupChromePalette: Equatable {
     let seed: ArtRGB
     switch style {
     case .system: seed = dark ? ArtRGB(0.12, 0.12, 0.13) : ArtRGB(0.92, 0.92, 0.93)
-    case .artwork: seed = ArtRGB(0.17, 0.18, 0.20)
+    case .artwork: seed = ArtworkBackdropPalette.neutral.dominant  // the same grey as the backdrop
     case .ambientBlue, .freezing: seed = ArtRGB(0.12, 0.23, 0.35)
     case .coffee: seed = ArtRGB(0.32, 0.22, 0.15)
     case .irishGreen: seed = ArtRGB(0.12, 0.28, 0.20)
@@ -51,21 +53,54 @@ extension EnvironmentValues {
   }
 }
 
-/// Only metadata changes resolve colors; audio meters never drive this wrapper.
+/// The lead cover alone. Themes watch this instead of all of NowPlaying, so
+/// titles, levels and other apps' changes never re-render a themed stack.
+final class LeadArtwork: ObservableObject {
+  static let shared = LeadArtwork()
+  @Published private(set) var image: NSImage?
+  private var bag: AnyCancellable?
+
+  private init() {
+    // objectWillChange fires before the change: read on the next main turn
+    // (DispatchQueue, not RunLoop, so it still lands during a scroll or drag).
+    bag = NowPlaying.shared.objectWillChange.merge(with: NowStack.shared.objectWillChange)
+      .receive(on: DispatchQueue.main)
+      .sink { [weak self] _ in self?.refresh() }
+    refresh()
+  }
+
+  private func refresh() {
+    let next = NowStack.shared.lead.flatMap { NowPlaying.shared.describe($0, state: false).artwork }
+    if next !== image { image = next }
+  }
+}
+
+/// Only a cover change resolves colors; audio meters never drive this wrapper.
 struct PopupChromeTheme<Content: View>: View {
-  @ObservedObject var model: NowPlaying
   let background: BackgroundStyle
   var artworkEnabled = true
+  /// Artwork Bleed keeps the last cover's colour for 1200 ms while the next
+  /// one loads, exactly as the backdrop does; without it both go neutral.
+  var holdsCover = true
   @ViewBuilder let content: () -> Content
-  @ObservedObject private var stack = NowStack.shared
+  @ObservedObject private var lead = LeadArtwork.shared
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var resolved: (id: ObjectIdentifier, palette: ArtworkCardPalette?)?
   @State private var requested: ObjectIdentifier?
+  /// The last cover's palette, shown while the next cover resolves so ink
+  /// never changes ahead of the backdrop.
+  @State private var held: ArtworkCardPalette?
 
   var body: some View {
-    let image = background == .artwork && artworkEnabled ? stack.lead.flatMap { model.describe($0).artwork } : nil
+    let artworkStyle = background == .artwork && artworkEnabled
+    let image = artworkStyle ? lead.image : nil
     let id = image.map(ObjectIdentifier.init)
-    let source = id != nil && resolved?.id == id ? resolved?.palette : nil
+    // A cached cover resolves in this pass, so there is no fallback frame.
+    let current = id == nil ? nil
+      : resolved?.id == id ? resolved?.palette : image.flatMap(ArtworkCardPalettes.shared.cached)
+    let holding = artworkStyle && (id != nil || holdsCover)
+    let source = current ?? (holding ? held : nil)
     let palette = source.map(PopupChromePalette.init(source:)) ?? .fixed(background, dark: scheme == .dark)
     content()
       .environment(\.popupChrome, palette)
@@ -78,10 +113,26 @@ struct PopupChromeTheme<Content: View>: View {
         guard let image else { resolved = nil; return }
         ArtworkCardPalettes.shared.palette(for: image) { value in
           guard requested == next, let next else { return }
-          var transaction = Transaction()
-          transaction.disablesAnimations = true
-          withTransaction(transaction) { resolved = (next, value) }
+          // Surface and accent glide with the backdrop's 0.72 s fade. Ink is
+          // black or white, so a flip lands at once (a glide would pass
+          // through unreadable grey); so do the first palette and Reduce Motion.
+          let glide = !reduceMotion && held != nil && value != nil && held?.dark == value?.dark
+          var transaction = Transaction(animation: glide ? .easeInOut(duration: 0.72) : nil)
+          transaction.disablesAnimations = !glide
+          withTransaction(transaction) {
+            resolved = (next, value)
+            held = value
+          }
         }
+      }
+      .task(id: id) {
+        // No cover: the backdrop's rule. Hold briefly under Bleed, never
+        // leave an unrelated cover indefinitely.
+        guard id == nil, held != nil else { return }
+        if holdsCover {
+          do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
+        }
+        held = nil
       }
       .onDisappear { requested = nil }
   }
@@ -154,11 +205,17 @@ struct ChromeBackdropScrim: View {
   @Environment(\.popupChrome) private var chrome
   var body: some View {
     if let chrome, style != .system {
-      if chrome.artwork.dark {
-        Color.black.opacity(style.scene || style.morph ? 0.68 : style == .artwork ? 0.28 : 0.12)
-      } else {
-        Color.white.opacity(style.scene || style.morph ? 0.24 : 0.08)
-      }
+      let dark = chrome.artwork.dark
+      (dark ? Color.black : Color.white).opacity(Self.opacity(style, dark: dark))
     }
+  }
+
+  /// Black under white ink, white under black ink. Artwork backdrop palettes
+  /// are measured through this veil (ArtworkBackdropPalette.extract).
+  static func opacity(_ style: BackgroundStyle, dark: Bool) -> Double {
+    guard style != .system else { return 0 }
+    if style == .artwork { return ArtworkBackdropPalette.scrim(dark: dark) }
+    if dark { return style.scene || style.morph ? 0.68 : 0.12 }
+    return style.scene || style.morph ? 0.24 : 0.08
   }
 }

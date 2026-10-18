@@ -173,22 +173,26 @@ struct Chip<Icon: View>: View {
 
   @Environment(\.bentoChips) private var bento
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.popupChrome) private var chrome
 
-  /// Classic: accent blue. Bento: dark ink (white in dark mode).
+  /// The popup's action accent, like the segment beside it. Outside the
+  /// popup: Classic accent blue, Bento dark ink (white in dark mode).
   private var selectedFill: Color {
     if let tint { return tint.pastel }
+    if let chrome { return chrome.accent }
     guard bento else { return Color.accentColor }
     return scheme == .dark ? Color.white.opacity(0.85) : BentoInk.miniFill
   }
 
   private var selectedText: Color {
     if tint != nil { return Color.black.opacity(0.85) }
+    if let chrome { return chrome.surface }
     return bento && scheme == .dark ? Color.black : Color.white
   }
 
   private var restingFill: Color {
     if let tint { return tint.pastel.opacity(scheme == .dark ? 0.20 : 0.30) }
-    return Color.primary.opacity(0.07)
+    return chrome?.ink.opacity(0.08) ?? Color.primary.opacity(0.07)
   }
 
   var body: some View {

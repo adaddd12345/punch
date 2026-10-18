@@ -160,7 +160,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
       let output = rendered ?? image
       ArtworkCardPalettes.shared.palette(for: image) { palette in
       guard loadingID == token, request == nil else { return }
-      let rgb = palette?.surface ?? ArtRGB(0.16, 0.18, 0.22)
+      let rgb = palette?.surface ?? ArtworkBackdropPalette.neutral.dominant
       let reverse = NSColor(srgbRed: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1)
       originalContentHeight = window?.contentView?.bounds.height
       inspectionHeight = originalContentHeight

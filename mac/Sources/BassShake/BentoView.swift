@@ -1847,8 +1847,18 @@ struct BentoTile<Content: View>: View {
       .modifier(BentoHoverSurface(radius: r, enabled: hoverResponse && !flat && glass == nil))
       .background {
         if glass != nil {
-          RoundedRectangle(cornerRadius: r, style: .continuous)
-            .fill((chrome?.accent ?? tint.pastel).opacity(look == .lit ? 0.16 : 0.025))
+          let accent = chrome?.accent ?? tint.pastel
+          ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: r, style: .continuous)
+              .fill(accent.opacity(look == .lit ? 0.16 : 0.025))
+            if case .fader(let value) = look {
+              GeometryReader { geometry in
+                Rectangle().fill(accent.opacity(0.08))
+                  .frame(width: geometry.size.width * min(1, max(0, value)))
+              }
+            }
+          }
+          .clipShape(RoundedRectangle(cornerRadius: r, style: .continuous))
         } else if let chrome {
           PopupChromeFill(palette: chrome, look: look, radius: r)
         } else if flat {
@@ -2972,7 +2982,7 @@ private struct BentoLevelLine: View {
     let silent = L.level <= MeterModel.loudFloorDb + 0.5
     let clipping = ProcessInfo.processInfo.systemUptime < L.clipUntil
     let showTicks = !silent && (clipping || (!reduceMotion && L.hold > L.level + 0.5))
-    let clipRed = Color(red: 1.0, green: 0.24, blue: 0.30)
+    let clipRed = MeterModel.limitRed
     return Canvas { ctx, size in
       let mid = size.width / 2
       let half = size.width / 2

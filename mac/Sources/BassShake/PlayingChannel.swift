@@ -121,7 +121,7 @@ struct PlayingChannelMini<Chip: View>: View {
               shape.fill(muted ? Color.orange.opacity(0.85) : Color.black.opacity(0.42))
               Image(systemName: symbol)
                 .font(.system(size: (art * 0.38).rounded(), weight: .heavy))
-                .foregroundStyle(Color.white)
+                .foregroundStyle(muted ? MeterModel.warningInk : Color.white)
             }
             .transition(.opacity)
           }
@@ -409,7 +409,7 @@ private struct EarsRow: View {
         Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
           .font(.system(size: 9, weight: .bold))
           .frame(width: 28, height: 18)
-          .foregroundStyle(muted ? Color.white : Color.primary.opacity(0.7))
+          .foregroundStyle(muted ? MeterModel.warningInk : Color.primary.opacity(0.7))
           .background(Capsule().fill(muted ? Color.orange : Color.primary.opacity(0.08)))
           .contentShape(Capsule())
       }

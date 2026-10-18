@@ -85,6 +85,15 @@ import AppKit
 
     // The two callbacks share an in-flight request; releasing the caller's
     // reference must not permit an image identity to be reused before it ends.
+    // The popup's backdrop keeps the card's ink readable through the scrim.
+    let card = ArtworkCardPalette.extract(blueGold)!
+    let popup = ArtworkBackdropPalette.extract(blueGold, card: card)!
+    let veil: ArtRGB = card.dark ? .black : .white
+    let scrim = ArtworkBackdropPalette.scrim(dark: card.dark)
+    require([popup.dominant, popup.secondary, popup.depth, popup.light].allSatisfy {
+      ArtworkCardPalette.contrast(card.ink, $0.mix(veil, scrim)) >= 4.5
+    }, "A backdrop lobe left the card's ink unreadable")
+
     var completed = 0
     var strongImage: NSImage? = NSImage(cgImage: blueGold, size: NSSize(width: 96, height: 96))
     weak var weakImage = strongImage
@@ -92,7 +101,7 @@ import AppKit
     for _ in 0..<2 {
       palettes.palette(for: strongImage!) { result in
         require(Thread.isMainThread, "Palette callback left the main thread")
-        require(result == pair, "Coalesced request returned the wrong cover")
+        require(result == popup, "Coalesced request returned the wrong cover")
         completed += 1
       }
     }

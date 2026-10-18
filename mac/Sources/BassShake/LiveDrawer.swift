@@ -281,7 +281,12 @@ private struct VisualEffectBackground: NSViewRepresentable {
     v.blendingMode = .behindWindow
     return v
   }
-  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+  /// The native material follows the theme's scheme, not the Mac's, so a
+  /// dark cover on a light Mac doesn't show a light frame around dark ink.
+  func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+    let name: NSAppearance.Name = context.environment.colorScheme == .dark ? .darkAqua : .aqua
+    if nsView.appearance?.name != name { nsView.appearance = NSAppearance(named: name) }
+  }
 }
 
 private final class DrawerPanel: NSPanel {
@@ -321,8 +326,21 @@ struct DrawerRoot: View {
   @ObservedObject var model: DrawerContent
   @ObservedObject var flags: DrawerHints
   let onSize: (CGSize) -> Void
-  @Environment(\.colorScheme) private var scheme
   var body: some View {
+    // The popup's theme, from the same inputs: ink, surfaces, accent, scrim
+    // and colour scheme match the controls above (its backdrop is `.local`,
+    // no Bleed, so no hold).
+    PopupChromeTheme(background: model.appearance.background,
+                     artworkEnabled: model.appearance.localArtwork, holdsCover: false) {
+      themed
+    }
+    .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
+    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .fixedSize()
+    .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
+  }
+
+  private var themed: some View {
     model.view
       .environment(\.popupTint, model.appearance.tint)
       .environment(\.artworkStyle, model.appearance.artworkStyle)
@@ -332,15 +350,10 @@ struct DrawerRoot: View {
       .environment(\.artworkPerspective, model.appearance.artworkPerspective)
       .environment(\.appGlassEnabled, model.appearance.liquidGlass)
       .environment(\.playButtonLook, model.appearance.playButtonLook)
-      .tint(Drawer.accent(model.appearance.tint, scheme))
       // The main colourway over the same native material.
       .popupBackdrop(model.appearance.background, active: flags.shown)
       .environment(\.artworkBackdropContext, model.appearance.localArtwork ? .local : nil)
       .background(VisualEffectBackground())
-      .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
-      .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-      .fixedSize()
-      .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
   }
 }
 

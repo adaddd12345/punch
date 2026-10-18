@@ -119,12 +119,18 @@ final class MeterModel: ObservableObject {
   /// Playback-tuned level zones (recording-style −18/−6 thresholds would
   /// leave normal music permanently "hot"). Output is limited at −1 dBFS,
   /// so red means exactly one thing: you are riding the limiter.
+  /// Red means one thing everywhere: the limiter is holding peaks.
+  static let limitRed = Color(red: 1.00, green: 0.24, blue: 0.30)
+  /// Ink on limit red and mute orange. White measures about 3.5:1 on the red
+  /// and 2:1 on orange; black clears 6:1 on both.
+  static let warningInk = Color.black.opacity(0.88)
+
   static let zones: [(upTo: Double, color: Color)] = [
     (-12, Color(red: 0.16, green: 0.80, blue: 0.62)),   // teal-green: comfortable
     (-6, Color(red: 0.55, green: 0.86, blue: 0.30)),    // lime
     (-3, Color(red: 1.00, green: 0.80, blue: 0.20)),    // yellow: loud
     (-1.2, Color(red: 1.00, green: 0.55, blue: 0.16)),  // orange: near the ceiling
-    (.infinity, Color(red: 1.00, green: 0.24, blue: 0.30)),  // red: limiting
+    (.infinity, limitRed),  // red: limiting
   ]
 
   static func color(_ db: Double) -> Color {
@@ -214,14 +220,16 @@ private struct MeterScale: View {
 private struct LimitPill: View {
   let active: Bool
   let reductionDb: Double
+  @Environment(\.colorSchemeContrast) private var contrast
   var body: some View {
     Text(active ? String(format: "LIMIT %.0f", reductionDb) : "LIMIT")
       .font(.system(size: 8, weight: .bold, design: .rounded))
       .monospacedDigit()
       .padding(.horizontal, 5)
       .padding(.vertical, 1.5)
-      .foregroundStyle(active ? .white : .secondary)
-      .background(Capsule().fill(active ? Color(red: 1, green: 0.23, blue: 0.23) : .primary.opacity(0.08)))
+      .foregroundStyle(active ? MeterModel.warningInk : .secondary)
+      .background(Capsule().fill(active ? MeterModel.limitRed : .primary.opacity(0.08)))
+      .overlay { if contrast == .increased { Capsule().strokeBorder(.primary.opacity(0.45), lineWidth: 1) } }
       .animation(.easeOut(duration: 0.15), value: active)
       .help("Lights up when the limiter is holding peaks under −1 dBFS.")
   }

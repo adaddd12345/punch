@@ -34,12 +34,12 @@ struct PlayerArtworkHeader<Controls: View>: View {
   var body: some View {
     let inset: CGFloat = preview ? 8 : 10
     VStack(spacing: 8) {
-      VStack(spacing: preview ? 6 : 8) {
+      VStack(spacing: preview ? 10 : 14) {
         PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
                            spinning: spinning, paused: paused)
           .frame(height: preview ? 136 : 200)
           .inspectableArtwork(artwork, entry: entry)
-        VStack(spacing: 6) {
+        VStack(spacing: preview ? 7 : 9) {
           Text(title)
             .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),
                           weight: .bold, design: .rounded))
