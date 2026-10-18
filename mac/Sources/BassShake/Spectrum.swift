@@ -16,8 +16,9 @@ final class SpectrumModel: ObservableObject {
   /// Points across 20 Hz–20 kHz (the EQ's x-axis), evenly spaced in log f.
   static let columns = 200
   /// Displayed range: dBFS per ~12 Hz of spectrum (a 4096-point bin at
-  /// 48 kHz, whatever the real rate and size), so a full-scale sine reads
-  /// 0 and music slopes down to the right like a pro analyser.
+  /// 48 kHz, whatever the real rate and size). Integrated tone power uses
+  /// the full-scale-sine reference; individual columns also depend on the
+  /// window and frequency smoothing, so a tone's plotted peak need not be 0.
   static let topDb: Float = 6
   static let bottomDb: Float = -84
   static let floorDb: Float = bottomDb - 6
@@ -108,6 +109,14 @@ final class SpectrumAnalyzer {
   /// (1/6 read as soft humps on real music); the ghost gets ~1/6 on top.
   static var smoothing = 1.0 / 12
 
+  /// Convert zrip's squared magnitudes to one-sided power per FFT bin,
+  /// relative to a full-scale sine (mean-square power 0.5). The real FFT's
+  /// factor of 4 in power cancels the one-sided factor of 2 and sine-reference
+  /// factor of 2. DC and Nyquist are excluded by the analyzer's frequency map.
+  static func binPowerScale(fftSize: Int, windowEnergy: Double) -> Double {
+    1 / (Double(fftSize) * windowEnergy)
+  }
+
   private var n = 0
   private var rate = 0.0
   private var setup: FFTSetup?
@@ -139,9 +148,12 @@ final class SpectrumAnalyzer {
     let cols = SpectrumModel.columns
     let binHz = rate / Double(n)
     let half = pow(2.0, Self.smoothing / 2)   // band edges, ± half the width
-    // One-sided Parseval with a Hann window (sum w² = 3n/8), zrip's ×2 scale
-    // (×4 in power), and ×2 so a full-scale sine reads 0 dB.
-    let norm = 2.0 / (4.0 * Double(n) / 2 * 0.375 * Double(n))
+    // Measure the actual generated window: vDSP_HANN_NORM has sum w² ≈ n,
+    // unlike the ordinary Hann's 3n/8. Hardcoding the latter here overstates
+    // power by 10 log10(8/3), about 4.26 dB. The fixed reference bandwidth
+    // below turns calibrated bin power into the displayed power density.
+    let windowEnergy = window.reduce(0.0) { $0 + Double($1) * Double($1) }
+    let norm = Self.binPowerScale(fftSize: n, windowEnergy: windowEnergy)
     lo = []; hi = []; pos = []; gainDb = []
     for c in 0..<cols {
       let fc = 20 * pow(10, 3 * Double(c) / Double(cols - 1))

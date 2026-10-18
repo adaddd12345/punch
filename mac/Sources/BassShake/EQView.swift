@@ -6,7 +6,7 @@ import SwiftUI
 ///   scroll      Q (bandwidth) of the hovered / grabbed node
 ///   double-click  reset that node to 0 dB;  ⌥-click: reset it fully
 ///   drag the line or empty space  raises/lowers everything = Boost
-///               (the line is always drawn as EQ + Boost: your whole sound);
+///               (the line shows user EQ + Boost; other processing is not plotted);
 ///               ⌥-drag tilts bass against treble (the two shelves);
 ///               double-click the line: Boost to 0
 ///   keyboard    ←/→ pick a node, ↑/↓ gain (⇧ fine), ⌥←/→ frequency,
@@ -99,14 +99,43 @@ struct EQView: View {
   private let topDb = 18.0
   private let bottomDb = -12.0
   private let pad: CGFloat = 12
-  /// The real total level: the line is drawn this far above the EQ shape.
+  /// Boost's contribution: the line is drawn this far above the EQ shape.
   private var boost: Double { shown.boostDb }
   /// Settings as heard: with any drag or glide in flight.
   private var shown: Settings { liveEdit.settings ?? controller.settings }
   private static let dragKey = "eq.drag"
   private static let qKey = "eq.q"
 
+  private var separateWaveformLane: Bool {
+    controller.settings.waveform && controller.settings.enabled && !controller.settings.spectrum
+      && controller.settings.waveformStyle != .classic && !powerSaver
+  }
+
   var body: some View {
+    VStack(spacing: 0) {
+      responseSurface
+      if separateWaveformLane {
+        Rectangle().fill(Color.primary.opacity(0.10)).frame(height: 1)
+          .padding(.horizontal, 12)
+        // This x axis is time. Keeping it outside the response surface avoids
+        // suggesting that waveform positions correspond to EQ frequencies.
+        WaveformView(model: controller.waveform, color: controller.settings.scopeColor,
+                     style: controller.settings.waveformStyle)
+          .frame(height: 52)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 4)
+          .allowsHitTesting(false)
+      }
+    }
+    .background(
+      RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .fill(Color.primary.opacity(chrome ? 0.045 : 0))
+    )
+    .clipShape(RoundedRectangle(cornerRadius: chrome ? 12 : 0, style: .continuous))
+    .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
+  }
+
+  private var responseSurface: some View {
     GeometryReader { geo in
       let size = geo.size
       let shown = self.shown
@@ -123,8 +152,9 @@ struct EQView: View {
             SpectrumView(model: controller.spectrum, color: spectrumColor)
               .allowsHitTesting(false)
               .transition(.opacity)
-          } else if !powerSaver {
-            WaveformView(model: controller.waveform, color: controller.settings.scopeColor)
+          } else if !powerSaver && !separateWaveformLane {
+            WaveformView(model: controller.waveform, color: controller.settings.scopeColor,
+                         style: controller.settings.waveformStyle)
               .allowsHitTesting(false)
               .transition(.opacity)
           }
@@ -212,12 +242,6 @@ struct EQView: View {
         }
       }
     }
-    .background(
-      RoundedRectangle(cornerRadius: 12, style: .continuous)
-        .fill(Color.primary.opacity(chrome ? 0.045 : 0))
-    )
-    .clipShape(RoundedRectangle(cornerRadius: chrome ? 12 : 0, style: .continuous))
-    .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
   }
 
   /// Spectrum's one hue: the tile's ink (Bento), else the scope colour; the
@@ -246,9 +270,13 @@ struct EQView: View {
   // MARK: - Nodes sit on the combined line
 
   /// Samples of the summed response, 20 Hz–20 kHz on the same log axis as x().
-  private static let curveSamples = 256
+  // One log grid for line, nodes and hit tests, including narrow warped
+  // peaks near Nyquist. Imported presets permit a higher Q than the wheel.
+  private static let curveSamples = 4096
   private func response(_ bands: [EQBand]) -> [Double] {
-    curves.curve(bands, count: Self.curveSamples, controller)
+    let maxQ = bands.map(\.q).filter(\.isFinite).max() ?? 6
+    let count = min(16_384, Int(ceil(Double(Self.curveSamples) * max(1, min(20, maxQ) / 6))))
+    return curves.curve(bands, count: count, controller)
   }
   /// The summed response at `f`, interpolated from `resp`.
   private func sample(_ resp: [Double], at f: Double) -> Double {
@@ -296,9 +324,9 @@ struct EQView: View {
       grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
     }
     ctx.stroke(grid, with: .color(.primary.opacity(contrast == .increased ? 0.18 : 0.06)), lineWidth: 1)
-    var zero = Path()
-    zero.move(to: CGPoint(x: 0, y: y(0, h))); zero.addLine(to: CGPoint(x: w, y: y(0, h)))
-    ctx.stroke(zero, with: .color(.primary.opacity(0.14)), lineWidth: 1)
+    EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
+                                dark: scheme == .dark, highContrast: contrast == .increased,
+                                prism: controller.settings.eqLineStyle == .prism)
     ctx.draw(Text("0 dB").font(.system(size: 8, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
              at: CGPoint(x: w - 4, y: y(0, h) + 6), anchor: .trailing)
     for (f, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")] {
@@ -308,6 +336,11 @@ struct EQView: View {
 
     drawGhost(ctx, size: size)
     let resp = response(bands)
+    if controller.settings.eqLineStyle == .prism {
+      drawPrism(ctx, size: size, bands: bands, boost: boost, color: spectrumColor)
+      drawNodes(ctx, size: size, bands: bands, resp: resp, boost: boost)
+      return
+    }
     // Per-node soft "influence" glow so you can see what each node does.
     for (i, b) in bands.enumerated() where abs(b.gain) > 0.05 {
       let cx = x(b.freq, w)
@@ -350,16 +383,41 @@ struct EQView: View {
   }
 
   /// The drawn line: the EQ's response raised by `boost` (the real total).
-  private func curvePath(_ bands: [EQBand], size: CGSize, boost: Double) -> Path {
+  private func curvePoints(_ bands: [EQBand], size: CGSize, boost: Double) -> [CGPoint] {
     let w = size.width, h = size.height
-    let n = max(64, Int(w / 2))
-    let resp = curves.curve(bands, count: n, controller)
+    let resp = response(bands)
+    let n = resp.count
+    return resp.enumerated().map { k, db in
+      CGPoint(x: w * CGFloat(k) / CGFloat(n - 1), y: y(clampDb(db + boost), h))
+    }
+  }
+
+  private func curvePath(_ bands: [EQBand], size: CGSize, boost: Double) -> Path {
     var curve = Path()
-    for (k, db) in resp.enumerated() {
-      let p = CGPoint(x: w * CGFloat(k) / CGFloat(n - 1), y: y(clampDb(db + boost), h))
+    for (k, p) in curvePoints(bands, size: size, boost: boost).enumerated() {
       k == 0 ? curve.move(to: p) : curve.addLine(to: p)
     }
     return curve
+  }
+
+  private func drawPrism(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], boost: Double, color: Color) {
+    let selected = lineDrag == nil ? (grabbed ?? hovered ?? (focused && kbActive ? kbBand : nil)) : nil
+    var comparison: [CGPoint]? = nil
+    var bandColor: Color? = nil
+    if let selected, bands.indices.contains(selected), abs(bands[selected].gain) > 0.05 {
+      // All supported bands become an exact wire at 0 dB. The shaded distance
+      // from this counterfactual to the full curve is precisely this band's
+      // dB contribution, including overlap with every other filter.
+      var without = bands
+      without[selected].gain = 0
+      comparison = curvePoints(without, size: size, boost: boost)
+      bandColor = Self.colors[selected]
+    }
+    EQLineArtwork.drawPrism(in: ctx, points: curvePoints(bands, size: size, boost: boost),
+                            size: size, zeroY: y(0, size.height), color: color,
+                            dark: scheme == .dark, highContrast: contrast == .increased,
+                            powerSaver: powerSaver, pressed: lineDrag != nil,
+                            comparisonPoints: comparison, contributionColor: bandColor)
   }
 
   /// Bento's lit filament: fill fading to clear, a soft glow, then the line.
@@ -369,30 +427,42 @@ struct EQView: View {
                             showNodes: Bool, kbDot: Int?) {
     let w = size.width, h = size.height
     let dark = scheme == .dark
-    // Faint 0 dB reference, so a Boost offset reads.
-    var zero = Path()
-    zero.move(to: CGPoint(x: 0, y: y(0, h))); zero.addLine(to: CGPoint(x: w, y: y(0, h)))
-    ctx.stroke(zero, with: .color(.primary.opacity(contrast == .increased ? 0.22 : 0.10)),
-               style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
-    drawGhost(ctx, size: size)
-    let curve = curvePath(bands, size: size, boost: boost)
-    var fill = curve
-    fill.addLine(to: CGPoint(x: w, y: h))
-    fill.addLine(to: CGPoint(x: 0, y: h))
-    fill.closeSubpath()
-    ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.30 : 0.18), color.opacity(0)]),
-                                         startPoint: CGPoint(x: 0, y: y(12, h)),
-                                         endPoint: CGPoint(x: 0, y: h)))
-    if !powerSaver {
-      ctx.drawLayer { glow in
-        glow.addFilter(.blur(radius: 5))
-        glow.stroke(curve, with: .color(color.opacity(dark ? 0.75 : 0.28)),
-                    style: StrokeStyle(lineWidth: dark ? 6 : 5, lineCap: .round, lineJoin: .round))
+    // Fixed 0 dB reference, so a Boost offset reads independently of the scope.
+    EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
+                                dark: dark, highContrast: contrast == .increased,
+                                prism: controller.settings.eqLineStyle == .prism)
+    if controller.settings.eqLineStyle == .prism {
+      ctx.draw(Text("EQ + BOOST · dB").font(.system(size: 7, weight: .medium, design: .monospaced))
+        .foregroundColor(.secondary.opacity(0.8)), at: CGPoint(x: 8, y: 8), anchor: .leading)
+      for (frequency, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k Hz")] {
+        ctx.draw(Text(label).font(.system(size: 7, weight: .medium, design: .monospaced))
+          .foregroundColor(.secondary.opacity(0.75)),
+                 at: CGPoint(x: x(frequency, w), y: h - 6), anchor: .center)
       }
     }
-    drawHeldLine(ctx, curve: curve, color: color)
-    ctx.stroke(curve, with: .color(color),
-               style: StrokeStyle(lineWidth: lineDrag == nil ? 2.5 : 2.9, lineCap: .round, lineJoin: .round))
+    drawGhost(ctx, size: size)
+    if controller.settings.eqLineStyle == .prism {
+      drawPrism(ctx, size: size, bands: bands, boost: boost, color: color)
+    } else {
+      let curve = curvePath(bands, size: size, boost: boost)
+      var fill = curve
+      fill.addLine(to: CGPoint(x: w, y: h))
+      fill.addLine(to: CGPoint(x: 0, y: h))
+      fill.closeSubpath()
+      ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.30 : 0.18), color.opacity(0)]),
+                                           startPoint: CGPoint(x: 0, y: y(12, h)),
+                                           endPoint: CGPoint(x: 0, y: h)))
+      if !powerSaver {
+        ctx.drawLayer { glow in
+          glow.addFilter(.blur(radius: 5))
+          glow.stroke(curve, with: .color(color.opacity(dark ? 0.75 : 0.28)),
+                      style: StrokeStyle(lineWidth: dark ? 6 : 5, lineCap: .round, lineJoin: .round))
+        }
+      }
+      drawHeldLine(ctx, curve: curve, color: color)
+      ctx.stroke(curve, with: .color(color),
+                 style: StrokeStyle(lineWidth: lineDrag == nil ? 2.5 : 2.9, lineCap: .round, lineJoin: .round))
+    }
 
     let resp = response(bands)
     if showNodes {
@@ -403,6 +473,10 @@ struct EQView: View {
       for (i, b) in bands.enumerated() {
         let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h, boost: boost))
         let picked = i == kbDot
+        if controller.settings.eqLineStyle == .prism && !picked {
+          EQLineArtwork.drawStud(in: ctx, at: c, color: color)
+          continue
+        }
         let r: CGFloat = picked ? 5.5 : 2.5
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
                  with: .color(picked ? Self.colors[i] : color.opacity(0.9)))
@@ -439,6 +513,10 @@ struct EQView: View {
     for (i, b) in bands.enumerated() {
       let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h, boost: boost))
       let active = grabbed == i || hovered == i
+      if controller.settings.eqLineStyle == .prism && !active && !(focused && kbActive && kbBand == i) {
+        EQLineArtwork.drawStud(in: ctx, at: c, color: Self.colors[i])
+        continue
+      }
       let r: CGFloat = active ? 7.5 : 5.5
       if active {
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - 14, y: c.y - 14, width: 28, height: 28)),
@@ -829,12 +907,13 @@ private struct LimitOverlay: View {
 /// several times (line, nodes, readout, hit tests), and only the bands
 /// being dragged change between frames.
 final class CurveCache {
-  private var entries: [(bands: [EQBand], count: Int, curve: [Double])] = []
+  private var entries: [(bands: [EQBand], count: Int, sampleRate: Double, curve: [Double])] = []
 
   func curve(_ bands: [EQBand], count: Int, _ controller: AudioController) -> [Double] {
-    if let e = entries.first(where: { $0.count == count && $0.bands == bands }) { return e.curve }
+    let rate = controller.curveSampleRate
+    if let e = entries.first(where: { $0.count == count && $0.sampleRate == rate && $0.bands == bands }) { return e.curve }
     let c = controller.curve(for: bands, count: count)
-    entries.insert((bands, count, c), at: 0)
+    entries.insert((bands, count, rate, c), at: 0)
     if entries.count > 6 { entries.removeLast() }
     return c
   }

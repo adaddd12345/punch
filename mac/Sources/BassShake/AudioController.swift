@@ -47,6 +47,7 @@ final class AudioController: ObservableObject {
 
   @Published private(set) var status: Status = .off {
     didSet {
+      if case let .running(_, sampleRate) = status { syncCurveSampleRate(sampleRate) }
       if status != oldValue {
         log.notice("status: \(String(describing: self.status), privacy: .public)")
         updatePermissionPoll()
@@ -186,6 +187,9 @@ final class AudioController: ObservableObject {
 
   private let engine: OpaquePointer
   private let curveEngine: OpaquePointer
+  /// Main-thread transfer-function evaluator rate. Status already publishes
+  /// route changes; this is not fast-changing meter state or another publisher.
+  private(set) var curveSampleRate = 48_000.0
   let audioQueue = DispatchQueue(label: "bassshake.audio", qos: .userInteractive)
   /// HAL property-listener callbacks land here, never on main. Registering a
   /// listener that targets the main queue *from* the main thread hung the app
@@ -242,7 +246,8 @@ final class AudioController: ObservableObject {
     isMirror = true
     engine = punch_engine_create()
     curveEngine = punch_engine_create()
-    punch_engine_prepare(curveEngine, 48_000, 2, 512)
+    curveSampleRate = local.curveSampleRate
+    punch_engine_prepare(curveEngine, local.curveSampleRate, 2, 512)
     settings = local.settings
     needsOnboarding = false
   }
@@ -1223,6 +1228,15 @@ final class AudioController: ObservableObject {
     var out = [Double](repeating: 0, count: count)
     out.withUnsafeMutableBufferPointer { punch_eq_curve(curveEngine, 20, 20_000, $0.baseAddress, count) }
     return out
+  }
+
+  /// TPT/SVF frequency warping depends on the actual route's sample rate.
+  /// This auxiliary engine never processes audio or calls the HAL, so it can
+  /// be prepared here on main when the audio queue publishes a running route.
+  private func syncCurveSampleRate(_ rate: Double) {
+    guard rate.isFinite, rate > 0, rate != curveSampleRate else { return }
+    punch_engine_prepare(curveEngine, rate, 2, 512)
+    curveSampleRate = rate
   }
 
   /// Called at quit. Bounded wait: if Core Audio is stuck, quit anyway; the

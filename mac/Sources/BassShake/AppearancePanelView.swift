@@ -10,9 +10,11 @@ struct AppearancePanelView: View {
   @Environment(\.popupChrome) private var chrome
   @ObservedObject private var stack = NowStack.shared
   @ObservedObject private var now = NowPlaying.shared
+  @State private var category = AppearanceCategory.artwork
 
   private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
   private let vinylColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+  private let waveformColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
   // Intentional browsing order: adaptive choices, quiet colourways, moving
   // gradients, seasonal scenes, then the specialised market theme.
   private let backgroundOrder: [BackgroundStyle] = [
@@ -41,16 +43,53 @@ struct AppearancePanelView: View {
         Text("Appearance").font(.system(size: 14, weight: .bold, design: .rounded))
         Spacer()
       }
-      ScrollView(.vertical) {
-        VStack(alignment: .leading, spacing: 12) {
-          backgrounds
-          artwork
-          vinyl
-          finish
+      VStack(spacing: -20) {
+        AppearanceArtworkPreview(image: cover, style: controller.settings.artworkStyle)
+          .environment(\.artworkEffect, controller.settings.artworkEffect)
+          .environment(\.artworkFoil, controller.settings.artworkFoil)
+          .environment(\.vinylMaterial, controller.settings.vinylMaterial)
+          .layoutPriority(1)
+
+        VStack(spacing: 10) {
+          Picker("Appearance category", selection: $category) {
+            ForEach(AppearanceCategory.allCases) { category in
+              Text(category.rawValue).tag(category)
+            }
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          .accessibilityIdentifier("appearance-category")
+          .padding(.top, 8)
+
+          ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+              switch category {
+              case .artwork:
+                artwork
+                vinyl
+                finish
+              case .background:
+                backgrounds
+              case .equalizer:
+                equalizer
+              }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+          }
+          .id(category)
+          .scrollIndicators(.automatic)
+          // Keep the first section readable at rest; scrolling content
+          // gently dissolves beneath the category strip.
+          .mask(alignment: .top) {
+            VStack(spacing: 0) {
+              LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: 8)
+              Rectangle()
+            }
+          }
         }
-        .padding(.bottom, 4)
       }
-      .scrollIndicators(.automatic)
       .frame(maxHeight: 600)
     }
     .frame(width: 336)
@@ -109,6 +148,74 @@ struct AppearancePanelView: View {
       }
     }
   }
+
+  private var equalizer: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      section("Waveform") {
+        Text("Choose how the sound moves.")
+          .font(.system(size: 11))
+          .foregroundStyle(chrome?.secondary ?? Color.secondary)
+        LazyVGrid(columns: waveformColumns, spacing: 10) {
+          ForEach(WaveformStyle.allCases) { style in
+            choice(style.title,
+                   selected: controller.settings.eqVisual == .scope && controller.settings.waveformStyle == style,
+                   labelLines: 1,
+                   action: {
+                     controller.settings.waveformStyle = style
+                     controller.settings.setEQVisualByHand(.scope)
+                   }) {
+              previewSurface {
+                WaveformArtwork(mins: Self.previewSignal.mins, maxs: Self.previewSignal.maxs,
+                                rms: Self.previewSignal.rms, density: Self.previewSignal.density,
+                                color: eqPreviewColor, style: style)
+                  .padding(.horizontal, 10)
+                  .padding(.vertical, 10)
+              }
+            }
+            .help(style.detail)
+          }
+        }
+      }
+      section("EQ controls") {
+        Text("Curve and handle styles.")
+          .font(.system(size: 11))
+          .foregroundStyle(chrome?.secondary ?? Color.secondary)
+        HStack(spacing: 8) {
+          ForEach(EQLineStyle.allCases) { style in
+            choice(style.title, selected: controller.settings.eqLineStyle == style,
+                   labelLines: 1, action: { controller.settings.eqLineStyle = style }) {
+              previewSurface {
+                EQLinePreview(style: style, color: eqPreviewColor,
+                              response: controller.curve(for: controller.shownSettings.bands, count: 128),
+                              nodeFrequencies: controller.shownSettings.bands.map(\.freq),
+                              boost: controller.shownSettings.boostDb)
+                  .padding(.horizontal, 8)
+              }
+            }
+          }
+        }
+      }
+      section("Display") {
+        HStack {
+          Picker("Visual", selection: Binding(get: { controller.settings.eqVisual },
+                                               set: { controller.settings.setEQVisualByHand($0) })) {
+            ForEach(EQVisual.allCases) { Text($0.title).tag($0) }
+          }
+          Picker("Color", selection: bind(\.scopeColor)) {
+            ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
+          }
+        }
+        .controlSize(.small)
+        .font(.system(size: 11))
+      }
+    }
+  }
+
+  private var eqPreviewColor: Color {
+    let color = controller.settings.scopeColor
+    return color == .accent ? (chrome?.accent ?? Color.accentColor) : color.color
+  }
+  private static let previewSignal = EQPreviewSignal.music.samples()
 
   private var vinyl: some View {
     section("Vinyl") {
@@ -237,6 +344,65 @@ struct AppearancePanelView: View {
       return true
     }
   }()
+}
+
+private enum AppearanceCategory: String, CaseIterable, Identifiable {
+  case artwork = "Artwork", background = "Background", equalizer = "Equalizer"
+  var id: String { rawValue }
+}
+
+/// A stationary, live settings preview stays available while browsing the
+/// lower controls. Only its compact sleeve/record and halo taper away; the
+/// popup's own background continues behind it without a full-width cover.
+struct AppearanceArtworkPreview: View {
+  let image: NSImage
+  let style: ArtworkStyle
+  @Environment(\.vinylMaterial) private var material
+  @Environment(\.artworkEffect) private var effect
+  @Environment(\.artworkFoil) private var foil
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+  private var description: String {
+    [style.title, style == .vinyl ? material.title : nil,
+     effect == .none ? nil : effect.title, foil ? "Holographic finish" : nil]
+      .compactMap { $0 }.joined(separator: ", ")
+  }
+
+  var body: some View {
+    ZStack {
+      if !reduceTransparency {
+        Image(nsImage: image)
+          .resizable()
+          .aspectRatio(contentMode: .fill)
+          .frame(width: 160, height: 132)
+          .clipped()
+          .blur(radius: 24)
+          .opacity(0.18)
+          .accessibilityHidden(true)
+      }
+      // Match the cover's physical size to the sleeve when switching styles.
+      NowArt(artwork: image, icon: image, size: style == .vinyl ? 176 : 132,
+             spinning: false, paused: false, style: style)
+    }
+    .frame(maxWidth: .infinity)
+    .frame(height: 168)
+    .mask {
+      LinearGradient(stops: [
+        .init(color: .black, location: 0),
+        .init(color: .black, location: 0.54),
+        .init(color: .black.opacity(0.92), location: 0.64),
+        .init(color: .black.opacity(0.45), location: 0.78),
+        .init(color: .clear, location: 0.90)
+      ], startPoint: .top, endPoint: .bottom)
+    }
+    .environment(\.powerSaver, true)
+    .environment(\.drawPaused, true)
+    .allowsHitTesting(false)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Artwork preview")
+    .accessibilityValue(description)
+    .accessibilityAddTraits(.isImage)
+  }
 }
 
 /// Palette extraction remains a slow leaf update, matching Vinyl Peek. Fixed

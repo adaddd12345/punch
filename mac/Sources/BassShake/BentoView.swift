@@ -81,6 +81,10 @@ struct BentoView: View {
   /// Liquid Glass tiles: the IDs that let a strip or tile morph as it comes and goes.
   @Namespace private var glassSpace
   private var s: Settings { controller.settings }
+  /// Measured time-domain plots have their own lane below the frequency plot.
+  private var waveformLaneHeight: CGFloat {
+    s.waveform && s.enabled && !s.spectrum && s.waveformStyle != .classic && !powerSaver ? 61 : 0
+  }
   /// What's Playing. Not observed here: only its own small views observe it.
   private var nowPlaying: NowPlaying { NowPlaying.shared }
   private var live: Bool { s.enabled }
@@ -243,7 +247,7 @@ struct BentoView: View {
     case LayoutSection.classicEQ.key:
       // The original EQ: grid, labels and its own faint backing.
       EQView(controller: controller)
-        .frame(height: size == .full ? 150 : 112)
+        .frame(height: (size == .full ? 150 : 112) + waveformLaneHeight)
         .opacity(live ? 1 : 0.45)
     case LayoutSection.classicMeters.key:
       MeterView(model: meters)
@@ -251,7 +255,7 @@ struct BentoView: View {
       BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
         EQView(controller: controller, chrome: false,
                filament: live ? (chrome?.accent ?? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink)) : Color.secondary)
-          .frame(height: size == .full ? 132 : 100)
+          .frame(height: (size == .full ? 132 : 100) + waveformLaneHeight)
       }
       .pointerHintTint(live ? ink(.bass) : nil)
     case LayoutSection.bentoDials.key:

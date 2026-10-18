@@ -788,6 +788,9 @@ struct Settings: Codable, Equatable {
   /// `waveform` is on.
   var spectrum = false
   var scopeColor: ScopeColor = .accent
+  /// Signal artwork and editable EQ response are independent visual choices.
+  var waveformStyle: WaveformStyle = .classic
+  var eqLineStyle: EQLineStyle = .classic
   var backgroundStyle: BackgroundStyle = .system
   /// Only Artwork Match reacts to captured Mac audio; static by default.
   var artworkBackgroundLive = false
@@ -1026,6 +1029,8 @@ struct Settings: Codable, Equatable {
     waveform = (try? c.decodeIfPresent(Bool.self, forKey: .waveform)) ?? d.waveform
     spectrum = (try? c.decodeIfPresent(Bool.self, forKey: .spectrum)) ?? d.spectrum
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
+    waveformStyle = (try? c.decodeIfPresent(WaveformStyle.self, forKey: .waveformStyle)) ?? d.waveformStyle
+    eqLineStyle = (try? c.decodeIfPresent(EQLineStyle.self, forKey: .eqLineStyle)) ?? d.eqLineStyle
     backgroundStyle = (try? c.decodeIfPresent(BackgroundStyle.self, forKey: .backgroundStyle)) ?? d.backgroundStyle
     artworkBackgroundBleed = (try? c.decodeIfPresent(Bool.self, forKey: .artworkBackgroundBleed)) ?? d.artworkBackgroundBleed
     artworkBackgroundLive = (try? c.decodeIfPresent(Bool.self, forKey: .artworkBackgroundLive)) ?? d.artworkBackgroundLive
