@@ -89,6 +89,7 @@ struct PlayerArtworkStage: View {
           EffectArtworkImage(image: artwork, size: max(width, height))
             .overlay { ArtworkFoil(size: max(width, height), radius: 0, engaged: false) }
             .frame(width: width, height: height)
+            .artworkInspectionSource()
             .clipped()
             .opacity(style == .vinyl ? 0.32 : 1)
             .mask {
@@ -159,6 +160,7 @@ private struct LandscapeArtworkStage: View {
             .offset(x: coverWidth - diameter * 0.75)
         }
         EffectArtworkImage(image: image, size: coverWidth, aspectRatio: ratio)
+          .artworkInspectionSource()
           .clipShape(shape)
           .overlay {
             ArtworkFoil(size: coverWidth, radius: 0, engaged: false)

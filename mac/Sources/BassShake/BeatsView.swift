@@ -87,6 +87,7 @@ struct BeatsView: View {
           }
         }
         if !player.drops.isEmpty { Divider() }
+        Button("Beat Inbox…") { DownloadQueueWindow.show(controller: controller) }
         Button("Open Beats Folder") { player.openFolder() }
       } label: {
         Text(player.current?.title ?? "Choose a Beat")

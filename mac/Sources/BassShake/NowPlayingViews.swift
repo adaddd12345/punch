@@ -462,6 +462,7 @@ struct NowArt: View {
       }
     }
     .frame(width: size, height: size)
+    .artworkInspectionSource()
     .contentShape(Rectangle())
     .onHover { hovering = $0 && !drawPaused && !Reshuffle.anyOn }
     .onDisappear { hovering = false }

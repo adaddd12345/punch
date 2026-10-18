@@ -146,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
   func applicationWillTerminate(_ notification: Notification) {
+    MainActor.assumeIsolated { DownloadQueue.shutdownIfLoaded() }
     // Best effort; the page's short lease also releases after an abrupt exit.
     BrowserTempo.shared.restore()
     // Release the tap so the original audio resumes immediately. If Core
@@ -728,6 +729,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
 
   /// The right-click menu: the menu-bar icon's, or the Dock tile's (no
   /// Quit/About/Updates/Login there: the Dock has its own Quit and Options).
+  @MainActor @objc private func menuBeatInbox() { DownloadQueueWindow.show(controller: controller) }
+
   private func buildMenu(forDock: Bool) -> NSMenu {
     let menu = NSMenu()
     func add(_ title: String, _ sel: Selector, on: Bool = false, key: String = "") {
@@ -738,6 +741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     add(popover.isShown ? (forDock ? "Close Controls" : "Hide The Bass Shaker")
                         : (forDock ? "Open Controls" : "Open The Bass Shaker"), #selector(menuToggle))
     menu.addItem(.separator())
+    add("Beat Inbox…", #selector(menuBeatInbox))
     add("Check & Fix Sound Issues", #selector(menuFix))
     add("On", #selector(menuEnabled), on: controller.settings.enabled)
     if controller.settings.enabled { add("Original Sound (A/B)", #selector(menuBypass), on: controller.bypassed) }

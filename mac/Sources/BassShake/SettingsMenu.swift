@@ -20,6 +20,7 @@ struct SettingsMenuContent: View {
 
   var body: some View {
     soundMenu
+    Button("Beat Inbox…") { DownloadQueueWindow.show(controller: controller) }
     Toggle("Artist Mode", isOn: bind(\.artistMode))
       .help("Show tempo controls for Beats and supported YouTube videos, with pitch preserved.")
     devicesMenu

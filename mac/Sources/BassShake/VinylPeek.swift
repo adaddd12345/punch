@@ -670,6 +670,7 @@ struct VinylPeekArt: View {
   private func sleeve(_ g: VinylGeometry, _ p: ArtPalette, dark: Bool, shape: RoundedRectangle, engaged: Bool) -> some View {
     if let artwork {
       EffectArtworkImage(image: artwork, size: g.sleeve)
+        .artworkInspectionSource()
         .clipShape(shape)
         .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
         .overlay { ArtworkFoil(size: g.sleeve, radius: g.sleeveRadius, engaged: engaged) }
