@@ -274,7 +274,7 @@ enum VinylArtCache {
     let t = min(1, max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t)
   }
 
-  /// Per-pixel, 3×3 supersampled. ~5 k pixels at the hero's size: well under a millisecond.
+  /// Per-pixel, 3×3 supersampled and cached; large heroes reuse the bitmap.
   private static func render(record: ArtRGB, label: ArtRGB, diameter: CGFloat, scale: CGFloat, dark: Bool) -> VinylImages {
     let n = max(8, Int((diameter * scale).rounded()))
     let R = Double(n) / 2
@@ -282,7 +282,7 @@ enum VinylArtCache {
     // Grooves: track gaps (lighter, soft) and a gentle tone per track.
     let gaps: [Double] = small ? [0.6, 0.8] : [0.55, 0.66, 0.77, 0.88]
     let trackTone: [Double] = [0.0, 0.035, -0.025, 0.02, -0.015]
-    let labelR = 0.4, holeR = 0.055
+    let labelR = Double(VinylLabelGeometry.diameterRatio), holeR = Double(VinylLabelGeometry.holeRatio)
     let alphaBase = dark ? 0.86 : 0.82
 
     func discSample(_ x: Double, _ y: Double) -> (ArtRGB, Double) {
@@ -290,16 +290,6 @@ enum VinylArtCache {
       let r = (dx * dx + dy * dy).squareRoot() / R
       if r > 1 || r < holeR { return (ArtRGB.black, 0) }
       let th = atan2(dy, dx)
-      if r < labelR {
-        var c = label.scaled(1 - 0.07 * (r / labelR) * (r / labelR))
-        // A printed half and ring: what shows the label turning.
-        c = c.scaled(0.955 + 0.045 * tanh(sin(th) * 5))
-        let ring = exp(-pow((r - labelR * 0.78) / 0.012, 2))
-        c = c.scaled(1 - 0.08 * ring)
-        // The label's edge sinks a touch into the vinyl.
-        c = c.scaled(1 - 0.18 * smooth(labelR - 0.025, labelR, r))
-        return (c, 1)
-      }
       var c = record
       var a = alphaBase
       // Run-out (smooth, a little clearer) and lead-in (smooth): grooves between.
@@ -343,7 +333,7 @@ enum VinylArtCache {
       w += (dark ? 0.05 : 0.08) * max(0, -dy / R) * onVinyl
       w += 0.45 * exp(-pow((r - 0.985) / 0.012, 2)) * pow(max(0, cosd), 2)
       // The label is paper: a softer, broader sheen.
-      if r < labelR { w = 0.12 * max(0, -dy / R) + 0.06 * pow(max(0, cosd), 3) }
+      if r < labelR { w = 0 }
       return min(1, w)
     }
 
@@ -403,9 +393,11 @@ enum VinylArtCache {
 // MARK: - The record (Core Animation)
 
 /// The record: shadow, turning disc, fixed sheen. The turn is a Core Animation
-/// rotation (render server, ≤ 15 fps); stopping keeps the angle it reached.
+/// rotation (render server, 15 fps small / 30 fps large); stopping keeps its angle.
 struct VinylRecord: NSViewRepresentable {
   var material: VinylMaterial = .artwork
+  var artwork: NSImage? = nil
+  @Environment(\.colorSchemeContrast) private var contrast
   let record: ArtRGB
   let label: ArtRGB
   let diameter: CGFloat
@@ -416,6 +408,7 @@ struct VinylRecord: NSViewRepresentable {
 
   func updateNSView(_ v: VinylRecordView, context: Context) {
     v.configure(material: material, record: record, label: label, diameter: diameter, dark: dark)
+    v.configureLabel(artwork: artwork, colour: label, diameter: diameter, contrast: contrast == .increased)
     v.spinning = spinning
   }
 }
@@ -425,12 +418,19 @@ final class VinylRecordView: NSView {
   static let period: CFTimeInterval = 7.5
   private let shadowLayer = CALayer()
   private let discLayer = CALayer()
+  private let labelLayer = CALayer()
+  private var labelKey = ""
+  private var labelSource: NSImage?
+  private var labelColour = ArtRGB(0.6, 0.6, 0.6)
+  private var labelDiameter: CGFloat = 0
+  private var labelContrast = false
   private let sheenLayer = CALayer()
   private var key = ""
   private var inputs: (material: VinylMaterial, record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool)?
   private var pad: CGFloat = 0
   /// The angle the disc stopped at (radians, clockwise).
   private var angle: CGFloat = 0
+  private var spinFrameRate: Float = 15
   var spinning = false { didSet { if spinning != oldValue { updateSpin() } } }
 
   override init(frame: NSRect) {
@@ -441,6 +441,8 @@ final class VinylRecordView: NSView {
       l.contentsGravity = .resize
       layer?.addSublayer(l)
     }
+    labelLayer.contentsGravity = .resize
+    discLayer.addSublayer(labelLayer)
   }
   required init?(coder: NSCoder) { fatalError() }
 
@@ -459,6 +461,36 @@ final class VinylRecordView: NSView {
     }
     inputs = (material, record, label, diameter, dark)
     render()
+  }
+
+  func configureLabel(artwork: NSImage?, colour: ArtRGB, diameter: CGFloat, contrast: Bool) {
+    labelSource = artwork; labelColour = colour; labelDiameter = diameter; labelContrast = contrast
+    updateLabel()
+    updateSpin()
+  }
+
+  private func updateLabel() {
+    let scale = window?.backingScaleFactor ?? 2
+    guard let pixels = VinylLabelGeometry.pixels(diameter: labelDiameter, scale: scale) else {
+      labelKey = ""; labelLayer.contents = nil; return
+    }
+    let source = labelDiameter * VinylLabelGeometry.diameterRatio >= VinylLabelGeometry.artworkMinimum ? labelSource : nil
+    let request = VinylLabels.key(source: source, fallback: labelColour, pixels: pixels, contrast: labelContrast)
+    guard request != labelKey else { return }
+    labelKey = request
+    CATransaction.begin(); CATransaction.setDisableActions(true)
+    // Clear a previous track immediately, then replace its matching paper fallback.
+    labelLayer.contents = VinylLabels.shared.fallback(labelColour, pixels: pixels, contrast: labelContrast)
+    labelLayer.contentsScale = scale
+    CATransaction.commit()
+    needsLayout = true
+    guard let source else { return }
+    VinylLabels.shared.image(for: source, fallback: labelColour, pixels: pixels, contrast: labelContrast) { [weak self] image in
+      guard let self, self.labelKey == request else { return }
+      CATransaction.begin(); CATransaction.setDisableActions(true)
+      if let image { self.labelLayer.contents = image }
+      CATransaction.commit()
+    }
   }
 
   private func render() {
@@ -493,23 +525,35 @@ final class VinylRecordView: NSView {
     discLayer.bounds = CGRect(origin: .zero, size: b.size)
     discLayer.position = CGPoint(x: b.midX, y: b.midY)
     sheenLayer.frame = b
+    let labelSide = b.width * VinylLabelGeometry.diameterRatio
+    labelLayer.frame = CGRect(x: (b.width - labelSide) / 2, y: (b.height - labelSide) / 2, width: labelSide, height: labelSide)
     CATransaction.commit()
   }
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     render()
+    updateLabel()
     updateSpin()
   }
 
   override func viewDidChangeBackingProperties() {
     super.viewDidChangeBackingProperties()
     render()
+    updateLabel()
   }
 
   private func updateSpin() {
     let want = spinning && window != nil
-    let running = discLayer.animation(forKey: "turn") != nil
+    var running = discLayer.animation(forKey: "turn") != nil
+    let frameRate: Float = labelSource != nil && labelDiameter >= 96 ? 30 : 15
+    if want && running && frameRate != spinFrameRate {
+      if let current = discLayer.presentation()?.value(forKeyPath: "transform.rotation.z") as? CGFloat {
+        angle = current.truncatingRemainder(dividingBy: 2 * .pi)
+      }
+      discLayer.removeAnimation(forKey: "turn")
+      running = false
+    }
     if want && !running {
       let a = CABasicAnimation(keyPath: "transform.rotation.z")
       // The layer tree is flipped (y down), so a growing angle turns clockwise.
@@ -518,8 +562,10 @@ final class VinylRecordView: NSView {
       a.duration = Self.period
       a.repeatCount = .infinity
       a.isRemovedOnCompletion = false
-      // 15 fps: the edge moves ~1 pt a frame, smooth on the soft texture, half the compositing of 30.
-      a.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: 15, preferred: 15)
+      // Sharp hero labels need a smaller angular step; tiny material textures
+      // retain their cheaper rate. The existing visibility/motion gates own spin.
+      spinFrameRate = frameRate
+      a.preferredFrameRateRange = CAFrameRateRange(minimum: 8, maximum: frameRate, preferred: frameRate)
       discLayer.add(a, forKey: "turn")
     } else if !want && running {
       if let p = discLayer.presentation()?.value(forKeyPath: "transform.rotation.z") as? CGFloat {
@@ -634,7 +680,7 @@ struct VinylPeekArt: View {
     let shape = RoundedRectangle(cornerRadius: g.sleeveRadius, style: .continuous)
     let engaged = hovering && canReveal
     VinylRevealScene(progress: engaged ? 1 : 0, geometry: g, restingCenter: center, dark: dark,
-      record: VinylRecord(material: material, record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
+      record: VinylRecord(material: material, artwork: artwork, record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
                           spinning: material == .artwork && spinning && !reduceMotion && !powerSaver && !drawPaused),
       sleeve: sleeve(g, p, dark: dark, shape: shape, engaged: engaged)
         .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(dark ? 0.35 : 0.2), radius: 2, y: 1)))

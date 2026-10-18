@@ -162,7 +162,7 @@ private struct LandscapeArtworkStage: View {
       }
       ZStack(alignment: .leading) {
         if record {
-          VinylRecord(material: material, record: palette.record(dark: scheme == .dark),
+          VinylRecord(material: material, artwork: image, record: palette.record(dark: scheme == .dark),
                       label: palette.label(dark: scheme == .dark), diameter: diameter,
                       dark: scheme == .dark, spinning: false)
             .frame(width: diameter, height: diameter)

@@ -34,7 +34,9 @@ struct DownloadArtworkTile: View {
           DispatchQueue.main.async { favicon = image }
         }
       }
-      .onChange(of: queue.artworkRevision) { _, _ in artwork = NSImage(contentsOf: queue.artworkURL(job.id)) }
+      .onChange(of: queue.artworkRevision) { _, _ in
+        if artwork == nil { artwork = NSImage(contentsOf: queue.artworkURL(job.id)) }
+      }
   }
 }
 

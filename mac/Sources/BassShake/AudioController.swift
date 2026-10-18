@@ -407,9 +407,8 @@ final class AudioController: ObservableObject {
     settings.userPresetID = p.id
     settings.editedFrom = nil
     settings.bass = p.bass
-    settings.boostDb = p.boostDb
     settings.character = p.character
-    morph(to: p.bands)
+    morph(to: p.bands, boost: p.boostDb)
   }
 
   /// Saves the current sound as a new preset and selects it.
@@ -624,6 +623,7 @@ final class AudioController: ObservableObject {
   /// land on a new pair of headphones.
   private func deviceChanged(from old: AudioObjectID) {
     guard !isMirror, settings.perDevice else { return }
+    stopMorph(keepWhereItIs: false)
     // Only on a real switch (not the first device found at launch). Only a
     // positive Boost is risky; a cut stays. Modes don't switch sounds, but
     // the Boost rule still applies in them.
@@ -707,6 +707,7 @@ final class AudioController: ObservableObject {
   /// Everything back to first-run defaults (presets included).
   func resetAllSettings() {
     guard !isMirror else { return }
+    stopMorph(keepWhereItIs: false)
     UserDefaults.standard.removeObject(forKey: Settings.key)
     settings = Settings()
   }
@@ -985,42 +986,56 @@ final class AudioController: ObservableObject {
     return d.isBluetooth || n.contains("headphone") || n.contains("airpods") || n.contains("beats")
   }
 
-  /// Preset changes glide the curve (log-frequency, dB gain, log-Q) with an
-  /// ease-out over ~350 ms; the engine follows every frame, so what you
-  /// hear morphs exactly like what you see.
-  /// Settings take the target at once (one popup render); the glide itself
-  /// is an in-flight edit (LiveEdit.swift), so only the curve redraws per frame.
-  private func morph(to target: [EQBand], duration: Double = 0.35) {
-    // A glide here would stream preview frames to the other Mac: set it once.
-    if isMirror { settings.bands = EQBand.normalized(target); return }
-    let start = shownSettings.bands   // mid-glide: from where it is now
+  /// One shared, non-bouncing glide for the response curve, points and Boost.
+  /// Seed the presentation before committing the destination so neither the
+  /// display nor the audio engine can briefly jump to the target and back.
+  private func morph(to target: [EQBand], boost: Double? = nil, duration: Double = EQPresetTransition.duration) {
+    let target = EQBand.normalized(target)
+    let targetBoost = boost ?? settings.boostDb
+    if isMirror {
+      var s = settings; s.bands = target; s.boostDb = targetBoost; settings = s
+      return
+    }
+    let start = shownSettings
     morphTimer?.invalidate()
     morphTimer = nil
-    let target = EQBand.normalized(target)
-    guard start.count == target.count else {
+    var destination = settings
+    destination.bands = target
+    destination.boostDb = targetBoost
+    guard start.bands.count == target.count,
+          !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+          duration.isFinite, duration > 0,
+          start.bands != target || start.boostDb != targetBoost else {
       morphTarget = nil
-      endPreview(Self.morphKey) { settings.bands = target }
+      endPreview(Self.morphKey) { settings = destination }
       return
     }
     morphTarget = target
-    settings.bands = target
+    preview(Self.morphKey) { $0.bands = start.bands; $0.boostDb = start.boostDb }
+    settings = destination
     let t0 = ProcessInfo.processInfo.systemUptime
     let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
       guard let self else { t.invalidate(); return }
       let p = min(1, (ProcessInfo.processInfo.systemUptime - t0) / duration)
-      let e = 1 - pow(1 - p, 3)
       if p >= 1 {
         t.invalidate()
         self.morphTimer = nil
         self.morphTarget = nil
         self.endPreview(Self.morphKey)
       } else {
-        let bands = zip(start, target).map { $0.lerp(to: $1, e) }
-        self.preview(Self.morphKey) { $0.bands = bands }
+        let frame = EQPresetTransition.frame(from: start.bands, boost: start.boostDb,
+                                             to: target, boost: targetBoost, progress: p)
+        self.preview(Self.morphKey) { $0.bands = frame.bands; $0.boostDb = frame.boost }
       }
     }
     RunLoop.main.add(timer, forMode: .common)
     morphTimer = timer
+  }
+
+  /// Direct manipulation owns the graph immediately, including Canvas drags
+  /// and Boost/Q scrubs which use LiveEdit rather than update(band:).
+  func prepareLivePreview(_ key: String) {
+    if key != Self.morphKey { stopMorph() }
   }
   private static let morphKey = "morph"
 
@@ -1031,8 +1046,12 @@ final class AudioController: ObservableObject {
     t.invalidate()
     morphTimer = nil
     morphTarget = nil
-    let now = shownSettings.bands
-    endPreview(Self.morphKey) { if keepWhereItIs { settings.bands = now } }
+    let now = shownSettings
+    endPreview(Self.morphKey) {
+      if keepWhereItIs {
+        var s = settings; s.bands = now.bands; s.boostDb = now.boostDb; settings = s
+      }
+    }
   }
 
   func select(device: OutputDevice) {

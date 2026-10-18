@@ -26,6 +26,7 @@ private struct ArtworkInspectionDesign {
 private struct ArtworkInspectionRequest: Identifiable {
   let id = UUID()
   let image: NSImage
+  let rawArtwork: NSImage
   let entry: NowEntry?
   let effect: ArtworkEffect
   let source: CGRect
@@ -164,7 +165,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
       originalContentHeight = window?.contentView?.bounds.height
       inspectionHeight = originalContentHeight
       if let window, window.styleMask.contains(.titled) { originalWindowFrame = window.frame }
-      request = ArtworkInspectionRequest(image: output, entry: entry, effect: effect, source: source, reverse: reverse,
+      request = ArtworkInspectionRequest(image: output, rawArtwork: image, entry: entry, effect: effect, source: source, reverse: reverse,
                                          reduceMotion: reduced, powerSaver: saver, design: design)
       closing = false
       registerKeyboard()
@@ -267,6 +268,7 @@ private struct ArtworkInspectionOverlay: View {
   @StateObject private var transport = ArtworkPlayerTransport()
   @State private var selection: NowEntry?
   @State private var face: NSImage
+  @State private var labelArtwork: NSImage
   @State private var reverse: NSColor
   @State private var faceToken = UUID()
   @State private var turn = 0
@@ -279,6 +281,7 @@ private struct ArtworkInspectionOverlay: View {
     self.request = request; _revealed = revealed; self.closing = closing; self.dismiss = dismiss
     _selection = State(initialValue: request.entry)
     _face = State(initialValue: request.image)
+    _labelArtwork = State(initialValue: request.rawArtwork)
     _reverse = State(initialValue: request.reverse)
   }
 
@@ -444,8 +447,8 @@ private struct ArtworkInspectionOverlay: View {
       let peek = artworkStyle == .vinyl ? height * 0.23 : 0
       ZStack {
         if artworkStyle == .vinyl {
-          let colours = ArtPalettes.shared.cached(text?.artwork ?? face) ?? .neutral
-          VinylRecord(material: vinylMaterial, record: colours.record(dark: palette.dark),
+          let colours = ArtPalettes.shared.cached(labelArtwork) ?? .neutral
+          VinylRecord(material: vinylMaterial, artwork: labelArtwork, record: colours.record(dark: palette.dark),
             label: colours.label(dark: palette.dark), diameter: height * 0.92,
             dark: palette.dark, spinning: false)
             .frame(width: height * 0.92, height: height * 0.92)
@@ -506,6 +509,7 @@ private struct ArtworkInspectionOverlay: View {
     selection = entry
     turning = false; opening = false; artHovered = false; turn = 0
     face = now.describe(entry, state: false).artwork ?? now.icon(entry.app)
+    labelArtwork = face
     transport.select(entry)
     refreshFace()
   }
@@ -519,6 +523,7 @@ private struct ArtworkInspectionOverlay: View {
                                     effect: request.effect, aspectRatio: ratio) { output in
       guard faceToken == token, !turning else { return }
       face = output ?? image
+      labelArtwork = image
       ArtworkCardPalettes.shared.palette(for: image) { result in
         guard faceToken == token, !turning, let result else { return }
         let rgb = result.surface

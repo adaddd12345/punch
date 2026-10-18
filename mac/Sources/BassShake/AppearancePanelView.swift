@@ -549,7 +549,7 @@ private struct AppearanceRecordPreview: View {
     let id = ObjectIdentifier(image)
     let palette = ArtPalettes.shared.cached(image)
       ?? (extracted?.id == id ? extracted?.palette : nil) ?? .neutral
-    VinylRecord(material: material, record: palette.record(dark: dark),
+    VinylRecord(material: material, artwork: image, record: palette.record(dark: dark),
                 label: palette.label(dark: dark), diameter: 48, dark: dark, spinning: false)
       .frame(width: 48, height: 48)
       .task(id: id) {

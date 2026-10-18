@@ -166,7 +166,7 @@ enum NativeVinylMaterials {
   }
   private static func light(_ material: VinylMaterial, x: Double, y: Double, angle: Double, radius: Double) -> Ink {
     // The paper label does not receive the acrylic/metal reflection.
-    guard radius > 0.264 else { return .clear }
+    guard radius > Double(VinylLabelGeometry.diameterRatio) else { return .clear }
     var coat: Ink = .clear
     let strength: Double
     switch material {
@@ -356,9 +356,9 @@ enum NativeVinylMaterials {
       drawGrooves(c, material: material)
       c.interpolationQuality = .high
       c.draw(grain, in: CGRect(x: 0, y: 0, width: 400, height: 400))
-      drawLabel(c, material: material)
       c.setBlendMode(.clear)
-      c.fillEllipse(in: CGRect(x: 195.4, y: 195.4, width: 9.2, height: 9.2))
+      c.fillEllipse(in: CGRect(x: 200 - 200 * VinylLabelGeometry.holeRatio, y: 200 - 200 * VinylLabelGeometry.holeRatio,
+                               width: 400 * VinylLabelGeometry.holeRatio, height: 400 * VinylLabelGeometry.holeRatio))
     }
     draw(in: &sheen, size: n) { c in
       // A quiet material edge, never a white sticker-like perimeter. The face
@@ -375,7 +375,8 @@ enum NativeVinylMaterials {
       c.setStrokeColor(edge.cg); c.setLineWidth(0.9)
       c.strokeEllipse(in: CGRect(x: 1.75, y: 1.75, width: 396.5, height: 396.5))
       c.setBlendMode(.clear)
-      c.fillEllipse(in: CGRect(x: 195.4, y: 195.4, width: 9.2, height: 9.2))
+      c.fillEllipse(in: CGRect(x: 200 - 200 * VinylLabelGeometry.holeRatio, y: 200 - 200 * VinylLabelGeometry.holeRatio,
+                               width: 400 * VinylLabelGeometry.holeRatio, height: 400 * VinylLabelGeometry.holeRatio))
     }
     let discImage = resized(image(disc, size: n), to: pixels)
     let sheenImage = resized(image(sheen, size: n), to: pixels)
@@ -394,7 +395,7 @@ enum NativeVinylMaterials {
     case .opal: strength = 0.29
     case .artwork: strength = 0.32
     }
-    for radius in stride(from: 62.0, to: 196, by: 1.65) {
+    for radius in stride(from: Double(VinylLabelGeometry.diameterRatio) * 200 + 8, to: 196, by: 1.65) {
       let silent = (radius > 99 && radius < 104) || (radius > 139 && radius < 143) || (radius > 174 && radius < 178)
       let a = (radius.truncatingRemainder(dividingBy: 5) < 2 ? 0.27 : 0.15) * (silent ? 0.55 : 1) * strength
       c.setStrokeColor(Ink(0x173a51, a).cg); c.setLineWidth(0.65)
@@ -404,34 +405,10 @@ enum NativeVinylMaterials {
       c.strokeEllipse(in: CGRect(x: 200 - r, y: 200 - r, width: 2 * r, height: 2 * r))
     }
     c.setStrokeColor(Ink(0xffffff, 0.25).cg); c.setLineWidth(0.6)
-    c.strokeEllipse(in: CGRect(x: 140, y: 140, width: 120, height: 120))
-  }
-
-  private static func drawLabel(_ c: CGContext, material: VinylMaterial) {
-    let pair: (Ink, Ink), ink: Ink, angle: Double
-    switch material {
-    case .clear: pair = (Ink(0xdfe5e9, 0xe8 / 255.0), Ink(0xc5d2d8, 0xe8 / 255.0)); ink = Ink(0x455868); angle = 135
-    case .chrome: pair = (Ink(0x68777e), Ink(0x26343d)); ink = Ink(0xf2fafb); angle = 145
-    case .pastel: pair = (Ink(0xf6e3df, 0xf2 / 255.0), Ink(0xd3e3ec, 0xed / 255.0)); ink = Ink(0x6c5865); angle = 145
-    case .space: pair = (Ink(0xb64e5c, 0xe8 / 255.0), Ink(0x63223d, 0xe8 / 255.0)); ink = Ink(0xffe4d8); angle = 135
-    case .opal: pair = (Ink(0xf3eee4), Ink(0xd9d8d0)); ink = Ink(0x66635d); angle = 145
-    case .artwork: pair = (Ink(0xd1d4d2), Ink(0x919c9b)); ink = Ink(0x354343); angle = 145
-    }
-    let box = CGRect(x: 147.2, y: 147.2, width: 105.6, height: 105.6)
-    c.saveGState(); c.addEllipse(in: box); c.clip()
-    if let gradient = CGGradient(colorsSpace: colourSpace, colors: [pair.0.cg, pair.1.cg] as CFArray, locations: [0, 1]) {
-      let a = angle * .pi / 180, dx = sin(a) * 74.67, dy = -cos(a) * 74.67
-      c.drawLinearGradient(gradient, start: CGPoint(x: 200 - dx, y: 200 - dy), end: CGPoint(x: 200 + dx, y: 200 + dy), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-    }
-    c.restoreGState()
-    c.setStrokeColor(Ink(0x172b34, 0.11).cg); c.setLineWidth(0.8); c.strokeEllipse(in: box)
-    c.setStrokeColor(ink.opacity(0.13).cg); c.setLineWidth(1)
-    c.strokeEllipse(in: box.insetBy(dx: 10.56, dy: 10.56))
-    // The centre stays a label at real size, rather than microscopic fake text.
-    c.setStrokeColor(ink.opacity(0.60).cg); c.setLineWidth(1.4)
-    c.strokeEllipse(in: CGRect(x: 189.5, y: 189.5, width: 21, height: 21))
-    c.setStrokeColor(ink.opacity(0.22).cg); c.setLineWidth(1.1)
-    c.move(to: CGPoint(x: 189, y: 226)); c.addLine(to: CGPoint(x: 211, y: 226)); c.strokePath()
+    c.strokeEllipse(in: CGRect(x: 200 - 200 * (VinylLabelGeometry.diameterRatio + 0.025),
+                              y: 200 - 200 * (VinylLabelGeometry.diameterRatio + 0.025),
+                              width: 400 * (VinylLabelGeometry.diameterRatio + 0.025),
+                              height: 400 * (VinylLabelGeometry.diameterRatio + 0.025)))
   }
 
   private static func shadow(pixels: Int, pad: Int, scale: CGFloat, dark: Bool, clear: Bool) -> CGImage {

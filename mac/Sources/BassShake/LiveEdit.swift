@@ -23,6 +23,7 @@ extension AudioController {
   /// renders and nothing is saved. Patches are absolute ("boost = 4"), so
   /// the latest one per key wins.
   func preview(_ key: String, _ patch: @escaping (inout Settings) -> Void) {
+    prepareLivePreview(key)
     if let i = previews.firstIndex(where: { $0.key == key }) {
       previews[i].patch = patch
     } else {
@@ -66,6 +67,7 @@ extension AudioController {
               preview: { [weak self] v in self?.preview(key) { $0[keyPath: path] = v } },
               commit: { [weak self] v in
                 guard let self else { return }
+                self.prepareLivePreview(key)
                 self.endPreview(key) { if self.settings[keyPath: path] != v { self.settings[keyPath: path] = v } }
               })
   }

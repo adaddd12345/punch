@@ -561,6 +561,7 @@ struct EQView: View {
             dragOrigin = nil
             return
           }
+          controller.prepareLivePreview(Self.dragKey)
           let bands = shown.bands
           dragOrigin = (bands[i], v.startLocation)
           var rest = bands
@@ -635,6 +636,7 @@ struct EQView: View {
 
   private func beginLine(_ v: DragGesture.Value) {
     commitQ()
+    controller.prepareLivePreview(Self.dragKey)
     let s = shown
     let bands = s.bands
     let low = bands.firstIndex { $0.kind == .lowShelf }, high = bands.lastIndex { $0.kind == .highShelf }
@@ -740,8 +742,9 @@ struct EQView: View {
   private func resetHovered() {
     guard let i = hovered ?? grabbed else {
       // Double-click on the line: Boost back to 0.
-      if onLine, controller.settings.boostDb != 0, !controller.isPreviewing(Self.dragKey) {
+      if onLine, shown.boostDb != 0 || controller.settings.boostDb != 0, !controller.isPreviewing(Self.dragKey) {
         controller.pushUndo()
+        controller.prepareLivePreview(Self.dragKey)
         controller.settings.boostDb = 0
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
       }
