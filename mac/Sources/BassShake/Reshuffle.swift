@@ -215,6 +215,7 @@ struct ReshuffleBlock: ViewModifier {
   let move: (Int) -> Void
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.popupChrome) private var chrome
 
   private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous) }
 
@@ -236,11 +237,15 @@ struct ReshuffleBlock: ViewModifier {
       .onDisappear { model.hover(key, false) }
       // Lifted: an opaque card, so nothing under it shows through.
       .background {
-        if lifted { shape.fill(Color(nsColor: .windowBackgroundColor)) }
+        if lifted { shape.fill(chrome?.surface ?? Color(nsColor: .windowBackgroundColor)) }
       }
       .overlay {
         if on {
-          shape.strokeBorder(Color.accentColor.opacity(lifted ? 0.9 : 0.6), lineWidth: lifted ? 1.5 : 1)
+          if lifted {
+            shape.fill((chrome?.accent ?? Color.accentColor).opacity(0.18))
+              .allowsHitTesting(false)
+          }
+          shape.strokeBorder((chrome?.accent ?? Color.accentColor).opacity(lifted ? 0.9 : 0.6), lineWidth: lifted ? 1.5 : 1)
             .allowsHitTesting(false)
             .transition(.opacity)
         }

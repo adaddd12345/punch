@@ -910,6 +910,7 @@ struct Settings: Codable, Equatable {
   var artworkEffect: ArtworkEffect = .none
   /// An optional iridescent plastic finish; separate from Halftone Dots and layout.
   var artworkFoil = false
+  var artworkPerspective = false
   /// Legacy play-button preference, retained for settings shared with older builds.
   var isoMuteButton = true
   /// What's Playing's play / pause appearance (⋯ › Look › Play Button).
@@ -1080,6 +1081,7 @@ struct Settings: Codable, Equatable {
     playerArtworkLayout = (try? c.decodeIfPresent(PlayerArtworkLayout.self, forKey: .playerArtworkLayout)) ?? d.playerArtworkLayout
     vinylMaterial = (try? c.decodeIfPresent(VinylMaterial.self, forKey: .vinylMaterial)) ?? d.vinylMaterial
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
+    artworkPerspective = (try? c.decodeIfPresent(Bool.self, forKey: .artworkPerspective)) ?? d.artworkPerspective
     artworkFoil = (try? c.decodeIfPresent(Bool.self, forKey: .artworkFoil)) ?? d.artworkFoil
     isoMuteButton = (try? c.decodeIfPresent(Bool.self, forKey: .isoMuteButton)) ?? d.isoMuteButton
     if let savedLook = try? c.decodeIfPresent(PlayButtonLook.self, forKey: .playButtonLook) {

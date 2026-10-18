@@ -80,6 +80,7 @@ private struct DownloadQueueWorkspace: View {
         .environment(\.artworkBackdropContext, .local)
         .environment(\.powerSaver, true)
         .environment(\.vinylMaterial, controller.settings.vinylMaterial)
+        .environment(\.artworkPerspective, controller.settings.artworkPerspective)
         .environment(\.appGlassEnabled, controller.settings.liquidGlass && !controller.settings.powerSaver)
     }
   }

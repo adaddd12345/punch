@@ -108,6 +108,7 @@ struct PopoverView: View {
     .environment(\.vinylMaterial, controller.settings.vinylMaterial)
     .environment(\.artworkEffect, controller.settings.artworkEffect)
     .environment(\.artworkFoil, controller.settings.artworkFoil)
+    .environment(\.artworkPerspective, controller.settings.artworkPerspective)
     .environment(\.playButtonLook, controller.settings.playButtonLook)
     .environment(\.artworkBackdropContext, controller.isMirror ? nil : .local)
     .onChange(of: menuPanel) { _, p in
@@ -165,6 +166,8 @@ struct PopoverView: View {
                      vinylMaterial: controller.settings.vinylMaterial,
                      artworkEffect: controller.settings.artworkEffect,
                      artworkFoil: controller.settings.artworkFoil,
+                     artworkPerspective: controller.settings.artworkPerspective,
+                     liquidGlass: controller.settings.liquidGlass && !controller.settings.powerSaver,
                      playButtonLook: controller.settings.playButtonLook,
                      localArtwork: !controller.isMirror)
   }

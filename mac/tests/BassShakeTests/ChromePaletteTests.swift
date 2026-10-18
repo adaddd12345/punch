@@ -29,6 +29,15 @@ struct ChromePaletteTests {
     }
   }
 
+  @Test func coverPerspectivePreservesSavedPreferenceAndDefaultsFlat() throws {
+    let missing = try JSONDecoder().decode(Settings.self, from: Data("{}".utf8))
+    #expect(!missing.artworkPerspective)
+    var saved = Settings()
+    saved.artworkPerspective = true
+    let restored = try JSONDecoder().decode(Settings.self, from: JSONEncoder().encode(saved))
+    #expect(restored.artworkPerspective)
+  }
+
   @Test func nowPlayingDefaultsOnWithoutOverwritingAnExplicitPreference() throws {
     #expect(Settings().showNowPlaying)
     let missing = try JSONDecoder().decode(Settings.self, from: Data("{}".utf8))

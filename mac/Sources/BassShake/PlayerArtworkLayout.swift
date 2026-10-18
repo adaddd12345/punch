@@ -13,7 +13,7 @@ enum PlayerArtworkLayout: String, Codable, CaseIterable, Identifiable {
     case .expanded: return "An artwork banner that fades into your controls."
     }
   }
-  static let headerHeight: CGFloat = 392
+  static let headerHeight: CGFloat = 376
 }
 
 /// Both the player and Appearance use this composition. Only the image fades;
@@ -33,8 +33,10 @@ struct PlayerArtworkHeader<Controls: View>: View {
   @ViewBuilder let controls: () -> Controls
 
   var body: some View {
-    let artHeight: CGFloat = preview ? 144 : 228
-    VStack(spacing: preview ? 8 : 12) {
+    let artHeight: CGFloat = preview ? 136 : 208
+    // Keep the sleeve close to its title; give the transport its own breathing
+    // room instead of repeating the same gap between unlike groups.
+    VStack(spacing: 0) {
       PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
                          spinning: spinning, paused: paused)
         .frame(height: artHeight + edgeInset)
@@ -42,12 +44,14 @@ struct PlayerArtworkHeader<Controls: View>: View {
         .offset(y: -edgeInset / 2)
         .frame(height: artHeight)
         .inspectableArtwork(artwork, entry: entry)
-      VStack(spacing: 4) {
+        .padding(.bottom, 6)
+      VStack(spacing: 6) {
         Text(title)
           .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),
                         weight: .bold, design: .rounded))
           .foregroundStyle(.artworkPrimary)
           .lineLimit(2)
+          .lineSpacing(-1)
           .fixedSize(horizontal: false, vertical: true)
         Text(subtitle)
           .font(.system(size: preview ? 10.5 : 12, weight: .medium))
@@ -56,11 +60,12 @@ struct PlayerArtworkHeader<Controls: View>: View {
       }
       .multilineTextAlignment(.center)
       .frame(maxWidth: .infinity)
-      .frame(height: preview ? 64 : 80)
+      .frame(height: preview ? 64 : 80, alignment: .top)
       .help([title, subtitle].filter { !$0.isEmpty }.joined(separator: " — "))
+      .padding(.bottom, preview ? 14 : 22)
       controls().frame(height: preview ? 44 : 60)
     }
-    .frame(height: preview ? 268 : PlayerArtworkLayout.headerHeight)
+    .frame(height: preview ? 264 : PlayerArtworkLayout.headerHeight)
   }
 }
 
@@ -167,9 +172,11 @@ private struct LandscapeArtworkStage: View {
               .frame(width: coverWidth, height: coverHeight).clipped().clipShape(shape)
           }
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-          .modifier(SoftShadow(on: !powerSaver, color: .black.opacity(0.2), radius: 6, y: 3))
+          .modifier(ArtworkSleeveFinish(radius: min(12, coverHeight * 0.07)))
+          .modifier(SoftShadow(on: !powerSaver, color: .black.opacity(0.15), radius: 4, y: 2))
       }
       .frame(width: coverWidth + peek, height: coverHeight, alignment: .leading)
+      .modifier(ArtworkCoverPerspective())
     }
     .frame(width: width, height: height)
     .task(id: ObjectIdentifier(image)) {

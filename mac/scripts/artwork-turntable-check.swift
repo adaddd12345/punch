@@ -47,10 +47,17 @@ struct ArtworkTurntableCheck {
     let occupied = (0..<face.pixelsWide).filter { color(face, $0, midY).alphaComponent > 0.5 }.count
     precondition(abs(CGFloat(occupied) - nominal.width) < 8, "Overscan must preserve intended artwork size")
     let back = try snapshot(.pi)
-    for x in stride(from: Int(padding + 50), through: Int(padding + nominal.width - 50), by: 55) {
-      let c = color(back, x, midY)
-      precondition(c.greenComponent > c.redComponent * 1.4, "Artwork leaked through to reverse")
-    }
+    let reverse = study.card.childNode(withName: "Soft cover reverse", recursively: false)!
+    precondition(reverse.geometry?.firstMaterial?.isDoubleSided == false)
+    let reverseImage = reverse.geometry?.firstMaterial?.diffuse.contents as! NSImage
+    precondition(reverseImage !== image && reverseImage.size == NSSize(width: 128, height: 128))
+    let backLeft = color(back, back.pixelsWide / 3, midY)
+    let backRight = color(back, back.pixelsWide * 2 / 3, midY)
+    precondition(abs(backLeft.redComponent - backRight.redComponent) > 0.1,
+                 "Reverse must retain the cover's colour gradient")
+    let center = color(back, back.pixelsWide / 2, midY)
+    precondition(center.redComponent > 0.15 && center.blueComponent > 0.15,
+                 "Blurred reverse must blend across the original hard edge")
     let edge = try snapshot(.pi / 2)
     let opaque = (0..<edge.pixelsWide).filter { color(edge, $0, midY).alphaComponent > 0.5 }.count
     precondition(opaque >= 1 && opaque <= 7, "Physical edge must be thin but nonzero")
@@ -67,7 +74,7 @@ struct ArtworkTurntableCheck {
       ArtworkTurntableFactory.fit(item.camera, imageSize: source.size, artworkSize: art, viewport: size)
       renderer.scene = item.scene; renderer.pointOfView = item.camera
       for degrees in stride(from: 0, through: 360, by: 15) {
-        item.card.eulerAngles = SCNVector3(-0.05, CGFloat(degrees) * .pi / 180, 0)
+        item.card.eulerAngles = SCNVector3(0.055, CGFloat(degrees) * .pi / 180, 0)
         let shot = renderer.snapshot(atTime: 0, with: size, antialiasingMode: .multisampling2X)
         let rep = NSBitmapImageRep(data: shot.tiffRepresentation!)!
         let w = rep.pixelsWide, h = rep.pixelsHigh
@@ -81,6 +88,6 @@ struct ArtworkTurntableCheck {
         }
       }
     }
-    print("Artwork turntable: intended size, single-sided front, solid reverse, thin edge, and 150 rotation/aspect clipping checks passed")
+    print("Artwork turntable: intended size, single-sided front, blurred cover reverse, thin edge, and 150 rotation/aspect clipping checks passed")
   }
 }

@@ -409,6 +409,7 @@ struct NowArt: View {
   @State private var hovering = false
 
   var body: some View {
+    Group {
     if (style ?? setting).resolved(for: size) == .vinyl {
       VinylPeekArt(artwork: artwork, favicon: favicon, icon: icon, size: size,
                    spinning: spinning, out: !paused)
@@ -416,6 +417,7 @@ struct NowArt: View {
     } else {
       cover
     }
+    }.modifier(ArtworkCoverPerspective())
   }
 
   private var cover: some View {
@@ -427,6 +429,7 @@ struct NowArt: View {
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
           .overlay { ArtworkFoil(size: size, radius: radius, engaged: hovering) }
+          .modifier(ArtworkSleeveFinish(radius: radius))
           .compositingGroup()
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
           .transition(.opacity)

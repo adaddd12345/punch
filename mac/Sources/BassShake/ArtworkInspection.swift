@@ -12,6 +12,17 @@ import SwiftUI
   }
 }
 
+/// Capture the source card's appearance across both hosting boundaries (the
+/// Dock window and the menu-bar popover). Environment values below a root do
+/// not flow back up into its overlay.
+private struct ArtworkInspectionDesign {
+  let style: ArtworkStyle
+  let material: VinylMaterial
+  let perspective: Bool
+  let glass: Bool
+  let chrome: PopupChromePalette?
+}
+
 private struct ArtworkInspectionRequest: Identifiable {
   let id = UUID()
   let image: NSImage
@@ -21,13 +32,14 @@ private struct ArtworkInspectionRequest: Identifiable {
   let reverse: NSColor
   let reduceMotion: Bool
   let powerSaver: Bool
+  let design: ArtworkInspectionDesign
 }
 
 private struct InspectArtworkKey: EnvironmentKey {
-  static let defaultValue: ((NSImage, CGRect, ArtworkEffect, Bool, Bool, NowEntry?) -> Void)? = nil
+  static let defaultValue: ((NSImage, CGRect, ArtworkEffect, Bool, Bool, NowEntry?, ArtworkInspectionDesign) -> Void)? = nil
 }
 private extension EnvironmentValues {
-  var inspectArtwork: ((NSImage, CGRect, ArtworkEffect, Bool, Bool, NowEntry?) -> Void)? {
+  var inspectArtwork: ((NSImage, CGRect, ArtworkEffect, Bool, Bool, NowEntry?, ArtworkInspectionDesign) -> Void)? {
     get { self[InspectArtworkKey.self] }
     set { self[InspectArtworkKey.self] = newValue }
   }
@@ -58,6 +70,11 @@ private struct InspectableArtwork: ViewModifier {
   let entry: NowEntry?
   @Environment(\.inspectArtwork) private var inspect
   @Environment(\.artworkEffect) private var effect
+  @Environment(\.artworkStyle) private var style
+  @Environment(\.vinylMaterial) private var material
+  @Environment(\.artworkPerspective) private var perspective
+  @Environment(\.appGlassEnabled) private var glass
+  @Environment(\.popupChrome) private var chrome
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
 
@@ -68,7 +85,8 @@ private struct InspectableArtwork: ViewModifier {
           Button {
             let local = anchor.map { geometry[$0] } ?? CGRect(origin: .zero, size: geometry.size)
             let origin = geometry.frame(in: .global).origin
-            inspect(image, local.offsetBy(dx: origin.x, dy: origin.y), effect, reduceMotion, powerSaver, entry)
+            inspect(image, local.offsetBy(dx: origin.x, dy: origin.y), effect, reduceMotion, powerSaver, entry,
+                    ArtworkInspectionDesign(style: style, material: material, perspective: perspective, glass: glass, chrome: chrome))
           } label: {
             Color.clear.contentShape(Rectangle())
           }
@@ -109,6 +127,11 @@ private struct ArtworkInspectionRoot: ViewModifier {
           if let request {
             ArtworkInspectionOverlay(request: request, revealed: $revealed,
                                      closing: closing, dismiss: dismiss)
+              .environment(\.artworkStyle, request.design.style)
+              .environment(\.vinylMaterial, request.design.material)
+              .environment(\.artworkPerspective, request.design.perspective)
+              .environment(\.appGlassEnabled, request.design.glass)
+              .environment(\.popupChrome, request.design.chrome)
               .id(request.id)
           }
         }
@@ -121,7 +144,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
   }
 
   private func present(_ image: NSImage, _ source: CGRect, _ effect: ArtworkEffect,
-                       _ reduced: Bool, _ saver: Bool, _ entry: NowEntry?) {
+                       _ reduced: Bool, _ saver: Bool, _ entry: NowEntry?, _ design: ArtworkInspectionDesign) {
     guard request == nil, source.width > 0, source.height > 0,
           image.size.width.isFinite, image.size.height.isFinite,
           image.size.width > 0, image.size.height > 0 else { return }
@@ -142,7 +165,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
       inspectionHeight = originalContentHeight
       if let window, window.styleMask.contains(.titled) { originalWindowFrame = window.frame }
       request = ArtworkInspectionRequest(image: output, entry: entry, effect: effect, source: source, reverse: reverse,
-                                         reduceMotion: reduced, powerSaver: saver)
+                                         reduceMotion: reduced, powerSaver: saver, design: design)
       closing = false
       registerKeyboard()
       }
@@ -161,7 +184,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
 
   private func dismiss() {
     guard let request, !closing else { return }
-    let duration = request.reduceMotion ? 0.2 : 0.42
+    let duration = request.reduceMotion ? 0.2 : 0.32
     withAnimation(.easeInOut(duration: duration)) {
       closing = true; revealed = false
       inspectionHeight = originalContentHeight
@@ -178,7 +201,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
     let available = max(240, (window?.screen?.visibleFrame.height ?? 820) - 80)
     let height = min(740, available, ceil(contentHeight + 58))
     guard abs((inspectionHeight ?? 0) - height) > 1 else { return }
-    let duration = request?.reduceMotion == true ? 0 : 0.42
+    let duration = request?.reduceMotion == true ? 0 : 0.32
     withAnimation(duration == 0 ? nil : .easeInOut(duration: duration)) { inspectionHeight = height }
     // Popovers follow SwiftUI's preferred height. The ordinary Dock window
     // needs its native viewport updated, retaining its top edge and old size.
@@ -234,6 +257,11 @@ private struct ArtworkInspectionOverlay: View {
   let closing: Bool
   let dismiss: () -> Void
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.popupChrome) private var chrome
+  @Environment(\.artworkStyle) private var artworkStyle
+  @Environment(\.vinylMaterial) private var vinylMaterial
+  @Environment(\.artworkPerspective) private var perspective
+  @Environment(\.appGlassEnabled) private var glass
   @ObservedObject private var now = NowPlaying.shared
   @ObservedObject private var stack = NowStack.shared
   @StateObject private var transport = ArtworkPlayerTransport()
@@ -266,6 +294,7 @@ private struct ArtworkInspectionOverlay: View {
   private var text: NowEntryText? { entry.map { now.describe($0, state: false) } }
   private var imageIdentity: ObjectIdentifier? { text?.artwork.map(ObjectIdentifier.init) }
   private var palette: ArtworkCardPalette {
+    if let chrome { return chrome.artwork }
     let rgb = reverse.usingColorSpace(.sRGB) ?? reverse
     return ArtworkCardPalette(color: ArtRGB(rgb.redComponent, rgb.greenComponent, rgb.blueComponent))
   }
@@ -273,7 +302,7 @@ private struct ArtworkInspectionOverlay: View {
   var body: some View {
     GeometryReader { geometry in
       let ratio = face.size.width / max(1, face.size.height)
-      let artWidth = min(300, max(1, geometry.size.width - 64), 240 * ratio)
+      let artWidth = min(300, max(1, geometry.size.width - 64), 240 * ratio) / (artworkStyle == .vinyl ? 1 + 0.23 / ratio : 1)
       VStack(spacing: 0) {
         Color.clear.frame(height: 58).accessibilityHidden(true)
         GeometryReader { _ in
@@ -281,23 +310,24 @@ private struct ArtworkInspectionOverlay: View {
             ScrollView(.vertical) {
               VStack(spacing: 18) {
                 ArtworkPlayerSources(selectedID: entry?.id, section: .playing, select: select)
-                VStack(spacing: 16) {
+                VStack(spacing: 0) {
                   artworkButton(width: artWidth, height: artWidth / ratio)
-                    .padding(.vertical, 8)
+                    .padding(.top, 8).padding(.bottom, 12)
                     .frame(maxWidth: .infinity)
                     .anchorPreference(key: ArtworkSlotKey.self, value: .bounds) { $0 }
                   VStack(spacing: 6) {
                     Text(text?.title ?? "Artwork")
                       .font(.system(size: 23, weight: .bold, design: .rounded))
-                      .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                      .lineLimit(2).lineSpacing(-1).fixedSize(horizontal: false, vertical: true)
                     if let subtitle = text?.subtitle, !subtitle.isEmpty {
                       Text(subtitle).font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary).lineLimit(2)
+                        .foregroundStyle(.artworkSecondary).lineLimit(2)
                     }
                   }
                   .multilineTextAlignment(.center)
                   .frame(maxWidth: .infinity)
                   .help(text.map { "\($0.title) — \($0.subtitle)" } ?? "Artwork preview")
+                  .padding(.bottom, 22)
                   if let entry {
                     ArtworkPlayerControls(transport: transport, entry: entry).id(entry.id)
                   }
@@ -307,7 +337,7 @@ private struct ArtworkInspectionOverlay: View {
               }
               .padding(16)
               .frame(maxWidth: 420)
-              .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+              .modifier(AppGlassSurface(radius: 24, interactive: false))
               .overlay {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
                   .strokeBorder(Color.primary.opacity(0.16), lineWidth: 1)
@@ -350,6 +380,7 @@ private struct ArtworkInspectionOverlay: View {
       .foregroundStyle(palette.ink.color)
       .environment(\.colorScheme, palette.dark ? .dark : .light)
       .environment(\.artworkCardPalette, palette)
+      .environment(\.popupChrome, chrome ?? PopupChromePalette(source: palette))
       .background {
         palette.surface.color.opacity(revealed && !closing ? (reduceTransparency ? 1 : 0.88) : 0)
       }
@@ -359,11 +390,11 @@ private struct ArtworkInspectionOverlay: View {
     .task(id: closing) {
       guard !closing else { return }
       closeFocused = true
-      withAnimation(.easeInOut(duration: request.reduceMotion ? 0.2 : 0.42)) { revealed = true }
+      withAnimation(.easeInOut(duration: request.reduceMotion ? 0.2 : 0.32)) { revealed = true }
       transport.select(entry)
       // Wait for a laid-out renderer, then make one complete turn and land on
       // the printed front. Hover repeats one full turn; click opens the source.
-      do { try await Task.sleep(for: .milliseconds(420)) } catch { return }
+      do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
       guard !closing, opening else { return }
       if request.reduceMotion { opening = false } else { turning = true; turn = 2 }
     }
@@ -389,7 +420,7 @@ private struct ArtworkInspectionOverlay: View {
       Button(action: dismiss) {
         Image(systemName: "xmark").font(.system(size: 13, weight: .semibold))
           .frame(width: 36, height: 36)
-          .background(Color.primary.opacity(0.08), in: Circle())
+          .modifier(AppGlassSurface(radius: 18))
           .contentShape(Circle())
       }
       .buttonStyle(.plain).accessibilityLabel("Close player")
@@ -410,11 +441,24 @@ private struct ArtworkInspectionOverlay: View {
         .frame(width: width * 1.5, height: width * 1.5)
         .offset(y: -18)
         .allowsHitTesting(false)
-      ArtworkTurntableScene(image: face, reverse: reverse, turn: turn, artworkSize: size,
-                            reducedMotion: request.reduceMotion, powerSaver: request.powerSaver)
-        .id(selection?.id ?? request.id.uuidString)
-        .frame(width: width + overscan * 2, height: height + overscan * 2)
-        .allowsHitTesting(false)
+      let peek = artworkStyle == .vinyl ? height * 0.23 : 0
+      ZStack {
+        if artworkStyle == .vinyl {
+          let colours = ArtPalettes.shared.cached(text?.artwork ?? face) ?? .neutral
+          VinylRecord(material: vinylMaterial, record: colours.record(dark: palette.dark),
+            label: colours.label(dark: palette.dark), diameter: height * 0.92,
+            dark: palette.dark, spinning: false)
+            .frame(width: height * 0.92, height: height * 0.92)
+            .offset(x: width / 2 - height * 0.23)
+            .modifier(ArtworkCoverPerspective())
+        }
+        ArtworkTurntableScene(image: face, reverse: reverse, turn: turn, artworkSize: size,
+                              reducedMotion: request.reduceMotion, powerSaver: request.powerSaver,
+                              perspective: perspective, glass: glass && !reduceTransparency)
+          .id(selection?.id ?? request.id.uuidString)
+          .frame(width: width + overscan * 2, height: height + overscan * 2)
+          .allowsHitTesting(false)
+      }.offset(x: -peek / 2)
     }
     .frame(width: width, height: height)
     .overlay(alignment: .topTrailing) {

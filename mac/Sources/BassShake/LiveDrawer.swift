@@ -329,6 +329,8 @@ struct DrawerRoot: View {
       .environment(\.vinylMaterial, model.appearance.vinylMaterial)
       .environment(\.artworkEffect, model.appearance.artworkEffect)
       .environment(\.artworkFoil, model.appearance.artworkFoil)
+      .environment(\.artworkPerspective, model.appearance.artworkPerspective)
+      .environment(\.appGlassEnabled, model.appearance.liquidGlass)
       .environment(\.playButtonLook, model.appearance.playButtonLook)
       .tint(Drawer.accent(model.appearance.tint, scheme))
       // The main colourway over the same native material.

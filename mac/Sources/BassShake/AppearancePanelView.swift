@@ -244,6 +244,7 @@ struct AppearancePanelView: View {
 
   private var artwork: some View {
     section("Artwork") {
+      VStack(spacing: 10) {
       HStack(spacing: 8) {
         ForEach(ArtworkStyle.allCases) { style in
           choice(style == .vinyl ? "Vinyl" : style.title,
@@ -260,6 +261,11 @@ struct AppearancePanelView: View {
           .accessibilityLabel(style.title)
           .help(style.title)
         }
+      }
+      Toggle("Cover perspective", isOn: bind(\.artworkPerspective))
+        .toggleStyle(.switch).controlSize(.small)
+        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .help("A shallow tilt shared by artwork throughout the app.")
       }
     }
   }

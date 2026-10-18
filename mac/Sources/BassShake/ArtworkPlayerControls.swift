@@ -10,11 +10,14 @@ struct ArtworkPlayerControls: View {
   var body: some View {
     VStack(spacing: 14) {
       ArtworkPlayerProgress(transport: transport)
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .modifier(AppGlassSurface(radius: 14, interactive: false))
       HStack(spacing: 28) {
         Button(action: transport.previous) {
           Image(systemName: transport.previousSystemImage)
             .font(.system(size: 22, weight: .semibold))
-            .frame(width: 44, height: 44).contentShape(Rectangle())
+            .frame(width: 44, height: 44).contentShape(Circle())
+            .modifier(AppGlassSurface(radius: 22))
         }
         .disabled(!transport.snapshot.canPrevious || transport.busy)
         .accessibilityLabel(transport.previousLabel).help(transport.previousLabel)
@@ -25,6 +28,7 @@ struct ArtworkPlayerControls: View {
             .foregroundStyle(palette?.surface.color ?? Color(nsColor: .windowBackgroundColor))
             .frame(width: 64, height: 64)
             .background(palette?.ink.color ?? Color.primary, in: Circle())
+            .modifier(AppGlassSurface(radius: 32))
             .contentShape(Circle())
         }
         .disabled(!transport.snapshot.canToggle || transport.busy)
@@ -33,21 +37,26 @@ struct ArtworkPlayerControls: View {
         Button(action: transport.next) {
           Image(systemName: transport.nextSystemImage)
             .font(.system(size: 22, weight: .semibold))
-            .frame(width: 44, height: 44).contentShape(Rectangle())
+            .frame(width: 44, height: 44).contentShape(Circle())
+            .modifier(AppGlassSurface(radius: 22))
         }
         .disabled(!transport.snapshot.canNext || transport.busy)
         .accessibilityLabel(transport.nextLabel).help(transport.nextLabel)
       }
       .buttonStyle(.plain)
       .frame(maxWidth: .infinity)
+      .padding(.vertical, 10)
+      .modifier(AppGlassSurface(radius: 22, interactive: false))
       if let message = transport.message {
         VStack(spacing: 7) {
           Text(message)
             .font(.system(size: 11, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary).multilineTextAlignment(.center)
+            .foregroundStyle(.artworkSecondary).multilineTextAlignment(.center)
           Button("Open \(entry.app.name)") { NowStack.focus(entry, model: .shared) }
             .buttonStyle(.plain)
             .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .modifier(AppGlassSurface(radius: 12))
         }
         .frame(maxWidth: .infinity)
       }
@@ -108,7 +117,7 @@ struct ArtworkPlayerProgress: View {
           Text(sample.duration > 0 ? "−" + Self.time(max(0, sample.duration - position)) : "—:—")
         }
         .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.artworkSecondary)
         .accessibilityHidden(true)
       }
     }

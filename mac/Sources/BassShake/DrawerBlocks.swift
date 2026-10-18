@@ -11,6 +11,8 @@ struct DrawerAppearance: Equatable {
   var vinylMaterial: VinylMaterial = .artwork
   var artworkEffect: ArtworkEffect = .none
   var artworkFoil = false
+  var artworkPerspective = false
+  var liquidGlass = false
   var playButtonLook: PlayButtonLook = .prism
   var localArtwork = true
 }

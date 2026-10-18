@@ -1,5 +1,6 @@
 import AppKit
 import SceneKit
+import CoreImage
 import SwiftUI
 
 /// A finite, native material study. There is no display-link work while resting.
@@ -10,17 +11,19 @@ struct ArtworkTurntableScene: NSViewRepresentable {
   let artworkSize: CGSize
   let reducedMotion: Bool
   let powerSaver: Bool
+  var perspective = false
+  var glass = false
 
   func makeNSView(context: Context) -> ArtworkTurntableView {
     let view = ArtworkTurntableView(frame: .zero)
     view.configure(image: image, reverse: reverse, turn: turn,
-                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize)
+                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize, perspective: perspective, glass: glass)
     return view
   }
 
   func updateNSView(_ view: ArtworkTurntableView, context: Context) {
     view.configure(image: image, reverse: reverse, turn: turn,
-                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize)
+                   reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize, perspective: perspective, glass: glass)
   }
 
   static func dismantleNSView(_ view: ArtworkTurntableView, coordinator: ()) {
@@ -32,9 +35,9 @@ struct ArtworkTurntableScene: NSViewRepresentable {
 /// Kept separate so front, edge-on and reverse can be rendered deterministically.
 enum ArtworkTurntableFactory {
   static let width: CGFloat = 2.4
-  static let depth: CGFloat = 0.009
-  static let turnDuration: TimeInterval = 0.7
-  static let openingDuration: TimeInterval = 1.15
+  static let depth: CGFloat = 0.003
+  static let turnDuration: TimeInterval = 0.52
+  static let openingDuration: TimeInterval = 0.86
 
   static func overscan(for size: CGSize) -> CGFloat { max(24, max(size.width, size.height) * 0.12) }
 
@@ -58,7 +61,28 @@ enum ArtworkTurntableFactory {
     let camera: SCNNode
   }
 
-  static func make(image: NSImage, reverse: NSColor) -> Study {
+  private static let imageContext = CIContext(options: [.cacheIntermediates: false])
+  /// Collapse detail before the blur. The reverse carries the cover's colour
+  /// flow without readable text or a mirrored second print.
+  static func reverseImage(_ image: NSImage, tint: NSColor) -> NSImage {
+    let small = NSImage(size: NSSize(width: 64, height: 64))
+    small.lockFocus()
+    image.draw(in: NSRect(x: 0, y: 0, width: 64, height: 64))
+    small.unlockFocus()
+    guard let cg = small.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return small }
+    let source = CIImage(cgImage: cg)
+    let blurred = source.clampedToExtent().applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 18])
+      .cropped(to: source.extent)
+    guard let output = imageContext.createCGImage(blurred, from: source.extent) else { return small }
+    let result = NSImage(cgImage: output, size: NSSize(width: 128, height: 128))
+    result.lockFocus()
+    NSGradient(starting: tint.withAlphaComponent(0.08), ending: tint.withAlphaComponent(0.48))?
+      .draw(in: NSRect(x: 0, y: 0, width: 128, height: 128), angle: -65)
+    result.unlockFocus()
+    return result
+  }
+
+  static func make(image: NSImage, reverse: NSColor, glass: Bool = false) -> Study {
     let scene = SCNScene()
     scene.background.contents = NSColor.clear
     let ratio = image.size.width.isFinite && image.size.height.isFinite && image.size.height > 0
@@ -71,10 +95,10 @@ enum ArtworkTurntableFactory {
     // AppKit's point-scale default is too coarse for this metre-scale mesh.
     outline.flatness = 0.001
     let body = SCNShape(path: outline, extrusionDepth: depth)
-    body.chamferRadius = 0.0035
+    body.chamferRadius = 0.0009
     body.chamferMode = .both
     let pigment = SCNMaterial()
-    pigment.name = "Solid reverse and curved edge"
+    pigment.name = "Thin sleeve edge"
     pigment.diffuse.contents = reverse
     pigment.lightingModel = .physicallyBased
     pigment.roughness.contents = 0.65
@@ -98,14 +122,28 @@ enum ArtworkTurntableFactory {
     print.diffuse.mipFilter = .linear
     print.lightingModel = .phong
     print.ambient.contents = NSColor.white
-    print.specular.contents = NSColor(white: 0.12, alpha: 1)
-    print.shininess = 70
+    print.specular.contents = NSColor(white: glass ? 0.38 : 0.08, alpha: 1)
+    print.shininess = glass ? 110 : 45
     print.isDoubleSided = false
     face.materials = [print]
     let front = SCNNode(geometry: face)
     front.name = "Printed front"
     front.position.z = depth / 2 + 0.0005
     card.addChildNode(front)
+
+    let backPlane = SCNPlane(width: width - inset * 2, height: height - inset * 2)
+    backPlane.cornerRadius = max(0, radius - inset)
+    let backMaterial = SCNMaterial()
+    backMaterial.name = "Blurred cover gradient"
+    backMaterial.diffuse.contents = reverseImage(image, tint: reverse)
+    backMaterial.lightingModel = .constant
+    backMaterial.isDoubleSided = false
+    backPlane.materials = [backMaterial]
+    let back = SCNNode(geometry: backPlane)
+    back.name = "Soft cover reverse"
+    back.position.z = -depth / 2 - 0.0005
+    back.eulerAngles.y = .pi
+    card.addChildNode(back)
 
     let camera = SCNNode()
     let lens = SCNCamera()
@@ -141,6 +179,8 @@ enum ArtworkTurntableFactory {
 final class ArtworkTurntableView: SCNView {
   private var source: NSImage?
   private var pigment: NSColor?
+  private var glass = false
+  private var perspective = false
   private var card: SCNNode?
   private var turn: Int?
   private var generation = 0
@@ -165,7 +205,7 @@ final class ArtworkTurntableView: SCNView {
   }
 
   func configure(image: NSImage, reverse: NSColor, turn requestedTurn: Int,
-                 reducedMotion: Bool, powerSaver: Bool, artworkSize: CGSize) {
+                 reducedMotion: Bool, powerSaver: Bool, artworkSize: CGSize, perspective: Bool = false, glass: Bool = false) {
     self.artworkSize = artworkSize
     backgroundColor = .clear
     allowsCameraControl = false
@@ -173,9 +213,10 @@ final class ArtworkTurntableView: SCNView {
     rendersContinuously = false
     preferredFramesPerSecond = powerSaver ? 30 : 60
     antialiasingMode = powerSaver ? .multisampling2X : .multisampling4X
-    if source !== image || pigment != reverse || card == nil {
+    if source !== image || pigment != reverse || card == nil || self.glass != glass || self.perspective != perspective {
+      self.glass = glass; self.perspective = perspective
       stop()
-      let study = ArtworkTurntableFactory.make(image: image, reverse: reverse)
+      let study = ArtworkTurntableFactory.make(image: image, reverse: reverse, glass: glass)
       scene = study.scene
       pointOfView = study.camera
       projectionViewport = .zero
@@ -183,7 +224,7 @@ final class ArtworkTurntableView: SCNView {
       source = image
       pigment = reverse
       turn = requestedTurn
-      study.card.eulerAngles.y = CGFloat(requestedTurn) * .pi
+      study.card.eulerAngles = SCNVector3(perspective ? CGFloat.pi / 60 : 0, CGFloat(requestedTurn) * .pi + (perspective ? -CGFloat.pi * 7 / 180 : 0), 0)
       updateProjection()
       return
     }
@@ -193,17 +234,19 @@ final class ArtworkTurntableView: SCNView {
     turn = requestedTurn
     generation += 1
     let currentGeneration = generation
+    let restPitch: CGFloat = perspective ? .pi / 60 : 0
+    let restYaw: CGFloat = perspective ? -.pi * 7 / 180 : 0
     let start = card.action(forKey: "turn") == nil
-      ? SCNVector3(0, CGFloat(previousTurn) * .pi, 0) : card.presentation.eulerAngles
+      ? SCNVector3(restPitch, CGFloat(previousTurn) * .pi + restYaw, 0) : card.presentation.eulerAngles
     card.removeAllActions()
     card.eulerAngles = start
-    let target = CGFloat(requestedTurn) * CGFloat.pi
+    let target = CGFloat(requestedTurn) * CGFloat.pi + restYaw
     let duration = abs(requestedTurn - previousTurn) == 2 ? ArtworkTurntableFactory.openingDuration : ArtworkTurntableFactory.turnDuration
     let action: SCNAction
     if reducedMotion {
       action = .sequence([
         .fadeOut(duration: 0.1),
-        .run { node in node.eulerAngles = SCNVector3(0, target, 0) },
+        .run { node in node.eulerAngles = SCNVector3(restPitch, target, 0) },
         .fadeIn(duration: 0.1)
       ])
     } else {
@@ -212,7 +255,7 @@ final class ArtworkTurntableView: SCNView {
         let t = min(1, max(0, Double(elapsed) / duration))
         let eased = t * t * t * (10 + t * (-15 + 6 * t))
         // A quiet pitch reveals the thin edge; the centre never wanders.
-        let pitch = CGFloat(Double(start.x) * (1 - eased) + sin(t * .pi) * -0.05)
+        let pitch = CGFloat(Double(start.x) * (1 - eased) + Double(restPitch) * eased + sin(t * .pi) * -0.018)
         let yaw = start.y + (target - start.y) * CGFloat(eased)
         let roll = CGFloat(Double(start.z) * (1 - eased))
         node.eulerAngles = SCNVector3(pitch, yaw, roll)
@@ -222,7 +265,7 @@ final class ArtworkTurntableView: SCNView {
     card.runAction(action, forKey: "turn") { [weak self] in
       DispatchQueue.main.async {
         guard let self, self.generation == currentGeneration else { return }
-        self.card?.eulerAngles = SCNVector3(0, target, 0)
+        self.card?.eulerAngles = SCNVector3(restPitch, target, 0)
         self.card?.opacity = 1
         self.isPlaying = false
         self.needsDisplay = true

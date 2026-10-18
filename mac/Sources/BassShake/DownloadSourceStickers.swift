@@ -104,13 +104,24 @@ struct DownloadSourceSticker: View {
 }
 
 struct DownloadSourceStickerRow: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var hovered: DownloadStickerBrand?
   var body: some View {
-    HStack(spacing: 15) {
+    HStack(spacing: -8) {
       ForEach(DownloadStickerBrand.allCases) { brand in
-        DownloadSourceSticker(brand: brand)
+        DownloadSourceSticker(brand: brand, size: 44, tilted: hovered != brand)
+          .scaleEffect(hovered == brand && !reduceMotion ? 1.06 : 1)
+          .offset(y: hovered == brand && !reduceMotion ? -6 : 0)
+          .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.8), value: hovered)
+          .frame(width: 44, height: 44)
+          .contentShape(Rectangle())
+          .onHover { inside in
+            if inside { hovered = brand } else if hovered == brand { hovered = nil }
+          }
+          .zIndex(hovered == brand ? 10 : 0)
           .help("\(brand.title) media links via yt-dlp. Public, non-live audio and video; availability varies.")
       }
-    }.frame(maxWidth: .infinity).padding(.vertical, 10)
+    }.frame(maxWidth: .infinity).padding(.top, 16).padding(.bottom, 10)
       .accessibilityElement(children: .combine)
       .accessibilityLabel("Audio sources supported by yt-dlp: YouTube, SoundCloud, X, Bandcamp, Vimeo and TikTok. Availability varies by link.")
   }
