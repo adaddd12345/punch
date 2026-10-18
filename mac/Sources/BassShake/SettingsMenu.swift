@@ -146,7 +146,7 @@ struct SettingsMenuContent: View {
       // Reduce Transparency keep the classic frosted tiles.
       if #available(macOS 26, *) {
         Toggle("Liquid Glass", isOn: bind(\.liquidGlass))
-          .disabled(!controller.settings.bento || controller.settings.powerSaver
+          .disabled(controller.settings.powerSaver
                     || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
       }
       Divider()

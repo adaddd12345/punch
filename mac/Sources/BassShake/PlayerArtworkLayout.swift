@@ -200,6 +200,7 @@ struct NowPlayingArtworkHeader: View {
     let text = model.describe(entry)
     let notice = model.notice
     let loading = stack.isLoading(entry) && notice == nil
+    VStack(spacing: 8) {
     PlayerArtworkHeader(layout: layout, artwork: text.artwork, favicon: text.favicon,
                         icon: model.icon(app), title: loading ? "Loading \(app.name)…" : text.title,
                         subtitle: notice?.text ?? text.subtitle,
@@ -208,6 +209,33 @@ struct NowPlayingArtworkHeader: View {
                         preview: preview, entry: entry) {
       ArtworkHeroControls(model: model, entry: entry, preview: preview)
     }
+    if !preview { HeaderPlaybackScrubber(entry: entry) }
+    }
     .environment(\.drawPaused, inheritedPause || preview)
+  }
+}
+
+/// The same native slider and source-checked seeking as the expanded player.
+/// No pretend timeline for sources that don't expose duration/seeking.
+private struct HeaderPlaybackScrubber: View {
+  let entry: NowEntry
+  @StateObject private var transport = ArtworkPlayerTransport()
+  @Environment(\.drawPaused) private var paused
+
+  var body: some View {
+    Group {
+      if transport.snapshot.canSeek && transport.snapshot.duration > 0 {
+        ArtworkPlayerProgress(transport: transport)
+          .padding(.horizontal, 12).padding(.bottom, 4)
+      }
+    }
+    .onAppear { if !paused { transport.select(entry) } }
+    .onChange(of: entry.id) { _, _ in if !paused { transport.select(entry) } }
+    .onChange(of: entry.item?.url) { _, _ in if !paused { transport.select(entry) } }
+    .onChange(of: entry.app.pid) { _, _ in if !paused { transport.select(entry) } }
+    .onChange(of: paused) { _, value in
+      if value { transport.stop() } else { transport.select(entry) }
+    }
+    .onDisappear { transport.stop() }
   }
 }

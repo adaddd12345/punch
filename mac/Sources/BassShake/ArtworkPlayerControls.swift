@@ -55,7 +55,7 @@ struct ArtworkPlayerControls: View {
   }
 }
 
-private struct ArtworkPlayerProgress: View {
+struct ArtworkPlayerProgress: View {
   @ObservedObject var transport: ArtworkPlayerTransport
   @Environment(\.drawPaused) private var drawPaused
   @State private var editing = false

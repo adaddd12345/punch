@@ -98,6 +98,7 @@ struct PopoverView: View {
         controls
       }
     }
+    .environment(\.appGlassEnabled, controller.settings.liquidGlass && !controller.settings.powerSaver)
     .artworkInspectionRoot(enabled: role != .launchWindow)
     // Above both the classic stack and Bento (and the pinned popover).
     .pointerHintRoot(enabled: controller.settings.pointerHints)
@@ -207,18 +208,13 @@ struct PopoverView: View {
       .animation(.easeOut(duration: 0.25), value: slowStart)
   }
 
-  /// Muted apps What's Playing doesn't already show (muted, with its unmute).
+  /// Persistent recovery, independent of player size and artwork visibility.
   @ViewBuilder private var mutedNotice: some View {
     if !controller.isMirror { localMutedNotice }
   }
 
   private var localMutedNotice: some View {
-    let s = controller.settings
-    let mini = size == .mini
-    return MutedNotice(live: controller.live,
-                       heroShown: mini ? s.showPlayingChannel : s.showNowPlaying,
-                       tilesShown: !mini && s.showNowPlaying
-                         && s.shows(s.bento ? .bentoNowPlaying : .classicNowPlaying))
+    MutedNotice(live: controller.live)
   }
 
   private var controlStack: some View {
@@ -1023,8 +1019,7 @@ struct PopoverView: View {
   /// on, not Power Saver / Reduce Transparency), else the tiles' fill or Classic's.
   private var footerSurface: FooterSurface {
     let s = controller.settings
-    guard s.bento else { return .flat }
-    guard #available(macOS 26, *), s.liquidGlass, !s.powerSaver, !reduceTransparency else { return .bento }
+    guard #available(macOS 26, *), s.liquidGlass, !s.powerSaver, !reduceTransparency, contrast != .increased else { return s.bento ? .bento : .flat }
     return .glass
   }
 

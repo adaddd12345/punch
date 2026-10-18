@@ -119,7 +119,9 @@ private struct FooterShelfFill: View {
   var body: some View {
     let dark = scheme == .dark
     let more = contrast == .increased ? 1.6 : 1
-    if let chrome {
+    if surface == .glass {
+      Color.clear
+    } else if let chrome {
       Capsule().fill(chrome.surface)
         .overlay { Capsule().strokeBorder(chrome.ink.opacity(contrast == .increased ? 0.34 : 0.14), lineWidth: 0.5) }
     } else { switch surface {
@@ -147,7 +149,7 @@ private struct FooterShelfGlass: ViewModifier {
   let on: Bool
   @Environment(\.colorScheme) private var scheme
   func body(content: Content) -> some View {
-    if #available(macOS 26, *), on, chrome == nil {
+    if #available(macOS 26, *), on {
       content.glassEffect(.regular.tint(Color.black.opacity(scheme == .dark ? 0.16 : 0.04)), in: Capsule())
     } else {
       content

@@ -108,7 +108,7 @@ struct PlayingChannelMini<Chip: View>: View {
     let hint = locked
       ? PointerHint(app.name, does: "Pausing needs Accessibility; this opens \(app.name) instead.")
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
-                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
+                        chosen: model.muteIsChoice(app), fallback: fallback,
                         browser: app.isBrowser)
     // A locked key route opens the app, never the Accessibility screen from Mini
     // (an app with undecided Automation may still get macOS's Automation prompt).

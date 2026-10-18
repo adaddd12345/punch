@@ -113,7 +113,9 @@ import SwiftUI
           .background(.primary.opacity(0.07), in: Circle())
       }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .accessibilityLabel("Inbox options")
-    }.padding(.horizontal, 14).padding(.vertical, 10)
+    }.padding(.horizontal, 14).padding(.vertical, 8)
+      .modifier(AppGlassSurface(radius: 18, interactive: false))
+      .padding(.horizontal, 12).padding(.vertical, 8)
   }
 
   private var composer: some View {
@@ -461,7 +463,7 @@ private struct InboxSecondaryStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label.font(.system(size: 12, weight: .semibold, design: .rounded))
       .padding(.horizontal, 13).padding(.vertical, 9)
-      .background(.primary.opacity(configuration.isPressed ? 0.12 : 0.065), in: Capsule())
+      .modifier(AppGlassSurface(radius: 24, selected: configuration.isPressed))
       .contentShape(Capsule())
   }
 }
@@ -470,7 +472,7 @@ private struct InboxIconStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label.font(.system(size: 12, weight: .semibold))
       .frame(width: 30, height: 30)
-      .background(.primary.opacity(configuration.isPressed ? 0.12 : 0.055), in: Circle())
+      .modifier(AppGlassSurface(radius: 15, selected: configuration.isPressed))
       .contentShape(Circle())
   }
 }

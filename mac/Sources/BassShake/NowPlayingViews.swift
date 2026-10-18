@@ -223,7 +223,7 @@ private struct PrimaryButton: View {
     let hint = locked
       ? Caption.locked(app.name, playing: playing)
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
-                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
+                        chosen: model.muteIsChoice(app), fallback: fallback,
                         browser: app.isBrowser)
     let button = Button { model.primary(app) } label: {
       Group {
@@ -648,24 +648,21 @@ extension Caption {
 
   /// The big button. Script route: none (play/pause is obvious there).
   static func primary(_ name: String, route: NowPlaying.Route, playing: Bool, muted: Bool,
-                      chosen: Bool, ignored: Bool, fallback: Bool, browser: Bool = false) -> PointerHint {
+                      chosen: Bool, fallback: Bool, browser: Bool = false) -> PointerHint {
     // A browser's mute is every tab (one audio process for all of them).
     let word = (muted ? "Unmute" : "Mute") + (browser ? " \(name) (all tabs)" : "")
     if fallback {
-      return PointerHint(word, does: "Muted because the pause key didn't reach \(name).")
+      return PointerHint(word, does: "Restores sound for \(name).")
     }
     switch route {
     case .script:
       return PointerHint("")
     case .key:
       return PointerHint(playing ? "Pause" : "Play",
-                         does: "Uses your Mac's play/pause key; mutes instead if \(name) ignores it.")
+                         does: "Uses your Mac’s play/pause key. Sound is never muted automatically.")
     case .mute:
       if chosen {
         return PointerHint(word, does: "Pausing is off; turn it on in ⋯ › Presets & Settings.")
-      }
-      if ignored {
-        return PointerHint(word, does: "\(name) didn't pause with the key, so this mutes it.")
       }
       return PointerHint(word, does: "\(name) has no pause key, so this mutes it.")
     }
@@ -681,7 +678,7 @@ extension Caption {
 
   /// The headline while its note offers Accessibility (a few seconds).
   static func noticeSettings(_ name: String) -> PointerHint {
-    PointerHint("Allow Accessibility", does: "Then the play button pauses \(name) instead of muting it.")
+    PointerHint("Allow Accessibility", does: "Allows the play button to control \(name).")
   }
 
   static let noteTurnOff = PointerHint("Turn Off", does: "Hides What's Playing only; The Bass Shaker stays on.")

@@ -174,8 +174,6 @@ final class NowPlaying: ObservableObject {
   @Published private(set) var audible: Set<String> = []
   /// Apps the media key paused, by when (cleared when they sound again).
   @Published private(set) var pausedByUs: [String: TimeInterval] = [:]
-  /// Apps we muted because the key didn't pause them (their big button unmutes).
-  @Published private(set) var mutedByUs: Set<String> = []
   /// One line under the controls (a key that missed); clears after 4 s.
   @Published private(set) var notice: (id: String, text: String, settings: Bool)?
   /// The Mac lets us post the media key (Accessibility). Checked off main on
@@ -260,8 +258,6 @@ final class NowPlaying: ObservableObject {
   /// Last time each app was really sounding (not just the meter's release tail).
   private var lastLoud: [String: TimeInterval] = [:]
   private var lastLevel: [String: Double] = [:]
-  /// Apps the key missed this session (memory only): they get mute.
-  private var keyless: Set<String> = []
   private var noticeAt: TimeInterval = 0
   /// An access check is on `checkQueue`.
   private var accessChecking = false
@@ -353,9 +349,6 @@ final class NowPlaying: ObservableObject {
         DispatchQueue.main.async {
           guard let self else { return }
           if self.muted != m { self.muted = m }
-          // Unmuted elsewhere (Live Channels): no longer our fallback mute.
-          let ours = self.mutedByUs.intersection(m)
-          if ours != self.mutedByUs { self.mutedByUs = ours }
         }
       }
       .store(in: &cancellables)
@@ -390,14 +383,11 @@ final class NowPlaying: ObservableObject {
   func isMuted(_ id: String) -> Bool { muted.contains(id) }
   /// Mutes just this app (the same per-app mute as Live Channels).
   func toggleMute(_ app: NowApp) {
-    mutedByUs.remove(app.id)
     guard let live = controller?.live else { return }
     live.setMuted(!live.muted.contains(app.id), id: app.id)
   }
-  /// The key missed and we muted it: the big button unmutes.
-  func showsUnmute(_ app: NowApp) -> Bool { mutedByUs.contains(app.id) && muted.contains(app.id) }
-  /// The key reached nobody for this app this session (it has a pause key in general).
-  func ignoredKey(_ app: NowApp) -> Bool { keyless.contains(app.id) }
+  /// Any per-app mute has an explicit recovery action, regardless of its origin.
+  func showsUnmute(_ app: NowApp) -> Bool { muted.contains(app.id) }
 
   /// System voices and helpers (VoiceOver, Spoken Content, Accessibility
   /// Services, Siri, alerts) aren't "what's playing": they never lead or get a
@@ -859,7 +849,7 @@ final class NowPlaying: ObservableObject {
 
   func route(_ app: NowApp) -> Route {
     if let p = app.player, tracks[p.rawValue] != nil, !denied.contains(p.rawValue) { return .script }
-    if MediaKeys.honours(app.bundleID), !keyless.contains(app.id), pauseRoute != .mute { return .key }
+    if MediaKeys.honours(app.bundleID), pauseRoute != .mute { return .key }
     return .mute
   }
 
@@ -871,7 +861,7 @@ final class NowPlaying: ObservableObject {
 
   /// Mute route because the user turned pausing off (not because the app has no key).
   func muteIsChoice(_ app: NowApp) -> Bool {
-    pauseRoute == .mute && MediaKeys.honours(app.bundleID) && !keyless.contains(app.id)
+    pauseRoute == .mute && MediaKeys.honours(app.bundleID)
   }
 
   func isPlaying(_ app: NowApp) -> Bool {
@@ -886,18 +876,18 @@ final class NowPlaying: ObservableObject {
   /// Undecided Automation: the click also raises macOS's prompt again (off main).
   /// Locked (its click opens Accessibility): no Automation prompt too, one screen per click.
   func primary(_ app: NowApp) {
-    if !locked(app) { askOnClick(app.bundleID) }
+    if !showsUnmute(app) && !locked(app) { askOnClick(app.bundleID) }
     primaryAction(app)
   }
 
   private func primaryAction(_ app: NowApp) {
+    if showsUnmute(app) { toggleMute(app); return }
     switch route(app) {
     case .script:
       playPause(app)
     case .mute:
       toggleMute(app)
     case .key:
-      if showsUnmute(app) { toggleMute(app); return }
       if !keysAllowed { unlock(); return }
       // Pause or play is decided from fresh levels (at most ~1 s after opening,
       // or after the meter starts under Power Saver).
@@ -967,25 +957,22 @@ final class NowPlaying: ObservableObject {
       }
       if other { MediaKeys.post(MediaKeys.play) }
       pausedByUs[p.id] = nil
-      if !muted.contains(p.id) {
-        mutedByUs.insert(p.id)
-        controller?.live.setMuted(true, id: p.id)
-      }
+      // A missed or ambiguous pause must never change the audio mute state.
+      // Keep the same playback action available; the user can retry or open the source.
       // A missed key (once per click): checked here, so the note below is right.
       if !MediaKeys.trusted { preflightStale = true }
       let ok = Self.accessOK(stale: preflightStale)
       if ok != keysAllowed { keysAllowed = ok }
       if !keysAllowed {
-        show(p.id, "\(name) muted. Allow Accessibility to pause ›", settings: true, now: now)
+        show(p.id, "Allow Accessibility to pause \(name) ›", settings: true, now: now)
       } else if !MediaKeys.postGranted {
         // Allowed in System Settings, but this run may not post until relaunch: keep the key route.
-        show(p.id, "\(name) muted. Reopen The Bass Shaker to finish.",
+        show(p.id, "Couldn’t pause \(name). Reopen The Bass Shaker to finish.",
              settings: false, now: now)
       } else {
-        keyless.insert(p.id)
         // A key nobody owns can launch Music.
         let music = !musicWasRunning && known[p.id]?.bundleID != NowPlayer.music.rawValue
-        show(p.id, "\(name) didn't pause, so it's muted." + (music ? " Music may have opened." : ""),
+        show(p.id, "Couldn’t confirm pause for \(name). Open it to check playback." + (music ? " Music may have opened." : ""),
              settings: false, now: now)
       }
     case .play:

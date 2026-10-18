@@ -94,8 +94,8 @@ struct BentoView: View {
   /// Liquid Glass tiles (macOS 26+, ⋯ › Look). Power Saver and Reduce
   /// Transparency keep the classic frosted fill.
   private var glass: Bool {
-    guard #available(macOS 26, *), !flat else { return false }
-    return s.liquidGlass && !powerSaver && !reduceTransparency
+    guard #available(macOS 26, *) else { return false }
+    return s.liquidGlass && !powerSaver && !reduceTransparency && contrast != .increased
   }
 
   /// The hero's glass, off while it's the block being dragged (like every
@@ -1804,20 +1804,21 @@ struct BentoTile<Content: View>: View {
     content()
       .padding(padding)
       .frame(maxWidth: .infinity, alignment: .leading)
-      .modifier(BentoHoverSurface(radius: r, enabled: hoverResponse && !flat))
+      .modifier(BentoHoverSurface(radius: r, enabled: hoverResponse && !flat && glass == nil))
       .background {
-        if let chrome {
+        if glass != nil {
+          RoundedRectangle(cornerRadius: r, style: .continuous)
+            .fill((chrome?.accent ?? tint.pastel).opacity(look == .lit ? 0.16 : 0.025))
+        } else if let chrome {
           PopupChromeFill(palette: chrome, look: look, radius: r)
         } else if flat {
           BentoFlatFill(tint: tint, look: look, radius: r)
-        } else if glass != nil {
-          BentoGlassWash(tint: tint, look: look, radius: r)
         } else {
           BentoFill(tint: tint, look: look, radius: r)
         }
       }
       .modifier(BentoClip(on: clipped, radius: r))
-      .modifier(BentoGlassSurface(on: glass != nil && !flat, radius: r, interactive: interactive,
+      .modifier(BentoGlassSurface(on: glass != nil, radius: r, interactive: interactive,
                                   clear: look == .outline, id: glassID, space: glassSpace))
   }
 }
@@ -1941,9 +1942,7 @@ struct BentoGlassContainer: ViewModifier {
   }
 }
 
-/// The system glass behind a tile. Never tinted: glass tints turn grey when
-/// the window isn't key (the pinned popover, the drawer panels), so our own
-/// wash, drawn inside the shape, carries the colour.
+/// The system glass behind a tile, with a restrained tint from the app theme.
 struct BentoGlassSurface: ViewModifier {
   @Environment(\.popupChrome) private var chrome
   let on: Bool
@@ -1953,15 +1952,15 @@ struct BentoGlassSurface: ViewModifier {
   var clear = false
   var id: String? = nil
   var space: Namespace.ID? = nil
-  @Environment(\.bentoHoverEnabled) private var quietHover
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   /// Off is Glass.identity, not a different view tree: only #available and
   /// the per-tile id branch, so toggling glass keeps the content's state.
   func body(content: Content) -> some View {
     if #available(macOS 26, *) {
       let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-      // Main Bento supplies its quiet wash; don't layer a system lift over it.
-      let glass = on && chrome == nil ? (clear ? Glass.clear : Glass.regular).interactive(interactive && !quietHover) : Glass.identity
+      // Native interaction supplies the highlight; avoid a second custom hover wash.
+      let glass = on ? Glass.regular.tint(chrome?.accent.opacity(0.035) ?? Color.clear).interactive(interactive && !reduceMotion) : Glass.identity
       if let id, let space {
         content
           .glassEffect(glass, in: shape)

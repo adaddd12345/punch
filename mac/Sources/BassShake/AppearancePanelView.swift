@@ -413,7 +413,7 @@ struct AppearancePanelView: View {
       }
       .padding(6)
       .foregroundStyle(ink)
-      .background(shape.fill(ink.opacity(selected ? 0.07 : 0.025)))
+      .modifier(AppGlassSurface(radius: 10, selected: selected))
       .overlay(shape.strokeBorder(ink.opacity(selected ? 0.9 : 0.08), lineWidth: selected ? 1.5 : 0.5))
       .overlay(alignment: .topTrailing) {
         if selected {

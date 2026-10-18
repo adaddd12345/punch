@@ -301,54 +301,40 @@ struct LiveLevelMeter: View {
 }
 
 
-/// The muted apps present, and which apps What's Playing shows with their own
-/// mute, published only when they change (LiveChannels also publishes the
-/// 30 Hz levels, which the notice must not observe).
+/// All muted sources, published only when their slow state changes.
+/// The notice does not observe the 30 Hz audio levels.
 final class MutedApps: ObservableObject {
   struct Entry: Equatable { let id: String; let name: String }
   @Published private(set) var present: [Entry] = []
-  /// Apps on What's Playing's hero, and its small tiles (NowStack).
-  @Published private(set) var hero: String?
-  @Published private(set) var tiles: Set<String> = []
-
-  init(live: LiveChannels, stack: NowStack = .shared) {
+  init(live: LiveChannels) {
     live.$apps.combineLatest(live.$muted)
-      .map { apps, muted in apps.filter { muted.contains($0.id) }.map { Entry(id: $0.id, name: $0.name) } }
+      .map { [weak live] apps, muted in
+        Self.entries(apps: apps.map { Entry(id: $0.id, name: $0.name) }, muted: muted,
+                     name: { live?.displayName(bundleID: $0) ?? $0 })
+      }
       .removeDuplicates()
       .assign(to: &$present)
-    stack.$lead.map { $0?.app.id }.removeDuplicates().assign(to: &$hero)
-    // The closed drawer has no mute: only the tiles on screen count.
-    stack.$rest.combineLatest(stack.$drawerOpen)
-      .map { rest, open in
-        // The collapsed shelf only exposes an unmuted, confirmed player.
-        // Muted entries are reachable as tiles only while the drawer is open.
-        open ? Set(rest.map(\.app.id)) : Set<String>()
-      }
-      .removeDuplicates().assign(to: &$tiles)
   }
+  /// Session mutes remain recoverable even after an app stops producing audio.
+  static func entries(apps: [Entry], muted: Set<String>, name: (String) -> String) -> [Entry] {
+    muted.sorted().map { id in apps.first { $0.id == id } ?? Entry(id: id, name: name(id)) }
+  }
+
 }
 
-/// Always-visible line in the popover while any present app is muted, so a
+/// Always-visible line in the popover while any source is muted, so a
 /// mute can never quietly kill someone's music. One click unmutes all.
-/// An app What's Playing shows (muted, with its unmute) isn't listed again.
+/// Never hide recovery based on an artwork or tile that may be collapsed.
 struct MutedNotice: View {
   @StateObject private var model: MutedApps
   private let live: LiveChannels
-  /// What's Playing's hero / small tiles are on screen.
-  private let heroShown: Bool
-  private let tilesShown: Bool
-
-  init(live: LiveChannels, heroShown: Bool = false, tilesShown: Bool = false) {
+  init(live: LiveChannels) {
     _model = StateObject(wrappedValue: MutedApps(live: live))
     self.live = live
-    self.heroShown = heroShown
-    self.tilesShown = tilesShown
   }
 
   var body: some View {
-    let listed = model.present.filter { e in
-      !(heroShown && model.hero == e.id) && !(tilesShown && model.tiles.contains(e.id))
-    }
+    let listed = model.present
     let names = listed.map(\.name)
     if !names.isEmpty {
       HStack(spacing: 6) {

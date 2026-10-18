@@ -523,7 +523,7 @@ struct NowEntryArtButton: View {
     let hint = locked
       ? PointerHint(app.name, does: "Pausing needs Accessibility; this opens \(app.name) instead.")
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
-                        chosen: model.muteIsChoice(app), ignored: model.ignoredKey(app), fallback: fallback,
+                        chosen: model.muteIsChoice(app), fallback: fallback,
                         browser: app.isBrowser)
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
       // Its record stays still (Vinyl Peek): only the hero's turns, one motion at a time.
