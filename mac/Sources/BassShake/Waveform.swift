@@ -91,7 +91,8 @@ struct WaveformView: View {
   @ObservedObject var model: WaveformModel
   var color: ScopeColor = .accent
 
-  private var traceColor: Color { color.color }
+  @Environment(\.popupChrome) private var chrome
+  private var traceColor: Color { color == .accent ? (chrome?.accent ?? color.color) : color.color }
 
   var body: some View {
     trace

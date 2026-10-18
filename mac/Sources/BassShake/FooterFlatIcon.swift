@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Quiet monochrome footer symbols with open counters at their native 16 pt size.
 struct FooterFlatIcon: View {
-  enum Kind { case dj, beats, settings, diagnose, power }
+  enum Kind { case dj, beats, settings, diagnose, appearance, power }
   let kind: Kind
   var tint: Color? = nil
   var engaged = false
@@ -29,6 +29,7 @@ struct FooterFlatIcon: View {
       case .beats: MusicSleeveGlyph().stroke(style: Self.stroke)
       case .settings: serviceGlyph
       case .diagnose: DiagnosticLoupeAnimation(engaged: engaged, motionAllowed: motionAllowed, stroke: Self.stroke)
+      case .appearance: PaintKitGlyph().stroke(style: Self.stroke)
       case .power:
         Image(systemName: "power")
           .font(.system(size: 13, weight: .regular))
@@ -284,5 +285,31 @@ private struct DJDeckGlyph: Shape {
     p.addEllipse(in: CGRect(x: 14.4, y: 16.5, width: 3, height: 2.4))
     return p.applying(CGAffineTransform(scaleX: rect.width / 24, y: rect.height / 24))
       .applying(CGAffineTransform(translationX: rect.minX, y: rect.minY))
+  }
+}
+
+/// The brush and open paint pot use the footer family's light, rounded outline.
+private struct PaintKitGlyph: Shape {
+  func path(in rect: CGRect) -> Path {
+    var p = Path()
+    p.addRoundedRect(in: CGRect(x: 2.5, y: 2.5, width: 8, height: 9),
+                     cornerSize: CGSize(width: 1, height: 1))
+    p.move(to: CGPoint(x: 2.5, y: 7))
+    p.addLine(to: CGPoint(x: 10.5, y: 7))
+    p.move(to: CGPoint(x: 5.2, y: 2.5))
+    p.addLine(to: CGPoint(x: 5.2, y: 5))
+    p.move(to: CGPoint(x: 8, y: 2.5))
+    p.addLine(to: CGPoint(x: 8, y: 5))
+    p.move(to: CGPoint(x: 5, y: 11.5))
+    p.addLine(to: CGPoint(x: 5, y: 19))
+    p.addQuadCurve(to: CGPoint(x: 8, y: 19), control: CGPoint(x: 6.5, y: 23))
+    p.addLine(to: CGPoint(x: 8, y: 11.5))
+    p.addEllipse(in: CGRect(x: 12, y: 10, width: 9.5, height: 3.5))
+    p.move(to: CGPoint(x: 12, y: 11.75))
+    p.addLine(to: CGPoint(x: 12, y: 20))
+    p.addCurve(to: CGPoint(x: 21.5, y: 20),
+               control1: CGPoint(x: 12, y: 22.5), control2: CGPoint(x: 21.5, y: 22.5))
+    p.addLine(to: CGPoint(x: 21.5, y: 11.75))
+    return p.footerScaled(to: rect)
   }
 }

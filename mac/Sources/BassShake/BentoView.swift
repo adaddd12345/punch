@@ -22,13 +22,13 @@ struct PlayerDetailsCollapsedKey: PreferenceKey {
 ///      (Full: 78 pt rows. Compact: Bass · four-mode bento · Late Night)
 ///   └─ (mode details, when a mode with settings is on) ──────────┘
 ///
-/// Colour has one meaning each: the hero wears the active preset's pastel
-/// (or Study/Sleep's), Strength and Boost share the bass hue, every mode owns
-/// a hue used nowhere else, and EQ / presets are neutral frosted glass.
+/// The popup supplies one tonal surface and action accent. Standalone panels
+/// retain their legacy palette when no popup chrome environment is present.
 ///
 /// Observes only `AudioController` (slow state). Meters, the Night Guard cut
 /// and timers stay in their own small observed views.
 struct BentoView: View {
+  @Environment(\.popupChrome) private var chrome
   @ObservedObject var controller: AudioController
   let meters: MeterModel
   @Binding var editor: PresetEditor.Mode?
@@ -87,9 +87,9 @@ struct BentoView: View {
   /// An app may lead the hero: What's Playing (Full, Compact) or the playing channel (Mini).
   private var playingShown: Bool { size == .mini ? s.showPlayingChannel : s.showNowPlaying }
   /// Every tile but the hero turns calm graphite when the app is off.
-  private func tint(_ t: BentoTint) -> BentoTint { live ? t : .graphite }
+  private func tint(_ t: BentoTint) -> BentoTint { live ? (chrome?.tint ?? t) : .graphite }
   /// A tile's hue as readable text (Tutorial Mode cards).
-  private func ink(_ t: BentoTint) -> Color { scheme == .dark ? t.pastel : t.ink }
+  private func ink(_ t: BentoTint) -> Color { chrome?.accent ?? (scheme == .dark ? t.pastel : t.ink) }
 
   /// Liquid Glass tiles (macOS 26+, ⋯ › Look). Power Saver and Reduce
   /// Transparency keep the classic frosted fill.
@@ -145,8 +145,8 @@ struct BentoView: View {
     .background(alignment: .top) {
       if let d = drag, !d.cancelled {
         let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
-        shape.strokeBorder(Color.accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-          .background(shape.fill(Color.accentColor.opacity(scheme == .dark ? 0.10 : 0.07)))
+        shape.strokeBorder((chrome?.accent ?? Color.accentColor).opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+          .background(shape.fill((chrome?.accent ?? Color.accentColor).opacity(scheme == .dark ? 0.10 : 0.07)))
           .frame(height: d.heights[d.key] ?? 0)
           .offset(y: ReshuffleSlot.top(of: d.key, in: d.order, heights: d.heights))
           .allowsHitTesting(false)
@@ -250,7 +250,7 @@ struct BentoView: View {
     case LayoutSection.bentoEQ.key:
       BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
         EQView(controller: controller, chrome: false,
-               filament: live ? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink) : Color.secondary)
+               filament: live ? (chrome?.accent ?? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink)) : Color.secondary)
           .frame(height: size == .full ? 132 : 100)
       }
       .pointerHintTint(live ? ink(.bass) : nil)
@@ -524,6 +524,7 @@ struct BentoView: View {
   private var modeCount: Int { [s.mode != .off, s.studioEars, s.autoLoudness, s.nightGuard].filter { $0 }.count }
 
   private var heroTint: BentoTint {
+    if let chrome { return chrome.tint }
     switch s.mode {
     case .study: return .lime
     case .sleep, .lateNight: return .lilac
@@ -1267,8 +1268,8 @@ struct BentoView: View {
       Image(systemName: "power")
         .font(.system(size: (d * CGFloat(0.4)).rounded(), weight: .heavy, design: .rounded))
         .frame(width: d, height: d)
-        .foregroundStyle(live ? heroTint.pastel : Color.secondary)
-        .background(Circle().fill(live ? BentoInk.miniFill : Color.primary.opacity(0.08)))
+        .foregroundStyle(live ? (chrome?.surface ?? heroTint.pastel) : Color.secondary)
+        .background(Circle().fill(live ? (chrome?.accent ?? BentoInk.miniFill) : Color.primary.opacity(0.08)))
         .contentShape(Circle())
     }
     .buttonStyle(BentoPressStyle())
@@ -1763,6 +1764,7 @@ enum BentoLook: Equatable {
 /// BentoView with Liquid Glass on (macOS 26+), the same wash sits inside a
 /// system glass shape instead, with no rim of our own.
 struct BentoTile<Content: View>: View {
+  @Environment(\.popupChrome) private var chrome
   let tint: BentoTint
   var look: BentoLook = .base
   var padding: CGFloat = 8
@@ -1790,7 +1792,9 @@ struct BentoTile<Content: View>: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .modifier(BentoHoverSurface(radius: r, enabled: hoverResponse && !flat))
       .background {
-        if flat {
+        if let chrome {
+          PopupChromeFill(palette: chrome, look: look, radius: r)
+        } else if flat {
           BentoFlatFill(tint: tint, look: look, radius: r)
         } else if glass != nil {
           BentoGlassWash(tint: tint, look: look, radius: r)
@@ -1807,6 +1811,7 @@ struct BentoTile<Content: View>: View {
 /// Classic's tile: the faint backing the original EQ always had. On (a lit
 /// mode) is a soft pastel wash; no glow, rim or shadow.
 private struct BentoFlatFill: View {
+  @Environment(\.popupChrome) private var chrome
   let tint: BentoTint
   let look: BentoLook
   let radius: CGFloat
@@ -1818,7 +1823,10 @@ private struct BentoFlatFill: View {
     let hc = contrast == .increased
     let faint = Color.primary.opacity(hc ? 0.10 : 0.045)
     let wash = tint.pastel.opacity((scheme == .dark ? 0.16 : 0.26) + (hc ? 0.12 : 0))
-    ZStack {
+    Group {
+      if let chrome { PopupChromeFill(palette: chrome, look: look, radius: radius) }
+      else {
+        ZStack {
       SeasonalControlBacking(shape: shape)
       switch look {
       case .outline:
@@ -1835,6 +1843,8 @@ private struct BentoFlatFill: View {
         .clipShape(shape)
       default:
         shape.fill(faint)
+      }
+        }
       }
     }
     .animation(.easeOut(duration: 0.15), value: look == .lit)
@@ -1921,6 +1931,7 @@ struct BentoGlassContainer: ViewModifier {
 /// the window isn't key (the pinned popover, the drawer panels), so our own
 /// wash, drawn inside the shape, carries the colour.
 struct BentoGlassSurface: ViewModifier {
+  @Environment(\.popupChrome) private var chrome
   let on: Bool
   let radius: CGFloat
   let interactive: Bool
@@ -1936,7 +1947,7 @@ struct BentoGlassSurface: ViewModifier {
     if #available(macOS 26, *) {
       let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
       // Main Bento supplies its quiet wash; don't layer a system lift over it.
-      let glass = on ? (clear ? Glass.clear : Glass.regular).interactive(interactive && !quietHover) : Glass.identity
+      let glass = on && chrome == nil ? (clear ? Glass.clear : Glass.regular).interactive(interactive && !quietHover) : Glass.identity
       if let id, let space {
         content
           .glassEffect(glass, in: shape)
@@ -1968,6 +1979,7 @@ struct BentoAboveGlass: ViewModifier {
 /// BentoFill, retuned for glass (which is lighter in light mode and darker in
 /// dark), with no rim or drop shadow (the glass draws its own edge).
 struct BentoGlassWash: View {
+  @Environment(\.popupChrome) private var chrome
   let tint: BentoTint
   let look: BentoLook
   var radius: CGFloat = BentoRadius.tile
@@ -2003,7 +2015,10 @@ struct BentoGlassWash: View {
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-    ZStack {
+    Group {
+      if let chrome { PopupChromeFill(palette: chrome, look: look, radius: radius) }
+      else {
+        ZStack {
       switch look {
       case .outline:
         // Clear glass needs a dimming layer in dark mode: over a light
@@ -2031,6 +2046,8 @@ struct BentoGlassWash: View {
       case .base:
         shape.fill(wash(.base))
       }
+        }
+      }
     }
     .clipShape(shape)
     .animation(.easeOut(duration: 0.15), value: look == .lit)
@@ -2040,6 +2057,7 @@ struct BentoGlassWash: View {
 }
 
 struct BentoFill: View {
+  @Environment(\.popupChrome) private var chrome
   let tint: BentoTint
   let look: BentoLook
   var radius: CGFloat = BentoRadius.tile
@@ -2071,7 +2089,10 @@ struct BentoFill: View {
                                      .init(color: Color.white.opacity(dark ? 0.02 : 0.10), location: 1)],
                              startPoint: .top, endPoint: .bottom)
     let hair = BentoRadius.hairline(displayScale)
-    ZStack {
+    Group {
+      if let chrome { PopupChromeFill(palette: chrome, look: look, radius: radius) }
+      else {
+        ZStack {
       SeasonalControlBacking(shape: shape)
       switch look {
       case .outline:
@@ -2107,6 +2128,8 @@ struct BentoFill: View {
           }
         }
         shape.strokeBorder(rim, lineWidth: hair)
+      }
+        }
       }
     }
     .animation(.easeOut(duration: 0.15), value: look == .lit)
@@ -2420,6 +2443,7 @@ private struct ScrubTile<Accessory: View>: View {
 /// Four independent controls share one plate in Compact. Each keeps its own
 /// colour, hit target, hint and accessible name; no nested glass surfaces.
 private struct CompactModeQuad: View {
+  @Environment(\.popupChrome) private var chrome
   struct Item: Identifiable {
     var identity: String? = nil
     var id: String { identity ?? title }
@@ -2511,7 +2535,7 @@ private struct CompactModeQuad: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, 2)
         .modifier(BentoHoverSurface(radius: BentoRadius.inner, control: true))
-        .background(shape.fill(item.tint.pastel.opacity(item.on ? (scheme == .dark ? 0.18 : 0.30) : 0)))
+        .background(shape.fill((chrome?.accent ?? item.tint.pastel).opacity(item.on ? (scheme == .dark ? 0.18 : 0.30) : 0)))
         .contentShape(shape)
       }
     }
@@ -2603,6 +2627,7 @@ private struct ModeTile<Fact: View>: View {
 
 /// A mode glyph: a disc (solid in the hue when on), or a bare glyph in Classic.
 private struct ModeGlyph: View {
+  @Environment(\.popupChrome) private var chrome
   let symbol: String
   let tint: BentoTint
   let on: Bool
@@ -2612,6 +2637,7 @@ private struct ModeGlyph: View {
 
   /// Graphite in dark mode is a mid grey, about 2:1 on the tile: a lighter grey.
   private var ink: Color {
+    if let chrome { return chrome.ink }
     guard scheme == .dark else { return tint.ink }
     return tint.name == BentoTint.graphite.name ? Color(white: 0.82) : tint.pastel
   }
@@ -2625,11 +2651,11 @@ private struct ModeGlyph: View {
         .frame(width: size, height: size, alignment: .leading)
     } else {
       ZStack {
-        Circle().fill(on ? tint.ink : Color.primary.opacity(0.08))
+        Circle().fill(on ? (chrome?.accent ?? tint.ink) : Color.primary.opacity(0.08))
         Image(systemName: symbol)
           .symbolVariant(on ? .fill : .none)
           .font(.system(size: size * 0.5, weight: .bold))
-          .foregroundStyle(on ? Color.white : ink)
+          .foregroundStyle(on ? (chrome?.surface ?? Color.white) : ink)
       }
       .frame(width: size, height: size)
     }

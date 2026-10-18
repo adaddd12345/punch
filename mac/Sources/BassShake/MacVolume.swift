@@ -431,6 +431,7 @@ private struct MacMuteButton: View {
   var disc = false
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.popupTint) private var tint
+  @Environment(\.popupChrome) private var chrome
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
@@ -452,7 +453,7 @@ private struct MacMuteButton: View {
         .background {
           if disc {
             Circle().fill(s.silent ? Color.red
-                          : onFader ? (scheme == .dark ? tint?.pastel : tint?.ink) ?? Color.primary
+                          : onFader ? chrome?.accent ?? (scheme == .dark ? tint?.pastel : tint?.ink) ?? Color.primary
                                     : Color.primary.opacity(contrast == .increased ? 0.16 : 0.08))
           }
         }

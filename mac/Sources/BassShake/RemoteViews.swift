@@ -32,6 +32,7 @@ struct RemoteMacTile: View {
   @State private var barWidth: CGFloat = 300
   @Environment(\.colorScheme) private var scheme
   @Environment(\.colorSchemeContrast) private var contrast
+  @Environment(\.popupChrome) private var chrome
   @Environment(\.labelLevel) private var labels
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
@@ -117,7 +118,7 @@ struct RemoteMacTile: View {
       Button { live ? model.toggleEnabled() : model.retry() } label: {
         Image(systemName: live ? "power" : "arrow.clockwise")
           .font(.system(size: 11, weight: .bold))
-          .foregroundStyle(live && s?.enabled == true ? Color.accentColor : Color.secondary)
+          .foregroundStyle(live && s?.enabled == true ? (chrome?.accent ?? Color.accentColor) : Color.secondary)
           .frame(width: 24, height: 24)
           .contentShape(Rectangle())
       }

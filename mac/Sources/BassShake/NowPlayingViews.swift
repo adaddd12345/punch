@@ -454,6 +454,7 @@ struct MuteButton: View {
 
 /// Shown once, the first time What's Playing is turned on.
 struct NowPlayingNote: View {
+  @Environment(\.popupChrome) private var chrome
   @ObservedObject var controller: AudioController
   /// The popup is at Mini size (where What's Playing is hidden).
   let mini: Bool
@@ -473,7 +474,7 @@ struct NowPlayingNote: View {
           }
           .foregroundStyle(.artworkPrimary)
         } icon: {
-          Image(systemName: "music.note").foregroundStyle(Color.accentColor)
+          Image(systemName: "music.note").foregroundStyle(chrome?.accent ?? Color.accentColor)
         }
         HStack(spacing: 6) {
           Button("Got It") { controller.settings.nowPlayingNoteSeen = true }
@@ -492,9 +493,14 @@ struct NowPlayingNote: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background {
         let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
-        shape.fill(.thinMaterial)
-          .overlay(shape.fill(Color.accentColor.opacity(0.10)))
-          .overlay(shape.strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 0.5))
+        if let chrome {
+          shape.fill(chrome.surface)
+            .overlay(shape.strokeBorder(chrome.ink.opacity(0.16), lineWidth: 0.5))
+        } else {
+          shape.fill(.thinMaterial)
+            .overlay(shape.fill(Color.accentColor.opacity(0.10)))
+            .overlay(shape.strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 0.5))
+        }
       }
       .transition(.opacity.combined(with: .move(edge: .top)))
     }

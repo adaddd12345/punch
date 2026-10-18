@@ -111,6 +111,7 @@ struct FooterShelf<Content: View>: View {
 /// A shade darker than the popup with a lip that catches the light at the bottom
 /// (recessed, where the tiles are raised). Classic: a faint flat band.
 private struct FooterShelfFill: View {
+  @Environment(\.popupChrome) private var chrome
   let surface: FooterSurface
   @Environment(\.colorScheme) private var scheme
   @Environment(\.colorSchemeContrast) private var contrast
@@ -118,7 +119,10 @@ private struct FooterShelfFill: View {
   var body: some View {
     let dark = scheme == .dark
     let more = contrast == .increased ? 1.6 : 1
-    switch surface {
+    if let chrome {
+      Capsule().fill(chrome.surface)
+        .overlay { Capsule().strokeBorder(chrome.ink.opacity(contrast == .increased ? 0.34 : 0.14), lineWidth: 0.5) }
+    } else { switch surface {
     case .glass:
       Color.clear
     case .bento:
@@ -132,16 +136,18 @@ private struct FooterShelfFill: View {
     case .flat:
       Capsule().fill(Color.primary.opacity(0.04 * more)).allowsHitTesting(false)
     }
+    }
   }
 }
 
 /// The shelf's glass (macOS 26): one container, tinted a shade darker so it reads as the
 /// dock rather than another tile, and never on the buttons inside (no glass on glass).
 private struct FooterShelfGlass: ViewModifier {
+  @Environment(\.popupChrome) private var chrome
   let on: Bool
   @Environment(\.colorScheme) private var scheme
   func body(content: Content) -> some View {
-    if #available(macOS 26, *), on {
+    if #available(macOS 26, *), on, chrome == nil {
       content.glassEffect(.regular.tint(Color.black.opacity(scheme == .dark ? 0.16 : 0.04)), in: Capsule())
     } else {
       content
@@ -213,6 +219,7 @@ private struct FooterPlate: View {
 /// DJ and Beats use the same selected wash and active material as the player.
 /// Opening a drawer is a quiet wash; processing / playback uses a solid active chip.
 struct FooterModePlate: ViewModifier {
+  @Environment(\.popupChrome) private var chrome
   let active: Bool
   let expanded: Bool
   @Environment(\.popupTint) private var tint
@@ -223,12 +230,12 @@ struct FooterModePlate: ViewModifier {
   func body(content: Content) -> some View {
     let dark = scheme == .dark
     let material = FooterMaterial(tint: tint?.ink, dark: dark)
-    let wash = (dark ? tint?.pastel : tint?.ink) ?? Color.primary
+    let wash = chrome?.accent ?? (dark ? tint?.pastel : tint?.ink) ?? Color.primary
     content
-      .foregroundStyle(active ? Color.white : Color.primary)
+      .foregroundStyle(active ? (chrome?.surface ?? Color.white) : (chrome?.ink ?? Color.primary))
       .background {
         Capsule()
-          .fill(active ? material.activeFill : expanded && !reduceTransparency ? wash.opacity(contrast == .increased ? 0.24 : 0.12) : .clear)
+          .fill(active ? (chrome?.accent ?? material.activeFill) : expanded && !reduceTransparency ? wash.opacity(contrast == .increased ? 0.24 : 0.12) : .clear)
           .overlay {
             if active || expanded {
               Capsule().strokeBorder(Color.primary.opacity(contrast == .increased || reduceTransparency ? 0.3 : 0.08), lineWidth: 0.5)

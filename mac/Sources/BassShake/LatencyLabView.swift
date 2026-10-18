@@ -359,6 +359,7 @@ struct LatencySparkline: View {
 /// Shows only with On-the-Road Recording on. Click opens the lab.
 struct LatencyChip: View {
   @ObservedObject var lab: LatencyLab
+  var iconOnly = false
   let onOpen: () -> Void
   @Environment(\.labelLevel) private var labels
 
@@ -367,21 +368,23 @@ struct LatencyChip: View {
       Button(action: onOpen) {
         HStack(spacing: 4) {
           Image(systemName: "metronome").font(.system(size: 12, weight: .semibold)).symbolRenderingMode(.hierarchical)
-          if let saved = lab.savedForCurrentPair {
+          if !iconOnly, let saved = lab.savedForCurrentPair {
             Text(String(format: "%.0f ms", saved.extraMs))
               .font(.system(size: 10, weight: .semibold, design: .rounded))
               .monospacedDigit()
               .fixedSize()
-          } else if labels == .full {
+          } else if !iconOnly && labels == .full {
             Text("Measure")
               .font(.system(size: 10, weight: .semibold, design: .rounded))
               .fixedSize()
           }
         }
-        .footerChip()
+        .footerChip(iconOnly: iconOnly)
         .foregroundStyle(lab.savedForCurrentPair == nil ? Color.secondary : Color.primary)
       }
       .buttonStyle(FooterButtonStyle(chip: true))
+      .accessibilityLabel("Latency Lab")
+      .accessibilityValue(helpText)
       .help(helpText)
       .onAppear { lab.startMonitoring() }
     }

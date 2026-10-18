@@ -77,6 +77,7 @@ extension EnvironmentValues {
 /// Non-glass controls need their own contrast over a saturated colour canvas.
 /// This backing stays inside each control; it never greys or whitens the background.
 struct SeasonalControlBacking<S: Shape>: View {
+  @Environment(\.popupChrome) private var chrome
   let shape: S
   @Environment(\.seasonalBackdrop) private var seasonal
   @Environment(\.colorScheme) private var scheme
@@ -84,7 +85,9 @@ struct SeasonalControlBacking<S: Shape>: View {
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
   var body: some View {
-    if seasonal {
+    if let chrome {
+      shape.fill(chrome.surface).allowsHitTesting(false).accessibilityHidden(true)
+    } else if seasonal {
       shape.fill((scheme == .dark ? Color.black : Color.white)
         .opacity(reduceTransparency ? 1 : (contrast == .increased ? 0.78 : 0.52)))
         .allowsHitTesting(false)

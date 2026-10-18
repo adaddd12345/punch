@@ -6,6 +6,8 @@ struct LiveChannelsButton: View {
   @ObservedObject var model: LiveChannels
   @ObservedObject private var beats = BeatPlayer.shared
   @Binding var expanded: Bool
+  var iconOnly = false
+  @Environment(\.popupChrome) private var chrome
   @Environment(\.labelLevel) private var labels
 
   var body: some View {
@@ -18,11 +20,13 @@ struct LiveChannelsButton: View {
         Circle()
           .fill(n > 0 ? MeterModel.zones[0].color : Color.secondary.opacity(0.45))
           .frame(width: 6, height: 6)
+        if !iconOnly {
         Text(labels == .icons ? (n > 0 ? "\(n)" : "") : (n > 0 ? "\(n) Live" : "Live"))
           .font(.system(size: 10, weight: .bold, design: .rounded))
           .monospacedDigit()
           .lineLimit(1)
           .fixedSize()
+        }
         if mutedCount > 0 {
           Image(systemName: "speaker.slash.fill")
             .font(.system(size: 8, weight: .bold))
@@ -33,12 +37,14 @@ struct LiveChannelsButton: View {
           .foregroundStyle(.tertiary)
           .rotationEffect(.degrees(expanded ? 180 : 0))
       }
-      .footerChip()
+      .footerChip(iconOnly: iconOnly)
       .foregroundStyle(Color.primary)
       // In its bento group: no plate at rest; open tints only its own plate.
-      .background(Capsule().fill(expanded ? Color.accentColor.opacity(0.2) : Color.clear))
+      .background(Capsule().fill(expanded ? (chrome?.accent ?? Color.accentColor).opacity(0.2) : Color.clear))
     }
     .buttonStyle(FooterButtonStyle(chip: true))
+    .accessibilityLabel("Apps Playing")
+    .accessibilityValue("\(n) playing, \(mutedCount) muted")
     .pointerHint(hint(n, mutedCount))
   }
 

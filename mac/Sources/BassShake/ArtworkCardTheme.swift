@@ -58,14 +58,15 @@ struct ArtworkCardTheme<Content: View>: View {
   let on: Bool
   @ViewBuilder let content: (ArtworkCardPalette?) -> Content
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.popupChrome) private var chrome
   @State private var requested: ObjectIdentifier?
   @State private var resolved: (id: ObjectIdentifier, palette: ArtworkCardPalette?)?
 
   var body: some View {
-    let artwork = on ? stack.lead.flatMap { model.describe($0).artwork } : nil
+    let artwork = on && chrome == nil ? stack.lead.flatMap { model.describe($0).artwork } : nil
     let id = artwork.map(ObjectIdentifier.init)
     // A previous cover's asynchronous result must never tint the new song.
-    let palette = id != nil && resolved?.id == id ? resolved?.palette : nil
+    let palette = chrome?.artwork ?? (id != nil && resolved?.id == id ? resolved?.palette : nil)
     content(palette)
       .environment(\.colorScheme, palette.map { $0.dark ? .dark : .light } ?? scheme)
       .environment(\.artworkCardPalette, palette)

@@ -32,6 +32,7 @@ struct PopoverView: View {
   @Environment(\.colorSchemeContrast) private var contrast
   @State private var showDJ = false
   @State private var showBeats = false
+  @State private var showAppearance = false
   @ObservedObject private var beats = BeatPlayer.shared
   @ObservedObject private var latencyLab = LatencyLab.shared
   @State private var showLatencyLab = false
@@ -210,6 +211,13 @@ struct PopoverView: View {
   }
 
   private var controlStack: some View {
+    PopupChromeTheme(model: NowPlaying.shared, background: controller.settings.backgroundStyle,
+                     artworkEnabled: !controller.isMirror) {
+      themedControlStack
+    }
+  }
+
+  private var themedControlStack: some View {
     VStack(alignment: .leading, spacing: 8) {
       let isClassicMini = !controller.settings.bento && size == .mini
       // Opened from the Dock: the footer's controls in a header (icon, name, groups).
@@ -217,6 +225,9 @@ struct PopoverView: View {
         dockHeader
           .padding(.bottom, FooterBento.edgeGap - 8)
       }
+      // Retain the sound controls' identity and local disclosure state while
+      // Appearance takes their place. They cannot receive input while hidden.
+      VStack(alignment: .leading, spacing: 8) {
       // Take Control: who this popup is driving, always on top (and Switch Back).
       if let t = takeover {
         TakeoverBanner(session: t)
@@ -279,8 +290,19 @@ struct PopoverView: View {
       }
       // Under the stack, so a mute never pushes What's Playing down.
       mutedNotice
+      }
+      .frame(height: showAppearance ? 0 : nil)
+      .opacity(showAppearance ? 0 : 1)
+      .clipped()
+      .allowsHitTesting(!showAppearance)
+      .accessibilityHidden(showAppearance)
+      .modifier(AppearanceContentPause(paused: showAppearance))
+      if showAppearance {
+        AppearancePanelView(controller: controller) { setAppearance(false) }
+          .transition(.opacity)
+      }
       // No hairline: the shelf's own tone and a 10 pt gap set the footer apart.
-      if size != .mini && !dockHeaderShown {
+      if (size != .mini || showAppearance) && !dockHeaderShown {
         footer
           .environment(\.popupTint, popupTint)
           .padding(.top, FooterBento.edgeGap - 8)
@@ -370,6 +392,7 @@ struct PopoverView: View {
     }
     .onChange(of: showLive) { _, on in
       if on {
+        setAppearance(false)
         guard bindDrawerClose() else { return }
         showDJ = false
         showBeats = false
@@ -1045,22 +1068,24 @@ struct PopoverView: View {
   private var statusGroup: some View {
     FooterGroup {
       if !controller.settings.bento || size == .mini {
-        LiveChannelsButton(model: controller.live, expanded: $showLive)
+        LiveChannelsButton(model: controller.live, expanded: $showLive, iconOnly: true)
       }
       Button {
+        setAppearance(false)
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
       } label: {
         HStack(spacing: 4) {
           // A small flat DJ wearing headphones above the decks.
-          FooterFlatIcon(kind: .dj, tint: controller.dj.anyActive ? Color.white : nil)
-          if labels != .icons { Text("DJ").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
+          FooterFlatIcon(kind: .dj)
         }
-        .footerChip(iconOnly: labels == .icons)
+        .footerChip(iconOnly: true)
         .modifier(FooterModePlate(active: controller.dj.anyActive, expanded: showDJ))
       }
       .buttonStyle(FooterButtonStyle(chip: true))
+      .accessibilityLabel("DJ")
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
       Button {
+        setAppearance(false)
         if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
       } label: {
         HStack(spacing: 4) {
@@ -1070,14 +1095,14 @@ struct PopoverView: View {
           } else {
             FooterFlatIcon(kind: .beats)
           }
-          if labels != .icons { Text("Beats").font(.system(size: 10, weight: .bold, design: .rounded)).lineLimit(1).fixedSize() }
         }
-        .footerChip(iconOnly: labels == .icons)
+        .footerChip(iconOnly: true)
         .modifier(FooterModePlate(active: beats.playing, expanded: showBeats))
       }
       .buttonStyle(FooterButtonStyle(chip: true))
+      .accessibilityLabel("Beats")
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
-      LatencyChip(lab: latencyLab) { withAnimation { showLatencyLab = true } }
+      LatencyChip(lab: latencyLab, iconOnly: true) { withAnimation { showLatencyLab = true } }
     }
   }
 
@@ -1120,19 +1145,40 @@ struct PopoverView: View {
                          dismiss: { controller.doctorReport = nil },
                          restart: controller.status == .audioServiceStuck ? controller.restartAudioService : nil)
       }
+      Button { setAppearance(!showAppearance) } label: {
+        FooterFlatIcon(kind: .appearance)
+          .footerChip(iconOnly: true)
+          .modifier(FooterModePlate(active: false, expanded: showAppearance))
+      }
+      .buttonStyle(FooterButtonStyle(chip: true))
+      .accessibilityLabel("Appearance")
+      .accessibilityValue(showAppearance ? "Open" : "Closed")
+      .help("Appearance: backgrounds, artwork and vinyl")
       FooterShakerMenu(help: "Settings") {
         SettingsMenuContent(controller: controller, updates: updates, panel: $menuPanel)
       }
     }
   }
 
+  private func setAppearance(_ shown: Bool) {
+    if shown {
+      showLive = false
+      showDJ = false
+      showBeats = false
+      showDoctorReport = false
+      reshuffle.set(false)
+    }
+    withAnimation(reduceMotion || controller.settings.powerSaver ? nil : .easeOut(duration: 0.22)) {
+      showAppearance = shown
+    }
+  }
+
   /// Quit, past a rule: it ends the whole app, so it never shares a group with menus.
   private var powerGroup: some View {
     FooterGroup {
-      // The word with full labels; otherwise a flat power symbol. Red under the pointer.
+      // Destructive action stays at the far edge, with a red hover treatment.
       Button { NSApp.terminate(nil) } label: {
-        if labels == .full { Text("Quit").fixedSize().padding(.horizontal, 8) }
-        else { FooterFlatIcon(kind: .power) }
+        FooterFlatIcon(kind: .power)
       }
       .accessibilityLabel("Quit")
       .buttonStyle(FooterButtonStyle(danger: true))
@@ -1471,5 +1517,14 @@ struct OverflowScroll<Content: View>: View {
       transaction.disablesAnimations = true
       withTransaction(transaction) { overflows = value }
     }
+  }
+}
+
+/// Preserve the window's inherited occlusion budget while hiding sound controls.
+private struct AppearanceContentPause: ViewModifier {
+  let paused: Bool
+  @Environment(\.drawPaused) private var inherited
+  func body(content: Content) -> some View {
+    content.environment(\.drawPaused, inherited || paused)
   }
 }
