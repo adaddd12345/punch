@@ -1472,7 +1472,7 @@ final class PopupSpace: ObservableObject {
 /// changed width, so a Strength scrub re-made every tile per pointer event.
 /// The popup's overflow scroller: the native overlay scroller at the small
 /// control size (the default regular one looked oversized in a 360 pt popup).
-private struct SlimScroller: NSViewRepresentable {
+struct SlimScroller: NSViewRepresentable {
   func makeNSView(context: Context) -> NSView { Probe() }
   func updateNSView(_ nsView: NSView, context: Context) {}
   final class Probe: NSView {

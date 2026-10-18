@@ -582,7 +582,9 @@ struct BentoView: View {
     // swap (mid popup resize) never tears down its NSSwitch.
     .overlay(alignment: .topTrailing) {
       FlatPowerSlot(on: s.showNowPlaying,
-                    idle: (0, compact ? 24 : 32), playing: (compact ? 52 : 64, 24)) {
+                    idle: (0, compact ? 24 : 32),
+                    playing: (s.playerArtworkLayout == .compact ? (compact ? 52 : 64)
+                      : PlayerArtworkLayout.headerHeight + (compact ? 12 : 16), 24)) {
         flatPower
           .background(GeometryReader { g in
             Color.clear
@@ -857,11 +859,16 @@ struct BentoView: View {
     // Separate the player from its tweaks; related controls share the tighter
     // 8 pt rhythm instead of giving Tempo its own pair of large section gaps.
     VStack(alignment: .leading, spacing: flat ? 16 : 12) {
-      HStack(alignment: .center, spacing: 8) {
-        NowPlayingHeadline(model: nowPlaying, app: app, art: 48, title: 15)
-        NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 40, extras: true)
+      if s.playerArtworkLayout == .compact {
+        HStack(alignment: .center, spacing: 8) {
+          NowPlayingHeadline(model: nowPlaying, app: app, art: 48, title: 15)
+          NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 40, extras: true)
+        }
+        .frame(height: 48)
+      } else {
+        NowPlayingArtworkHeader(model: nowPlaying, app: app, layout: s.playerArtworkLayout,
+                                edgeInset: flat ? 0 : heroPad)
       }
-      .frame(height: 48)
       if flat || !detailsCollapsed {
         VStack(alignment: .leading, spacing: flat ? 16 : 8) {
           if s.artistMode && !controller.isMirror { ArtistTempoView() }
@@ -903,11 +910,16 @@ struct BentoView: View {
   /// Compact, something playing: the song with play/pause, then one bar.
   private func playingCompact(_ app: NowApp, _ t: BentoTint, dark: Bool) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-      HStack(alignment: .center, spacing: 8) {
-        NowPlayingHeadline(model: nowPlaying, app: app, art: 40, title: 13)
-        NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 32, extras: false)
+      if s.playerArtworkLayout == .compact {
+        HStack(alignment: .center, spacing: 8) {
+          NowPlayingHeadline(model: nowPlaying, app: app, art: 40, title: 13)
+          NowPlayingControls(model: nowPlaying, app: app, tint: transportTint(t, dark: dark), primary: 32, extras: false)
+        }
+        .frame(height: 40)
+      } else {
+        NowPlayingArtworkHeader(model: nowPlaying, app: app, layout: s.playerArtworkLayout,
+                                edgeInset: flat ? 0 : heroPad)
       }
-      .frame(height: 40)
       if flat || !detailsCollapsed {
         VStack(alignment: .leading, spacing: flat ? 12 : 8) {
           if s.artistMode && !controller.isMirror { ArtistTempoView() }

@@ -259,6 +259,87 @@ private struct PrimaryButton: View {
   }
 }
 
+/// The large artwork headers use a calm, symmetrical transport group. The
+/// information button reveals the full title; the menu contains real source
+/// actions rather than implying a music library managed by this app.
+struct ArtworkHeroControls: View {
+  @ObservedObject var model: NowPlaying
+  let entry: NowEntry
+  var preview = false
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.artworkCardPalette) private var palette
+  @Environment(\.colorSchemeContrast) private var contrast
+  @State private var showingInfo = false
+  private var secondaryInk: Color { palette?.ink.color ?? (scheme == .dark ? .white : .black) }
+
+  var body: some View {
+    // A white disc stays luminous on artwork colours. On very pale surfaces,
+    // invert it so the primary action remains the visual anchor.
+    let darkDisc = palette.map {
+      ArtworkCardPalette.contrast(.white, $0.surface) < (contrast == .increased ? 3 : 1.8)
+    } ?? (scheme == .light)
+    HStack(spacing: preview ? 20 : 24) {
+      Button { showingInfo.toggle() } label: { secondary("info") }
+        .buttonStyle(BentoPressStyle())
+        .accessibilityLabel("Track information")
+        .help("Track information")
+        .popover(isPresented: $showingInfo) {
+          VStack(alignment: .leading, spacing: 8) {
+            let text = model.describe(entry, state: false)
+            Text(text.title).font(.headline).textSelection(.enabled)
+            Text(text.subtitle).font(.subheadline).foregroundStyle(.secondary)
+            if let notice = model.notice {
+              Text(notice.text).font(.caption)
+              if notice.settings { Button("Open Accessibility Settings") { MediaKeys.openSettings() } }
+            }
+            Button { NowStack.focus(entry, model: model) } label: {
+              Label("Open \(entry.app.name)", systemImage: "arrow.up.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color.primary)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+          }
+          .foregroundStyle(Color.primary)
+          .padding(16).frame(width: 260, alignment: .leading)
+        }
+      PrimaryButton(model: model, app: entry.app, size: preview ? 44 : 60,
+                    glyph: preview ? 17 : 23, fill: darkDisc ? .black : .white)
+        .environment(\.colorScheme, darkDisc ? .light : .dark)
+        .environment(\.playButtonLook, .flat)
+        .overlay(Circle().strokeBorder(secondaryInk.opacity(0.08), lineWidth: 0.5).allowsHitTesting(false))
+      Menu {
+        Button("Open \(entry.app.name)") { NowStack.focus(entry, model: model) }
+        Button(model.isMuted(entry.app.id) ? "Unmute \(entry.app.muteTarget)" : "Mute \(entry.app.muteTarget)") {
+          model.toggleMute(entry.app)
+        }
+        if model.route(entry.app) == .script {
+          Divider()
+          Button("Next song") { model.nextTrack(entry.app) }
+        }
+      } label: {
+        Image(systemName: "ellipsis").font(.system(size: preview ? 13 : 16, weight: .semibold))
+          .foregroundStyle(secondaryInk)
+      }
+      .menuStyle(.borderlessButton).menuIndicator(.hidden)
+      .frame(width: preview ? 32 : 40, height: preview ? 32 : 40)
+      .background(Circle().fill(secondaryInk.opacity(0.08)))
+      .contentShape(Circle())
+      .accessibilityLabel("Playback options")
+      .help("Playback options")
+    }
+  }
+
+  private func secondary(_ symbol: String) -> some View {
+    Image(systemName: symbol).font(.system(size: preview ? 13 : 16, weight: .semibold))
+      .foregroundStyle(secondaryInk)
+      .frame(width: preview ? 32 : 40, height: preview ? 32 : 40)
+      .background(Circle().fill(secondaryInk.opacity(0.08)))
+      .contentShape(Circle())
+  }
+}
+
 /// The locked play/pause's badge: a tiny lock on a plate, on the disc's edge.
 private struct LockBadge: View {
   let size: CGFloat
@@ -316,6 +397,8 @@ struct NowArt: View {
   var paused = false
   /// Overrides the setting (the drawer's overlapped covers stay plain).
   var style: ArtworkStyle? = nil
+  /// Larger album presentations use a quieter corner than compact app tiles.
+  var cornerRadius: CGFloat? = nil
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.artworkStyle) private var setting
   @Environment(\.artworkFoil) private var foil
@@ -333,13 +416,14 @@ struct NowArt: View {
   }
 
   private var cover: some View {
-    let shape = RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+    let radius = cornerRadius ?? size * 0.22
+    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
     return ZStack {
       if let artwork {
         EffectArtworkImage(image: artwork, size: size)
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-          .overlay { ArtworkFoil(size: size, radius: size * 0.22, engaged: hovering) }
+          .overlay { ArtworkFoil(size: size, radius: radius, engaged: hovering) }
           .compositingGroup()
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
           .transition(.opacity)
@@ -348,7 +432,7 @@ struct NowArt: View {
         let side = (size * 0.6).rounded()
         shape.fill(Color.primary.opacity(0.07))
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-          .overlay { ArtworkFoil(size: size, radius: size * 0.22, blank: true, engaged: hovering) }
+          .overlay { ArtworkFoil(size: size, radius: radius, blank: true, engaged: hovering) }
           .overlay(
             Image(nsImage: favicon)
               .resizable()
@@ -363,7 +447,7 @@ struct NowArt: View {
         ZStack {
           if foil && size >= 28 {
             shape.fill(Color.primary.opacity(0.05))
-              .overlay { ArtworkFoil(size: size, radius: size * 0.22, blank: true, engaged: hovering) }
+              .overlay { ArtworkFoil(size: size, radius: radius, blank: true, engaged: hovering) }
           }
           Image(nsImage: icon)
             .resizable()

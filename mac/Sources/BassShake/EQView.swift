@@ -26,12 +26,15 @@ struct EQView: View {
   /// Bento only: no grid or labels, the curve drawn as one lit line in this
   /// colour with a glow and a fill fading to clear. nil = the classic look.
   var filament: Color? = nil
+  /// Appearance uses the actual renderer without editing audio settings.
+  var preview = false
 
-  init(controller: AudioController, chrome: Bool = true, filament: Color? = nil) {
+  init(controller: AudioController, chrome: Bool = true, filament: Color? = nil, preview: Bool = false) {
     self.controller = controller
     self.liveEdit = controller.liveEdit
     self.chrome = chrome
     self.filament = filament
+    self.preview = preview
   }
 
   @State private var grabbed: Int?
@@ -133,6 +136,7 @@ struct EQView: View {
     )
     .clipShape(RoundedRectangle(cornerRadius: chrome ? 12 : 0, style: .continuous))
     .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
+    .allowsHitTesting(!preview)
   }
 
   private var responseSurface: some View {
@@ -141,7 +145,7 @@ struct EQView: View {
       let shown = self.shown
       let bands = shown.bands
       // Read here (not only in the Canvas) so changes redraw it.
-      let showNodes = pointerIn || grabbed != nil
+      let showNodes = preview || pointerIn || grabbed != nil
       let kbDot: Int? = focused && kbActive ? kbBand : nil
       let boostDb = shown.boostDb
       ZStack {
@@ -227,7 +231,9 @@ struct EQView: View {
       .onChange(of: dragHeld) { _, held in
         if !held { finishDrag() }
       }
-      .onAppear { installScrollMonitor(); installKeyboardMonitor() }
+      .onAppear {
+        if !preview { installScrollMonitor(); installKeyboardMonitor() }
+      }
       .onDisappear { finishDrag(); removeScrollMonitor(); removeKeyboardMonitor() }
       // Outside accessibilityRepresentation so the context remains readable
       // alongside the band's accessible sliders. It never intercepts a drag.

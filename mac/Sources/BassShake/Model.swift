@@ -901,6 +901,8 @@ struct Settings: Codable, Equatable {
   /// What's Playing art (⋯ › Look › Artwork › Style): the plain cover, or Vinyl
   /// Peek (a sleeve with a choice of record materials peeking out).
   var artworkStyle: ArtworkStyle = .cover
+  /// The full player header; Mini keeps its small transport row.
+  var playerArtworkLayout: PlayerArtworkLayout = .compact
   /// The record material; Artwork Tint preserves the original per-cover look.
   var vinylMaterial: VinylMaterial = .artwork
   /// A treatment for cover art and video stills, independent of cover / vinyl.
@@ -1075,6 +1077,7 @@ struct Settings: Codable, Equatable {
     menuBarVolume = (try? c.decodeIfPresent(Bool.self, forKey: .menuBarVolume)) ?? d.menuBarVolume
     menuBarContent = (try? c.decodeIfPresent(MenuBarContent.self, forKey: .menuBarContent)) ?? d.menuBarContent
     artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
+    playerArtworkLayout = (try? c.decodeIfPresent(PlayerArtworkLayout.self, forKey: .playerArtworkLayout)) ?? d.playerArtworkLayout
     vinylMaterial = (try? c.decodeIfPresent(VinylMaterial.self, forKey: .vinylMaterial)) ?? d.vinylMaterial
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
     artworkFoil = (try? c.decodeIfPresent(Bool.self, forKey: .artworkFoil)) ?? d.artworkFoil

@@ -170,6 +170,10 @@ struct SettingsMenuContent: View {
       // Artwork layout and image treatment are independent, so effects also
       // work on the cover inside Vinyl Peek's sleeve.
       Menu("Artwork") {
+        Picker("Layout", selection: bind(\.playerArtworkLayout)) {
+          ForEach(PlayerArtworkLayout.allCases) { Text($0.title).tag($0) }
+        }
+        Divider()
         Picker("Style", selection: bind(\.artworkStyle)) {
           ForEach(ArtworkStyle.allCases) { Text($0.title).tag($0) }
         }
