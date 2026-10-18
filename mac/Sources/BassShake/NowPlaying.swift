@@ -160,6 +160,9 @@ final class NowPlaying: ObservableObject {
   @Published private(set) var hero: NowApp?
   /// Other playing apps, at most three, in a stable order.
   @Published private(set) var others: [NowApp] = []
+  /// Every currently retained source for the focused player, without the
+  /// compact hero's three-tile limit. Shares its existing discovery lifecycle.
+  @Published private(set) var artworkApps: [NowApp] = []
   /// Song info by bundle ID (Spotify / Music only).
   @Published private(set) var tracks: [String: NowTrack] = [:]
   /// Browser tabs playing, by NowApp.id (loudest/most recent first). Empty for other apps.
@@ -440,6 +443,7 @@ final class NowPlaying: ObservableObject {
     deferredClick = nil
     hero = nil
     others = []
+    artworkApps = []
     lastHeard = [:]
     known = [:]
     firstSeen = [:]
@@ -686,6 +690,12 @@ final class NowPlaying: ObservableObject {
     } else {
       challenger = nil
     }
+
+    let catalog = ranked.sorted {
+      let left = firstSeen[$0] ?? 0, right = firstSeen[$1] ?? 0
+      return left != right ? left < right : $0 < $1
+    }.compactMap { known[$0] }
+    if catalog != artworkApps { artworkApps = catalog }
 
     let rest = ranked.filter { $0 != heroID }.prefix(Self.maxOthers)
       .sorted { (firstSeen[$0] ?? 0) < (firstSeen[$1] ?? 0) }
@@ -1475,6 +1485,45 @@ final class NowPlaying: ObservableObject {
     }
   }
 
+  /// Focused artwork transport. Uses the existing consent gate and serial
+  /// script bridges; no global key fallback can control a different source.
+  func artworkPlayback(_ entry: NowEntry, operation: ArtworkPlaybackOperation,
+                       expectedTrack: String, lease: ArtworkPlaybackLease,
+                       completion: @escaping (ArtworkPlaybackReply) -> Void) {
+    guard let bundleID = entry.app.bundleID, detailsAllowed(bundleID) else {
+      completion(ArtworkPlaybackReply(error: "permission")); return
+    }
+    let player = entry.item == nil ? entry.app.player : nil
+    let target = BrowserTempoTarget(entry)
+    guard player != nil || target != nil else {
+      completion(ArtworkPlaybackReply(error: "unsupported")); return
+    }
+    let queue = player != nil ? scriptQueue : browserQueue
+    let transportBridge = player != nil ? bridge : browserBridge
+    if !operation.isRead { NowPlayingScripts.beginUrgent() }
+    queue.async {
+      defer { if !operation.isRead { NowPlayingScripts.endUrgent() } }
+      let reply: ArtworkPlaybackReply
+      if !lease.isValid {
+        reply = ArtworkPlaybackReply(error: "cancelled")
+      } else if RunningApps.pid(bundleID) != entry.app.pid {
+        reply = ArtworkPlaybackReply(error: "stopped")
+      } else if AutomationGate.check(bundleID, ask: false) != AutomationGate.allowed {
+        reply = ArtworkPlaybackReply(error: "permission")
+      } else if let player {
+        reply = transportBridge.artworkPlayback(player, operation: operation, expectedTrack: expectedTrack, lease: lease, expectedPID: entry.app.pid)
+      } else if let target {
+        reply = transportBridge.artworkPlayback(target, operation: operation, lease: lease, expectedPID: entry.app.pid)
+      } else {
+        reply = ArtworkPlaybackReply(error: "unsupported")
+      }
+      DispatchQueue.main.async {
+        if !operation.isRead { self.lastPoll = ProcessInfo.processInfo.systemUptime - Self.pollEvery + 0.25 }
+        completion(reply)
+      }
+    }
+  }
+
   // MARK: - Automation permission (AutomationGate; checks off main)
 
   /// Artist Mode's explicit, source-level tempo command. Reuses the browser
@@ -1784,9 +1833,10 @@ final class NowPlayingScripts {
   static func endUrgent() { urgentLock.lock(); urgentCount = max(0, urgentCount - 1); urgentLock.unlock() }
 
   /// `cache: false` for one-off sources (a tab click): compiled, run, dropped.
-  func run(key: String, _ source: String, cache: Bool = true) -> Outcome {
+  func run(key: String, _ source: String, cache: Bool = true, shouldRun: (() -> Bool)? = nil) -> Outcome {
     Self.osaLock.lock()
     defer { Self.osaLock.unlock() }
+    guard shouldRun?() ?? true else { return .failure(-128) }
     if cache && broken.contains(key) { return .failure(0) }
     let script: NSAppleScript
     if cache, let hit = compiled[key] {
@@ -1805,6 +1855,7 @@ final class NowPlayingScripts {
       script = s
     }
     var err: NSDictionary?
+    guard shouldRun?() ?? true else { return .failure(-128) }
     let result = script.executeAndReturnError(&err)
     if let err {
       return .failure((err[NSAppleScript.errorNumber] as? Int) ?? 0)

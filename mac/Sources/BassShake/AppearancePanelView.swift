@@ -153,7 +153,7 @@ struct AppearancePanelView: View {
   @ViewBuilder private var headerPreview: some View {
     let layout = controller.settings.playerArtworkLayout
     if layout == .compact {
-      AppearanceArtworkPreview(image: cover, style: controller.settings.artworkStyle)
+      AppearanceArtworkPreview(image: cover, style: controller.settings.artworkStyle, entry: stack.lead)
     } else if let entry = stack.lead {
       NowPlayingArtworkHeader(model: now, app: entry.app, layout: layout, preview: true)
     } else {
@@ -509,6 +509,7 @@ private enum AppearanceCategory: String, CaseIterable, Identifiable {
 struct AppearanceArtworkPreview: View {
   let image: NSImage
   let style: ArtworkStyle
+  var entry: NowEntry? = nil
   @Environment(\.vinylMaterial) private var material
   @Environment(\.artworkEffect) private var effect
   @Environment(\.artworkFoil) private var foil
@@ -553,7 +554,7 @@ struct AppearanceArtworkPreview: View {
     .accessibilityLabel("Artwork preview")
     .accessibilityValue(description)
     .accessibilityAddTraits(.isImage)
-    .inspectableArtwork(image)
+    .inspectableArtwork(image, entry: entry)
   }
 }
 

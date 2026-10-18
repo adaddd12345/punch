@@ -29,6 +29,7 @@ struct PlayerArtworkHeader<Controls: View>: View {
   var paused = false
   var edgeInset: CGFloat = 0
   var preview = false
+  var entry: NowEntry? = nil
   @ViewBuilder let controls: () -> Controls
 
   var body: some View {
@@ -40,7 +41,7 @@ struct PlayerArtworkHeader<Controls: View>: View {
         .padding(.horizontal, -edgeInset)
         .offset(y: -edgeInset / 2)
         .frame(height: artHeight)
-        .inspectableArtwork(artwork)
+        .inspectableArtwork(artwork, entry: entry)
       VStack(spacing: 4) {
         Text(title)
           .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),
@@ -202,7 +203,7 @@ struct NowPlayingArtworkHeader: View {
                         subtitle: notice?.text ?? text.subtitle,
                         spinning: !preview && model.barsLit(entry), paused: preview ? false : text.paused,
                         edgeInset: layout == .expanded && text.artwork != nil ? edgeInset : 0,
-                        preview: preview) {
+                        preview: preview, entry: entry) {
       ArtworkHeroControls(model: model, entry: entry, preview: preview)
     }
     .environment(\.drawPaused, inheritedPause || preview)

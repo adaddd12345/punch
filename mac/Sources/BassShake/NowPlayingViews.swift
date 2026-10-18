@@ -78,7 +78,7 @@ struct NowPlayingHeadline: View {
         .nowPlayingBars(model, entry, art: art, hidden: loading)
         .loadingArt(loading, size: art)
         .modifier(NowMorph(id: entry.id))
-        .inspectableArtwork(loading ? nil : text.artwork)
+        .inspectableArtwork(loading ? nil : text.artwork, entry: entry)
       Button {
         NowStack.focus(entry, model: model)
       } label: {
