@@ -53,7 +53,8 @@ struct HiddenWhilePlaying<Content: View>: View {
 }
 
 /// The hero's entry: cover (or tab still, or app icon), title and a second
-/// line (artist / site / state). Click brings it forward. A note after a key
+/// line (artist / site / state). The words bring it forward; the cover opens
+/// the artwork presentation. A note after a key
 /// that missed takes the words' place for a few seconds; when it offers
 /// Accessibility, a click on the note (only) opens that.
 struct NowPlayingHeadline: View {
@@ -71,21 +72,29 @@ struct NowPlayingHeadline: View {
     // Its song / tab on the way: bars where the art and lines go, which
     // turn into them in place (NowLoading; never the app's name first).
     let loading = stack.isLoading(entry) && note == nil
-    Button {
-      NowStack.focus(entry, model: model)
-    } label: {
-      content(entry, text, note, loading: loading)
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(BentoPressStyle())
-    .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: text.paused,
-                                    picked: stack.pinned != nil && stack.pinned == entry.id))
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(note.map { $0.text } ?? (loading ? "Loading \(app.name)" : model.accessibility(entry).label))
-    .accessibilityValue(note != nil || loading ? "" : model.accessibility(entry).value)
-    .accessibilityActions {
-      if note?.settings == true {
-        Button("Open Accessibility Settings") { MediaKeys.openSettings() }
+    HStack(alignment: .center, spacing: 8) {
+      NowArt(artwork: text.artwork, favicon: text.favicon, icon: model.icon(app), size: art,
+             spinning: model.barsLit(entry), paused: text.paused)
+        .nowPlayingBars(model, entry, art: art, hidden: loading)
+        .loadingArt(loading, size: art)
+        .modifier(NowMorph(id: entry.id))
+        .inspectableArtwork(loading ? nil : text.artwork)
+      Button {
+        NowStack.focus(entry, model: model)
+      } label: {
+        content(entry, text, note, loading: loading)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(BentoPressStyle())
+      .pointerHint(Caption.nowPlaying(app.name, song: text.song, paused: text.paused,
+                                      picked: stack.pinned != nil && stack.pinned == entry.id))
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel(note.map { $0.text } ?? (loading ? "Loading \(app.name)" : model.accessibility(entry).label))
+      .accessibilityValue(note != nil || loading ? "" : model.accessibility(entry).value)
+      .accessibilityActions {
+        if note?.settings == true {
+          Button("Open Accessibility Settings") { MediaKeys.openSettings() }
+        }
       }
     }
   }
@@ -93,46 +102,39 @@ struct NowPlayingHeadline: View {
   private func content(_ entry: NowEntry, _ text: NowEntryText,
                        _ note: (id: String, text: String, settings: Bool)?,
                        loading: Bool) -> some View {
-      HStack(alignment: .center, spacing: 8) {
-        NowArt(artwork: text.artwork, favicon: text.favicon, icon: model.icon(app), size: art,
-               spinning: model.barsLit(entry), paused: text.paused)
-          .nowPlayingBars(model, entry, art: art, hidden: loading)
-          .loadingArt(loading, size: art)
-          .modifier(NowMorph(id: entry.id))
-        VStack(alignment: .leading, spacing: 2) {
-          if let n = note {
-            if n.settings {
-              NoticeText(text: n.text)
-                .contentShape(Rectangle())
-                .highPriorityGesture(TapGesture().onEnded { MediaKeys.openSettings() })
-                .pointerHint(Caption.noticeSettings(app.name))
-                .transition(.opacity)
-            } else {
-              NoticeText(text: n.text).transition(.opacity)
-            }
-          } else {
-            // Always two lines: the title, then artist / site / app (or what it's doing).
-            // A new song or tab fades its words in place (one Text each, so
-            // never two titles at once); a stack swap changes them at once.
-            VStack(alignment: .leading, spacing: 2) {
-              Text(text.title)
-                .font(.system(size: title, weight: .heavy, design: .rounded))
-                .tracking(-0.3)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .foregroundStyle(.artworkPrimary)
-                .contentTransition(.opacity)
-                .loadingLine(loading, fraction: NowLoading.titleWidth(entry.id), font: title)
-              NowSubtitle(text: text.subtitle, icon: text.hasArt ? model.icon(app) : nil, font: 11)
-                .loadingLine(loading, fraction: NowLoading.subtitleWidth(entry.id), font: 11)
-            }
-            .modifier(StillWhileMorphing())
-          }
+    VStack(alignment: .leading, spacing: 2) {
+      if let n = note {
+        if n.settings {
+          NoticeText(text: n.text)
+            .contentShape(Rectangle())
+            .highPriorityGesture(TapGesture().onEnded { MediaKeys.openSettings() })
+            .pointerHint(Caption.noticeSettings(app.name))
+            .transition(.opacity)
+        } else {
+          NoticeText(text: n.text).transition(.opacity)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.easeOut(duration: 0.2), value: note?.text)
-        .animation(.easeOut(duration: 0.2), value: text.title)
+      } else {
+        // Always two lines: the title, then artist / site / app (or what it's doing).
+        // A new song or tab fades its words in place (one Text each, so
+        // never two titles at once); a stack swap changes them at once.
+        VStack(alignment: .leading, spacing: 2) {
+          Text(text.title)
+            .font(.system(size: title, weight: .heavy, design: .rounded))
+            .tracking(-0.3)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .foregroundStyle(.artworkPrimary)
+            .contentTransition(.opacity)
+            .loadingLine(loading, fraction: NowLoading.titleWidth(entry.id), font: title)
+          NowSubtitle(text: text.subtitle, icon: text.hasArt ? model.icon(app) : nil, font: 11)
+            .loadingLine(loading, fraction: NowLoading.subtitleWidth(entry.id), font: 11)
+        }
+        .modifier(StillWhileMorphing())
       }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .animation(.easeOut(duration: 0.2), value: note?.text)
+    .animation(.easeOut(duration: 0.2), value: text.title)
   }
 
 }

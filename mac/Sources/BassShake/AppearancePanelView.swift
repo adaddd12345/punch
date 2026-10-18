@@ -524,11 +524,11 @@ struct AppearanceArtworkPreview: View {
     }
     .environment(\.powerSaver, true)
     .environment(\.drawPaused, true)
-    .allowsHitTesting(false)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Artwork preview")
     .accessibilityValue(description)
     .accessibilityAddTraits(.isImage)
+    .inspectableArtwork(image)
   }
 }
 

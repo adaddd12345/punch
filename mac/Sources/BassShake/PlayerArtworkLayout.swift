@@ -40,6 +40,7 @@ struct PlayerArtworkHeader<Controls: View>: View {
         .padding(.horizontal, -edgeInset)
         .offset(y: -edgeInset / 2)
         .frame(height: artHeight)
+        .inspectableArtwork(artwork)
       VStack(spacing: 4) {
         Text(title)
           .font(.system(size: preview ? (layout == .expanded ? 19 : 17) : (layout == .expanded ? 26 : 23),

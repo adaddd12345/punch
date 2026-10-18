@@ -658,6 +658,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     if let k = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
       guard let self, self.popover.isShown else { return event }
       let cmd = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
+      // The artwork presentation gets the first Escape in its own window.
+      if event.keyCode == 53, MainActor.assumeIsolated({ ArtworkInspectionKeyboard.dismiss(in: event.window) }) { return nil }
       // Esc while rearranging blocks ends that (Reshuffle's Done), not the popover.
       if event.keyCode == 53, Reshuffle.anyOn { return event }
       if event.keyCode == 53, !self.controller.pinned { self.closePopover(yieldFocus: true); return nil }
@@ -950,6 +952,7 @@ struct MainWindowView: View {
       }
       TakeoverRoot(local: controller, ownsDrawer: false)
     }
+    .artworkInspectionRoot()
     .onPreferenceChange(PlayerDetailsCollapsedKey.self) { collapsed in
       // OverflowScroll's first expanded proposal can still be the small
       // collapsed viewport. Restore room after the new controls enter layout.

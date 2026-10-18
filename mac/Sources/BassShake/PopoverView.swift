@@ -97,6 +97,7 @@ struct PopoverView: View {
         controls
       }
     }
+    .artworkInspectionRoot(enabled: role != .launchWindow)
     // Above both the classic stack and Bento (and the pinned popover).
     .pointerHintRoot(enabled: controller.settings.pointerHints)
     // Power Saver for everything inside; animation pauses while the window is covered.
