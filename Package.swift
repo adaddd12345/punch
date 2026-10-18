@@ -50,6 +50,11 @@ let package = Package(
         .linkedFramework("SwiftUI"),
       ]
     ),
+    .testTarget(
+      name: "BassShakeTests",
+      dependencies: ["BassShake"],
+      path: "mac/tests/BassShakeTests"
+    ),
   ],
   cxxLanguageStandard: .cxx20
 )

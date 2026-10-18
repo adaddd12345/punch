@@ -109,26 +109,17 @@ struct EQView: View {
   private static let dragKey = "eq.drag"
   private static let qKey = "eq.q"
 
-  private var separateWaveformLane: Bool {
-    controller.settings.waveform && controller.settings.enabled && !controller.settings.spectrum
-      && controller.settings.waveformStyle != .classic && !powerSaver
-  }
-
   var body: some View {
-    VStack(spacing: 0) {
-      responseSurface
-      if separateWaveformLane {
-        Rectangle().fill(Color.primary.opacity(0.10)).frame(height: 1)
-          .padding(.horizontal, 12)
-        // Measured output has its own lane and level scale, separate from
-        // the editable gain response above it.
-        WaveformView(model: controller.waveform, color: controller.settings.scopeColor,
-                     style: controller.settings.waveformStyle)
-          .frame(height: controller.settings.waveformStyle.laneHeight)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 4)
-          .allowsHitTesting(false)
+    VStack(spacing: 6) {
+      HStack {
+        Text("EQ").font(.system(size: 12, weight: .semibold, design: .rounded))
+        Spacer()
+        Text(controller.settings.waveform ? "Live sound · " + controller.settings.eqVisual.title : "Curve only")
+          .font(.system(size: 10, weight: .medium, design: .rounded))
+          .foregroundStyle(.secondary)
       }
+      .padding(.horizontal, 12).padding(.top, 10)
+      responseSurface
     }
     .background(
       RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -150,18 +141,11 @@ struct EQView: View {
       let boostDb = shown.boostDb
       ZStack {
         if controller.settings.waveform && controller.settings.enabled {
-          // Spectrum keeps running under Power Saver (at the ticker's 10 Hz);
-          // the scope, which needs the full rate to read, does not.
-          if controller.settings.spectrum {
-            SpectrumView(model: controller.spectrum, color: spectrumColor)
-              .allowsHitTesting(false)
-              .transition(.opacity)
-          } else if !powerSaver && !separateWaveformLane {
-            WaveformView(model: controller.waveform, color: controller.settings.scopeColor,
-                         style: controller.settings.waveformStyle)
-              .allowsHitTesting(false)
-              .transition(.opacity)
-          }
+          LiveEQVisualization(model: controller.spectrum, color: spectrumColor,
+                              style: controller.settings.eqVisual)
+            .padding(.bottom, 20)
+            .allowsHitTesting(false)
+            .transition(.opacity)
         }
         Canvas { ctx, size in
           draw(ctx, size: size, bands: bands, boost: boostDb, showNodes: showNodes && lineDrag == nil, kbDot: kbDot)
@@ -335,9 +319,9 @@ struct EQView: View {
                                 prism: controller.settings.eqLineStyle == .prism)
     ctx.draw(Text("0 dB").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
              at: CGPoint(x: w - 4, y: y(0, h) + 6), anchor: .trailing)
-    for (f, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k")] {
+    for (f, label) in [(100.0, "Bass"), (1_000.0, "Mids"), (8_000.0, "Highs")] {
       ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
-               at: CGPoint(x: x(f, w) + 3, y: h - 7), anchor: .leading)
+               at: CGPoint(x: x(f, w), y: h - 7), anchor: .center)
     }
 
     drawGhost(ctx, size: size)
@@ -437,14 +421,10 @@ struct EQView: View {
     EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
                                 dark: dark, highContrast: contrast == .increased,
                                 prism: controller.settings.eqLineStyle == .prism)
-    if controller.settings.eqLineStyle == .prism {
-      ctx.draw(Text("EQ + Boost · dB").font(.system(size: 9, weight: .medium, design: .rounded))
-        .foregroundColor(.secondary.opacity(0.8)), at: CGPoint(x: 8, y: 8), anchor: .leading)
-      for (frequency, label) in [(100.0, "100"), (1_000.0, "1k"), (10_000.0, "10k Hz")] {
-        ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded))
-          .foregroundColor(.secondary.opacity(0.75)),
-                 at: CGPoint(x: x(frequency, w), y: h - 6), anchor: .center)
-      }
+    for (frequency, label) in [(100.0, "Bass"), (1_000.0, "Mids"), (8_000.0, "Highs")] {
+      ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded))
+        .foregroundColor(.secondary.opacity(0.85)),
+               at: CGPoint(x: x(frequency, w), y: h - 7), anchor: .center)
     }
     drawGhost(ctx, size: size)
     if controller.settings.eqLineStyle == .prism {
@@ -455,7 +435,7 @@ struct EQView: View {
       fill.addLine(to: CGPoint(x: w, y: h))
       fill.addLine(to: CGPoint(x: 0, y: h))
       fill.closeSubpath()
-      ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.30 : 0.18), color.opacity(0)]),
+      ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.12 : 0.08), color.opacity(0)]),
                                            startPoint: CGPoint(x: 0, y: y(12, h)),
                                            endPoint: CGPoint(x: 0, y: h)))
       if !powerSaver {

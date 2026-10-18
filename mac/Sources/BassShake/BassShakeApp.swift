@@ -658,6 +658,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     // Esc closes an unpinned popover, ⌘W closes it, ⌘Z undoes a sound edit.
     if let k = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
       guard let self, self.popover.isShown else { return event }
+      // Companion windows own their keyboard shortcuts, including their sheets.
+      if MainActor.assumeIsolated({ DownloadQueueWindow.owns(event.window) }) { return event }
       let cmd = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
       // The artwork presentation gets the first Escape in its own window.
       if event.keyCode == 53, MainActor.assumeIsolated({ ArtworkInspectionKeyboard.dismiss(in: event.window) }) { return nil }

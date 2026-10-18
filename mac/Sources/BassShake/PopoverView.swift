@@ -19,6 +19,7 @@ struct PopoverView: View {
   /// Set by a settings-menu item; open(_:) shows it and clears this.
   @State private var menuPanel: SettingsPanel?
   @State private var confirmReset = false
+  @State private var confirmSoundReset = false
   @State private var splash = false
   /// "Connecting…" only once starting has taken a while (a normal start is
   /// 0.15–0.5 s, and a banner popping in pushed every tile mid-animation).
@@ -125,7 +126,6 @@ struct PopoverView: View {
   /// destructive reader, so the two visible windows must never compete.
   private var canReadAnalyzer: Bool {
     guard role == .launchWindow else { return true }
-    guard showAppearance || controller.settings.waveformStyle.isBassVisualizer else { return false }
     guard let primary = LiveDrawer.shared.host, primary.isVisible else { return true }
     return !primary.occlusionState.contains(.visible)
   }
@@ -326,6 +326,11 @@ struct PopoverView: View {
     } message: {
       Text("Your EQ, presets and options go back to how they were on first launch.")
     }
+    .confirmationDialog("Reset sound to defaults?", isPresented: $confirmSoundReset) {
+      Button("Reset Sound") { controller.resetSoundSettings() }
+    } message: {
+      Text("Reset EQ, bass, gain, listening modes and effects. Your appearance, saved presets, hearing fit and protection settings stay as they are.")
+    }
     .background(sizeShortcuts)
     .onChange(of: controller.settings.viewSize) { _, new in
       // Mini has no footer, so no Live/DJ tray either (and no rearranging).
@@ -514,13 +519,8 @@ struct PopoverView: View {
         }
         var visualPulled = false
         if s.waveform && s.enabled && canReadAnalyzer {
-          if s.spectrum {
-            controller.spectrum.pull(controller)
-            visualPulled = true
-          } else if !s.powerSaver {
-            controller.waveform.pull(controller)
-            visualPulled = true
-          }
+          controller.spectrum.pull(controller)
+          visualPulled = true
         }
         if role != .launchWindow {
           if reaction.captureActive, !visualPulled {
@@ -943,7 +943,7 @@ struct PopoverView: View {
       Banner(symbol: "stethoscope", tint: .green,
              text: (controller.doctorReport ?? []).joined(separator: "\n"),
              action: ("OK", { controller.doctorReport = nil }),
-             secondary: controller.status == .audioServiceStuck ? ("Restart macOS Audio", controller.restartAudioService) : nil)
+             secondary: controller.status == .audioServiceStuck ? ("Restart macOS Audio", controller.restartAudioService) : ((controller.doctorReport ?? []).contains("Everything looked fine.") ? ("Reset sound…", requestDoctorReset) : nil))
     case _ where controller.quietFloorSuggestion != nil:
       Banner(symbol: "speaker.wave.1", tint: .blue,
              text: "You never go above 20% on \(controller.quietFloorSuggestionName). Pad it by -15 dB for finer control?",
@@ -1127,6 +1127,12 @@ struct PopoverView: View {
     doctorRequestedHere = false
   }
 
+  private func requestDoctorReset() {
+    showDoctorReport = false
+    controller.doctorReport = nil
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { confirmSoundReset = true }
+  }
+
   /// Tools: Check & Fix and the ⋯ shaker menu.
   private var toolsGroup: some View {
     FooterGroup {
@@ -1154,7 +1160,8 @@ struct PopoverView: View {
         }), arrowEdge: .bottom) {
         DoctorReportCard(report: controller.doctorReport ?? [],
                          dismiss: { controller.doctorReport = nil },
-                         restart: controller.status == .audioServiceStuck ? controller.restartAudioService : nil)
+                         restart: controller.status == .audioServiceStuck ? controller.restartAudioService : nil,
+                         reset: (controller.doctorReport ?? []).contains("Everything looked fine.") ? requestDoctorReset : nil)
       }
       Button { setAppearance(!showAppearance) } label: {
         FooterFlatIcon(kind: .appearance)
@@ -1322,15 +1329,33 @@ private struct DoctorReportCard: View {
   let report: [String]
   let dismiss: () -> Void
   var restart: (() -> Void)?
+  var reset: (() -> Void)?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Label("Sound Check", systemImage: "stethoscope")
-        .font(.system(size: 12, weight: .semibold))
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
       Text(report.joined(separator: "\n"))
-        .font(.system(size: 11))
+        .font(.system(size: 11, design: .rounded))
         .fixedSize(horizontal: false, vertical: true)
         .textSelection(.enabled)
+      if let reset {
+        VStack(alignment: .leading, spacing: 6) {
+          Text("Still doesn’t sound right?").font(.system(size: 11, weight: .semibold, design: .rounded))
+          Text("Restore the default sound. Keep your look and saved presets.")
+            .font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+          Button(action: reset) {
+            Text("Reset sound…")
+              .font(.system(size: 11, weight: .medium, design: .rounded))
+              .padding(.horizontal, 2)
+              .padding(.vertical, 1)
+          }
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+        }.padding(10)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+      }
       HStack(spacing: 8) {
         if let restart { Button("Restart macOS Audio", action: restart) }
         Spacer(minLength: 0)

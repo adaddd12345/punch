@@ -16,7 +16,6 @@ struct AppearancePanelView: View {
 
   private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
   private let vinylColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
-  private let waveformColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
   // Intentional browsing order: adaptive choices, quiet colourways, moving
   // gradients, seasonal scenes, then the specialised market theme.
   private let backgroundOrder: [BackgroundStyle] = [
@@ -33,11 +32,7 @@ struct AppearancePanelView: View {
       now.isPlaying($0) && !now.isMuted($0.app.id) && $0.item?.muted != true
     }
   }
-  private var waveformLaneHeight: CGFloat {
-    let s = controller.settings
-    return s.waveform && s.enabled && !s.spectrum && s.waveformStyle != .classic && !powerSaver ? s.waveformStyle.laneHeight + 9 : 0
-  }
-  private var pinnedHeight: CGFloat { 36 + (showsLiveEQ ? 148 + waveformLaneHeight : 0) }
+  private var pinnedHeight: CGFloat { 36 + (showsLiveEQ ? 172 : 0) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -133,8 +128,8 @@ struct AppearancePanelView: View {
   private var liveEQPreview: some View {
     let s = controller.settings
     let status = !s.enabled ? "Processing off" : !s.waveform ? "Visual off"
-      : powerSaver && !s.spectrum ? "Scope paused · Power Saver" : "Playing audio"
-    let visual = s.eqVisual == .scope ? s.waveformStyle.title : s.eqVisual.title
+      : "Playing audio"
+    let visual = s.eqVisual.title
     return VStack(spacing: 6) {
       HStack {
         Text("EQ preview").font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -142,7 +137,7 @@ struct AppearancePanelView: View {
         Text(status).font(.system(size: 10)).foregroundStyle(chrome?.secondary ?? Color.secondary)
       }
       EQView(controller: controller, chrome: false, filament: eqPreviewColor, preview: true)
-        .frame(height: 100 + waveformLaneHeight)
+        .frame(height: 124)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("EQ preview, \(s.eqLineStyle.title) controls, \(visual). \(status)")
     }
@@ -271,39 +266,28 @@ struct AppearancePanelView: View {
 
   private var equalizer: some View {
     VStack(alignment: .leading, spacing: 12) {
-      section("Sound visualizer") {
-        Text("See bass, detail, or the raw signal.")
-          .font(.system(size: 11))
+      section("EQ display") {
+        Text("One view of bass, mids and highs. The dots shape the sound; the movement shows what’s playing.")
+          .font(.system(size: 11, design: .rounded))
           .foregroundStyle(chrome?.secondary ?? Color.secondary)
-        LazyVGrid(columns: waveformColumns, spacing: 10) {
-          ForEach([WaveformStyle.bassPulse, .bassSpectrum, .classic, .silk, .reed, .fold]) { style in
-            choice(style.title,
-                   selected: controller.settings.eqVisual == .scope && controller.settings.waveformStyle == style,
-                   labelLines: 1,
-                   action: {
-                     controller.settings.waveformStyle = style
-                     controller.settings.setEQVisualByHand(.scope)
-                   }) {
+        HStack(spacing: 8) {
+          ForEach(EQVisual.allCases) { style in
+            choice(style.title, selected: controller.settings.eqVisual == style,
+                   labelLines: 1, action: { controller.settings.setEQVisualByHand(style) }) {
               previewSurface {
-                if style.isBassVisualizer {
-                  BassVisualizerArtwork(frame: Self.bassPreview, color: eqPreviewColor,
-                                        style: style == .bassPulse ? .pressure : .columns, compact: true)
-                    .padding(8)
-                } else {
-                  WaveformArtwork(mins: Self.previewSignal.mins, maxs: Self.previewSignal.maxs,
-                                  rms: Self.previewSignal.rms, density: Self.previewSignal.density,
-                                  color: eqPreviewColor, style: style)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
-                }
+                ZStack {
+                  EQFrequencyArtwork(levels: Self.frequencyPreview, color: eqPreviewColor, style: style)
+                  EQLinePreview(style: controller.settings.eqLineStyle, color: eqPreviewColor,
+                                response: controller.curve(for: controller.shownSettings.bands, count: 128),
+                                nodeFrequencies: [], boost: controller.shownSettings.boostDb)
+                }.padding(8)
               }
             }
-            .help(style.detail)
           }
         }
       }
-      section("EQ controls") {
-        Text("Curve and handle styles.")
+      section("Curve style") {
+        Text("The same six sound controls in either style.")
           .font(.system(size: 11))
           .foregroundStyle(chrome?.secondary ?? Color.secondary)
         HStack(spacing: 8) {
@@ -323,10 +307,6 @@ struct AppearancePanelView: View {
       }
       section("Display") {
         HStack {
-          Picker("Visual", selection: Binding(get: { controller.settings.eqVisual },
-                                               set: { controller.settings.setEQVisualByHand($0) })) {
-            ForEach(EQVisual.allCases) { Text($0.title).tag($0) }
-          }
           Picker("Color", selection: bind(\.scopeColor)) {
             ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
           }
@@ -341,7 +321,6 @@ struct AppearancePanelView: View {
     let color = controller.settings.scopeColor
     return color == .accent ? (chrome?.accent ?? Color.accentColor) : color.color
   }
-  private static let previewSignal = EQPreviewSignal.music.samples()
 
   private var vinyl: some View {
     section("Vinyl") {
@@ -462,22 +441,16 @@ struct AppearancePanelView: View {
       .overlay { content().environment(\.powerSaver, true).environment(\.drawPaused, true) }
   }
 
-  /// A labelled settings thumbnail, measured from a local synthetic kick/hi-hat signal.
-  private static let bassPreview: BassVisualizerFrame = {
-    let analyzer = BassVisualizerAnalysis()
+  /// Static thumbnail from measured bass, mid and high tones. The pinned
+  /// preview above uses live data from the exact same main EQ renderer.
+  private static let frequencyPreview: [Float] = {
+    let analyzer = SpectrumAnalyzer()
     let rate = 48_000.0
-    var result = BassVisualizerFrame.silence
-    for frame in 0...90 {
-      let time = Double(frame) / 30
-      let kick = 0.3 * exp(-time.truncatingRemainder(dividingBy: 0.5) * 12)
-      let hat = 0.035 * exp(-time.truncatingRemainder(dividingBy: 0.25) * 24)
-      let samples = (0..<2880).map { i -> Float in
-        let t = Double(i) / rate
-        return Float(kick * sin(2 * .pi * 60 * t) + hat * sin(2 * .pi * 6_000 * t))
-      }
-      result = analyzer.measure(samples: samples, sampleRate: rate, timestamp: time)
+    let samples = (0..<SpectrumAnalyzer.fftSize(for: rate)).map { i -> Float in
+      let t = Double(i) / rate
+      return Float(0.2 * sin(2 * .pi * 70 * t) + 0.08 * sin(2 * .pi * 900 * t) + 0.04 * sin(2 * .pi * 7_000 * t))
     }
-    return result
+    return analyzer.process(samples, rate: rate, dt: 1, calm: false).line
   }()
 
   /// A local original sleeve keeps image/effect choices legible before metadata

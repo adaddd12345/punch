@@ -150,20 +150,12 @@ struct SettingsMenuContent: View {
                     || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
       }
       Divider()
-      // What's drawn behind the EQ curve: the scope (time), the analyser
-      // (frequency, on the EQ's own axis), or nothing.
-      Picker("EQ Visual", selection: Binding(get: { controller.settings.eqVisual },
-                                             set: { controller.settings.setEQVisualByHand($0) })) {
+      Picker("EQ display", selection: Binding(get: { controller.settings.eqVisual },
+                                              set: { controller.settings.setEQVisualByHand($0) })) {
         ForEach(EQVisual.allCases) { Text($0.title).tag($0) }
       }
-      Picker("Scope Color", selection: bind(\.scopeColor)) {
+      Picker("EQ color", selection: bind(\.scopeColor)) {
         ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
-      }
-      Picker("Sound Visualizer", selection: Binding(get: { controller.settings.waveformStyle }, set: {
-        controller.settings.waveformStyle = $0
-        controller.settings.setEQVisualByHand(.scope)
-      })) {
-        ForEach(WaveformStyle.allCases) { Text($0.title).tag($0) }
       }
       Picker("EQ Line", selection: bind(\.eqLineStyle)) {
         ForEach(EQLineStyle.allCases) { Text($0.title).tag($0) }

@@ -618,15 +618,15 @@ extension Settings {
   }
 }
 
-/// ⋯ › Look › EQ Visual (stored as `waveform` + `spectrum`).
+/// One frequency display. Legacy stored scope/spectrum keys now select Bars/Flow.
 enum EQVisual: String, CaseIterable, Identifiable {
   case scope, spectrum, off
   var id: String { rawValue }
   var title: String {
     switch self {
-    case .scope: return "Scope"
-    case .spectrum: return "Spectrum"
-    case .off: return "Off"
+    case .scope: return "Bars"
+    case .spectrum: return "Flow"
+    case .off: return "Curve only"
     }
   }
 }

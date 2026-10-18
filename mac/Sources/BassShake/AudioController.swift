@@ -693,6 +693,17 @@ final class AudioController: ObservableObject {
 
   // MARK: - Reset, export, import
 
+  /// Sound Check offers a narrow reset; the separate full reset stays in General.
+  func resetSoundSettings() {
+    guard !isMirror else { return }
+    stopMorph(keepWhereItIs: false)
+    leaveModeQuietly()
+    settings = settings.resettingSound()
+    dj = DJState()
+    bypassed = false
+    doctorReport = ["Sound controls reset. Your appearance and saved presets are unchanged."]
+  }
+
   /// Everything back to first-run defaults (presets included).
   func resetAllSettings() {
     guard !isMirror else { return }

@@ -58,30 +58,22 @@ import SwiftUI
       header
       ScrollViewReader { scroll in
       ScrollView {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
           composer.id("download-composer")
           if let added { addedConfirmation(added) }
           if !current.isEmpty { queueSection("In the queue", jobs: current) }
           if !attention.isEmpty { queueSection("Needs attention", jobs: attention) }
           if !history.isEmpty { queueSection("Saved", jobs: history) }
-          if queue.jobs.isEmpty { emptyQueue }
           if let storageIssue = queue.storageIssue {
             Label(storageIssue, systemImage: "exclamationmark.circle")
               .font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
           }
-          VStack(spacing: 7) {
-            Text("Downloads continue when you close this window.")
-            HStack(spacing: 6) {
-              Image(systemName: "externaldrive")
-              Text("Saved on this Mac.")
-              Link("Powered by yt-dlp ↗", destination: URL(string: "https://github.com/yt-dlp/yt-dlp")!)
-            }
-          }
-          .font(.system(size: 11, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary).frame(maxWidth: .infinity)
-          .padding(.vertical, 4)
+          Text(queue.jobs.isEmpty ? "Paste a link to start. Downloads continue when this window closes." : "Downloads continue when this window closes.")
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+
         }
-        .padding(20).padding(.top, 2)
+        .padding(.horizontal, 12).padding(.bottom, 10)
         .frame(maxWidth: 760).frame(maxWidth: .infinity)
       }
       .scrollBounceBehavior(.basedOnSize)
@@ -92,7 +84,7 @@ import SwiftUI
       }
     }
     .font(.system(size: 13, design: .rounded))
-    .background(chrome?.surface ?? Color(nsColor: .windowBackgroundColor))
+    .background(Color.clear)
     .sheet(isPresented: $guide) { DownloadSetupGuide(queue: queue) }
     .onAppear { if !queue.dependencies.isChecking { queue.refreshDependencies() } }
     .onDisappear {
@@ -105,46 +97,37 @@ import SwiftUI
   }
 
   private var header: some View {
-    HStack(alignment: .center, spacing: 12) {
-      Image(systemName: "arrow.down.to.line")
-        .font(.system(size: 23, weight: .medium))
-        .frame(width: 46, height: 46)
-        .background(.primary.opacity(0.065), in: RoundedRectangle(cornerRadius: 15))
-      VStack(alignment: .leading, spacing: 3) {
-        Text("Beat Inbox").font(.system(size: 25, weight: .bold, design: .rounded))
-        Text("From a link to your library.").foregroundStyle(.secondary)
+    HStack(spacing: 8) {
+      Image(systemName: "arrow.down.to.line").font(.system(size: 17, weight: .semibold))
+      Text("Beat Inbox").font(.system(size: 18, weight: .bold, design: .rounded))
+      Spacer(minLength: 8)
+      if queue.dependencies.ready {
+        Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
+          .help("yt-dlp is ready on this Mac").accessibilityLabel("yt-dlp ready")
       }
-      Spacer(minLength: 12)
-      Button { guide = true } label: { Label("Guide", systemImage: "questionmark.circle") }
-        .buttonStyle(InboxSecondaryStyle())
-    }
-    .padding(22)
+      Menu {
+        Button("Setup guide…") { guide = true }
+        Link("About yt-dlp", destination: URL(string: "https://github.com/yt-dlp/yt-dlp")!)
+      } label: {
+        Image(systemName: "ellipsis").frame(width: 28, height: 28)
+          .background(.primary.opacity(0.07), in: Circle())
+      }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .accessibilityLabel("Inbox options")
+    }.padding(.horizontal, 14).padding(.vertical, 10)
   }
 
   private var composer: some View {
-    InboxCard {
-      VStack(alignment: .leading, spacing: 17) {
-        HStack {
-          Label("Add audio", systemImage: "link").font(.system(size: 16, weight: .semibold, design: .rounded))
-          Spacer()
-          if queue.dependencies.ready {
-            Label("yt-dlp ready", systemImage: "checkmark.circle.fill")
-              .font(.system(size: 11, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
-              .help("yt-dlp \(queue.dependencies.ytDLPVersion ?? "") · Installed on this Mac")
-          }
-        }
+    InboxCard(padding: 12) {
+      VStack(alignment: .leading, spacing: 10) {
         HStack(spacing: 8) {
           TextField("Paste a video or audio link", text: $address)
             .textFieldStyle(.plain).font(.system(size: 14, design: .rounded))
             .focused($addressFocused).onSubmit(add)
             .accessibilityLabel("Video or audio link")
             .onChange(of: address) { _, _ in error = nil }
-          Button("Paste") {
-            if let value = NSPasteboard.general.string(forType: .string) { address = value.trimmingCharacters(in: .whitespacesAndNewlines) }
-            addressFocused = true
-          }.buttonStyle(.plain).font(.system(size: 12, weight: .semibold, design: .rounded))
+
         }
-        .padding(13)
+        .padding(10)
         .background(.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(addressFocused ? 0.3 : 0.08)))
 
@@ -175,7 +158,8 @@ import SwiftUI
             }
           }
         }
-        Text(formatDetail).font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+        Text(format == .originalAudio ? "Original audio, without conversion." : format == .wav ? "Uncompressed PCM. Source quality stays the limit." : "AAC / MP3 quality depends on the original source.")
+          .font(.system(size: 10, design: .rounded)).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
 
         HStack(spacing: 12) {
@@ -195,7 +179,7 @@ import SwiftUI
           Button(action: add) {
             Label(options.submitting ? "Adding…" : "Add to queue", systemImage: "plus")
               .font(.system(size: 13, weight: .semibold, design: .rounded))
-              .padding(.horizontal, 15).padding(.vertical, 12)
+              .padding(.horizontal, 12).padding(.vertical, 9)
               .foregroundStyle(chrome?.surface ?? Color(nsColor: .windowBackgroundColor))
               .background(chrome?.ink ?? Color.primary, in: Capsule())
           }
@@ -221,23 +205,14 @@ import SwiftUI
     }
   }
 
-  private var formatDetail: String {
-    switch format {
-    case .originalAudio: return "Best available audio, kept unchanged. The source determines its format."
-    case .m4a: return "Compact AAC audio for everyday listening. Higher bitrate uses more space."
-    case .mp3: return "Compatible with most players and editors. Higher bitrate uses more space."
-    case .wav: return "Uncompressed audio for editing. A larger file cannot restore source detail."
-    }
-  }
-
   private func settingCard<Content: View>(_ title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 9) {
+    VStack(alignment: .leading, spacing: 5) {
       Label(title, systemImage: icon).font(.system(size: 11, weight: .medium, design: .rounded))
         .foregroundStyle(.secondary)
       content().frame(maxWidth: .infinity, alignment: .leading)
         .font(.system(size: 13, weight: .semibold, design: .rounded))
     }
-    .padding(13).frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+    .padding(9).frame(maxWidth: .infinity, alignment: .topLeading)
     .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
     .overlay(RoundedRectangle(cornerRadius: 13).strokeBorder(.primary.opacity(0.075)))
   }
@@ -290,7 +265,7 @@ import SwiftUI
         VStack(spacing: 0) {
           ForEach(Array(jobs.enumerated()), id: \.element.id) { index, job in
             if index > 0 { Divider().padding(.leading, 66).padding(.trailing, 16) }
-            DownloadJobRow(job: job, queue: queue, showGuide: { guide = true }, edit: { edit(job) }).padding(16)
+            DownloadJobRow(job: job, queue: queue, showGuide: { guide = true }, edit: { edit(job) }).padding(11)
           }
         }
       }
@@ -298,7 +273,7 @@ import SwiftUI
   }
 
   private func addedConfirmation(_ item: (source: String, format: String, folder: String)) -> some View {
-    InboxCard(padding: 15) {
+    InboxCard(padding: 10) {
       HStack(alignment: .top, spacing: 11) {
         Image(systemName: "checkmark.circle.fill").font(.system(size: 20))
         VStack(alignment: .leading, spacing: 4) {
@@ -310,20 +285,6 @@ import SwiftUI
         Button { added = nil } label: { Image(systemName: "xmark") }
           .buttonStyle(InboxIconStyle()).accessibilityLabel("Dismiss queue confirmation")
       }
-    }
-  }
-
-  private var emptyQueue: some View {
-    InboxCard {
-      HStack(spacing: 15) {
-        Image(systemName: "tray").font(.system(size: 28, weight: .light)).foregroundStyle(.secondary)
-        VStack(alignment: .leading, spacing: 5) {
-          Text("Your next find starts here").font(.system(size: 14, weight: .semibold, design: .rounded))
-          Text("Add a link above. Follow its progress here, then reveal the audio in Finder.")
-            .foregroundStyle(.secondary).font(.system(size: 12, design: .rounded))
-            .fixedSize(horizontal: false, vertical: true)
-        }
-      }.padding(.vertical, 9)
     }
   }
 
@@ -487,12 +448,12 @@ private struct DownloadJobRow: View {
 }
 
 private struct InboxCard<Content: View>: View {
-  var padding: CGFloat = 18
+  var padding: CGFloat = 12
   @ViewBuilder let content: () -> Content
   var body: some View {
     content().padding(padding).frame(maxWidth: .infinity, alignment: .leading)
-      .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-      .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.primary.opacity(0.10)))
+      .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+      .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.10)))
   }
 }
 
