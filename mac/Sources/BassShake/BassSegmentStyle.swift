@@ -15,6 +15,7 @@ struct BassSegmentStyle: ButtonStyle {
     let selected: Bool
     let active: Bool
     @State private var hovered = false
+    @Environment(\.popupChrome) private var chrome
     @Environment(\.bentoFlat) private var flat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -29,7 +30,7 @@ struct BassSegmentStyle: ButtonStyle {
       let hover = hovered && !drawPaused
       configuration.label
         .background {
-          shape.fill(selected ? (active ? BentoInk.miniFill : Color.primary.opacity(0.08)) : .clear)
+          shape.fill(selected ? (active ? (chrome?.accent ?? BentoInk.miniFill) : Color.primary.opacity(0.08)) : .clear)
             .overlay {
               if !flat {
                 if selected && active && !reduceTransparency {

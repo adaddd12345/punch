@@ -26,10 +26,10 @@ struct AppGlassSurface: ViewModifier {
   func body(content: Content) -> some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
     if #available(macOS 26, *), enabled && !reduceTransparency && contrast != .increased {
-      content.glassEffect(.regular.tint(selected ? (chrome?.accent ?? .accentColor).opacity(0.18) : .clear)
+      content.glassEffect(.clear.tint((chrome?.ink ?? .primary).opacity(selected ? 0.16 : 0.06))
         .interactive(interactive && !reduceMotion), in: shape)
     } else {
-      content.background((chrome?.surface ?? Color(nsColor: .controlBackgroundColor)), in: shape)
+      content.background(selected ? AnyShapeStyle(.chromeRaised) : AnyShapeStyle(.chromeSurface), in: shape)
         .overlay(shape.strokeBorder(.primary.opacity(selected ? 0.5 : 0.14), lineWidth: selected ? 1 : 0.5))
     }
   }

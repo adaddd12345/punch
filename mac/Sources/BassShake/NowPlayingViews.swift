@@ -289,7 +289,7 @@ struct ArtworkHeroControls: View {
           VStack(alignment: .leading, spacing: 8) {
             let text = model.describe(entry, state: false)
             Text(text.title).font(.headline).textSelection(.enabled)
-            Text(text.subtitle).font(.subheadline).foregroundStyle(.secondary)
+            Text(text.subtitle).font(.subheadline).foregroundStyle(.artworkSecondary)
             if let notice = model.notice {
               Text(notice.text).font(.caption)
               if notice.settings { Button("Open Accessibility Settings") { MediaKeys.openSettings() } }
@@ -305,6 +305,7 @@ struct ArtworkHeroControls: View {
           }
           .foregroundStyle(Color.primary)
           .padding(16).frame(width: 260, alignment: .leading)
+          .modifier(ChromePopupSurface())
         }
       PrimaryButton(model: model, app: entry.app, size: preview ? 44 : 60,
                     glyph: preview ? 17 : 23, fill: darkDisc ? .black : .white)
@@ -581,7 +582,7 @@ struct NowPlayingNote: View {
       .background {
         let shape = RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
         if let chrome {
-          shape.fill(chrome.surface)
+          shape.fill(.chromeSurface)
             .overlay(shape.strokeBorder(chrome.ink.opacity(0.16), lineWidth: 0.5))
         } else {
           shape.fill(.thinMaterial)

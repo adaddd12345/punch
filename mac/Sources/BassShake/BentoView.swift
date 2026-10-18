@@ -1165,8 +1165,8 @@ struct BentoView: View {
       .fixedSize()
       .padding(.horizontal, 8)
       .frame(height: 24)
-      .foregroundStyle(on ? Color.white : Color.primary)
-      .background(chipShape.fill(on ? AnyShapeStyle(Color.orange) : AnyShapeStyle(.artworkControl)))
+      .foregroundStyle(on ? (chrome?.surface ?? Color.black) : (chrome?.ink ?? Color.primary))
+      .background(chipShape.fill(on ? AnyShapeStyle(chrome?.accent ?? Color.primary) : AnyShapeStyle(.chromeSurface)))
       .contentShape(chipShape)
     }
     .buttonStyle(BentoPressStyle())
@@ -1267,6 +1267,7 @@ struct BentoView: View {
     Toggle("The Bass Shaker", isOn: Binding(get: { controller.settings.enabled },
                                             set: { controller.settings.enabled = $0 }))
       .toggleStyle(.switch)
+      .tint(chrome?.accent ?? .accentColor)
       .controlSize(.small)
       .labelsHidden()
       .fixedSize()
@@ -1303,8 +1304,8 @@ struct BentoView: View {
       }
       .padding(.horizontal, 8)
       .frame(height: 20)
-      .foregroundStyle(s.limit ? Color.white : Color.primary.opacity(0.8))
-      .background(inner.fill(s.limit ? BentoInk.miniFill : Color.primary.opacity(mini ? chipFill : 0.08)))
+      .foregroundStyle(s.limit ? (chrome?.surface ?? Color.white) : (chrome?.ink ?? Color.primary))
+      .background(inner.fill(s.limit ? (chrome?.accent ?? BentoInk.miniFill) : Color.primary.opacity(mini ? chipFill : 0.08)))
       .contentShape(inner)
       .verticalHitSlop(mini ? 2 : 0)
     }
@@ -1677,7 +1678,7 @@ struct BentoView: View {
       }
       if s.noiseOn {
         HStack(spacing: 8) {
-          Image(systemName: "speaker.wave.1").font(.system(size: 9)).foregroundStyle(.secondary)
+          Image(systemName: "speaker.wave.1").font(.system(size: 9)).foregroundStyle(.artworkSecondary)
           LiveSlider(value: s.noiseDb, range: -60 ... -24, param: controller.param("noise", \.noiseDb, step: 0.5))
             .controlSize(.mini)
           if s.mode == .sleep {
@@ -1960,7 +1961,7 @@ struct BentoGlassSurface: ViewModifier {
     if #available(macOS 26, *) {
       let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
       // Native interaction supplies the highlight; avoid a second custom hover wash.
-      let glass = on ? Glass.regular.tint(chrome?.accent.opacity(0.035) ?? Color.clear).interactive(interactive && !reduceMotion) : Glass.identity
+      let glass = on ? Glass.clear.tint(chrome?.ink.opacity(0.06) ?? Color.clear).interactive(interactive && !reduceMotion) : Glass.identity
       if let id, let space {
         content
           .glassEffect(glass, in: shape)
@@ -2331,14 +2332,14 @@ private struct ScrubTile<Accessory: View>: View {
       if splitRow {
         HStack(spacing: 4) {
           Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.artworkSecondary)
           Text(title).font(.system(size: 10, weight: .semibold, design: .rounded))
           Spacer(minLength: 2)
           HStack(alignment: .firstTextBaseline, spacing: 0) {
-            if !f.0.isEmpty { Text(f.0).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary) }
+            if !f.0.isEmpty { Text(f.0).font(.system(size: 9, weight: .semibold)).foregroundStyle(.artworkSecondary) }
             Text(f.1).font(.system(size: 17, weight: .bold, design: .rounded))
               .contentTransition(.numericText())
-            Text(f.2).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            Text(f.2).font(.system(size: 9, weight: .semibold)).foregroundStyle(.artworkSecondary)
           }
           .monospacedDigit()
         }
@@ -2363,14 +2364,14 @@ private struct ScrubTile<Accessory: View>: View {
                 if !f.0.isEmpty {
                   Text(f.0)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.artworkSecondary)
                 }
                 Text(f.1)
                   .font(.system(size: mini ? 24 : 28, weight: .bold, design: .rounded))
                   .contentTransition(.numericText())
                 Text(f.2)
                   .font(.system(size: 12, weight: .bold, design: .rounded))
-                  .foregroundStyle(.secondary)
+                  .foregroundStyle(.artworkSecondary)
               }
               .scaleEffect(dragging && motion ? 1.04 : 1, anchor: .leading)
               .offset(x: motion ? band : 0)
@@ -2379,7 +2380,7 @@ private struct ScrubTile<Accessory: View>: View {
               Spacer(minLength: 0)
               Image(systemName: "chevron.left.chevron.right")
                 .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.artworkSecondary)
                 .opacity(hover || dragging ? 1 : 0)
             }
             .monospacedDigit()
@@ -2393,7 +2394,7 @@ private struct ScrubTile<Accessory: View>: View {
             if !mini, let explanation {
               Text(explanation)
                 .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.artworkSecondary)
                 .lineLimit(1)
             }
           }
@@ -2703,6 +2704,7 @@ private struct BassTile: View {
   @State private var position: Double?
   @State private var hover = false
   @State private var cursorPushed = false
+  @Environment(\.popupChrome) private var chrome
   @Environment(\.labelLevel) private var labels
   @Environment(\.colorScheme) private var scheme
   @Environment(\.colorSchemeContrast) private var contrast
@@ -2733,7 +2735,7 @@ private struct BassTile: View {
           if on {
             Image(systemName: "chevron.left.chevron.right")
               .font(.system(size: 8, weight: .bold))
-              .foregroundStyle(.secondary)
+              .foregroundStyle(.artworkSecondary)
               .opacity(hover || start != nil ? 1 : 0)
             Text(percent)
               .font(.system(size: compact ? 11 : 13, weight: .bold, design: .rounded))
@@ -2831,7 +2833,7 @@ private struct BassTile: View {
                 .opacity(labelOpacity)
             }
           }
-          .foregroundStyle(sel && c != .off ? Color.white : Color.primary.opacity(sel ? 0.9 : (dark ? 0.75 : 0.65)))
+          .foregroundStyle(sel && c != .off ? (chrome?.surface ?? Color.white) : (chrome?.ink ?? Color.primary).opacity(sel ? 1 : 0.9))
           .frame(maxWidth: .infinity, maxHeight: .infinity)
           .contentShape(Rectangle())
         }
@@ -2862,7 +2864,7 @@ private extension Text {
     font(.system(size: 10, weight: .medium, design: .rounded))
       .monospacedDigit()
       // Not .secondary: on a lit tile in dark mode that fell to about 3.5:1.
-      .foregroundStyle(Color.primary.opacity(0.8))
+      .foregroundStyle(.artworkSecondary)
       .lineLimit(1)
       .minimumScaleFactor(0.8)
   }

@@ -101,7 +101,7 @@ struct FooterShelf<Content: View>: View {
       .padding(.horizontal, FooterBento.inset)
       .frame(height: FooterBento.height)
       .background { FooterShelfFill(surface: surface) }
-      .background { if surface != .glass { SeasonalControlBacking(shape: Capsule()) } }
+
       .modifier(FooterShelfGlass(on: surface == .glass))
       .padding(.horizontal, -FooterBento.bleed)
       .padding(edge == .bottom ? .bottom : .top, -FooterBento.bleed)
@@ -122,7 +122,7 @@ private struct FooterShelfFill: View {
     if surface == .glass {
       Color.clear
     } else if let chrome {
-      Capsule().fill(chrome.surface)
+      Capsule().fill(.chromeSurface)
         .overlay { Capsule().strokeBorder(chrome.ink.opacity(contrast == .increased ? 0.34 : 0.14), lineWidth: 0.5) }
     } else { switch surface {
     case .glass:
@@ -150,7 +150,7 @@ private struct FooterShelfGlass: ViewModifier {
   @Environment(\.colorScheme) private var scheme
   func body(content: Content) -> some View {
     if #available(macOS 26, *), on {
-      content.glassEffect(.regular.tint(Color.black.opacity(scheme == .dark ? 0.16 : 0.04)), in: Capsule())
+      content.glassEffect(.clear.tint(chrome?.ink.opacity(0.06) ?? .clear), in: Capsule())
     } else {
       content
     }

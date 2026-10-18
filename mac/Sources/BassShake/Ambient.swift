@@ -58,7 +58,8 @@ struct PopupBackground: View {
 extension View {
   /// Colour stays behind the controls; seasonal themes add no foreground decoration.
   func popupBackdrop(_ style: BackgroundStyle, active: Bool) -> some View {
-    background(PopupBackground(style: style, active: active))
+    background(PopupBackground(style: style, active: active)
+      .overlay { ChromeBackdropScrim(style: style).allowsHitTesting(false) })
       .environment(\.seasonalBackdrop, style.festive || style == .artwork)
   }
 }
@@ -86,7 +87,7 @@ struct SeasonalControlBacking<S: Shape>: View {
 
   var body: some View {
     if let chrome {
-      shape.fill(chrome.surface).allowsHitTesting(false).accessibilityHidden(true)
+      shape.fill(.chromeSurface).allowsHitTesting(false).accessibilityHidden(true)
     } else if seasonal {
       shape.fill((scheme == .dark ? Color.black : Color.white)
         .opacity(reduceTransparency ? 1 : (contrast == .increased ? 0.78 : 0.52)))

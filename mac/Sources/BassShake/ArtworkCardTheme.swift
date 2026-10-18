@@ -15,7 +15,7 @@ extension EnvironmentValues {
 /// cover colour. Inside the music card use its measured, opaque second ink.
 struct ArtworkSecondaryStyle: ShapeStyle {
   func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
-    environment.artworkCardPalette.map { AnyShapeStyle($0.secondary.color) } ?? AnyShapeStyle(.secondary)
+    environment.popupChrome.map { AnyShapeStyle($0.secondary) } ?? environment.artworkCardPalette.map { AnyShapeStyle($0.secondary.color) } ?? AnyShapeStyle(.secondary)
   }
 }
 
@@ -37,6 +37,12 @@ extension ShapeStyle where Self == ArtworkPrimaryStyle {
 /// when macOS changes appearance underneath a coloured card.
 struct ArtworkControlStyle: ShapeStyle {
   func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+    if let palette = environment.popupChrome {
+      if environment.accessibilityReduceTransparency || environment.colorSchemeContrast == .increased {
+        return palette.raised
+      }
+      return palette.ink.opacity(0.12)
+    }
     if let palette = environment.artworkCardPalette {
       return palette.surface.mix(palette.ink, 0.10).color
     }
@@ -96,10 +102,11 @@ struct ArtworkCardFill: View {
   let palette: ArtworkCardPalette
   let radius: CGFloat
   let glass: Bool
+  @Environment(\.popupChrome) private var chrome
 
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-    shape.fill(palette.surface.color)
+    shape.fill(chrome != nil ? AnyShapeStyle(.chromeSurface) : AnyShapeStyle(palette.surface.color))
       .overlay {
         if !glass {
           shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.32), .white.opacity(0.06), .black.opacity(0.12)],

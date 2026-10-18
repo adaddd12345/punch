@@ -64,17 +64,17 @@ import SwiftUI
           if !current.isEmpty { queueSection("In the queue", jobs: current) }
           if !attention.isEmpty { queueSection("Needs attention", jobs: attention) }
           if !history.isEmpty { queueSection("Saved", jobs: history) }
+          DownloadSourceStickerRow()
           if let storageIssue = queue.storageIssue {
             Label(storageIssue, systemImage: "exclamationmark.circle")
-              .font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+              .font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
           }
-          Text(queue.jobs.isEmpty ? "Paste a link to start. Downloads continue when this window closes." : "Downloads continue when this window closes.")
-            .font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+
 
         }
         .padding(.horizontal, 12).padding(.bottom, 10)
         .frame(maxWidth: 760).frame(maxWidth: .infinity)
+        .background(InboxOverlayScroller())
       }
       .scrollBounceBehavior(.basedOnSize)
       .onChange(of: composerFocus) { _, _ in
@@ -87,6 +87,7 @@ import SwiftUI
     .background(Color.clear)
     .sheet(isPresented: $guide) { DownloadSetupGuide(queue: queue) }
     .onAppear { if !queue.dependencies.isChecking { queue.refreshDependencies() } }
+    .onChange(of: current.count) { _, count in if count == 0 { added = nil } }
     .onDisappear {
       options.cancelPendingSubmission()
     }
@@ -102,7 +103,7 @@ import SwiftUI
       Text("Beat Inbox").font(.system(size: 18, weight: .bold, design: .rounded))
       Spacer(minLength: 8)
       if queue.dependencies.ready {
-        Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
+        Image(systemName: "checkmark.circle.fill").foregroundStyle(.artworkSecondary)
           .help("yt-dlp is ready on this Mac").accessibilityLabel("yt-dlp ready")
       }
       Menu {
@@ -141,7 +142,7 @@ import SwiftUI
             }.frame(height: 24)
 
           }
-          settingCard(format == .wav ? "Bit depth" : format == .originalAudio ? "Quality" : "Target bitrate", icon: "slider.horizontal.3") {
+          settingCard(format == .wav ? "Bit depth" : format == .originalAudio ? "Quality" : "Bitrate", icon: "slider.horizontal.3") {
             if format == .originalAudio {
               Text("Source quality")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -160,16 +161,13 @@ import SwiftUI
             }
           }
         }
-        Text(format == .originalAudio ? "Original audio, without conversion." : format == .wav ? "Uncompressed PCM. Source quality stays the limit." : "AAC / MP3 quality depends on the original source.")
-          .font(.system(size: 10, design: .rounded)).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+
 
         HStack(spacing: 12) {
           Button(action: chooseFolder) {
             HStack(spacing: 9) {
               Image(systemName: "folder").font(.system(size: 17))
               VStack(alignment: .leading, spacing: 3) {
-                Text("Save to").font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
                 Text(folder.lastPathComponent).lineLimit(1).truncationMode(.middle)
                   .font(.system(size: 12, weight: .semibold, design: .rounded))
               }
@@ -179,7 +177,7 @@ import SwiftUI
           }
           .buttonStyle(.plain).help(folder.path).accessibilityLabel("Choose download folder, currently \(folder.lastPathComponent)")
           Button(action: add) {
-            Label(options.submitting ? "Adding…" : "Add to queue", systemImage: "plus")
+            Label(options.submitting ? "Adding…" : "Add", systemImage: "plus")
               .font(.system(size: 13, weight: .semibold, design: .rounded))
               .padding(.horizontal, 12).padding(.vertical, 9)
               .foregroundStyle(chrome?.surface ?? Color(nsColor: .windowBackgroundColor))
@@ -193,7 +191,7 @@ import SwiftUI
             Image(systemName: "exclamationmark.circle").font(.system(size: 16))
             VStack(alignment: .leading, spacing: 4) {
               Text("Couldn’t add this link").font(.system(size: 12, weight: .semibold, design: .rounded))
-              Text(error).font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+              Text(error).font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
@@ -210,7 +208,7 @@ import SwiftUI
   private func settingCard<Content: View>(_ title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: 5) {
       Label(title, systemImage: icon).font(.system(size: 11, weight: .medium, design: .rounded))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.artworkSecondary)
       content().frame(maxWidth: .infinity, alignment: .leading)
         .font(.system(size: 13, weight: .semibold, design: .rounded))
     }
@@ -224,7 +222,7 @@ import SwiftUI
       HStack(spacing: 9) {
         ProgressView().controlSize(.small)
         Text("Checking for your download tools…")
-      }.font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+      }.font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
     } else if !queue.dependencies.ready || needsFFmpeg {
       HStack(alignment: .top, spacing: 9) {
         Image(systemName: "puzzlepiece.extension").padding(.top, 2)
@@ -236,7 +234,7 @@ import SwiftUI
             .buttonStyle(.plain).fontWeight(.semibold)
         }
       }
-      .font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+      .font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
       .fixedSize(horizontal: false, vertical: true)
     } else if isYouTubeLink && queue.dependencies.jsRuntime == nil {
       HStack(alignment: .top, spacing: 9) {
@@ -245,7 +243,7 @@ import SwiftUI
           Text("YouTube may need Deno or Node to read this link.")
           Button("See setup guide") { guide = true }.buttonStyle(.plain).fontWeight(.semibold)
         }
-      }.font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+      }.font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
     }
   }
 
@@ -253,14 +251,14 @@ import SwiftUI
     VStack(alignment: .leading, spacing: 10) {
       HStack {
         Text(title).font(.system(size: 15, weight: .semibold, design: .rounded))
-        Text("\(jobs.count)").font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+        Text("\(jobs.count)").font(.system(size: 12, weight: .medium, design: .rounded)).foregroundStyle(.artworkSecondary)
         Spacer()
         if title == "Saved" || title == "Needs attention" {
           Button("Clear list") { jobs.forEach { queue.remove($0.id) } }.buttonStyle(.plain)
             .font(.system(size: 11, weight: .semibold, design: .rounded))
             .help("Remove these jobs from the list. Downloaded files stay in their folder.")
         } else {
-          Text("One at a time").font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+          Text("One at a time").font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
         }
       }.padding(.horizontal, 3)
       InboxCard(padding: 0) {
@@ -276,17 +274,15 @@ import SwiftUI
 
   private func addedConfirmation(_ item: (source: String, format: String, folder: String)) -> some View {
     InboxCard(padding: 10) {
-      HStack(alignment: .top, spacing: 11) {
-        Image(systemName: "checkmark.circle.fill").font(.system(size: 20))
-        VStack(alignment: .leading, spacing: 4) {
-          Text("Added to queue").font(.system(size: 13, weight: .semibold, design: .rounded))
-          Text("\(item.source) · \(item.format) · \(item.folder)")
-            .font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary).lineLimit(2)
-        }
+      HStack(spacing: 8) {
+        Image(systemName: "checkmark.circle.fill")
+        Text("Queued").fontWeight(.semibold)
+        Text(item.format).foregroundStyle(.artworkSecondary).lineLimit(1)
         Spacer(minLength: 4)
         Button { added = nil } label: { Image(systemName: "xmark") }
-          .buttonStyle(InboxIconStyle()).accessibilityLabel("Dismiss queue confirmation")
-      }
+          .buttonStyle(.plain).accessibilityLabel("Dismiss queue confirmation")
+      }.font(.system(size: 11, design: .rounded))
+        .help("\(item.source) · \(item.folder)")
     }
   }
 
@@ -361,41 +357,32 @@ private struct DownloadJobRow: View {
   }
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      Group {
-        if job.state == .processing || (job.state == .downloading && job.progress == nil) {
-          ProgressView().controlSize(.small)
-        } else {
-          Image(systemName: icon).font(.system(size: 17, weight: .medium))
-        }
-      }
-        .frame(width: 38, height: 42)
-        .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 11))
-        .accessibilityHidden(true)
+      DownloadArtworkTile(job: job, queue: queue)
       VStack(alignment: .leading, spacing: 7) {
         Text(job.title.isEmpty ? (URL(string: job.url)?.host ?? "Audio download") : job.title)
           .font(.system(size: 13, weight: .semibold, design: .rounded)).lineLimit(2)
           .textSelection(.enabled)
         HStack(spacing: 6) {
-          Text(status)
+          Text(job.state == .completed ? DownloadSource.name(job.url) : status)
           if let progress = job.progress, job.state == .downloading {
             Text("\(Int(min(1, max(0, progress)) * 100))%").monospacedDigit()
           }
           if let speed = job.speed, job.state == .downloading { Text("·"); Text(speed) }
           Spacer(minLength: 0)
-          Text(job.format.title + (job.bitrateKbps.map { " · \($0) kbps target" } ?? job.bitDepth.map { " · \($0) bit" } ?? ""))
+          Text(job.format.title + (job.bitrateKbps.map { " · \($0) kbps" } ?? job.bitDepth.map { " · \($0) bit" } ?? ""))
         }
-        .font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+        .font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.artworkSecondary)
         if job.state == .downloading, let progress = job.progress {
           ProgressView(value: min(1, max(0, progress))).tint(.primary).accessibilityLabel("Download progress")
         }
         if let message = job.error, job.state == .failed || job.state == .cancelled {
           VStack(alignment: .leading, spacing: 8) {
             let failure = InboxFailureMessage(message)
-            Text(failure.summary).font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+            Text(failure.summary).font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
               .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             if let details = failure.details {
               DisclosureGroup("Details") {
-                Text(details).font(.system(size: 10, design: .rounded)).foregroundStyle(.secondary)
+                Text(details).font(.system(size: 10, design: .rounded)).foregroundStyle(.artworkSecondary)
                   .fixedSize(horizontal: false, vertical: true).textSelection(.enabled).padding(.top, 4)
               }.font(.system(size: 11, design: .rounded))
             }
@@ -416,7 +403,7 @@ private struct DownloadJobRow: View {
         if job.state == .completed, let path = job.filePath {
           HStack(spacing: 14) {
             Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
-              Label("Show in Finder", systemImage: "folder")
+              Label("Finder", systemImage: "folder")
             }
             Button { NSWorkspace.shared.open(URL(fileURLWithPath: path)) } label: {
               Label("Open", systemImage: "arrow.up.right")
@@ -428,10 +415,7 @@ private struct DownloadJobRow: View {
         if active {
           Button { queue.cancel(job.id) } label: { Image(systemName: "xmark") }
             .accessibilityLabel("Cancel \(job.title)").help("Cancel download")
-        } else if job.state == .completed {
-          Image(systemName: "checkmark.circle.fill").font(.system(size: 17))
-            .foregroundStyle(.secondary).accessibilityHidden(true)
-        } else if job.error == nil {
+        } else if job.state != .completed && job.error == nil {
           Button { queue.retry(job.id) } label: { Image(systemName: "arrow.clockwise") }
             .accessibilityLabel("Retry \(job.title)").help("Retry download")
         }
@@ -454,7 +438,7 @@ private struct InboxCard<Content: View>: View {
   @ViewBuilder let content: () -> Content
   var body: some View {
     content().padding(padding).frame(maxWidth: .infinity, alignment: .leading)
-      .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+      .background(.chromeSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
       .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.10)))
   }
 }
@@ -490,7 +474,7 @@ private struct DownloadSetupGuide: View {
           Text("A little setup. Then just links.")
             .font(.system(size: 22, weight: .bold, design: .rounded))
           Text("Beat Inbox uses the tools already on your Mac.")
-            .font(.system(size: 12, design: .rounded)).foregroundStyle(.secondary)
+            .font(.system(size: 12, design: .rounded)).foregroundStyle(.artworkSecondary)
         }
         Spacer()
         Button { dismiss() } label: { Image(systemName: "xmark") }.buttonStyle(InboxIconStyle())
@@ -512,7 +496,7 @@ private struct DownloadSetupGuide: View {
                 if queue.dependencies.isChecking { ProgressView().controlSize(.small) }
               }
               if let issue = queue.dependencies.issue {
-                Text(issue).font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+                Text(issue).font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
                   .fixedSize(horizontal: false, vertical: true)
               }
             }
@@ -522,7 +506,7 @@ private struct DownloadSetupGuide: View {
               VStack(alignment: .leading, spacing: 10) {
                 Text("Need a tool?").font(.system(size: 15, weight: .semibold, design: .rounded))
                 Text("If you use Homebrew, copy this setup command and run it once in Terminal. After setup, every download happens here.")
-                  .font(.system(size: 12, design: .rounded)).foregroundStyle(.secondary)
+                  .font(.system(size: 12, design: .rounded)).foregroundStyle(.artworkSecondary)
                   .fixedSize(horizontal: false, vertical: true)
                 HStack(alignment: .center, spacing: 12) {
                   Text("brew install yt-dlp ffmpeg deno")
@@ -542,13 +526,22 @@ private struct DownloadSetupGuide: View {
             }
           }
           InboxCard {
+            VStack(alignment: .leading, spacing: 8) {
+              Text("YouTube, SoundCloud, X & more").fontWeight(.semibold)
+              Text("Paste a public media link supported by your installed yt-dlp. One item per link; no live streams, sign-in or DRM. Site support can change.")
+                .font(.system(size: 12, design: .rounded)).foregroundStyle(.artworkSecondary)
+              Link("Supported sites ↗", destination: URL(string: "https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md")!)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+            }
+          }
+          InboxCard {
             VStack(alignment: .leading, spacing: 13) {
               Text("How your inbox works").font(.system(size: 15, weight: .semibold, design: .rounded))
               guideRow("1", "Paste one link", "Add a video or audio page. Only one item is downloaded; playlist-only YouTube links are not supported.")
-              guideRow("2", "Choose your audio", "Original keeps the best available audio unchanged. M4A and MP3 let you choose bitrate; WAV lets you choose 16 or 24 bit. Conversion cannot add quality.")
+              guideRow("2", "Choose your audio", "M4A, MP3 and WAV extract audio from video too. Original requires a separate audio stream. Bitrate is a target; conversion cannot improve the source.")
               guideRow("3", "Keep listening", "Jobs run one at a time and continue when this window closes. Quit the app to stop the queue.")
               Text("Download only audio you own or have permission to save. Beat Inbox does not bypass DRM or sign in to websites.")
-                .font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+                .font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
           }
@@ -556,23 +549,23 @@ private struct DownloadSetupGuide: View {
       }
     }
     .frame(width: 520, height: min(640, max(380, ((NSApp.keyWindow?.screen ?? NSScreen.main)?.visibleFrame.height ?? 740) - 100)))
-    .background(chrome?.surface ?? Color(nsColor: .windowBackgroundColor))
+    .modifier(ChromePopupSurface())
   }
 
   private func tool(_ name: String, detail: String, path: URL?, required: Bool) -> some View {
     HStack(alignment: .top, spacing: 10) {
       Image(systemName: path == nil ? "circle.dashed" : "checkmark.circle.fill")
-        .font(.system(size: 16)).foregroundStyle(.secondary).padding(.top, 1)
+        .font(.system(size: 16)).foregroundStyle(.artworkSecondary).padding(.top, 1)
       VStack(alignment: .leading, spacing: 3) {
         HStack {
           Text(name).font(.system(size: 13, weight: .semibold, design: .rounded))
           Spacer()
           Text(path == nil ? (required ? "Needed" : "Not found") : "Found")
-            .font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.secondary)
+            .font(.system(size: 10, weight: .medium, design: .rounded)).foregroundStyle(.artworkSecondary)
         }
-        Text(detail).font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+        Text(detail).font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
         if let path {
-          Text(path.path).font(.system(size: 10, design: .rounded)).foregroundStyle(.secondary)
+          Text(path.path).font(.system(size: 10, design: .rounded)).foregroundStyle(.artworkSecondary)
             .lineLimit(1).truncationMode(.middle).help(path.path).textSelection(.enabled)
         }
       }
@@ -585,7 +578,7 @@ private struct DownloadSetupGuide: View {
         .frame(width: 24, height: 24).background(.primary.opacity(0.07), in: Circle())
       VStack(alignment: .leading, spacing: 4) {
         Text(title).font(.system(size: 12, weight: .semibold, design: .rounded))
-        Text(detail).font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+        Text(detail).font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
           .fixedSize(horizontal: false, vertical: true)
       }
     }

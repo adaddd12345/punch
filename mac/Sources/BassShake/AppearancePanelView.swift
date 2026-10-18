@@ -371,7 +371,7 @@ struct AppearancePanelView: View {
     }
       .padding(.horizontal, 12).padding(.vertical, 10)
       .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(chrome?.surface ?? Color.primary.opacity(0.05)))
+        .fill(.chromeSurface))
   }
 
   private func bind<T>(_ key: WritableKeyPath<Settings, T>) -> Binding<T> {
@@ -389,7 +389,7 @@ struct AppearancePanelView: View {
     .foregroundStyle(chrome?.ink ?? Color.primary)
     .background {
       RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(chrome?.surface ?? Color.primary.opacity(0.05))
+        .fill(.chromeSurface)
     }
   }
 

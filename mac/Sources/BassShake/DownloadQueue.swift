@@ -73,6 +73,9 @@ final class DownloadQueue: ObservableObject {
   @Published private(set) var jobs: [DownloadJob] = []
   @Published private(set) var dependencies = DownloadDependencies()
   @Published private(set) var storageIssue: String?
+  @Published private(set) var artworkRevision = 0
+  private var artworkTasks: [UUID: Task<Void, Never>] = [:]
+  private var artworkPending: [UUID: URL] = [:]
   private let storageURL: URL
   private var active: (id: UUID, process: DownloadSubprocess)?
   private var conversionTargets: [UUID: URL] = [:]
@@ -105,6 +108,35 @@ final class DownloadQueue: ObservableObject {
   deinit {
     if let terminationObserver { NotificationCenter.default.removeObserver(terminationObserver) }
     active?.process.cancel(immediately: true)
+  }
+
+  func artworkURL(_ id: UUID) -> URL {
+    storageURL.deletingLastPathComponent().appendingPathComponent("Artwork/\(id.uuidString).jpg")
+  }
+
+  func prepareArtwork(_ job: DownloadJob, source: URL? = nil) {
+    guard !isShuttingDown, jobs.contains(where: { $0.id == job.id }), artworkTasks[job.id] == nil,
+          !FileManager.default.fileExists(atPath: artworkURL(job.id).path),
+          let source = source ?? DownloadSource.legacyThumbnail(job.url) else { return }
+    artworkPending[job.id] = source
+    startArtwork()
+  }
+
+  private func startArtwork() {
+    guard !isShuttingDown else { return }
+    while artworkTasks.count < 2, let (id, source) = artworkPending.first {
+      artworkPending[id] = nil
+      let target = artworkURL(id)
+      artworkTasks[id] = Task { [weak self] in
+        let saved = await DownloadArtwork.fetch(source, to: target)
+        guard let self else { return }
+        self.artworkTasks[id] = nil
+        if !self.jobs.contains(where: { $0.id == id }) {
+          try? FileManager.default.removeItem(at: target)
+        } else if saved { self.artworkRevision += 1 }
+        self.startArtwork()
+      }
+    }
   }
 
   func refreshDependencies() {
@@ -175,6 +207,9 @@ final class DownloadQueue: ObservableObject {
   }
 
   private func removeIntermediate(_ job: DownloadJob) {
+    artworkPending[job.id] = nil
+    artworkTasks.removeValue(forKey: job.id)?.cancel()
+    try? FileManager.default.removeItem(at: artworkURL(job.id))
     guard job.format.needsFFmpeg else { return }
     // Only our UUID-scoped staging directory. Completed downloads live outside it.
     try? FileManager.default.removeItem(at: DownloadCommand.intermediateDirectory(job))
@@ -219,6 +254,8 @@ final class DownloadQueue: ObservableObject {
     guard active?.id == id, let index = jobs.firstIndex(where: { $0.id == id }), jobs[index].state.isActive else { return }
     switch DownloadOutput.parse(line) {
     case .title(let title): jobs[index].title = String(title.prefix(500))
+    case .artwork(let raw):
+      if let url = URL(string: raw) { prepareArtwork(jobs[index], source: url) }
     case .file(let path):
       // Only expose files inside this job's selected directory, never a URL or arbitrary tool output.
       let file = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
@@ -303,6 +340,7 @@ final class DownloadQueue: ObservableObject {
 
   func shutdown() {
     isShuttingDown = true
+    artworkTasks.values.forEach { $0.cancel() }; artworkTasks.removeAll(); artworkPending.removeAll()
     active?.process.cancel(immediately: true)
     if let id = active?.id, let index = jobs.firstIndex(where: { $0.id == id }) {
       jobs[index].state = .cancelled; jobs[index].error = "Interrupted when the app closed. Retry when you are ready."
@@ -349,7 +387,7 @@ struct DownloadCommand {
                 "--progress", "--progress-delta", "0.5", "--no-simulate", "--no-overwrites", "--no-mtime", "--socket-timeout", "20",
                 "--retries", "3", "--fragment-retries", "3", "--match-filter", "!is_live & !is_upcoming", "--format", job.format.needsFFmpeg ? "bestaudio/best" : "bestaudio",
                 "--paths", job.format.needsFFmpeg ? intermediateDirectory(job).path : job.destination, "--output", "%(title).160B [%(id)s] [\(job.format.title)\(quality)].%(ext)s",
-                "--print", "before_dl:BS_META:%(title)j", "--print", "after_move:BS_FILE:%(filepath)j",
+                "--print", "before_dl:BS_META:%(title)j", "--print", "before_dl:BS_ART:%(thumbnail)j", "--print", "after_move:BS_FILE:%(filepath)j",
                 "--progress-template", "download:BS_PROGRESS:%(progress.{status,downloaded_bytes,total_bytes,total_bytes_estimate,speed,eta})j",
                 "--progress-template", "postprocess:BS_PROCESS:%(progress.status)j"]
     if let ffmpeg = dependencies.ffmpeg { args += ["--ffmpeg-location", ffmpeg.path] }
@@ -360,9 +398,10 @@ struct DownloadCommand {
 }
 
 enum DownloadOutput {
-  case title(String), file(String), progress(Double?, String?, String?, Bool), processing, failure(String), ignore
+  case title(String), artwork(String), file(String), progress(Double?, String?, String?, Bool), processing, failure(String), ignore
   static func parse(_ line: String) -> DownloadOutput {
     if line.hasPrefix("BS_META:"), let text = jsonString(String(line.dropFirst(8))) { return .title(text) }
+    if line.hasPrefix("BS_ART:"), let text = jsonString(String(line.dropFirst(7))), text != "NA" { return .artwork(text) }
     if line.hasPrefix("BS_FILE:"), let text = jsonString(String(line.dropFirst(8))) { return .file(text) }
     if line.hasPrefix("BS_PROCESS:") { return .processing }
     if line.hasPrefix("ERROR:") { return .failure(String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)) }
@@ -418,7 +457,7 @@ enum DownloadOutput {
     if lower.contains("403") || lower.contains("429") || lower.contains("forbidden") { return "The source refused this request. Try later, or update yt-dlp." }
     if lower.contains("already exists") { return "A file with this name already exists. Choose another folder or keep the existing download." }
     if lower.contains("permission denied") || lower.contains("no space left") { return "The file could not be saved. Check free space and choose a writable folder." }
-    if lower.contains("requested format") { return "This source has no separate audio stream in the requested format." }
+    if lower.contains("requested format") { return "No separate audio stream was found. Try M4A or MP3 to extract audio from the video." }
     if lower.contains("timed out") || lower.contains("network") || lower.contains("name resolution") { return "The connection failed. Check your network and retry." }
     return String(redactedErrorText(raw).replacingOccurrences(of: "\u{001B}", with: "").prefix(320))
   }

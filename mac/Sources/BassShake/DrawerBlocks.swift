@@ -120,9 +120,7 @@ struct DrawerSurface: View {
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
     let hc = contrast == .increased
-    shape.fill(Color.primary.opacity(hc ? 0.12 : (scheme == .dark ? 0.08 : 0.055)))
-      .background(SeasonalControlBacking(shape: shape))
-      .overlay { if let tint { shape.fill(tint.pastel.opacity(scheme == .dark ? 0.08 : 0.12)) } }
+    shape.fill(.chromeSurface)
       .overlay { if hc { shape.strokeBorder(Color.primary.opacity(0.45), lineWidth: 1) } }
       .allowsHitTesting(false)
       .accessibilityHidden(true)

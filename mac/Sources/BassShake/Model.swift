@@ -826,7 +826,7 @@ struct Settings: Codable, Equatable {
   var pointerHints = true
   /// What's Playing (⋯ › Presets & Settings): the Bento hero shows the app you
   /// hear most (and, with permission, Spotify / Music's song and cover).
-  var showNowPlaying = false
+  var showNowPlaying = true
   /// The one-time note shown the first time What's Playing is turned on.
   var nowPlayingNoteSeen = false
   /// What's Playing's pause for apps other than Spotify / Music with a song.

@@ -196,7 +196,7 @@ struct PopoverView: View {
         if slowStart {
           HStack(spacing: 6) {
             ProgressView().controlSize(.small)
-            Text("Connecting to your speakers or headphones…").font(.system(size: 11)).foregroundStyle(.secondary)
+            Text("Connecting to your speakers or headphones…").font(.system(size: 11)).foregroundStyle(.artworkSecondary)
           }
           .padding(.horizontal, 10).padding(.vertical, 5)
           .background(.regularMaterial, in: Capsule())
@@ -744,7 +744,7 @@ struct PopoverView: View {
       if p.live {
         Image(systemName: "chevron.down")
           .font(.system(size: 9, weight: .bold))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.artworkSecondary)
       }
     }
     .frame(height: 24)
@@ -990,7 +990,7 @@ struct PopoverView: View {
     FooterShelf {
       Text("DJ, Beats, Live Channels and rearranging stay on this Mac.")
         .font(.system(size: 10))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.artworkSecondary)
         .lineLimit(2)
         .fixedSize(horizontal: false, vertical: true)
         .padding(.leading, 8)
@@ -1040,7 +1040,7 @@ struct PopoverView: View {
           .font(.system(size: 9, weight: .medium, design: .rounded))
           .lineLimit(1)
           .minimumScaleFactor(0.85)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.artworkSecondary)
           .padding(.trailing, FooterBento.groupGap)
       }
       toolsGroup
@@ -1228,7 +1228,7 @@ struct LabeledSlider: View {
       Text(format(v))
         .font(.system(size: 10, weight: .medium, design: .rounded))
         .monospacedDigit()
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.artworkSecondary)
         .frame(width: 44, alignment: .trailing)
     }
   }
@@ -1261,13 +1261,13 @@ private struct MiniDial<Accessory: View>: View {
             if !f.0.isEmpty {
               Text(f.0)
                 .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.artworkSecondary)
             }
             Text(f.1)
               .font(.system(size: 17, weight: .bold, design: .rounded))
             Text(f.2)
               .font(.system(size: 11, weight: .bold, design: .rounded))
-              .foregroundStyle(.secondary)
+              .foregroundStyle(.artworkSecondary)
           }
           .monospacedDigit()
           .lineLimit(1)
@@ -1276,13 +1276,13 @@ private struct MiniDial<Accessory: View>: View {
           if labels == .full {
             Text(title)
               .font(.system(size: 12, weight: .semibold, design: .rounded))
-              .foregroundStyle(.secondary)
+              .foregroundStyle(.artworkSecondary)
               .lineLimit(1)
               .fixedSize()
           } else {
             Image(systemName: symbol)
               .font(.system(size: 14, weight: .semibold))
-              .foregroundStyle(.secondary)
+              .foregroundStyle(.artworkSecondary)
               .frame(width: 24, alignment: .leading)
               .help(title)
           }
@@ -1338,7 +1338,7 @@ private struct DoctorReportCard: View {
         VStack(alignment: .leading, spacing: 6) {
           Text("Still doesn’t sound right?").font(.system(size: 11, weight: .semibold, design: .rounded))
           Text("Restore the default sound. Keep your look and saved presets.")
-            .font(.system(size: 11, design: .rounded)).foregroundStyle(.secondary)
+            .font(.system(size: 11, design: .rounded)).foregroundStyle(.artworkSecondary)
           Button(action: reset) {
             Text("Reset sound…")
               .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -1360,6 +1360,7 @@ private struct DoctorReportCard: View {
     }
     .padding(14)
     .frame(width: 300, alignment: .leading)
+    .modifier(ChromePopupSurface())
   }
 }
 

@@ -7,13 +7,14 @@ struct PopupChromePalette: Equatable {
   var surface: Color { artwork.surface.color }
   var raised: Color { artwork.surface.mix(artwork.ink, 0.08).color }
   var ink: Color { artwork.ink.color }
-  var secondary: Color { artwork.secondary.color }
-  var accent: Color { ink }
+  var secondaryRGB: ArtRGB { artwork.ink.mix(artwork.surface, 0.06) }
+  var secondary: Color { secondaryRGB.color }
+  var actionRGB: ArtRGB { artwork.surface.mix(artwork.ink, 0.82) }
+  var accent: Color { actionRGB.color }
   var tint: BentoTint { artwork.tint }
 
   init(source: ArtworkCardPalette) {
-    let neutral = source.dark ? ArtRGB(0.10, 0.10, 0.10) : ArtRGB(0.90, 0.90, 0.90)
-    artwork = ArtworkCardPalette(color: source.surface.mix(neutral, 0.72))
+    artwork = source
   }
 
   /// Named backgrounds are authored themes (including their light/dark ink).
@@ -26,7 +27,8 @@ struct PopupChromePalette: Equatable {
     case .ambientBlue, .freezing: seed = ArtRGB(0.12, 0.23, 0.35)
     case .coffee: seed = ArtRGB(0.32, 0.22, 0.15)
     case .irishGreen: seed = ArtRGB(0.12, 0.28, 0.20)
-    case .ember, .pumpkin: seed = ArtRGB(0.36, 0.20, 0.10)
+    case .ember: seed = ArtRGB(0.32, 0.12, 0.08)
+    case .pumpkin: seed = ArtRGB(0.23, 0.12, 0.23)
     case .violet: seed = ArtRGB(0.24, 0.16, 0.34)
     case .rose: seed = ArtRGB(0.35, 0.17, 0.23)
     case .arctic: seed = ArtRGB(0.10, 0.29, 0.31)
@@ -94,14 +96,14 @@ struct PopupChromeFill: View {
   var body: some View {
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
     ZStack(alignment: .leading) {
-      shape.fill(palette.surface)
+      shape.fill(.chromeSurface)
       switch look {
       case .fader(let value):
         GeometryReader { geometry in
-          Rectangle().fill(palette.accent.opacity(0.12))
+          Rectangle().fill(palette.accent.opacity(0.08))
             .frame(width: geometry.size.width * min(1, max(0, value)))
         }
-      case .lit, .strong: shape.fill(palette.accent.opacity(0.10))
+      case .lit, .strong: shape.fill(palette.accent.opacity(0.08))
       default: Color.clear
       }
       shape.strokeBorder(palette.ink.opacity(contrast == .increased ? 0.34 : (look == .lit ? 0.28 : 0.12)), lineWidth: 0.5)
@@ -109,5 +111,54 @@ struct PopupChromeFill: View {
     .clipShape(shape)
     .allowsHitTesting(false)
     .accessibilityHidden(true)
+  }
+}
+
+/// All resting controls let the same background through. Accessibility uses
+/// the measured opaque theme surface instead, never a mismatched system grey.
+struct ChromeSurfaceStyle: ShapeStyle {
+  var raised = false
+  func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+    guard let palette = environment.popupChrome else {
+      return Color.primary.opacity(raised ? 0.14 : 0.08)
+    }
+    if environment.accessibilityReduceTransparency || environment.colorSchemeContrast == .increased {
+      return raised ? palette.raised : palette.surface
+    }
+    return palette.ink.opacity(raised ? 0.16 : 0.08)
+  }
+}
+extension ShapeStyle where Self == ChromeSurfaceStyle {
+  static var chromeSurface: ChromeSurfaceStyle { .init() }
+  static var chromeRaised: ChromeSurfaceStyle { .init(raised: true) }
+}
+
+/// Auxiliary surfaces explicitly carry both ink and backing across the native
+/// popover boundary. Inheriting just the white foreground made light popovers unreadable.
+struct ChromePopupSurface: ViewModifier {
+  @Environment(\.colorScheme) private var scheme
+  @Environment(\.popupChrome) private var chrome
+  func body(content: Content) -> some View {
+    content
+      .foregroundStyle(chrome?.ink ?? Color.primary, chrome?.secondary ?? Color.secondary)
+      .tint(chrome?.accent ?? Color.accentColor)
+      .background(chrome?.surface ?? Color(nsColor: .windowBackgroundColor))
+      .environment(\.colorScheme, chrome.map { $0.artwork.dark ? .dark : .light } ?? scheme)
+  }
+}
+
+/// Decorative gradients can reach white or yellow. This shared scrim bounds
+/// their brightest point so a translucent control still supports white text.
+struct ChromeBackdropScrim: View {
+  let style: BackgroundStyle
+  @Environment(\.popupChrome) private var chrome
+  var body: some View {
+    if let chrome, style != .system {
+      if chrome.artwork.dark {
+        Color.black.opacity(style.scene || style.morph ? 0.68 : style == .artwork ? 0.28 : 0.12)
+      } else {
+        Color.white.opacity(style.scene || style.morph ? 0.24 : 0.08)
+      }
+    }
   }
 }

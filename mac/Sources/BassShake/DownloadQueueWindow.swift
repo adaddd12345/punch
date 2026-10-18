@@ -79,6 +79,7 @@ private struct DownloadQueueWorkspace: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .environment(\.artworkBackdropContext, .local)
         .environment(\.powerSaver, true)
+        .environment(\.vinylMaterial, controller.settings.vinylMaterial)
         .environment(\.appGlassEnabled, controller.settings.liquidGlass && !controller.settings.powerSaver)
     }
   }

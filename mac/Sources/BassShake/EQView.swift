@@ -70,6 +70,7 @@ struct EQView: View {
   @State private var keyboardWindow: NSWindow?
   @Environment(\.colorSchemeContrast) private var contrast
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.popupChrome) private var palette
   @Environment(\.pointerHintsOn) private var hintsOn
   /// Power Saver: no scope and no glow under the curve.
   @Environment(\.powerSaver) private var powerSaver
@@ -116,7 +117,7 @@ struct EQView: View {
         Spacer()
         Text(controller.settings.waveform ? "Live sound · " + controller.settings.eqVisual.title : "Curve only")
           .font(.system(size: 10, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary)
+          .foregroundStyle(.artworkSecondary)
       }
       .padding(.horizontal, 12).padding(.top, 10)
       responseSurface
@@ -239,6 +240,7 @@ struct EQView: View {
   private var spectrumColor: Color {
     if let filament { return filament }
     let c = controller.settings.scopeColor
+    if c == .accent, let palette { return palette.accent }
     if c == .accent && scheme == .dark {
       return Color(nsColor: NSColor.controlAccentColor.blended(withFraction: 0.35, of: .white) ?? .controlAccentColor)
     }
@@ -317,10 +319,10 @@ struct EQView: View {
     EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
                                 dark: scheme == .dark, highContrast: contrast == .increased,
                                 prism: controller.settings.eqLineStyle == .prism)
-    ctx.draw(Text("0 dB").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
+    ctx.draw(Text("0 dB").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(palette?.secondary ?? .secondary),
              at: CGPoint(x: w - 4, y: y(0, h) + 6), anchor: .trailing)
     for (f, label) in [(100.0, "Bass"), (1_000.0, "Mids"), (8_000.0, "Highs")] {
-      ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(.secondary.opacity(0.7)),
+      ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(palette?.secondary ?? .secondary),
                at: CGPoint(x: x(f, w), y: h - 7), anchor: .center)
     }
 
@@ -423,7 +425,7 @@ struct EQView: View {
                                 prism: controller.settings.eqLineStyle == .prism)
     for (frequency, label) in [(100.0, "Bass"), (1_000.0, "Mids"), (8_000.0, "Highs")] {
       ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded))
-        .foregroundColor(.secondary.opacity(0.85)),
+        .foregroundColor(palette?.secondary ?? .secondary),
                at: CGPoint(x: x(frequency, w), y: h - 7), anchor: .center)
     }
     drawGhost(ctx, size: size)
