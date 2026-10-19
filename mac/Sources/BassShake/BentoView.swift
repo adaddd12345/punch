@@ -29,6 +29,7 @@ struct PlayerDetailsCollapsedKey: PreferenceKey {
 /// and timers stay in their own small observed views.
 struct BentoView: View {
   @Environment(\.popupChrome) private var chrome
+  @Environment(\.spacing) private var gaps
   @ObservedObject var controller: AudioController
   let meters: MeterModel
   @Binding var editor: PresetEditor.Mode?
@@ -125,14 +126,17 @@ struct BentoView: View {
       .preference(key: PlayerDetailsCollapsedKey.self, value: !flat && size != .mini && detailsCollapsed)
   }
 
+  /// Between blocks: Breathing room's section gap (Mini stays dense at 8).
+  private var blockGap: CGFloat { size == .mini ? 8 : gaps.section }
+
   private var stack: some View {
-    VStack(spacing: 8) {
+    VStack(spacing: blockGap) {
       // One ForEach keyed by section at every size, so ⌘1/2/3 resizes each
       // block in place and a reorder moves blocks rather than rebuilding them.
       // Mid-drag the layout order stays as it was; blocks only shift (offsets).
       ForEach(drag?.start ?? blockKeys, id: \.self) { key in
         if blockShown(key) {
-          VStack(spacing: 8) { block(key) }
+          VStack(spacing: gaps.sibling) { block(key) }
             // Lifted: plain frosted tiles, so its glass never merges with the blocks it passes.
             .environment(\.bentoGlass, glass && drag?.key != key ? BentoGlassSpace(id: glassSpace) : nil)
             .modifier(ReshuffleBlock(key: key, name: sectionName(key), model: reshuffle,
@@ -150,7 +154,7 @@ struct BentoView: View {
         shape.strokeBorder((chrome?.accent ?? Color.accentColor).opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
           .background(shape.fill((chrome?.accent ?? Color.accentColor).opacity(scheme == .dark ? 0.10 : 0.07)))
           .frame(height: d.heights[d.key] ?? 0)
-          .offset(y: ReshuffleSlot.top(of: d.key, in: d.order, heights: d.heights))
+          .offset(y: ReshuffleSlot.top(of: d.key, in: d.order, heights: d.heights, spacing: d.gap))
           .allowsHitTesting(false)
           .transition(.opacity)
       }
@@ -286,6 +290,8 @@ struct BentoView: View {
     let start: [String]
     /// Heights when the drag began (nothing re-measures mid-drag).
     let heights: [String: CGFloat]
+    /// The gap between blocks when the drag began.
+    let gap: CGFloat
     /// The dragged block's slot among the blocks that show something.
     var target: Int
     /// The pointer's travel (window space).
@@ -303,8 +309,8 @@ struct BentoView: View {
   private func dragOffset(_ key: String) -> CGFloat {
     guard let d = drag, !d.cancelled, d.start.contains(key) else { return 0 }
     if key == d.key { return d.dy }
-    return ReshuffleSlot.top(of: key, in: d.order, heights: d.heights)
-      - ReshuffleSlot.top(of: key, in: d.start, heights: d.heights)
+    return ReshuffleSlot.top(of: key, in: d.order, heights: d.heights, spacing: d.gap)
+      - ReshuffleSlot.top(of: key, in: d.start, heights: d.heights, spacing: d.gap)
   }
 
   private var reflow: Animation? { reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.82) }
@@ -321,7 +327,7 @@ struct BentoView: View {
       guard let i = ReshuffleSlot.visible(shown, key: key, heights: heights).firstIndex(of: key) else { return }
       let sizes = shown.map { "\($0)=\(heights[$0] ?? -1)" }.joined(separator: ",")
       Self.reorderLog.notice("Begin \(key, privacy: .public), slot \(i), sizes \(sizes, privacy: .public)")
-      d = BlockDrag(key: key, start: shown, heights: heights, target: i)
+      d = BlockDrag(key: key, start: shown, heights: heights, gap: blockGap, target: i)
       reshuffle.dragging = true
       reshuffle.cancelDrag = { cancelDrag() }
       reshuffle.autoScroll.begin(in: reshuffle.hostWindow) { [reshuffle] in
@@ -346,7 +352,8 @@ struct BentoView: View {
 
   private func place(_ d: inout BlockDrag) {
     d.dy = d.translation + reshuffle.autoScroll.scrolled
-    let t = ReshuffleSlot.target(start: d.start, key: d.key, heights: d.heights, current: d.target, dy: d.dy)
+    let t = ReshuffleSlot.target(start: d.start, key: d.key, heights: d.heights, current: d.target, dy: d.dy,
+                                 spacing: d.gap)
     if t != d.target {
       d.target = t
       NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)

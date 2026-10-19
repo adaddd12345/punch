@@ -303,7 +303,8 @@ struct ReshuffleBlock: ViewModifier {
 /// dragged block's height, so stepping back needs another 2 × margin + 8 pt of
 /// travel: no oscillation on a boundary.
 enum ReshuffleSlot {
-  static let spacing: CGFloat = 8
+  /// Between blocks at standard Breathing room (BentoView passes the live gap).
+  static let spacing: CGFloat = Spacing.standard.section
   static let margin: CGFloat = 12
 
   /// A block with nothing in it (e.g. What's Playing with nothing playing)
@@ -321,7 +322,8 @@ enum ReshuffleSlot {
     return all.map { vis.contains($0) ? (it.next() ?? $0) : $0 }
   }
 
-  static func top(of key: String, in order: [String], heights: [String: CGFloat]) -> CGFloat {
+  static func top(of key: String, in order: [String], heights: [String: CGFloat],
+                  spacing: CGFloat = ReshuffleSlot.spacing) -> CGFloat {
     var y: CGFloat = 0
     for k in order {
       if k == key { return y }
@@ -330,9 +332,10 @@ enum ReshuffleSlot {
     return y
   }
 
-  static func target(start: [String], key: String, heights: [String: CGFloat], current: Int, dy: CGFloat) -> Int {
+  static func target(start: [String], key: String, heights: [String: CGFloat], current: Int, dy: CGFloat,
+                     spacing: CGFloat = ReshuffleSlot.spacing) -> Int {
     let h = heights[key] ?? 0
-    let top = Self.top(of: key, in: start, heights: heights) + dy
+    let top = Self.top(of: key, in: start, heights: heights, spacing: spacing) + dy
     let bottom = top + h
     let n = visible(start, key: key, heights: heights).count
     var t = current
@@ -341,12 +344,12 @@ enum ReshuffleSlot {
       let vo = visible(o, key: key, heights: heights)
       if t > 0 {
         let a = vo[t - 1]
-        let mid = Self.top(of: a, in: o, heights: heights) + (heights[a] ?? 0) / 2
+        let mid = Self.top(of: a, in: o, heights: heights, spacing: spacing) + (heights[a] ?? 0) / 2
         if top < mid - margin { t -= 1; continue }
       }
       if t < n - 1 {
         let b = vo[t + 1]
-        let mid = Self.top(of: b, in: o, heights: heights) + (heights[b] ?? 0) / 2
+        let mid = Self.top(of: b, in: o, heights: heights, spacing: spacing) + (heights[b] ?? 0) / 2
         if bottom > mid + margin { t += 1; continue }
       }
       break

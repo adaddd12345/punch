@@ -31,9 +31,6 @@ enum FooterBento {
   static let gap: CGFloat = 4
   /// Either side of the inset rule between groups.
   static let groupGap: CGFloat = 6
-  /// Between the blocks and the footer (or the Dock header): the blocks' edge
-  /// and this gap do the old hairline's job.
-  static let edgeGap: CGFloat = 8
 }
 
 /// How the footer's groups are drawn: system glass (macOS 26, Liquid Glass on), the

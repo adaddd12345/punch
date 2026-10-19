@@ -42,24 +42,33 @@ private struct TempoThemed: ViewModifier {
   @ObservedObject var controller: AudioController
   @ObservedObject private var popups = TempoPopups.shared
   @State private var owner = "popups-\(UUID().uuidString)"
+  @Environment(\.spacing) private var gaps
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   /// Groups are a popover's width, as the drawers.
   static let groupWidth: CGFloat = 360
+
+  // Concentric corners, inside out: a card, its group (card + the group's
+  // padding), the parent panel (group + the panel's margin).
+  static let cardCorner: CGFloat = 10
+  static func groupCorner(_ s: Spacing) -> CGFloat { cardCorner + s.groupPad }
+  static func panelCorner(_ s: Spacing) -> CGFloat { groupCorner(s) + s.panelMargin }
 
   var body: some View {
     let both = popups.bpm && popups.key
     let wide = Self.bigScreen
     Group {
       if both && wide {
-        HStack(alignment: .top, spacing: 6) { bpmGroup; keyGroup }
+        HStack(alignment: .top, spacing: gaps.section) { bpmGroup; keyGroup }
       } else {
-        VStack(spacing: 6) {
+        VStack(spacing: gaps.section) {
           if popups.bpm { bpmGroup }
           if popups.key { keyGroup }
         }
       }
     }
-    .padding(6)
+    .padding(gaps.panelMargin)
+    .animation(reduceMotion ? nil : Spacing.spring, value: gaps)
     .modifier(TempoThemed())
     .onAppear { TempoListening.shared.attach(owner, controller: controller) }
     .onDisappear {
@@ -88,14 +97,15 @@ private struct TempoThemed: ViewModifier {
   @ViewBuilder let header: () -> Header
   @ViewBuilder let cards: () -> Cards
   @Environment(\.colorScheme) private var scheme
+  @Environment(\.spacing) private var gaps
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Drawer.gap) {
+    VStack(alignment: .leading, spacing: gaps.sibling) {
       header().frame(height: Drawer.headerHeight)
       cards()
     }
-    .padding(12)
-    .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+    .padding(gaps.groupPad)
+    .background(RoundedRectangle(cornerRadius: TempoPopupsView.groupCorner(gaps), style: .continuous)
       .fill(wash.color.opacity(scheme == .dark ? 0.16 : 0.22)))
   }
 }
@@ -137,6 +147,7 @@ private struct TempoThemed: ViewModifier {
   @ObservedObject var controller: AudioController
   @ObservedObject private var sense = MusicSense.shared
   @Environment(\.tempoPalette) private var palette
+  @Environment(\.spacing) private var gaps
 
   var body: some View {
     let s = sense.snapshot
@@ -155,8 +166,8 @@ private struct TempoThemed: ViewModifier {
         .pointerHint("Listen again", does: "Starts fresh, for a new song or a beat switch.")
       }
     } cards: {
-      VStack(spacing: Drawer.gap) {
-        HStack(spacing: Drawer.gap) {
+      VStack(spacing: gaps.sibling) {
+        HStack(spacing: gaps.sibling) {
           TempoReadoutCard(snapshot: s).frame(width: 177)
           TempoMetronomeCard(metronome: Metronome.shared, sense: sense)
         }
@@ -269,7 +280,7 @@ private struct TempoThemed: ViewModifier {
       }
       .padding(.horizontal, 12)
       .frame(height: Drawer.barHeight)
-      .background(DrawerSurface())
+      .background(DrawerSurface(radius: TempoPopupsView.cardCorner))
     }
   }
 
@@ -432,6 +443,7 @@ private struct TempoThemed: ViewModifier {
 @MainActor private struct TempoKeyGroup: View {
   @ObservedObject private var sense = MusicSense.shared
   @Environment(\.tempoPalette) private var palette
+  @Environment(\.spacing) private var gaps
 
   var body: some View {
     let s = sense.snapshot
@@ -440,7 +452,7 @@ private struct TempoThemed: ViewModifier {
         EmptyView()
       }
     } cards: {
-      HStack(spacing: Drawer.gap) {
+      HStack(spacing: gaps.sibling) {
         TempoKeyCard(snapshot: s)
         TempoTunerCard(sense: sense).frame(width: 177)
       }
@@ -746,7 +758,7 @@ private struct TempoGauge: View {
     .foregroundStyle(block.ink.color)
     .padding(12)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .background(RoundedRectangle(cornerRadius: Drawer.radius, style: .continuous).fill(block.fill.color))
+    .background(RoundedRectangle(cornerRadius: TempoPopupsView.cardCorner, style: .continuous).fill(block.fill.color))
   }
 }
 

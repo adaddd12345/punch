@@ -9,6 +9,7 @@ struct AppearancePanelView: View {
   let close: () -> Void
   @Environment(\.colorScheme) private var scheme
   @Environment(\.popupChrome) private var chrome
+  @Environment(\.spacing) private var gaps
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.appGlassEnabled) private var glassEnabled
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -77,7 +78,7 @@ struct AppearancePanelView: View {
                 .padding(.bottom, showsLiveEQ ? 0 : controller.settings.playerArtworkLayout == .compact ? -20 : 12)
                 .id("appearance-preview")
               Section {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: gaps.section) {
                   switch category {
                   case .artwork:
                     layouts
@@ -86,6 +87,7 @@ struct AppearancePanelView: View {
                     holographicFinish
                     vinyl
                   case .background:
+                    breathingRoom
                     backgrounds
                   case .equalizer:
                     equalizer
@@ -250,6 +252,26 @@ struct AppearancePanelView: View {
       .controlSize(.small)
       .font(.system(size: 11, weight: .medium))
       .padding(.top, 2)
+    }
+  }
+
+  /// One setting for the popup's rhythm (Spacing): groups part, their insides stay close.
+  private var breathingRoom: some View {
+    section("Breathing room") {
+      HStack(spacing: 8) {
+        Image(systemName: "rectangle.compress.vertical").accessibilityHidden(true)
+        Slider(value: bind(\.breathingRoom), in: 0...1, step: 0.25)
+          .controlSize(.small)
+          .accessibilityLabel("Breathing room")
+          .accessibilityValue(Spacing.name(controller.settings.breathingRoom))
+        Image(systemName: "rectangle.expand.vertical").accessibilityHidden(true)
+        Text(Spacing.name(controller.settings.breathingRoom))
+          .font(.system(size: 11, weight: .medium))
+          .foregroundStyle(.secondary)
+          .frame(width: 54, alignment: .trailing)
+      }
+      .font(.system(size: 11, weight: .medium))
+      .help("Space between groups grows; items within a group stay close.")
     }
   }
 

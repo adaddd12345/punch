@@ -15,6 +15,8 @@ struct DrawerAppearance: Equatable {
   var liquidGlass = false
   var playButtonLook: PlayButtonLook = .prism
   var localArtwork = true
+  /// Breathing room (Spacing), so drawers keep the popup's rhythm.
+  var breathingRoom = Spacing.defaultRoom
 }
 
 /// The one design language of the tray's Beats and DJ drawers: flat colour

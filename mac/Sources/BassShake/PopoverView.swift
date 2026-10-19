@@ -154,6 +154,9 @@ struct PopoverView: View {
 
   private var labels: LabelLevel { controller.settings.labelLevel }
 
+  /// Breathing room (Appearance › Background): the gaps between and inside groups.
+  private var gaps: Spacing { Spacing(room: controller.settings.breathingRoom) }
+
   private var drawerAppearance: DrawerAppearance {
     DrawerAppearance(background: controller.settings.backgroundStyle,
                      tint: popupTint,
@@ -164,7 +167,8 @@ struct PopoverView: View {
                      artworkPerspective: controller.settings.artworkPerspective,
                      liquidGlass: controller.settings.liquidGlass && !controller.settings.powerSaver,
                      playButtonLook: controller.settings.playButtonLook,
-                     localArtwork: !controller.isMirror)
+                     localArtwork: !controller.isMirror,
+                     breathingRoom: controller.settings.breathingRoom)
   }
 
   /// Take Control: this popup drives another Mac (its controller is a mirror).
@@ -242,16 +246,18 @@ struct PopoverView: View {
 
   /// Themed by PopupChromeTheme in body, with every other panel.
   private var controlStack: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    // Between groups (the blocks, the footer, the Dock header): Breathing
+    // room's section gap; Mini stays dense at 8.
+    let groupGap = size == .mini ? 8 : gaps.section
+    return VStack(alignment: .leading, spacing: groupGap) {
       let isClassicMini = !controller.settings.bento && size == .mini
       // Opened from the Dock: the footer's controls in a header (icon, name, groups).
       if dockHeaderShown {
         dockHeader
-          .padding(.bottom, FooterBento.edgeGap - 8)
       }
       // Retain the sound controls' identity and local disclosure state while
       // Appearance takes their place. They cannot receive input while hidden.
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: groupGap) {
       // Take Control: who this popup is driving, always on top (and Switch Back).
       if let t = takeover {
         TakeoverBanner(session: t)
@@ -293,8 +299,8 @@ struct PopoverView: View {
                         windowControls: role != .launchWindow,
                         pin: { controller.setPinned(!controller.pinned, from: window.window) })),
                       flat: !controller.settings.bento,
-                      macBlock: AnyView(VStack(alignment: .leading, spacing: 8) { macSlot; earsSlot }),
-                      heroMacBlock: AnyView(VStack(alignment: .leading, spacing: 8) {
+                      macBlock: AnyView(VStack(alignment: .leading, spacing: gaps.sibling) { macSlot; earsSlot }),
+                      heroMacBlock: AnyView(VStack(alignment: .leading, spacing: gaps.sibling) {
                         if controller.settings.showMacVolume {
                           MacVolumeTile(model: controller.macVolume, size: .compact, liquidGlass: false, embedded: true)
                         } else {
@@ -328,11 +334,10 @@ struct PopoverView: View {
         AppearancePanelView(controller: controller) { setAppearance(false) }
           .transition(.opacity)
       }
-      // No hairline: the shelf's own tone and a 10 pt gap set the footer apart.
+      // No hairline: the shelf's own tone and the section gap set the footer apart.
       if (size != .mini || showAppearance) && !dockHeaderShown {
         footer
           .environment(\.popupTint, popupTint)
-          .padding(.top, FooterBento.edgeGap - 8)
       }
     }
     .animation(reduceMotion || controller.settings.powerSaver ? nil : PopupMotion.resize, value: size)
@@ -357,6 +362,8 @@ struct PopoverView: View {
     // covers nothing, and the band collapses once the capsule has rolled out.
     .modifier(UpdateBand(progress: bandShown ? 1 : 0, tapered: updateTaper))
     .environment(\.labelLevel, controller.settings.labelLevel)
+    .environment(\.spacing, gaps)
+    .animation(reduceMotion ? nil : Spacing.spring, value: gaps)
     .frame(width: 360)
     // Never taller than the screen space it hangs in (menu-bar popover only).
     .frame(maxHeight: role == .menuBar ? space.maxHeight : nil, alignment: .top)
@@ -465,7 +472,8 @@ struct PopoverView: View {
         showDJ = false
         showBeats = false
         LiveDrawer.shared.appearance = drawerAppearance
-        LiveDrawer.shared.show(TempoPopupsView(controller: controller), overlapWhenSmall: true)
+        LiveDrawer.shared.show(TempoPopupsView(controller: controller), overlapWhenSmall: true, fitsContent: true,
+                               corner: TempoPopupsView.panelCorner)
       } else if !showLive && !showDJ && !showBeats {
         LiveDrawer.shared.hide()
       }

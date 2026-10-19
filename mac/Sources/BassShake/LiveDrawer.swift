@@ -99,9 +99,13 @@ final class LiveDrawer {
   /// Shows any content in the drawer (Live Channels, DJ pads), replacing
   /// what was there. `height`: content of a known, fixed height (DJ, Beats)
   /// sizes the panel first, so under vs beside is decided on the real size
-  /// (no lift-then-move when it turns out not to fit).
+  /// (no lift-then-move when it turns out not to fit). `fitsContent`: the
+  /// panel takes the content's own width (Tempo's popups, one or two wide)
+  /// instead of the popover's. `corner`: the panel's corner for a spacing
+  /// (Tempo nests its groups' corners in it); nil keeps the drawers' 12.
   func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil, height: CGFloat? = nil,
-                           overlapWhenSmall: Bool = false) {
+                           overlapWhenSmall: Bool = false, fitsContent: Bool = false,
+                           corner: ((Spacing) -> CGFloat)? = nil) {
     guard let host, host.isVisible else { return }
     self.side = side || sideOnly
     self.overlapWhenSmall = overlapWhenSmall
@@ -133,7 +137,8 @@ final class LiveDrawer {
     hints.shown = true
     let w = width ?? anchorRect?.width ?? host.frame.width
     drawerContent.width = w
-    drawerContent.view = AnyView(content.frame(width: w))
+    drawerContent.corner = corner
+    drawerContent.view = fitsContent ? AnyView(content) : AnyView(content.frame(width: w))
     if hostingView == nil {
       let root = DrawerRoot(model: drawerContent, flags: hints) { [weak self] size in self?.fit(size) }
       let hv = NSHostingView(rootView: root)
@@ -339,6 +344,8 @@ final class DrawerContent: ObservableObject {
   @Published var view = AnyView(EmptyView())
   @Published var appearance = DrawerAppearance()
   var width: CGFloat = 360
+  /// Set with `view` (so it's read on the same publish).
+  var corner: ((Spacing) -> CGFloat)?
 }
 
 /// The panel's one root: the swapped content, hints, background, and a size
@@ -356,13 +363,16 @@ struct DrawerRoot: View {
       themed
     }
     .pointerHintRoot(enabled: flags.on && flags.shown).drawBudgetRoot()
-    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    .clipShape(RoundedRectangle(cornerRadius: model.corner?(spacing) ?? 12, style: .continuous))
     .fixedSize()
     .onGeometryChange(for: CGSize.self) { $0.size } action: { onSize($0) }
   }
 
+  private var spacing: Spacing { Spacing(room: model.appearance.breathingRoom) }
+
   private var themed: some View {
     model.view
+      .environment(\.spacing, spacing)
       .environment(\.popupTint, model.appearance.tint)
       .environment(\.artworkStyle, model.appearance.artworkStyle)
       .environment(\.vinylMaterial, model.appearance.vinylMaterial)

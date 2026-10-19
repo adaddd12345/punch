@@ -856,6 +856,8 @@ struct Settings: Codable, Equatable {
   var eqVisualMode: EQVisual = .flow
   /// Heat's stripes under the chosen mode (Flow, Trace, Regions).
   var eqHeatBehind = false
+  /// Space between the popup's groups (0…1; 0.5 is standard). See Spacing.
+  var breathingRoom = Spacing.defaultRoom
   /// The analyser's technical settings (Appearance › Equalizer › Technical).
   var spectrumSpeed: SpectrumSpeed = .medium
   var spectrumPeakHold: PeakHold = .oneSecond
@@ -1111,6 +1113,7 @@ struct Settings: Codable, Equatable {
     let mode = (try? c.decodeIfPresent(String.self, forKey: .eqVisualMode)).flatMap { $0 }.flatMap(EQVisual.fromStored)
     eqVisualMode = mode == nil || mode == .off ? d.eqVisualMode : mode!
     eqHeatBehind = (try? c.decodeIfPresent(Bool.self, forKey: .eqHeatBehind)) ?? d.eqHeatBehind
+    breathingRoom = (try? c.decodeIfPresent(Double.self, forKey: .breathingRoom)) ?? d.breathingRoom
     spectrumSpeed = (try? c.decodeIfPresent(SpectrumSpeed.self, forKey: .spectrumSpeed)) ?? d.spectrumSpeed
     spectrumPeakHold = (try? c.decodeIfPresent(PeakHold.self, forKey: .spectrumPeakHold)) ?? d.spectrumPeakHold
     spectrumRange = (try? c.decodeIfPresent(SpectrumRange.self, forKey: .spectrumRange)) ?? d.spectrumRange
