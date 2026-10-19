@@ -140,44 +140,51 @@ final class MeterModel: ObservableObject {
 
 struct MeterView: View {
   @ObservedObject var model: MeterModel
-  @Environment(\.labelLevel) private var labels
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
 
-  /// The same three columns as the Bass and Gain rows below (LabeledSlider),
-  /// so bars, scale and tracks share one span and the ticks are true.
+  /// A slim full-width stereo strip (left over right) on the same edges as
+  /// its neighbours. No scale and no pill: the zone colours say how hot, and
+  /// red (tips, and the track while limiting) means the limiter. The level in
+  /// dB is in the hint and VoiceOver.
   var body: some View {
-    let label: CGFloat = labels == .icons ? 16 : 74
-    VStack(spacing: 5) {
+    let limiting = model.limiting
+    VStack(spacing: 3) {
       ForEach(0..<2, id: \.self) { i in
-        HStack(spacing: 6) {
-          Text(i == 0 ? "L" : "R")
-            .font(.system(size: 9, weight: .medium, design: .rounded))
-            .foregroundStyle(.secondary)
-            .frame(width: label, alignment: .trailing)
-          MeterBar(channel: model.channels[i])
-            .frame(height: 7)
-          Color.clear.frame(width: 44, height: 1)
-        }
-      }
-      HStack(spacing: 6) {
-        Color.clear.frame(width: label, height: 1)
-        MeterScale()
-        // "LIMIT 12" can run a little wider than the column: it grows left, never truncates.
-        LimitPill(active: model.limiting, reductionDb: model.gainReductionDb)
-          .fixedSize()
-          .frame(width: 44, alignment: .trailing)
+        MeterBar(channel: model.channels[i], limiting: limiting, showHold: !reduceMotion || limiting)
+          .frame(height: 4)
       }
     }
+    .frame(maxWidth: .infinity)
+    .frame(height: 14)
+    .overlay(alignment: .trailing) {
+      // Colour alone isn't enough for everyone: the word, only while it acts.
+      if limiting && differentiateWithoutColor {
+        LimitPill(active: true, reductionDb: model.gainReductionDb).fixedSize()
+      }
+    }
+    .contentShape(Rectangle())
+    .pointerHint { [model] in LevelHint.make(model) }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel("Output level")
+    .accessibilityValue(LevelHint.value(model) + (limiting ? ", limiting" : ""))
   }
 }
 
 private struct MeterBar: View {
   let channel: MeterModel.Channel
+  /// The limiter is holding peaks: the whole track tints red.
+  var limiting = false
+  /// The falling peak tick (hidden under Reduce Motion unless limiting).
+  var showHold = true
+  @Environment(\.colorSchemeContrast) private var contrast
 
   var body: some View {
     Canvas { ctx, size in
       let r = size.height / 2
       let track = Path(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: r)
-      ctx.fill(track, with: .color(.primary.opacity(0.08)))
+      ctx.fill(track, with: .color(limiting ? MeterModel.limitRed.opacity(0.22)
+                                            : .primary.opacity(contrast == .increased ? 0.16 : 0.08)))
 
       // Fill: a gradient through the zones, revealed up to the level, so
       // colour always tells you how hot you are — not just the bar tip.
@@ -202,26 +209,11 @@ private struct MeterBar: View {
       }
       // Peak-hold tick in the colour of its zone.
       let hx = size.width * CGFloat(MeterModel.position(channel.hold))
-      if channel.hold > MeterModel.floorDb + 0.5 {
+      if showHold && channel.hold > MeterModel.floorDb + 0.5 {
         ctx.fill(Path(CGRect(x: max(0, hx - 1.5), y: 0, width: 3, height: size.height)),
                  with: .color(MeterModel.color(channel.hold)))
       }
     }
-  }
-}
-
-private struct MeterScale: View {
-  private let marks: [Double] = [-40, -24, -12, -6, -3, 0]
-  var body: some View {
-    GeometryReader { geo in
-      ForEach(marks, id: \.self) { db in
-        Text(db == 0 ? "0" : "\(Int(db))")
-          .font(.system(size: 8, weight: .medium, design: .rounded))
-          .foregroundStyle(.secondary)
-          .position(x: geo.size.width * CGFloat(MeterModel.position(db)), y: 5)
-      }
-    }
-    .frame(height: 10)
   }
 }
 

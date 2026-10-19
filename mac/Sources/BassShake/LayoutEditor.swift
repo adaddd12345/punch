@@ -71,7 +71,7 @@ struct LayoutSection: Identifiable, Equatable {
                                               tint: .bass, height: 48)
   static let classicPresets = LayoutSection(key: "classic.presets", name: "Presets", symbol: "square.stack", tint: .frost, height: 36)
   static let classicMeters = LayoutSection(key: "classic.meters", name: "Level Meters", symbol: "chart.bar.fill", tint: .mint,
-                                           height: 36, when: "Full size only")
+                                           height: 16, when: "Full size only")
   static let classicSliders = LayoutSection(key: "classic.sliders", name: "Strength & Boost", symbol: "waveform.path", tint: .bass, height: 44)
   static let classicModes = LayoutSection(key: "classic.modes", name: "Modes", symbol: "square.grid.3x2", tint: .indigo, height: 44)
   static let classicModeSettings = LayoutSection(key: "classic.modeSettings", name: "Mode Settings", symbol: "slider.horizontal.3",

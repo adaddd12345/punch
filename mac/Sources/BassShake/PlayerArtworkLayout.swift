@@ -106,6 +106,7 @@ struct PlayerArtworkStage: View {
   var paused = false
   @Environment(\.artworkStyle) private var style
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
 
   var body: some View {
@@ -142,15 +143,18 @@ struct PlayerArtworkStage: View {
         }
         if !expanded || style == .vinyl {
           // Vinyl's sleeve sits at the slot's leading edge (VinylGeometry), an
-          // eighth of the slot left of centre. Centre the cover itself, under
-          // the centred title; the record peeks into the free space and its
-          // moves never slide the cover. Width cap 0.6 keeps the record inside.
+          // eighth of the slot left of centre. Tucked, the cover is centred
+          // under the title; with the record out it eases a little left, so
+          // cover and record together don't lean right. Width cap 0.6 keeps
+          // the record inside.
           let vinyl = style == .vinyl
           let slot = min(height * 0.9, width * (vinyl ? 0.6 : 0.66)) * (vinyl ? 4 / 3 : 1)
           NowArt(artwork: artwork, favicon: favicon, icon: icon,
                  size: slot,
                  spinning: spinning, paused: paused, cornerRadius: min(14, height * 0.07))
-            .offset(x: vinyl ? slot * 0.125 : 0)
+            .offset(x: vinyl ? slot * (paused ? 0.125 : 0.085) : 0)
+            // The record's own slide (VinylPeek): the cover moves with it.
+            .animation(reduceMotion || powerSaver ? nil : .spring(response: 0.55, dampingFraction: 0.82), value: paused)
         }
         }
       }

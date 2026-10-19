@@ -64,7 +64,7 @@ struct EQLinePreview: View {
 
   var body: some View {
     Canvas { ctx, size in
-      let pad: CGFloat = 12
+      let pad: CGFloat = min(12, size.height * 0.1)  // small thumbnails keep their dB range
       func y(_ gain: Double) -> CGFloat { pad + CGFloat(18 - gain) * (size.height - 2 * pad) / 30 }
       let zero = y(0)
       guard response.count > 1 else { return }

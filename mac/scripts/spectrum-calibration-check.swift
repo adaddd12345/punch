@@ -7,6 +7,9 @@ final class AudioController {
   enum Status { case running(String, Double) }
   var status: Status = .running("Calibration", 48_000)
   func readAnalyzer(_ buffer: inout [Float]) -> Int { 0 }
+  /// The analyser reads its settings here (defaults: the app's defaults).
+  struct Settings { var spectrumParams = SpectrumParams() }
+  var settings = Settings()
 }
 
 @main struct SpectrumCalibrationCheck {

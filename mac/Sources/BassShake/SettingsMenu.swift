@@ -159,14 +159,11 @@ struct SettingsMenuContent: View {
                     || NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency)
       }
       Divider()
-      Picker("EQ display", selection: Binding(get: { controller.settings.eqVisual },
+      Picker("Live Sound", selection: Binding(get: { controller.settings.eqVisual },
                                               set: { controller.settings.setEQVisualByHand($0) })) {
         ForEach(EQVisual.allCases) { Text($0.title).tag($0) }
       }
-      Picker("EQ color", selection: bind(\.scopeColor)) {
-        ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
-      }
-      Picker("EQ Line", selection: bind(\.eqLineStyle)) {
+      Picker("Curve Style", selection: bind(\.eqLineStyle)) {
         ForEach(EQLineStyle.allCases) { Text($0.title).tag($0) }
       }
       // Artwork layout and image treatment are independent, so effects also
@@ -174,6 +171,9 @@ struct SettingsMenuContent: View {
       Menu("Artwork") {
         Picker("Layout", selection: bind(\.playerArtworkLayout)) {
           ForEach(PlayerArtworkLayout.allCases) { Text($0.title).tag($0) }
+        }
+        Picker("What’s Playing", selection: bind(\.nowPlayingSize)) {
+          ForEach(NowPlayingSize.allCases) { Text($0.title).tag($0) }
         }
         Divider()
         Picker("Style", selection: bind(\.artworkStyle)) {

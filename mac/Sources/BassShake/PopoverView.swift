@@ -1141,9 +1141,21 @@ struct PopoverView: View {
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { confirmSoundReset = true }
   }
 
-  /// Tools: the ⋯ menu (Check & Fix, Appearance and Quit are inside it).
+  /// Tools: Appearance and the ⋯ menu (Check & Fix and Quit are inside it).
   private var toolsGroup: some View {
     FooterGroup {
+      Button { setAppearance(!showAppearance) } label: {
+        Image(systemName: "paintpalette")
+          .font(.system(size: 13, weight: .regular))
+          .symbolRenderingMode(.hierarchical)
+          .frame(width: 16, height: 16)
+          .footerChip(iconOnly: true)
+          .modifier(FooterModePlate(active: false, expanded: showAppearance))
+      }
+      .buttonStyle(FooterButtonStyle(chip: true))
+      .accessibilityLabel("Appearance")
+      .accessibilityValue(showAppearance ? "Open" : "Closed")
+      .help("Appearance: backgrounds, artwork and EQ")
       FooterShakerMenu(help: "Settings") {
         SettingsMenuContent(controller: controller, updates: updates, panel: $menuPanel)
       }

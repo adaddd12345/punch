@@ -2,16 +2,17 @@ import AppKit
 import SwiftUI
 
 /// Six draggable nodes on a live response curve.
-///   drag        frequency + gain (Shift = fine)
-///   scroll      Q (bandwidth) of the hovered / grabbed node
+///   drag        frequency + gain (⇧ = fine, 0.25×)
+///   scroll / pinch  Q (bandwidth) of the hovered / grabbed node
 ///   double-click  reset that node to 0 dB;  ⌥-click: reset it fully
 ///   drag the line or empty space  raises/lowers everything = Boost
 ///               (the line shows user EQ + Boost; other processing is not plotted);
 ///               ⌥-drag tilts bass against treble (the two shelves);
 ///               double-click the line: Boost to 0
 ///   keyboard    ←/→ pick a node, ↑/↓ gain (⇧ fine), ⌥←/→ frequency,
-///               Space/Delete reset
+///               [ / ] wider / narrower (bells), Space/Delete reset
 /// Gain snaps to 0 dB with a trackpad haptic tick.
+/// The picked node's span lights the analyser under it (`focusSpan`).
 ///
 /// Drags are in-flight edits (LiveEdit.swift): the curve and the engine
 /// follow every event, settings are written once when the drag ends (one
@@ -28,18 +29,22 @@ struct EQView: View {
   var filament: Color? = nil
   /// Appearance uses the actual renderer without editing audio settings.
   var preview = false
+  /// Appearance's Test: a sample signal in place of the live spectrum.
+  var demo: EQDemoSource? = nil
 
-  init(controller: AudioController, chrome: Bool = true, filament: Color? = nil, preview: Bool = false) {
+  init(controller: AudioController, chrome: Bool = true, filament: Color? = nil, preview: Bool = false,
+       demo: EQDemoSource? = nil) {
     self.controller = controller
     self.liveEdit = controller.liveEdit
     self.chrome = chrome
     self.filament = filament
     self.preview = preview
+    self.demo = demo
   }
 
   @State private var grabbed: Int?
   @State private var hovered: Int?
-  @State private var dragOrigin: (band: EQBand, point: CGPoint)?
+  @State private var nodeDrag: NodeDrag?
   /// While dragging: the curve of every other band (this one at 0 dB), so the
   /// grabbed band's gain can be solved to put the line under the pointer.
   @State private var othersCurve: [Double] = []
@@ -59,8 +64,12 @@ struct EQView: View {
   /// The value chip by the pointer while the line is held.
   @State private var lineChip: (text: String, at: CGPoint)?
   @State private var cursorPushed = false
-  /// Scroll-wheel Q: committed once the wheel rests.
+  /// Scroll-wheel / pinch Q: committed once the gesture rests (nil = none in flight).
   @State private var qCommit: DispatchWorkItem?
+  /// The last edit key: one undo step per run of keys on one band.
+  /// The arrow-key run in progress: one undo step per run. It ends after 1 s,
+  /// on another band, or when anything else (⌘Z, a preset) changed the bands.
+  @State private var keyRun: (band: Int, at: TimeInterval, bands: [EQBand])?
   /// Response curves of the bands as drawn, memoized per (bands, count).
   @State private var curves = CurveCache()
   /// Keyboard ownership follows a graph press; SwiftUI focusable consumes
@@ -74,30 +83,61 @@ struct EQView: View {
   @Environment(\.pointerHintsOn) private var hintsOn
   /// Power Saver: no scope and no glow under the curve.
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   /// Inside a Liquid Glass tile (the readout skips its own blur there).
   @Environment(\.bentoGlass) private var bentoGlass
 
-  private static let colors: [Color] = [
-    Color(red: 1.00, green: 0.36, blue: 0.36),
-    Color(red: 1.00, green: 0.62, blue: 0.22),
-    Color(red: 1.00, green: 0.85, blue: 0.25),
-    Color(red: 0.35, green: 0.85, blue: 0.55),
-    Color(red: 0.30, green: 0.70, blue: 1.00),
-    Color(red: 0.68, green: 0.50, blue: 1.00),
+  /// Warm bass to cool highs, by where a node sits (not its band number), so
+  /// the order holds on every preset and mid-drag. On light surfaces the
+  /// pale hues (yellow, green) are deepened to stay readable.
+  private static let hues: [(Double, Double, Double)] = [
+    (1.00, 0.36, 0.36), (1.00, 0.62, 0.22), (1.00, 0.85, 0.25),
+    (0.35, 0.85, 0.55), (0.30, 0.70, 1.00), (0.68, 0.50, 1.00),
   ]
+  static func hue(at f: Double, light: Bool) -> Color {
+    let t = min(1, max(0, log10(max(20, f) / 20) / 3)) * Double(hues.count - 1)
+    let i = min(hues.count - 2, Int(t)), a = t - Double(i)
+    let (r0, g0, b0) = hues[i], (r1, g1, b1) = hues[i + 1]
+    var r = r0 + (r1 - r0) * a, g = g0 + (g1 - g0) * a, b = b0 + (b1 - b0) * a
+    if light {
+      // Deepen in proportion to brightness: yellow most, blue and violet barely.
+      let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
+      let k = max(0, luma - 0.45) * 0.9
+      r *= 1 - k; g *= 1 - k; b *= 1 - k
+    }
+    return Color(red: r, green: g, blue: b)
+  }
+  /// A node's colour: Bento's ink, else its frequency's hue.
+  private func nodeColor(_ b: EQBand) -> Color {
+    filament ?? Self.hue(at: b.freq, light: scheme != .dark)
+  }
   private let hitRadius: CGFloat = 22
   private let lineReach: CGFloat = 8
 
+  /// One grab of a node, measured from `point` (re-anchored when ⇧ flips).
+  private struct NodeDrag {
+    var band: EQBand             // the band at `point`
+    var point: CGPoint           // global
+    var fine: Bool               // ⇧ at `point`
+    var didEdit = false          // an unmoved press must not add an undo step
+  }
   /// One grab of the line: Boost (plain) or tilt (⌥).
   private struct LineDrag {
-    var startY: CGFloat          // global
+    var startY: CGFloat          // global; re-anchored when ⇧ flips
     var startBoost: Double
     var tilt: Bool
     var startBands: [EQBand]
     var low: Int, high: Int      // shelf indices (tilt)
+    var base: Double             // Boost (plain) or tilt (⌥) at startY
+    var value: Double            // Boost or tilt in flight
+    var fine: Bool               // ⇧ at startY
     var lastStep: Int            // whole dB, for the haptic tick
     var didEdit = false          // an unmoved press must not add an undo step
   }
+  /// ⇧: drags move at a quarter of the pointer's speed.
+  private static let fineRate: CGFloat = 0.25
+  /// [ and ]: one Q step.
+  private static let qStep = 1.12
   /// The dB scale: room above for Boost (0–12) on top of the EQ, so the
   /// drawn line (EQ + Boost) rarely clips. 0 dB sits a little below middle.
   private let topDb = 18.0
@@ -127,7 +167,7 @@ struct EQView: View {
         .fill(Color.primary.opacity(chrome ? 0.045 : 0))
     )
     .clipShape(RoundedRectangle(cornerRadius: chrome ? 12 : 0, style: .continuous))
-    .animation(.spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
+    .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.85), value: grabbed)
     .allowsHitTesting(!preview)
   }
 
@@ -140,10 +180,24 @@ struct EQView: View {
       let showNodes = preview || pointerIn || grabbed != nil
       let kbDot: Int? = focused && kbActive ? kbBand : nil
       let boostDb = shown.boostDb
+      let focus = focusSpan
       ZStack {
-        if controller.settings.waveform && controller.settings.enabled {
+        if let demo, controller.settings.waveform {
+          // The sample, shaped by this curve and Boost (the 200 analyser columns).
+          let shape = controller.curve(for: bands, count: SpectrumModel.columns)
+          let params = controller.settings.spectrumParams
+          TimelineView(.animation(minimumInterval: demo.slow ? 0.1 : 1.0 / 30, paused: demo.still)) { timeline in
+            let t = demo.still ? 1.03 : timeline.date.timeIntervalSince(demo.start)
+            EQFrequencyArtwork(frame: SpectrumFrame.still(EQPreviewDemo.levels(t: t, curveDb: shape, boostDb: boostDb),
+                                                          params: params),
+                               color: spectrumColor, style: controller.settings.eqVisual, focus: focus)
+          }
+            .padding(.bottom, 20)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        } else if controller.settings.waveform && controller.settings.enabled {
           LiveEQVisualization(model: controller.spectrum, color: spectrumColor,
-                              style: controller.settings.eqVisual)
+                              style: controller.settings.eqVisual, focus: focus)
             .padding(.bottom, 20)
             .allowsHitTesting(false)
             .transition(.opacity)
@@ -161,9 +215,12 @@ struct EQView: View {
         // in-graph readout stays for the keyboard.
         if let i = hintsOn ? (focused && kbActive && grabbed == nil ? kbBand : nil) : (grabbed ?? hovered ?? (focused && kbActive ? kbBand : nil)),
            i < bands.count, lineDrag == nil {
-          let nx: CGFloat = min(max(x(bands[i].freq, size.width), 52), size.width - 52)
+          let text = readoutText(bands[i], dragging: grabbed == i)
+          // Kept inside the view: about 4.9 pt a character, plus dot and padding.
+          let half = max(52, (CGFloat(text.count) * 4.9 + 24) / 2)
+          let nx: CGFloat = min(max(x(bands[i].freq, size.width), half), size.width - half)
           let ny: CGFloat = nodeY(bands[i], response(bands), size.height, boost: boostDb)
-          readout(bands[i], color: Self.colors[i])
+          readout(text, color: nodeColor(bands[i]))
             .position(x: nx, y: ny < 30 ? ny + 24 : ny - 22)
             .allowsHitTesting(false)
             .transition(.opacity)
@@ -178,11 +235,7 @@ struct EQView: View {
       .accessibilityRepresentation {
         VStack {
           ForEach(bands.indices, id: \.self) { i in
-            Slider(value: Binding(get: { controller.settings.bands[i].gain },
-                                  set: { g in var b = controller.settings.bands[i]; b.gain = g; controller.update(band: i, to: b) }),
-                   in: EQBand.gainRange)
-              .accessibilityLabel("EQ band \(i + 1), \(Int(bands[i].freq)) hertz")
-              .accessibilityValue("\(String(format: "%.1f", bands[i].gain)) decibels")
+            bandAccessibility(i, bands[i])
           }
         }
       }
@@ -224,7 +277,6 @@ struct EQView: View {
       // alongside the band's accessible sliders. It never intercepts a drag.
       .overlay(alignment: .bottom) {
         if controller.settings.waveform && controller.settings.enabled,
-           controller.settings.spectrum || !powerSaver,
            grabbed == nil && lineDrag == nil && hovered == nil && !kbActive {
           EQSpotifyPlaybackNotice(model: NowPlaying.shared.eqPlayback, ink: filament ?? .primary)
             .padding(.horizontal, 12)
@@ -235,16 +287,54 @@ struct EQView: View {
     }
   }
 
-  /// Spectrum's one hue: the tile's ink (Bento), else the scope colour; the
-  /// system accent is lifted a little on dark, where it reads too deep.
+  /// Spectrum's one hue: the tile's ink (Bento), else the theme accent; the
+  /// system accent (no theme) is lifted a little on dark, where it reads too deep.
   private var spectrumColor: Color {
     if let filament { return filament }
-    let c = controller.settings.scopeColor
-    if c == .accent, let palette { return palette.accent }
-    if c == .accent && scheme == .dark {
+    if let palette { return palette.accent }
+    if scheme == .dark {
       return Color(nsColor: NSColor.controlAccentColor.blended(withFraction: 0.35, of: .white) ?? .controlAccentColor)
     }
-    return c.color
+    return .accentColor
+  }
+  /// Classic's line: one ink, the theme's (no gradient through grey).
+  private var curveInk: Color { palette?.accent ?? Color.primary.opacity(0.85) }
+
+  /// The analyser (or Appearance's sample) is drawn under the curve.
+  private var visualShown: Bool {
+    controller.settings.waveform && (demo != nil || controller.settings.enabled)
+  }
+  /// Trace brings its own graph paper: no grid, dB rulers or region names here.
+  private var visualGrid: Bool { visualShown && controller.settings.eqVisual.drawsOwnGrid }
+  /// Heat and Regions fill the field with colour, so the line gets a keyline.
+  private var needsKeyline: Bool {
+    visualShown && (controller.settings.eqVisual == .heat || controller.settings.eqVisual == .regions)
+  }
+
+  /// The node being worked on: held, hovered, or picked with the keys.
+  private var selectedBand: Int? {
+    lineDrag == nil ? (grabbed ?? hovered ?? (focused && kbActive ? kbBand : nil)) : nil
+  }
+  /// The analyser lights this span (Hz) for the selected node.
+  private var focusSpan: ClosedRange<Double>? {
+    guard let i = selectedBand, shown.bands.indices.contains(i) else { return nil }
+    return Self.span(of: shown.bands[i])
+  }
+  /// Bell: its bandwidth, f·2^(±bw/2) with bw = 2·asinh(1/(2Q))/ln 2 octaves.
+  /// Shelves: from the corner to their end of the range.
+  static func span(of b: EQBand) -> ClosedRange<Double> {
+    let lo: Double, hi: Double
+    switch b.kind {
+    case .bell:
+      let bw = 2 * asinh(1 / (2 * max(0.01, b.q))) / log(2)
+      let k = pow(2, bw / 2)
+      lo = b.freq / k
+      hi = b.freq * k
+    case .lowShelf: lo = 20; hi = b.freq
+    case .highShelf: lo = b.freq; hi = 20_000
+    }
+    let a = min(20_000, max(20, lo)), z = min(20_000, max(20, hi))
+    return min(a, z)...max(a, z)
   }
 
   /// Caption #9: the node under the pointer (empty space: nothing).
@@ -307,71 +397,117 @@ struct EQView: View {
     }
     let w = size.width, h = size.height
 
-    // Grid.
-    var grid = Path()
-    for f in [50.0, 100, 200, 500, 1_000, 2_000, 5_000, 10_000] {
-      grid.move(to: CGPoint(x: x(f, w), y: 0)); grid.addLine(to: CGPoint(x: x(f, w), y: h))
+    let resp = response(bands)
+    let labelInk = palette?.secondary ?? .secondary
+    let ownGrid = visualGrid
+    if !ownGrid {
+      // Grid: one line per region edge (200, 600, 2.5k, 6k), stopping above
+      // the labels, plus quiet ±6 / +12 dB rulers for dragging.
+      var grid = Path()
+      for f in SpectrumFrame.regionEdges.dropFirst().dropLast() {
+        grid.move(to: CGPoint(x: x(f, w), y: 0)); grid.addLine(to: CGPoint(x: x(f, w), y: h - 16))
+      }
+      for g in [-6.0, 6, 12] {
+        grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
+      }
+      ctx.stroke(grid, with: .color(.primary.opacity(contrast == .increased ? 0.18 : 0.06)), lineWidth: 1)
     }
-    for g in [-6.0, 6, 12] {
-      grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
-    }
-    ctx.stroke(grid, with: .color(.primary.opacity(contrast == .increased ? 0.18 : 0.06)), lineWidth: 1)
     EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
                                 dark: scheme == .dark, highContrast: contrast == .increased,
                                 prism: controller.settings.eqLineStyle == .prism)
-    ctx.draw(Text("0 dB").font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(palette?.secondary ?? .secondary),
-             at: CGPoint(x: w - 4, y: y(0, h) + 6), anchor: .trailing)
-    for (f, label) in [(100.0, "Bass"), (1_000.0, "Mids"), (8_000.0, "Highs")] {
-      ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded)).foregroundColor(palette?.secondary ?? .secondary),
-               at: CGPoint(x: x(f, w), y: h - 7), anchor: .center)
+    // "0 dB" sits on whichever side of the line the curve's top end isn't.
+    let zeroY = y(0, h)
+    let highEnd = sample(resp, at: 20_000) + boost
+    ctx.draw(Text("0 dB").font(Self.labelFont).foregroundColor(labelInk),
+             at: CGPoint(x: w - 4, y: highEnd < 0 ? zeroY - 7 : zeroY + 7), anchor: .trailing)
+    if ownGrid {
+      drawHzRuler(ctx, width: w, y: h - 7, ink: labelInk)
+    } else {
+      drawRegionNames(ctx, width: w, y: h - 7, ink: labelInk)
     }
 
     drawGhost(ctx, size: size)
-    let resp = response(bands)
     if controller.settings.eqLineStyle == .prism {
+      drawKeyline(ctx, curve: curvePath(bands, size: size, boost: boost), lineWidth: 2)
       drawPrism(ctx, size: size, bands: bands, boost: boost, color: spectrumColor)
       drawNodes(ctx, size: size, bands: bands, resp: resp, boost: boost)
       return
     }
-    // Per-node soft "influence" glow so you can see what each node does.
-    for (i, b) in bands.enumerated() where abs(b.gain) > 0.05 {
-      let cx = x(b.freq, w)
-      let rect = CGRect(x: cx - 40, y: 0, width: 80, height: h)
-      ctx.fill(Path(rect), with: .radialGradient(
-        Gradient(colors: [Self.colors[i].opacity(0.10 * min(1, abs(b.gain) / 6)), .clear]),
-        center: CGPoint(x: cx, y: nodeY(b, resp, h, boost: boost)), startRadius: 0, endRadius: 44))
-    }
 
-    // Response curve.
+    // Response curve: one ink, and a flat wash between it and 0 dB (which
+    // side of the dotted line it's on already says boost or cut).
     let curve = curvePath(bands, size: size, boost: boost)
     var fill = curve
-    fill.addLine(to: CGPoint(x: w, y: y(0, h)))
-    fill.addLine(to: CGPoint(x: 0, y: y(0, h)))
+    fill.addLine(to: CGPoint(x: w, y: zeroY))
+    fill.addLine(to: CGPoint(x: 0, y: zeroY))
     fill.closeSubpath()
-    // "Smart" shading: warm where you boost, cool where you cut, hotter the
-    // further you go.
-    let shade = Gradient(stops: [
-      .init(color: Color(red: 1.0, green: 0.30, blue: 0.30).opacity(0.45), location: 0.0),
-      .init(color: Color(red: 1.0, green: 0.62, blue: 0.20).opacity(0.25), location: 0.30),
-      .init(color: Color.accentColor.opacity(0.05), location: 0.5),
-      .init(color: Color(red: 0.25, green: 0.60, blue: 1.0).opacity(0.25), location: 0.70),
-      .init(color: Color(red: 0.45, green: 0.35, blue: 1.0).opacity(0.40), location: 1.0),
-    ])
-    ctx.fill(fill, with: .linearGradient(shade, startPoint: CGPoint(x: 0, y: y(12, h)),
-                                         endPoint: CGPoint(x: 0, y: y(-12, h))))
-    let stroke = Gradient(stops: [
-      .init(color: Color(red: 1.0, green: 0.32, blue: 0.32), location: 0.0),
-      .init(color: Color(red: 1.0, green: 0.70, blue: 0.25), location: 0.32),
-      .init(color: .primary.opacity(0.85), location: 0.5),
-      .init(color: Color(red: 0.35, green: 0.70, blue: 1.0), location: 0.68),
-      .init(color: Color(red: 0.55, green: 0.45, blue: 1.0), location: 1.0),
-    ])
-    drawHeldLine(ctx, curve: curve, color: .primary)
-    ctx.stroke(curve, with: .linearGradient(stroke, startPoint: CGPoint(x: 0, y: y(12, h)),
-                                            endPoint: CGPoint(x: 0, y: y(-12, h))),
-               style: StrokeStyle(lineWidth: lineDrag == nil ? 2 : 2.4, lineCap: .round, lineJoin: .round))
+    let ink = curveInk
+    let lineWidth: CGFloat = (contrast == .increased ? 2.5 : 2) + (lineDrag == nil ? 0 : 0.4)
+    ctx.fill(fill, with: .color(ink.opacity(scheme == .dark ? 0.14 : 0.10)))
+    drawBandShare(ctx, size: size, bands: bands, boost: boost)
+    drawKeyline(ctx, curve: curve, lineWidth: lineWidth)
+    drawHeldLine(ctx, curve: curve, color: ink)
+    ctx.stroke(curve, with: .color(ink),
+               style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
 
     drawNodes(ctx, size: size, bands: bands, resp: resp, boost: boost)
+  }
+
+  private static let labelFont = Font.system(size: 9, weight: .medium, design: .rounded)
+  /// Trace's Hz ruler (its graph paper has no frequency labels of its own).
+  private static let rulerMarks: [(Double, String)] = [
+    (50, "50"), (100, "100"), (200, "200"), (500, "500"),
+    (1_000, "1k"), (2_000, "2k"), (5_000, "5k"), (10_000, "10k"),
+  ]
+  /// Shorter names for a region too narrow for the full one.
+  private static let shortRegionNames = ["Low-mids": "Lo-mids", "High-mids": "Hi-mids"]
+
+  private func drawHzRuler(_ ctx: GraphicsContext, width w: CGFloat, y: CGFloat, ink: Color) {
+    for (f, label) in Self.rulerMarks {
+      ctx.draw(Text(label).font(Self.labelFont.monospacedDigit()).foregroundColor(ink),
+               at: CGPoint(x: x(f, w), y: y), anchor: .center)
+    }
+  }
+
+  /// The five region names, each centred in its region (the log centre);
+  /// shortened, or left out, where the name would not fit.
+  private func drawRegionNames(_ ctx: GraphicsContext, width w: CGFloat, y: CGFloat, ink: Color) {
+    let edges = SpectrumFrame.regionEdges, names = SpectrumFrame.regionNames
+    for k in names.indices where k + 1 < edges.count {
+      let x0 = x(edges[k], w), x1 = x(edges[k + 1], w)
+      for name in [names[k], Self.shortRegionNames[names[k]]].compactMap({ $0 }) {
+        let text = ctx.resolve(Text(name).font(Self.labelFont).foregroundColor(ink))
+        guard text.measure(in: CGSize(width: w, height: 40)).width + 4 <= x1 - x0 else { continue }
+        ctx.draw(text, at: CGPoint(x: (x0 + x1) / 2, y: y), anchor: .center)
+        break
+      }
+    }
+  }
+
+  /// Heat and Regions: the tile's colour at half strength just under the line,
+  /// parting it from the colour field.
+  private func drawKeyline(_ ctx: GraphicsContext, curve: Path, lineWidth: CGFloat) {
+    guard needsKeyline else { return }
+    let surface = palette?.surface ?? Color(nsColor: .windowBackgroundColor)
+    ctx.stroke(curve, with: .color(surface.opacity(0.5)),
+               style: StrokeStyle(lineWidth: lineWidth + 3, lineCap: .round, lineJoin: .round))
+  }
+
+  /// Classic: the hovered or held band's own share of the line, filled from
+  /// the curve to the curve without it (as Contribution does).
+  private func drawBandShare(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], boost: Double) {
+    guard lineDrag == nil, let i = grabbed ?? hovered, bands.indices.contains(i),
+          abs(bands[i].gain) > 0.05 else { return }
+    var without = bands
+    without[i].gain = 0
+    let points = curvePoints(bands, size: size, boost: boost)
+    let comparison = curvePoints(without, size: size, boost: boost)
+    guard points.count > 1, comparison.count == points.count else { return }
+    var share = Path()
+    share.addLines(points)
+    for p in comparison.reversed() { share.addLine(to: p) }
+    share.closeSubpath()
+    ctx.fill(share, with: .color(nodeColor(bands[i]).opacity(0.12)))
   }
 
   /// The drawn line: the EQ's response raised by `boost` (the real total).
@@ -393,7 +529,7 @@ struct EQView: View {
   }
 
   private func drawPrism(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], boost: Double, color: Color) {
-    let selected = lineDrag == nil ? (grabbed ?? hovered ?? (focused && kbActive ? kbBand : nil)) : nil
+    let selected = selectedBand
     var comparison: [CGPoint]? = nil
     var bandColor: Color? = nil
     if let selected, bands.indices.contains(selected), abs(bands[selected].gain) > 0.05 {
@@ -403,7 +539,7 @@ struct EQView: View {
       var without = bands
       without[selected].gain = 0
       comparison = curvePoints(without, size: size, boost: boost)
-      bandColor = Self.colors[selected]
+      bandColor = nodeColor(bands[selected])
     }
     EQLineArtwork.drawPrism(in: ctx, points: curvePoints(bands, size: size, boost: boost),
                             size: size, zeroY: y(0, size.height), color: color,
@@ -423,13 +559,15 @@ struct EQView: View {
     EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
                                 dark: dark, highContrast: contrast == .increased,
                                 prism: controller.settings.eqLineStyle == .prism)
-    for (frequency, label) in [(100.0, "Bass"), (1_000.0, "Mids"), (8_000.0, "Highs")] {
-      ctx.draw(Text(label).font(.system(size: 9, weight: .medium, design: .rounded))
-        .foregroundColor(palette?.secondary ?? .secondary),
-               at: CGPoint(x: x(frequency, w), y: h - 7), anchor: .center)
+    // Labels only (no grid): region names, or Trace's Hz ruler.
+    if visualGrid {
+      drawHzRuler(ctx, width: w, y: h - 7, ink: palette?.secondary ?? .secondary)
+    } else {
+      drawRegionNames(ctx, width: w, y: h - 7, ink: palette?.secondary ?? .secondary)
     }
     drawGhost(ctx, size: size)
     if controller.settings.eqLineStyle == .prism {
+      drawKeyline(ctx, curve: curvePath(bands, size: size, boost: boost), lineWidth: 2)
       drawPrism(ctx, size: size, bands: bands, boost: boost, color: color)
     } else {
       let curve = curvePath(bands, size: size, boost: boost)
@@ -440,6 +578,8 @@ struct EQView: View {
       ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.12 : 0.08), color.opacity(0)]),
                                            startPoint: CGPoint(x: 0, y: y(12, h)),
                                            endPoint: CGPoint(x: 0, y: h)))
+      drawBandShare(ctx, size: size, bands: bands, boost: boost)
+      drawKeyline(ctx, curve: curve, lineWidth: lineDrag == nil ? 2.5 : 2.9)
       if !powerSaver {
         ctx.drawLayer { glow in
           glow.addFilter(.blur(radius: 5))
@@ -467,7 +607,7 @@ struct EQView: View {
         }
         let r: CGFloat = picked ? 5.5 : 2.5
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
-                 with: .color(picked ? Self.colors[i] : color.opacity(0.9)))
+                 with: .color(picked ? color : color.opacity(0.9)))
       }
     }
   }
@@ -500,28 +640,49 @@ struct EQView: View {
     let w = size.width, h = size.height
     for (i, b) in bands.enumerated() {
       let c = CGPoint(x: x(b.freq, w), y: nodeY(b, resp, h, boost: boost))
-      let active = grabbed == i || hovered == i
-      if controller.settings.eqLineStyle == .prism && !active && !(focused && kbActive && kbBand == i) {
-        EQLineArtwork.drawStud(in: ctx, at: c, color: Self.colors[i])
+      let picked = focused && kbActive && kbBand == i
+      let active = grabbed == i || hovered == i || picked
+      let tone = nodeColor(b)
+      if controller.settings.eqLineStyle == .prism && !active {
+        EQLineArtwork.drawStud(in: ctx, at: c, color: tone)
         continue
       }
       let r: CGFloat = active ? 7.5 : 5.5
       if active {
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - 14, y: c.y - 14, width: 28, height: 28)),
-                 with: .color(Self.colors[i].opacity(0.18)))
+                 with: .color(tone.opacity(0.18)))
       }
-      ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
-               with: .color(Self.colors[i]))
-      ctx.stroke(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)),
-                 with: .color(.white.opacity(0.85)), lineWidth: 1.2)
+      let disc = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+      ctx.fill(disc, with: .color(tone))
+      ctx.stroke(disc, with: .color(.white.opacity(0.85)), lineWidth: 1.2)
+      // A hairline outside the white ring keeps every node's edge on light glass.
+      let rim = Path(ellipseIn: CGRect(x: c.x - r - 1, y: c.y - r - 1, width: 2 * r + 2, height: 2 * r + 2))
+      ctx.stroke(rim, with: .color(contrast == .increased ? Color.primary.opacity(0.5) : Color.black.opacity(0.18)),
+                 lineWidth: 0.5)
     }
   }
 
-  private func readout(_ b: EQBand, color: Color) -> some View {
-    let f = b.freq >= 1000 ? String(format: "%.1fk", b.freq / 1000) : String(format: "%.0f", b.freq)
-    return HStack(spacing: 4) {
+  /// "1.5 kHz  −3.0 dB  Q 1.4" (a shelf has no Q here); held below 1 kHz,
+  /// the note too: "55 Hz · A1  +3.0 dB  Q 1.4".
+  private func readoutText(_ b: EQBand, dragging: Bool) -> String {
+    var f = FreqText.hz(b.freq)
+    if dragging && b.freq < 1_000 { f += " · " + FreqText.note(b.freq) }
+    var text = "\(f)  \(Self.gainText(b.gain)) dB"
+    if b.kind == .bell { text += "  Q \(String(format: "%.1f", b.q))" }
+    return text
+  }
+
+  /// "+3.0", "−3.0" (a real minus), "0.0".
+  private static func gainText(_ g: Double) -> String {
+    let s = String(format: "%+.1f", g)
+    if s == "+0.0" || s == "-0.0" { return "0.0" }
+    return s.replacingOccurrences(of: "-", with: "\u{2212}")
+  }
+
+  private func readout(_ text: String, color: Color) -> some View {
+    HStack(spacing: 4) {
       Circle().fill(color).frame(width: 6, height: 6)
-      Text("\(f) Hz  \(String(format: "%+.1f", b.gain)) dB  Q \(String(format: "%.1f", b.q))")
+      Text(text)
         .font(.system(size: 9.5, weight: .semibold, design: .rounded))
         .monospacedDigit()
     }
@@ -555,24 +716,37 @@ struct EQView: View {
           }
           grabbed = i
           commitQ()
-          controller.pushUndo()
           if NSEvent.modifierFlags.contains(.option), EQBand.defaults.indices.contains(i) {
-            controller.update(band: i, to: EQBand.defaults[i], animated: true)   // ⌥-click: reset fully
-            dragOrigin = nil
+            // ⌥-click: reset fully (an edit at press, so its undo step is here).
+            if shown.bands.indices.contains(i), shown.bands[i] != EQBand.defaults[i] {
+              pushUndo()
+              controller.update(band: i, to: EQBand.defaults[i], animated: true)
+            }
+            nodeDrag = nil
             return
           }
           controller.prepareLivePreview(Self.dragKey)
           let bands = shown.bands
-          dragOrigin = (bands[i], v.startLocation)
+          nodeDrag = NodeDrag(band: bands[i], point: v.startLocation, fine: NSEvent.modifierFlags.contains(.shift))
           var rest = bands
           rest[i].gain = 0
           othersCurve = response(rest)
           snapped = abs(bands[i].gain) < 0.01
         }
-        guard let i = grabbed, let origin = dragOrigin else { return }
-        let fine: CGFloat = NSEvent.modifierFlags.contains(.shift) ? 0.2 : 1.0
-        let dx = (v.location.x - origin.point.x) * fine
-        let dy = (v.location.y - origin.point.y) * fine
+        guard let i = grabbed, var origin = nodeDrag else { return }
+        let fine = NSEvent.modifierFlags.contains(.shift)
+        if fine != origin.fine, shown.bands.indices.contains(i) {
+          // ⇧ flipped mid-drag: carry on from where the node is now, at the
+          // new rate, so nothing jumps.
+          origin.band = shown.bands[i]
+          origin.point = v.location
+          origin.fine = fine
+        }
+        let rate = fine ? Self.fineRate : 1
+        let dx = (v.location.x - origin.point.x) * rate
+        let dy = (v.location.y - origin.point.y) * rate
+        // An unmoved press edits nothing (no rounding drift, no undo step).
+        if dx == 0 && dy == 0 && !origin.didEdit { nodeDrag = origin; return }
         var b = origin.band
         let ox = x(origin.band.freq, size.width)
         // The dot sits on the summed line, so the drag moves the line: solve
@@ -594,10 +768,13 @@ struct EQView: View {
           NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
         b.gain = g
-        // Heard and drawn now; written to settings when the drag ends.
+        // Heard and drawn now; written to settings when the drag ends. The
+        // undo step goes in with the first change, not at the press.
         if shown.bands.indices.contains(i), shown.bands[i] != b {
+          if !origin.didEdit { pushUndo(); origin.didEdit = true }
           controller.preview(Self.dragKey) { s in if s.bands.indices.contains(i) { s.bands[i] = b } }
         }
+        nodeDrag = origin
       }
       .onEnded { _ in finishDrag() }
   }
@@ -613,7 +790,7 @@ struct EQView: View {
       }
     }
     grabbed = nil
-    dragOrigin = nil
+    nodeDrag = nil
     othersCurve = []
     if lineDrag != nil { endLine() }
     if didHold { focused = true }
@@ -641,8 +818,10 @@ struct EQView: View {
     let bands = s.bands
     let low = bands.firstIndex { $0.kind == .lowShelf }, high = bands.lastIndex { $0.kind == .highShelf }
     let tilt = NSEvent.modifierFlags.contains(.option) && low != nil && high != nil
+    let base = tilt ? 0 : s.boostDb
     lineDrag = LineDrag(startY: v.startLocation.y, startBoost: s.boostDb, tilt: tilt,
                         startBands: bands, low: low ?? 0, high: high ?? 0,
+                        base: base, value: base, fine: NSEvent.modifierFlags.contains(.shift),
                         lastStep: tilt ? 0 : Int(s.boostDb.rounded(.down)))
     setLineCursor(true)
   }
@@ -652,18 +831,25 @@ struct EQView: View {
   private func dragLine(_ v: DragGesture.Value, size: CGSize, frameOrigin: CGPoint) {
     guard var d = lineDrag else { return }
     let h = size.height
-    let fine: CGFloat = NSEvent.modifierFlags.contains(.shift) ? 0.2 : 1.0
-    let db = Double(-(v.location.y - d.startY) * fine / ptPerDb(h))
+    let fine = NSEvent.modifierFlags.contains(.shift)
+    if fine != d.fine {
+      // ⇧ flipped mid-drag: carry on from the value in flight, at the new rate.
+      d.startY = v.location.y
+      d.base = d.tilt ? d.value : shown.boostDb
+      d.fine = fine
+    }
+    let db = Double(-(v.location.y - d.startY) * (fine ? Self.fineRate : 1) / ptPerDb(h))
     let at = CGPoint(x: v.location.x - frameOrigin.x, y: v.location.y - frameOrigin.y)
     let step: Int
     if d.tilt {
-      let t = (min(6, max(-6, db)) * 10).rounded() / 10
+      let t = (min(6, max(-6, d.base + db)) * 10).rounded() / 10
+      d.value = t
       var lo = d.startBands[d.low], hi = d.startBands[d.high]
       lo.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, lo.gain + t))
       hi.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, hi.gain - t))
       let cur = shown.bands
       if cur.indices.contains(d.high), cur[d.low] != lo || cur[d.high] != hi {
-        if !d.didEdit { controller.pushUndo(); d.didEdit = true }
+        if !d.didEdit { pushUndo(); d.didEdit = true }
         let low = d.low, high = d.high
         controller.preview(Self.dragKey) { s in
           guard s.bands.indices.contains(high) else { return }
@@ -672,15 +858,17 @@ struct EQView: View {
         }
       }
       step = Int(t.rounded(.towardZero))
-      lineChip = ("Bass \(Self.signed(t)) · Treble \(Self.signed(-t)) dB", at)
+      lineChip = ("Bass \(Self.signed(t, fine: fine)) · Treble \(Self.signed(-t, fine: fine)) dB", at)
     } else {
-      let b = db == 0 ? d.startBoost : (min(12, max(0, d.startBoost + db)) * 10).rounded() / 10
+      let b = db == 0 ? d.base : (min(12, max(0, d.base + db)) * 10).rounded() / 10
+      d.value = b
       if b != shown.boostDb {
-        if !d.didEdit { controller.pushUndo(); d.didEdit = true }
+        if !d.didEdit { pushUndo(); d.didEdit = true }
         controller.preview(Self.dragKey) { $0.boostDb = b }
       }
       step = Int(b.rounded(.down))
-      lineChip = ("Boost +\(Int(b.rounded())) dB", at)
+      // ⇧ (fine) reads to 0.1 dB; otherwise whole dB.
+      lineChip = (fine ? String(format: "Boost +%.1f dB", b) : "Boost +\(Int(b.rounded())) dB", at)
     }
     if step != d.lastStep {
       NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
@@ -709,9 +897,34 @@ struct EQView: View {
     setLineCursor(false)
   }
 
-  private static func signed(_ v: Double) -> String {
+  /// "+2", "−2", "0"; fine: "+1.5", "−1.5", "0.0".
+  private static func signed(_ v: Double, fine: Bool = false) -> String {
+    if fine {
+      let r = (v * 10).rounded() / 10
+      return r > 0 ? String(format: "+%.1f", r) : (r < 0 ? String(format: "\u{2212}%.1f", -r) : "0.0")
+    }
     let r = Int(v.rounded())
     return r > 0 ? "+\(r)" : (r < 0 ? "\u{2212}\(-r)" : "0")
+  }
+
+  /// Every edit here but the keys: one undo step per gesture, and the end
+  /// of any run of keys.
+  private func pushUndo() {
+    keyRun = nil
+    controller.pushUndo()
+  }
+
+  /// A gain step that would cross 0 dB stops on it.
+  private static func stepGain(_ g: Double, by step: Double) -> Double {
+    var n = g + step
+    if g != 0, abs(n) < 1e-6 || (g < 0) != (n < 0) { n = 0 }
+    return min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, n))
+  }
+  private static func clampFreq(_ f: Double) -> Double {
+    min(EQBand.freqRange.upperBound, max(EQBand.freqRange.lowerBound, f))
+  }
+  private static func clampQ(_ q: Double) -> Double {
+    min(EQBand.qRange.upperBound, max(EQBand.qRange.lowerBound, q))
   }
 
   private func handleKey(_ key: KeyEquivalent, _ modifiers: EventModifiers) -> KeyPress.Result {
@@ -727,23 +940,39 @@ struct EQView: View {
     case .rightArrow where !alt: kbBand = (kbBand + 1) % bands.count; return .handled
     case .leftArrow, .rightArrow:
       let f = key == .rightArrow ? 1.06 : 1 / 1.06
-      b.freq = min(EQBand.freqRange.upperBound, max(EQBand.freqRange.lowerBound, b.freq * f))
+      b.freq = Self.clampFreq(b.freq * f)
     case .upArrow, .downArrow:
+      // A step across 0 dB lands on it, with the same tick as the drag snap.
       let step = (fine ? 0.1 : 0.5) * (key == .upArrow ? 1 : -1)
-      b.gain = min(EQBand.gainRange.upperBound, max(EQBand.gainRange.lowerBound, b.gain + step))
+      b.gain = Self.stepGain(b.gain, by: step)
+      if b.gain == 0 && bands[kbBand].gain != 0 {
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+      }
+    case Self.widerKey, Self.narrowerKey:
+      // Bells only: a shelf's Q is not its width here.
+      guard b.kind == .bell else { return .handled }
+      b.q = Self.clampQ(key == Self.narrowerKey ? b.q * Self.qStep : b.q / Self.qStep)
     default:
       b.gain = 0
     }
-    controller.pushUndo()
+    guard b != bands[kbBand] else { return .handled }
+    // One undo step per run of keys on one band; a pause over 1 s, another
+    // band or any other edit starts a new one.
+    let now = ProcessInfo.processInfo.systemUptime
+    let sameRun = keyRun.map { $0.band == kbBand && now - $0.at <= 1 && $0.bands == controller.settings.bands } ?? false
+    if !sameRun { controller.pushUndo() }
     controller.update(band: kbBand, to: b)
+    keyRun = (kbBand, now, controller.settings.bands)
     return .handled
   }
+  private static let widerKey = KeyEquivalent("[")
+  private static let narrowerKey = KeyEquivalent("]")
 
   private func resetHovered() {
     guard let i = hovered ?? grabbed else {
       // Double-click on the line: Boost back to 0.
       if onLine, shown.boostDb != 0 || controller.settings.boostDb != 0, !controller.isPreviewing(Self.dragKey) {
-        controller.pushUndo()
+        pushUndo()
         controller.prepareLivePreview(Self.dragKey)
         controller.settings.boostDb = 0
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
@@ -753,9 +982,72 @@ struct EQView: View {
     commitQ()
     guard shown.bands.indices.contains(i) else { return }
     var b = shown.bands[i]
+    // The presses push no undo step (only a moved drag does), so this one does.
+    if b.gain != 0 { pushUndo() }
     b.gain = 0
     controller.update(band: i, to: b, animated: true)
     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+  }
+
+  // MARK: - Accessibility
+
+  /// VoiceOver: each band is a gain slider (0.5 dB steps that stop on 0 dB),
+  /// with frequency, width (bells) and reset as actions.
+  @ViewBuilder
+  private func bandAccessibility(_ i: Int, _ b: EQBand) -> some View {
+    let slider = Slider(value: Binding(get: { shown.bands.indices.contains(i) ? shown.bands[i].gain : b.gain },
+                                       set: { g in
+                                         // Whatever the slider asks, one step from where the band is.
+                                         editBand(i) { band in
+                                           guard g != band.gain else { return }
+                                           band.gain = Self.stepGain(band.gain, by: g > band.gain ? 0.5 : -0.5)
+                                         }
+                                       }),
+                        in: EQBand.gainRange)
+      .accessibilityLabel(Self.spokenName(b))
+      .accessibilityValue(Self.spokenValue(b))
+      .accessibilityAction(named: "Raise frequency") { editBand(i) { $0.freq = Self.clampFreq($0.freq * Self.spokenFreqStep) } }
+      .accessibilityAction(named: "Lower frequency") { editBand(i) { $0.freq = Self.clampFreq($0.freq / Self.spokenFreqStep) } }
+      .accessibilityAction(named: "Reset band") {
+        editBand(i) { if EQBand.defaults.indices.contains(i) { $0 = EQBand.defaults[i] } else { $0.gain = 0 } }
+      }
+    if b.kind == .bell {
+      slider
+        .accessibilityAction(named: "Wider") { editBand(i) { $0.q = Self.clampQ($0.q / Self.qStep) } }
+        .accessibilityAction(named: "Narrower") { editBand(i) { $0.q = Self.clampQ($0.q * Self.qStep) } }
+    } else {
+      slider
+    }
+  }
+  /// Frequency actions move a third of an octave.
+  private static let spokenFreqStep: Double = pow(2, 1.0 / 3)
+
+  /// One accessibility action: one edit, one undo step.
+  private func editBand(_ i: Int, _ change: (inout EQBand) -> Void) {
+    commitQ()
+    guard shown.bands.indices.contains(i) else { return }
+    let old = shown.bands[i]
+    var b = old
+    change(&b)
+    guard b != old else { return }
+    pushUndo()
+    controller.update(band: i, to: b)
+  }
+
+  /// "Low shelf, 80 hertz", "Bell, 1.5 kilohertz".
+  private static func spokenName(_ b: EQBand) -> String {
+    let kind = b.kind == .lowShelf ? "Low shelf" : (b.kind == .highShelf ? "High shelf" : "Bell")
+    let f = FreqText.hz(b.freq)
+      .replacingOccurrences(of: "kHz", with: "kilohertz")
+      .replacingOccurrences(of: "Hz", with: "hertz")
+    return "\(kind), \(f)"
+  }
+
+  /// "-3.0 decibels, Q 1.4" (no Q on shelves).
+  private static func spokenValue(_ b: EQBand) -> String {
+    let g = abs(b.gain) < 0.05 ? 0 : b.gain
+    let q = b.kind == .bell ? ", Q \(String(format: "%.1f", b.q))" : ""
+    return String(format: "%.1f decibels", g) + q
   }
 
   /// Window-scoped keyboard editing without a focus responder over the Canvas.
@@ -784,7 +1076,13 @@ struct EQView: View {
       case 126: key = .upArrow
       case 49: key = .space
       case 51, 117: key = .delete
-      default: return event
+      default:
+        // [ and ] by the character typed, so they follow the keyboard layout.
+        switch event.characters ?? "" {
+        case "[": key = Self.widerKey
+        case "]": key = Self.narrowerKey
+        default: return event
+        }
       }
       var modifiers: EventModifiers = []
       if event.modifierFlags.contains(.option) { modifiers.insert(.option) }
@@ -802,35 +1100,55 @@ struct EQView: View {
 
   private func installScrollMonitor() {
     guard scrollMonitor == nil else { return }
-    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { event in
+    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify]) { event in
       guard let i = grabbed ?? hovered, shown.bands.indices.contains(i) else { return event }
-      let b = shown.bands[i]
-      let delta = Double(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.01 : event.scrollingDeltaY * 0.08)
-      let q = min(EQBand.qRange.upperBound, max(EQBand.qRange.lowerBound, b.q * exp(delta)))
-      guard q != b.q else { return nil }
-      // Heard and drawn per wheel event; written once the wheel rests.
-      controller.preview(Self.qKey) { s in if s.bands.indices.contains(i) { s.bands[i].q = q } }
-      qCommit?.cancel()
-      let w = DispatchWorkItem { [controller] in
-        let q = controller.shownSettings.bands.indices.contains(i) ? controller.shownSettings.bands[i].q : q
-        controller.endPreview(Self.qKey) {
-          guard controller.settings.bands.indices.contains(i) else { return }
-          var b = controller.settings.bands[i]
-          b.q = q
-          if b != controller.settings.bands[i] { controller.update(band: i, to: b) }
-        }
+      let factor: Double
+      if event.type == .magnify {
+        // Spreading the fingers widens the band (lower Q).
+        factor = exp(-Double(event.magnification))
+      } else {
+        // Momentum after the fingers lift is not a Q edit; it stays with
+        // the page unless a Q edit is in flight.
+        if event.momentumPhase != [] { return qCommit == nil ? event : nil }
+        factor = exp(Double(event.hasPreciseScrollingDeltas ? event.scrollingDeltaY * 0.01 : event.scrollingDeltaY * 0.08))
       }
-      qCommit = w
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: w)
+      adjustQ(i, by: factor)
       return nil
     }
   }
 
-  /// A pending wheel Q edit lands now (before another edit starts).
+  /// Wheel or pinch Q: heard and drawn per event, written once the gesture
+  /// rests (0.35 s), one undo step per gesture.
+  private func adjustQ(_ i: Int, by factor: Double) {
+    let b = shown.bands[i]
+    let q = Self.clampQ(b.q * factor)
+    guard q != b.q else { return }
+    if qCommit == nil { pushUndo() }
+    controller.preview(Self.qKey) { s in if s.bands.indices.contains(i) { s.bands[i].q = q } }
+    qCommit?.cancel()
+    let w = DispatchWorkItem { [controller] in
+      qCommit = nil
+      let q = controller.shownSettings.bands.indices.contains(i) ? controller.shownSettings.bands[i].q : q
+      controller.endPreview(Self.qKey) {
+        guard controller.settings.bands.indices.contains(i) else { return }
+        var b = controller.settings.bands[i]
+        b.q = q
+        if b != controller.settings.bands[i] { controller.update(band: i, to: b) }
+      }
+    }
+    qCommit = w
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: w)
+  }
+
+  /// A pending wheel / pinch Q edit lands now (before another edit starts).
+  /// Run, then cancel the timer's copy: a cancelled work item's perform()
+  /// returns without running.
   private func commitQ() {
     guard let w = qCommit else { return }
     qCommit = nil
-    if !w.isCancelled { w.cancel(); w.perform() }
+    guard !w.isCancelled else { return }
+    w.perform()
+    w.cancel()
   }
 
   private func removeScrollMonitor() {
@@ -907,5 +1225,34 @@ final class CurveCache {
     entries.insert((bands, count, rate, c), at: 0)
     if entries.count > 6 { entries.removeLast() }
     return c
+  }
+}
+
+/// The EQ block exactly as the popup draws it, Classic or Bento, so
+/// Appearance previews the real tile rather than an approximation.
+struct EQTile: View {
+  @ObservedObject var controller: AudioController
+  var full = true
+  var preview = false
+  var demo: EQDemoSource? = nil
+  @Environment(\.popupChrome) private var chrome
+  @Environment(\.colorScheme) private var scheme
+
+  var body: some View {
+    let live = controller.settings.enabled
+    let height: CGFloat = full ? 190 : 154
+    if controller.settings.bento {
+      BentoTile(tint: live ? (chrome?.tint ?? .frost) : .graphite, padding: 0, clipped: true) {
+        EQView(controller: controller, chrome: false,
+               filament: live ? (chrome?.accent ?? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink)) : Color.secondary,
+               preview: preview, demo: demo)
+          .frame(height: height)
+      }
+    } else {
+      // The original EQ: grid, labels and its own faint backing.
+      EQView(controller: controller, preview: preview, demo: demo)
+        .frame(height: height)
+        .opacity(live ? 1 : 0.45)
+    }
   }
 }

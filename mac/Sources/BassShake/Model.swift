@@ -591,12 +591,20 @@ enum ScopeColor: String, Codable, CaseIterable, Identifiable {
 }
 
 extension Settings {
+  /// What draws behind the curve. `waveform` stays the on/off master, so
+  /// Curve only keeps the last mode for when live sound comes back.
   var eqVisual: EQVisual {
-    get { !waveform ? .off : (spectrum ? .spectrum : .scope) }
+    get { waveform ? eqVisualMode : .off }
     set {
       waveform = newValue != .off
-      if newValue != .off { spectrum = newValue == .spectrum }
+      if newValue != .off { eqVisualMode = newValue }
     }
+  }
+
+  /// The analyser's settings, as one value for its queue.
+  var spectrumParams: SpectrumParams {
+    SpectrumParams(speed: spectrumSpeed, peakHold: spectrumPeakHold, range: spectrumRange,
+                   slope: spectrumSlope, resolution: spectrumResolution)
   }
 }
 
@@ -627,20 +635,20 @@ extension Settings {
 
 extension Settings {
   /// ⋯ › Look › Background. The first time Wall Street is picked, EQ Visual goes to
-  /// Spectrum (its ticker look); leaving it puts back what was there, unless EQ Visual
+  /// Trace (its ticker look); leaving it puts back what was there, unless EQ Visual
   /// was changed by hand in between (see `setEQVisualByHand`).
   mutating func setBackground(_ new: BackgroundStyle) {
     let old = backgroundStyle
     backgroundStyle = new
     if new == .wallStreet, old != .wallStreet, !wallStreetSeen {
       wallStreetSeen = true
-      if eqVisual != .spectrum {
+      if eqVisual != .trace {
         eqVisualBeforeTheme = eqVisual.rawValue
-        eqVisual = .spectrum
+        eqVisual = .trace
       }
     } else if old == .wallStreet, new != .wallStreet, let raw = eqVisualBeforeTheme {
       eqVisualBeforeTheme = nil
-      if let v = EQVisual(rawValue: raw) { eqVisual = v }
+      if let v = EQVisual.fromStored(raw) { eqVisual = v }
     }
     // Wall Street turns the stock ticker on; leaving it turns off what it turned on.
     if new == .wallStreet, old != .wallStreet, !showTicker {
@@ -665,15 +673,27 @@ extension Settings {
   }
 }
 
-/// One frequency display. Legacy stored scope/spectrum keys now select Bars/Flow.
-enum EQVisual: String, CaseIterable, Identifiable {
-  case scope, spectrum, off
+/// What draws behind the curve (all on the EQ's frequency axis, all measured).
+enum EQVisual: String, Codable, CaseIterable, Identifiable {
+  case flow, trace, heat, regions, off
   var id: String { rawValue }
   var title: String {
     switch self {
-    case .scope: return "Bars"
-    case .spectrum: return "Flow"
+    case .flow: return "Flow"
+    case .trace: return "Trace"
+    case .heat: return "Heat"
+    case .regions: return "Regions"
     case .off: return "Curve only"
+    }
+  }
+  /// Trace brings its own graph paper and dB scale.
+  var drawsOwnGrid: Bool { self == .trace }
+  /// Saved values from before Trace, Heat and Regions ("scope" was Bars,
+  /// "spectrum" was Flow): both come back as Flow.
+  static func fromStored(_ raw: String) -> EQVisual? {
+    switch raw {
+    case "scope", "spectrum": return .flow
+    default: return EQVisual(rawValue: raw)
     }
   }
 }
@@ -831,9 +851,14 @@ struct Settings: Codable, Equatable {
   var hqGuard = true                              // keep Bluetooth headsets in stereo
   /// A live trace behind the EQ curve (the scope, or Spectrum below).
   var waveform = true
-  /// EQ Visual: the analyser (Spectrum.swift) instead of the scope, while
-  /// `waveform` is on.
-  var spectrum = false
+  /// The live view's mode while `waveform` is on (never .off).
+  var eqVisualMode: EQVisual = .flow
+  /// The analyser's technical settings (Appearance › Equalizer › Technical).
+  var spectrumSpeed: SpectrumSpeed = .medium
+  var spectrumPeakHold: PeakHold = .oneSecond
+  var spectrumRange: SpectrumRange = .db66
+  var spectrumSlope: SpectrumSlope = .db3
+  var spectrumResolution: SpectrumResolution = .twelfth
   var scopeColor: ScopeColor = .accent
   /// Signal artwork and editable EQ response are independent visual choices.
   var waveformStyle: WaveformStyle = .classic
@@ -950,6 +975,8 @@ struct Settings: Codable, Equatable {
   var artworkStyle: ArtworkStyle = .cover
   /// The full player header; Mini keeps its small transport row.
   var playerArtworkLayout: PlayerArtworkLayout = .compact
+  /// What's Playing: compact or expanded, or matching the popup's size.
+  var nowPlayingSize: NowPlayingSize = .matchSize
   /// The record material; Artwork Tint preserves the original per-cover look.
   var vinylMaterial: VinylMaterial = .artwork
   /// A treatment for cover art and video stills, independent of cover / vinyl.
@@ -1077,7 +1104,14 @@ struct Settings: Codable, Equatable {
     earProtector = (try? c.decodeIfPresent(Bool.self, forKey: .earProtector)) ?? d.earProtector
     hqGuard = (try? c.decodeIfPresent(Bool.self, forKey: .hqGuard)) ?? d.hqGuard
     waveform = (try? c.decodeIfPresent(Bool.self, forKey: .waveform)) ?? d.waveform
-    spectrum = (try? c.decodeIfPresent(Bool.self, forKey: .spectrum)) ?? d.spectrum
+    // Old saves (Bars or Flow, no key) all come back as Flow.
+    let mode = (try? c.decodeIfPresent(String.self, forKey: .eqVisualMode)).flatMap { $0 }.flatMap(EQVisual.fromStored)
+    eqVisualMode = mode == nil || mode == .off ? d.eqVisualMode : mode!
+    spectrumSpeed = (try? c.decodeIfPresent(SpectrumSpeed.self, forKey: .spectrumSpeed)) ?? d.spectrumSpeed
+    spectrumPeakHold = (try? c.decodeIfPresent(PeakHold.self, forKey: .spectrumPeakHold)) ?? d.spectrumPeakHold
+    spectrumRange = (try? c.decodeIfPresent(SpectrumRange.self, forKey: .spectrumRange)) ?? d.spectrumRange
+    spectrumSlope = (try? c.decodeIfPresent(SpectrumSlope.self, forKey: .spectrumSlope)) ?? d.spectrumSlope
+    spectrumResolution = (try? c.decodeIfPresent(SpectrumResolution.self, forKey: .spectrumResolution)) ?? d.spectrumResolution
     scopeColor = (try? c.decodeIfPresent(ScopeColor.self, forKey: .scopeColor)) ?? d.scopeColor
     waveformStyle = (try? c.decodeIfPresent(WaveformStyle.self, forKey: .waveformStyle)) ?? d.waveformStyle
     eqLineStyle = (try? c.decodeIfPresent(EQLineStyle.self, forKey: .eqLineStyle)) ?? d.eqLineStyle
@@ -1126,6 +1160,7 @@ struct Settings: Codable, Equatable {
     menuBarContent = (try? c.decodeIfPresent(MenuBarContent.self, forKey: .menuBarContent)) ?? d.menuBarContent
     artworkStyle = (try? c.decodeIfPresent(ArtworkStyle.self, forKey: .artworkStyle)) ?? d.artworkStyle
     playerArtworkLayout = (try? c.decodeIfPresent(PlayerArtworkLayout.self, forKey: .playerArtworkLayout)) ?? d.playerArtworkLayout
+    nowPlayingSize = (try? c.decodeIfPresent(NowPlayingSize.self, forKey: .nowPlayingSize)) ?? d.nowPlayingSize
     vinylMaterial = (try? c.decodeIfPresent(VinylMaterial.self, forKey: .vinylMaterial)) ?? d.vinylMaterial
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
     artworkPerspective = (try? c.decodeIfPresent(Bool.self, forKey: .artworkPerspective)) ?? d.artworkPerspective
@@ -1283,5 +1318,19 @@ extension Settings {
   /// listening mode replacing it (Late Night layers on, so it still counts).
   func isCurrent(_ p: Preset) -> Bool {
     userPresetID == nil && presetName == p.name && (mode == .off || mode.isLayered)
+  }
+}
+
+/// What's Playing's own size. Match Size keeps the old behaviour: compact in
+/// the Compact popup, expanded at Full.
+enum NowPlayingSize: String, Codable, CaseIterable, Identifiable {
+  case matchSize, compact, expanded
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .matchSize: return "Match Size"
+    case .compact: return "Compact"
+    case .expanded: return "Expanded"
+    }
   }
 }

@@ -18,6 +18,11 @@ struct AppearancePanelView: View {
   @ObservedObject private var stack = NowStack.shared
   @ObservedObject private var now = NowPlaying.shared
   @State private var category = AppearanceCategory.artwork
+  /// The EQ preview's sample signal (visual only), and when it started.
+  @State private var testing = false
+  @State private var testStart = Date()
+  /// The Technical section's disclosure (a view preference, not a setting).
+  @AppStorage("appearance.eqTechnicalOpen") private var technicalOpen = false
 
   private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
   private let vinylColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
@@ -32,12 +37,14 @@ struct AppearancePanelView: View {
   private var cover: NSImage {
     stack.lead.flatMap { now.describe($0, state: false).artwork } ?? Self.sampleCover
   }
-  private var showsLiveEQ: Bool {
-    category == .equalizer && ([stack.lead].compactMap { $0 } + stack.rest).contains {
+  private var somethingPlaying: Bool {
+    ([stack.lead].compactMap { $0 } + stack.rest).contains {
       now.isPlaying($0) && !now.isMuted($0.app.id) && $0.item?.muted != true
     }
   }
-  private var pinnedHeight: CGFloat { 36 + (showsLiveEQ ? 172 : 0) }
+  /// The Equalizer tab pins the real EQ tile (with or without sound).
+  private var showsLiveEQ: Bool { category == .equalizer }
+  private var pinnedHeight: CGFloat { 36 + (showsLiveEQ ? 154 + 6 + 22 + 6 + 8 : 0) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
@@ -117,7 +124,10 @@ struct AppearancePanelView: View {
               Rectangle()
             }
           }
-          .onChange(of: category) { _, _ in scroll.scrollTo("appearance-preview", anchor: .top) }
+          .onChange(of: category) { _, _ in
+            testing = false
+            scroll.scrollTo("appearance-preview", anchor: .top)
+          }
           .onChange(of: controller.settings.playerArtworkLayout) { _, _ in
             scroll.scrollTo("appearance-preview", anchor: .top)
           }
@@ -130,24 +140,47 @@ struct AppearancePanelView: View {
     .frame(width: 336)
   }
 
+  /// The real EQ tile at its real size, with what it's showing and a Test
+  /// that draws a sample signal behind the curve (nothing plays aloud).
   private var liveEQPreview: some View {
     let s = controller.settings
-    let status = !s.enabled ? "Processing off" : !s.waveform ? "Visual off"
-      : "Playing audio"
-    let visual = s.eqVisual.title
+    let status = testing ? "Sample music, shaped by your curve"
+      : !s.enabled ? "Processing off"
+      : s.eqVisual == .off ? "Curve only"
+      : somethingPlaying ? "Live" : "Nothing playing"
     return VStack(spacing: 6) {
-      HStack {
-        Text("EQ preview").font(.system(size: 12, weight: .semibold, design: .rounded))
-        Spacer()
-        Text(status).font(.system(size: 10)).foregroundStyle(chrome?.secondary ?? Color.secondary)
-      }
-      EQView(controller: controller, chrome: false, filament: eqPreviewColor, preview: true)
-        .frame(height: 124)
+      EQTile(controller: controller, full: false, preview: true,
+             demo: testing ? EQDemoSource(start: testStart, still: reduceMotion, slow: powerSaver) : nil)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("EQ preview, \(s.eqLineStyle.title) controls, \(visual). \(status)")
+        .accessibilityLabel("EQ preview, \(s.eqLineStyle.title), \(s.eqVisual.title). \(status)")
+      HStack(spacing: 8) {
+        Text(status)
+          .font(.system(size: 11))
+          .foregroundStyle(chrome?.secondary ?? Color.secondary)
+          .lineLimit(1)
+        Spacer(minLength: 0)
+        Button(testing ? "Stop" : "Test") {
+          if !testing { testStart = Date() }
+          testing.toggle()
+        }
+        .controlSize(.small)
+        .disabled(s.eqVisual == .off)
+        .help(s.eqVisual == .off ? "Curve only has no live sound to show." : "")
+        .pointerHint("Test", does: "Shows a sample signal here; nothing plays aloud.")
+      }
+      .frame(height: 22)
     }
-    .padding(10)
+    .padding(.horizontal, 6)
+    .padding(.top, 6)
     .foregroundStyle(chrome?.ink ?? Color.primary)
+    // A test runs at most 20 s, and never once the page is gone.
+    .task(id: testing) {
+      guard testing else { return }
+      try? await Task.sleep(for: .seconds(20))
+      if !Task.isCancelled { testing = false }
+    }
+    .onChange(of: s.eqVisual) { _, mode in if mode == .off { testing = false } }
+    .onDisappear { testing = false }
   }
 
   @ViewBuilder private var headerPreview: some View {
@@ -209,6 +242,14 @@ struct AppearancePanelView: View {
       }
       Text(controller.settings.playerArtworkLayout.detail)
         .font(.system(size: 11)).foregroundStyle(chrome?.secondary ?? Color.secondary)
+      // Its own size, or follow the popup's (⌘1/2/3).
+      Picker("What’s Playing", selection: bind(\.nowPlayingSize)) {
+        ForEach(NowPlayingSize.allCases) { Text($0.title).tag($0) }
+      }
+      .pickerStyle(.segmented)
+      .controlSize(.small)
+      .font(.system(size: 11, weight: .medium))
+      .padding(.top, 2)
     }
   }
 
@@ -260,62 +301,154 @@ struct AppearancePanelView: View {
   }
 
   private var equalizer: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      section("EQ display") {
-        Text("One view of bass, mids and highs. The dots shape the sound; the movement shows what’s playing.")
-          .font(.system(size: 11, design: .rounded))
-          .foregroundStyle(chrome?.secondary ?? Color.secondary)
-        HStack(spacing: 8) {
+    let shown = controller.shownSettings
+    let curve = controller.curve(for: shown.bands, count: 128)
+    let sample = SpectrumFrame.still(
+      EQPreviewDemo.still(curveDb: controller.curve(for: shown.bands, count: SpectrumModel.columns),
+                          boostDb: shown.boostDb),
+      params: controller.settings.spectrumParams)
+    return VStack(alignment: .leading, spacing: 8) {
+      section("Live sound") {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
           ForEach(EQVisual.allCases) { style in
             choice(style.title, selected: controller.settings.eqVisual == style,
                    labelLines: 1, action: { controller.settings.setEQVisualByHand(style) }) {
               previewSurface {
                 ZStack {
-                  EQFrequencyArtwork(levels: Self.frequencyPreview, color: eqPreviewColor, style: style)
+                  if style != .off {
+                    EQFrequencyArtwork(frame: sample, color: eqPreviewColor, style: style)
+                  }
                   EQLinePreview(style: controller.settings.eqLineStyle, color: eqPreviewColor,
-                                response: controller.curve(for: controller.shownSettings.bands, count: 128),
-                                nodeFrequencies: [], boost: controller.shownSettings.boostDb)
-                }.padding(8)
+                                response: curve, nodeFrequencies: [], boost: shown.boostDb)
+                    .opacity(style == .off ? 1 : 0.55)
+                }
+                .padding(.horizontal, 8)
               }
             }
           }
         }
-      }
-      section("Curve style") {
-        Text("The same six sound controls in either style.")
+        Text(Self.detail(controller.settings.eqVisual))
           .font(.system(size: 11))
           .foregroundStyle(chrome?.secondary ?? Color.secondary)
+      }
+      section("Curve style") {
         HStack(spacing: 8) {
           ForEach(EQLineStyle.allCases) { style in
             choice(style.title, selected: controller.settings.eqLineStyle == style,
                    labelLines: 1, action: { controller.settings.eqLineStyle = style }) {
               previewSurface {
-                EQLinePreview(style: style, color: eqPreviewColor,
-                              response: controller.curve(for: controller.shownSettings.bands, count: 128),
-                              nodeFrequencies: controller.shownSettings.bands.map(\.freq),
-                              boost: controller.shownSettings.boostDb)
+                EQLinePreview(style: style, color: eqPreviewColor, response: curve,
+                              comparison: style == .prism ? contributionComparison(shown.bands) : nil,
+                              nodeFrequencies: shown.bands.map(\.freq), boost: shown.boostDb)
                   .padding(.horizontal, 8)
               }
             }
           }
         }
+        Text(Self.detail(controller.settings.eqLineStyle))
+          .font(.system(size: 11))
+          .foregroundStyle(chrome?.secondary ?? Color.secondary)
       }
-      section("Display") {
-        HStack {
-          Picker("Color", selection: bind(\.scopeColor)) {
-            ForEach(ScopeColor.allCases) { Text($0.title).tag($0) }
-          }
-        }
-        .controlSize(.small)
-        .font(.system(size: 11))
-      }
+      technical
     }
   }
 
-  private var eqPreviewColor: Color {
-    let color = controller.settings.scopeColor
-    return color == .accent ? (chrome?.accent ?? Color.accentColor) : color.color
+  /// The analyser's settings for those who want them: tucked away, and
+  /// inactive while nothing is measured.
+  private var technical: some View {
+    let off = controller.settings.eqVisual == .off
+    let s = controller.settings
+    return VStack(alignment: .leading, spacing: 8) {
+      Button {
+        withAnimation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver)) { technicalOpen.toggle() }
+      } label: {
+        HStack {
+          Text("Technical").font(.system(size: 12, weight: .semibold, design: .rounded))
+          Spacer()
+          Image(systemName: "chevron.down")
+            .font(.system(size: 10, weight: .semibold))
+            .rotationEffect(.degrees(technicalOpen ? 0 : -90))
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityAddTraits(.isHeader)
+      .accessibilityValue(technicalOpen ? "Expanded" : "Collapsed")
+      if technicalOpen {
+        Group {
+          techRow("Speed", bind(\.spectrumSpeed), SpectrumSpeed.allCases) { $0.title }
+            .pointerHint("Speed", does: "Average shows the overall balance, not the moment.")
+          techRow("Peak hold", bind(\.spectrumPeakHold), PeakHold.allCases) { $0.title }
+            .pointerHint("Peak hold", does: "Max keeps each band's loudest moment until reopened.")
+          techRow("Range", bind(\.spectrumRange), SpectrumRange.allCases) { $0.title }
+            .pointerHint("Range", does: "Deeper shows quiet detail, like where lossy files stop.")
+          techRow("Slope", bind(\.spectrumSlope), SpectrumSlope.allCases) { $0.title }
+            .pointerHint("Slope", does: "3 draws pink noise flat; 4.5 matches mixing analysers.")
+          techRow("Detail", bind(\.spectrumResolution), SpectrumResolution.allCases) { $0.title }
+            .pointerHint("Detail", does: "Finer separates close notes above the bass.")
+        }
+        .disabled(off)
+        .opacity(off ? 0.45 : 1)
+        if reduceMotion && s.spectrumSpeed == .fast && !off {
+          Text("Reduce Motion is on, so Fast runs as Medium.")
+            .font(.system(size: 11))
+            .foregroundStyle(chrome?.secondary ?? Color.secondary)
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(10)
+    .foregroundStyle(chrome?.ink ?? Color.primary)
+    .background {
+      RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
+        .fill(.chromeSurface)
+    }
   }
+
+  /// One technical row: a label column, then a compact segmented choice.
+  private func techRow<T: Hashable>(_ title: String, _ value: Binding<T>, _ options: [T],
+                                    label: @escaping (T) -> String) -> some View {
+    HStack(spacing: 8) {
+      Text(title)
+        .font(.system(size: 11, weight: .medium))
+        .frame(width: 66, alignment: .leading)
+      Picker(title, selection: value) {
+        ForEach(options, id: \.self) { Text(label($0)).tag($0) }
+      }
+      .labelsHidden()
+      .pickerStyle(.segmented)
+      .controlSize(.small)
+    }
+  }
+
+  /// One plain line for the selected choice (true to what it draws).
+  private static func detail(_ visual: EQVisual) -> String {
+    switch visual {
+    case .flow: return "What you hear now, as a filled line."
+    case .trace: return "A plain analyser trace on a dBFS scale."
+    case .heat: return "Each frequency glows as loud as it is."
+    case .regions: return "How loud five ranges are, side by side."
+    case .off: return "Just your curve; nothing is measured."
+    }
+  }
+  private static func detail(_ style: EQLineStyle) -> String {
+    style == .classic ? "A dot on the line for each control."
+      : "Pointing at a control shades exactly what it adds."
+  }
+
+  /// Contribution's thumbnail shows its point: the curve without its
+  /// strongest control, so the shaded gap is visible.
+  private func contributionComparison(_ bands: [EQBand]) -> [Double]? {
+    guard let i = bands.indices.max(by: { abs(bands[$0].gain) < abs(bands[$1].gain) }),
+          abs(bands[i].gain) > 0.05 else { return nil }
+    var without = bands
+    without[i].gain = 0
+    return controller.curve(for: without, count: 128)
+  }
+
+  /// The theme's accent (the EQ colour picker is gone: the artwork's accent won anyway).
+  private var eqPreviewColor: Color { chrome?.accent ?? Color.accentColor }
+
 
   private var vinyl: some View {
     section("Vinyl") {
@@ -380,10 +513,11 @@ struct AppearancePanelView: View {
         .accessibilityAddTraits(.isHeader)
       content()
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(10)
     .foregroundStyle(chrome?.ink ?? Color.primary)
     .background {
-      RoundedRectangle(cornerRadius: 14, style: .continuous)
+      RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
         .fill(.chromeSurface)
     }
   }
@@ -458,6 +592,12 @@ struct AppearancePanelView: View {
                                      action: @escaping () -> Void,
                                      @ViewBuilder preview: () -> Preview) -> some View {
     let ink = chrome?.ink ?? (scheme == .dark ? Color.white : Color.black)
+    let accent = chrome?.accent ?? Color.accentColor
+    let strong = reduceTransparency || contrast == .increased
+    let glass: Bool = {
+      if #available(macOS 26, *) { return glassEnabled && !strong }
+      return false
+    }()
     let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
     return Button(action: action) {
       VStack(spacing: 4) {
@@ -465,7 +605,7 @@ struct AppearancePanelView: View {
           .allowsHitTesting(false)
           .accessibilityHidden(true)
         Text(title)
-          .font(.system(size: 11, weight: selected ? .semibold : .medium))
+          .font(.system(size: 11, weight: .medium))
           .multilineTextAlignment(.center)
           .lineLimit(labelLines)
           .fixedSize(horizontal: false, vertical: true)
@@ -474,14 +614,22 @@ struct AppearancePanelView: View {
       }
       .padding(6)
       .foregroundStyle(ink)
-      .modifier(AppGlassSurface(radius: 10, selected: selected))
-      .overlay(shape.strokeBorder(ink.opacity(selected ? 0.9 : 0.08), lineWidth: selected ? 1.5 : 0.5))
-      .overlay(alignment: .topTrailing) {
+      .modifier(AppGlassSurface(radius: 10, selected: selected && glass))
+      .overlay(shape.strokeBorder(ink.opacity(0.08), lineWidth: 0.5))
+      .overlay {
         if selected {
-          Image(systemName: "checkmark").font(.system(size: 8, weight: .bold))
-            .foregroundStyle(scheme == .dark ? Color.black : Color.white)
-            .frame(width: 14, height: 14)
-            .background(Circle().fill(ink))
+          RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(accent, lineWidth: strong ? 2.5 : 2)
+            .padding(-2)
+        }
+      }
+      .overlay(alignment: .topTrailing) {
+        // Colour alone isn't enough for everyone: a small check then.
+        if selected && (differentiateWithoutColor || strong) {
+          Image(systemName: "checkmark").font(.system(size: 7, weight: .bold))
+            .foregroundStyle(Color.white)
+            .frame(width: 12, height: 12)
+            .background(Circle().fill(accent))
             .padding(4)
         }
       }
@@ -501,18 +649,6 @@ struct AppearancePanelView: View {
       .frame(height: 52)
       .overlay { content().environment(\.powerSaver, true).environment(\.drawPaused, true) }
   }
-
-  /// Static thumbnail from measured bass, mid and high tones. The pinned
-  /// preview above uses live data from the exact same main EQ renderer.
-  private static let frequencyPreview: [Float] = {
-    let analyzer = SpectrumAnalyzer()
-    let rate = 48_000.0
-    let samples = (0..<SpectrumAnalyzer.fftSize(for: rate)).map { i -> Float in
-      let t = Double(i) / rate
-      return Float(0.2 * sin(2 * .pi * 70 * t) + 0.08 * sin(2 * .pi * 900 * t) + 0.04 * sin(2 * .pi * 7_000 * t))
-    }
-    return analyzer.process(samples, rate: rate, dt: 1, calm: false).line
-  }()
 
   /// A local original sleeve keeps image/effect choices legible before metadata
   /// arrives. This is only preview content and is never saved as playing artwork.

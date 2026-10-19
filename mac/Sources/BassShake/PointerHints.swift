@@ -860,6 +860,17 @@ enum Caption {
 }
 
 /// Limit's caption, live from the meters (Bento card and classic switch).
+/// The Classic level strip: the louder channel's level, red's meaning.
+enum LevelHint {
+  static func value(_ meters: MeterModel) -> String {
+    let db = max(meters.channels[0].level, meters.channels[1].level)
+    return db <= MeterModel.floorDb + 0.5 ? "Silent" : "\u{2212}\(String(format: "%.0f", max(0, -db))) dB"
+  }
+  static func make(_ meters: MeterModel) -> PointerHint {
+    PointerHint("Level", value: value(meters), does: "Red means peaks are at the ceiling.")
+  }
+}
+
 enum LimitHint {
   static func make(on: Bool, meters: MeterModel) -> PointerHint {
     let does = "Keeps loud parts clean by turning the bass down first."

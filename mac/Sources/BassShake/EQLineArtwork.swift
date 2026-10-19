@@ -31,9 +31,9 @@ enum EQLineArtwork {
   /// Active and keyboard-selected controls retain their larger colored rings.
   static func drawStud(in ctx: GraphicsContext, at point: CGPoint, color: Color) {
     var stud = Path()
-    stud.move(to: CGPoint(x: point.x, y: point.y - 3.3))
-    stud.addLine(to: CGPoint(x: point.x, y: point.y + 3.3))
-    ctx.stroke(stud, with: .color(color), style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+    stud.move(to: CGPoint(x: point.x, y: point.y - 4))
+    stud.addLine(to: CGPoint(x: point.x, y: point.y + 4))
+    ctx.stroke(stud, with: .color(color), style: StrokeStyle(lineWidth: 2, lineCap: .round))
   }
 
   /// The solid path is the full transfer magnitude. When a band is selected,

@@ -12,11 +12,13 @@ struct EQVisualizationTests {
         let expected = log10(frequency / 20) / 3
         #expect(abs(Double(peak) / Double(loud.line.count - 1) - expected) < 0.035)
         #expect(abs(Double(loud.line[peak] - quiet.line[peak]) - 6.0206) < 0.15)
-        let bars = EQFrequencyArtwork.bars(loud.line)
-        let quietBars = EQFrequencyArtwork.bars(quiet.line)
-        let barPeak = bars.indices.max(by: { bars[$0] < bars[$1] })!
-        #expect(abs((Double(barPeak) + 0.5) / Double(bars.count) - expected) < 0.05)
-        #expect(abs(Double(bars[barPeak] - quietBars[barPeak]) - 6.0206) < 0.15)
+        // Regions: the tone's own range is the loudest, and moves with level.
+        let regions = SpectrumFrame.regions(of: loud.line)
+        let quietRegions = SpectrumFrame.regions(of: quiet.line)
+        let edges = SpectrumFrame.regionEdges
+        let own = (0..<(edges.count - 1)).first { edges[$0] <= frequency && frequency < edges[$0 + 1] }!
+        #expect(regions.indices.max(by: { regions[$0] < regions[$1] }) == own)
+        #expect(abs(Double(regions[own] - quietRegions[own]) - 6.0206) < 0.3)
       }
     }
   }
@@ -29,11 +31,12 @@ struct EQVisualizationTests {
     var last = analyzer.process([Float](repeating: 0, count: n), rate: rate, dt: 0.1, calm: false)
     for _ in 0..<100 { last = analyzer.process([Float](repeating: 0, count: n), rate: rate, dt: 0.1, calm: false) }
     #expect(last.silent)
-    #expect(EQFrequencyArtwork.fraction(.nan) == 0)
-    #expect(EQFrequencyArtwork.fraction(-120) == 0)
-    #expect(EQFrequencyArtwork.fraction(100) == 1)
-    #expect(EQFrequencyArtwork.bars([]).isEmpty)
-    let finite = EQFrequencyArtwork.bars([.nan, -.infinity]).allSatisfy { $0.isFinite }
+    let frame = SpectrumFrame.still([Float](repeating: -20, count: SpectrumFrame.columns), params: SpectrumParams())
+    #expect(frame.fraction(.nan) == 0)
+    #expect(frame.fraction(-120) == 0)
+    #expect(frame.fraction(100) == 1)
+    let finite = SpectrumFrame.still([Float](repeating: .nan, count: SpectrumFrame.columns), params: SpectrumParams())
+      .regions.allSatisfy { $0.isFinite }
     #expect(finite)
   }
 

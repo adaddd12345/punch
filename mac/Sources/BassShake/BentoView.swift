@@ -242,21 +242,14 @@ struct BentoView: View {
       }
     case LayoutSection.bentoNowPlaying.key, LayoutSection.classicNowPlaying.key:
       // What's Playing: everything else playing, one small tile per tab or app (NowStack.swift).
-      NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: size == .compact)
+      NowPlayingTiles(model: nowPlaying, on: s.showNowPlaying, active: live, compact: heroCompact)
     case LayoutSection.classicEQ.key:
-      // The original EQ: grid, labels and its own faint backing.
-      EQView(controller: controller)
-        .frame(height: (size == .full ? 190 : 154))
-        .opacity(live ? 1 : 0.45)
+      EQTile(controller: controller, full: size == .full)
     case LayoutSection.classicMeters.key:
       MeterView(model: meters)
     case LayoutSection.bentoEQ.key:
-      BentoTile(tint: tint(.frost), padding: 0, clipped: true) {
-        EQView(controller: controller, chrome: false,
-               filament: live ? (chrome?.accent ?? (scheme == .dark ? BentoTint.bass.pastel : BentoTint.bass.ink)) : Color.secondary)
-          .frame(height: (size == .full ? 190 : 154))
-      }
-      .pointerHintTint(live ? ink(.bass) : nil)
+      EQTile(controller: controller, full: size == .full)
+        .pointerHintTint(live ? ink(.bass) : nil)
     case LayoutSection.bentoDials.key:
       dials
     case LayoutSection.classicSliders.key:
@@ -558,6 +551,14 @@ struct BentoView: View {
 
   /// Compact shrinks the hero's content as well as the EQ; both keep the same inset.
   private var compact: Bool { size == .compact }
+  /// What's Playing (the hero and More Playing): its own setting, or the popup's size.
+  private var heroCompact: Bool {
+    switch s.nowPlayingSize {
+    case .matchSize: return compact
+    case .compact: return true
+    case .expanded: return false
+    }
+  }
   private var heroPad: CGFloat { 12 }
 
   /// Every picker chip in the hero: one shape, one fill. Dark fill means "on".
@@ -577,9 +578,9 @@ struct BentoView: View {
     let t = heroTint
     let dark = scheme == .dark
     return NowPlayingSwitch(model: nowPlaying, on: s.showNowPlaying) {
-      if compact { flatIdleCompact(t, dark: dark) } else { flatIdleFull(t, dark: dark) }
+      if heroCompact { flatIdleCompact(t, dark: dark) } else { flatIdleFull(t, dark: dark) }
     } playing: { app in
-      if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
+      if heroCompact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     // One switch for both layouts, over their empty slots: the idle/playing
@@ -676,9 +677,9 @@ struct BentoView: View {
       let shape = RoundedRectangle(cornerRadius: BentoRadius.hero, style: .continuous)
       return VStack(alignment: .leading, spacing: 0) {
         NowPlayingSwitch(model: nowPlaying, on: s.showNowPlaying) {
-          if compact { idleCompact(t, dark: dark) } else { idleFull(t, dark: dark) }
+          if heroCompact { idleCompact(t, dark: dark) } else { idleFull(t, dark: dark) }
         } playing: { app in
-          if compact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
+          if heroCompact { playingCompact(app, t, dark: dark) } else { playingFull(app, t, dark: dark) }
         }
         if !detailsCollapsed, let heroMacBlock {
           heroMacBlock.padding(.top, 8)
