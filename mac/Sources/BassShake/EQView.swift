@@ -307,14 +307,11 @@ struct EQView: View {
   private var visualShown: Bool {
     controller.settings.waveform && (demo != nil || controller.settings.enabled)
   }
-  /// Trace brings its own graph paper: no grid, dB rulers or region names here.
+  /// Trace brings its own dB scale: an Hz ruler here instead of region names.
   private var visualGrid: Bool { visualShown && controller.settings.eqVisual.drawsOwnGrid }
-  /// Heat and Regions fill the field with colour, so the line gets a keyline.
-  private var needsKeyline: Bool {
-    let mode = controller.settings.eqVisual
-    return visualShown && (mode == .heat || mode == .regions || mode == .phosphor
-                           || (controller.settings.eqHeatBehind && mode != .off))
-  }
+  /// Every live view fills the field under the line (brightest at its top
+  /// edge, where the curve often sits), so the line gets a keyline.
+  private var needsKeyline: Bool { visualShown && controller.settings.eqVisual != .off }
 
   /// The node being worked on: held, hovered, or picked with the keys.
   private var selectedBand: Int? {
@@ -405,24 +402,9 @@ struct EQView: View {
     let resp = response(bands)
     let labelInk = palette?.secondary ?? .secondary
     let ownGrid = visualGrid
-    if !ownGrid {
-      // Grid: one line per region edge (200, 600, 2.5k, 6k), stopping above
-      // the labels, plus quiet ±6 / +12 dB rulers for dragging.
-      var grid = Path()
-      // Regions' own 1 pt gaps already mark these edges.
-      if !(visualShown && controller.settings.eqVisual == .regions) {
-        for f in SpectrumFrame.regionEdges.dropFirst().dropLast() {
-          grid.move(to: CGPoint(x: x(f, w), y: 0)); grid.addLine(to: CGPoint(x: x(f, w), y: h - 16))
-        }
-      }
-      for g in [-6.0, 6, 12] {
-        grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
-      }
-      ctx.stroke(grid, with: .color(.primary.opacity(contrast == .increased ? 0.18 : 0.06)), lineWidth: 1)
-    }
-    EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
-                                dark: scheme == .dark, highContrast: contrast == .increased,
-                                prism: controller.settings.eqLineStyle == .prism)
+    // No grid or 0 dB rule on this surface: the names below place the
+    // regions, the label and the wash's flat edge place 0 dB, and the readout
+    // and the 0 dB detent give the numbers while dragging.
     // "0 dB" sits on whichever side of the line the curve's top end isn't.
     let zeroY = y(0, h)
     let highEnd = sample(resp, at: 20_000) + boost
@@ -450,7 +432,8 @@ struct EQView: View {
     }
 
     // Response curve: one ink, and a flat wash between it and 0 dB (which
-    // side of the dotted line it's on already says boost or cut).
+    // side of its flat edge it's on already says boost or cut). Over a live
+    // body the wash is lighter, so it doesn't turn the colours milky.
     let curve = curvePath(bands, size: size, boost: boost)
     var fill = curve
     fill.addLine(to: CGPoint(x: w, y: zeroY))
@@ -458,7 +441,8 @@ struct EQView: View {
     fill.closeSubpath()
     let ink = curveInk
     let lineWidth: CGFloat = (contrast == .increased ? 2.5 : 2) + (lineDrag == nil ? 0 : 0.4)
-    ctx.fill(fill, with: .color(ink.opacity(scheme == .dark ? 0.14 : 0.10)))
+    let wash = needsKeyline ? (scheme == .dark ? 0.08 : 0.06) : (scheme == .dark ? 0.14 : 0.10)
+    ctx.fill(fill, with: .color(ink.opacity(wash)))
     drawBandShare(ctx, size: size, bands: bands, boost: boost)
     drawKeyline(ctx, curve: curve, lineWidth: lineWidth)
     drawHeldLine(ctx, curve: curve, color: ink)
@@ -469,7 +453,7 @@ struct EQView: View {
   }
 
   private static let labelFont = Font.system(size: 9, weight: .medium, design: .rounded)
-  /// Trace's Hz ruler (its graph paper has no frequency labels of its own).
+  /// Trace's Hz ruler (its dB scale has no frequency labels of its own).
   private static let rulerMarks: [(Double, String)] = [
     (50, "50"), (100, "100"), (200, "200"), (500, "500"),
     (1_000, "1k"), (2_000, "2k"), (5_000, "5k"), (10_000, "10k"),
@@ -574,10 +558,6 @@ struct EQView: View {
                             showNodes: Bool, kbDot: Int?) {
     let w = size.width, h = size.height
     let dark = scheme == .dark
-    // Fixed 0 dB reference, so a Boost offset reads independently of the scope.
-    EQLineArtwork.drawReference(in: ctx, width: w, zeroY: y(0, h),
-                                dark: dark, highContrast: contrast == .increased,
-                                prism: controller.settings.eqLineStyle == .prism)
     // Labels only (no grid): region names, or Trace's Hz ruler.
     if visualGrid {
       drawHzRuler(ctx, width: w, y: h - 7, ink: palette?.secondary ?? .secondary)
@@ -599,7 +579,9 @@ struct EQView: View {
       fill.addLine(to: CGPoint(x: w, y: h))
       fill.addLine(to: CGPoint(x: 0, y: h))
       fill.closeSubpath()
-      ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(dark ? 0.12 : 0.08), color.opacity(0)]),
+      // Lighter over a live body, as Classic's wash.
+      let lift = needsKeyline ? (dark ? 0.07 : 0.05) : (dark ? 0.12 : 0.08)
+      ctx.fill(fill, with: .linearGradient(Gradient(colors: [color.opacity(lift), color.opacity(0)]),
                                            startPoint: CGPoint(x: 0, y: y(12, h)),
                                            endPoint: CGPoint(x: 0, y: h)))
       drawBandShare(ctx, size: size, bands: bands, boost: boost)
@@ -651,12 +633,13 @@ struct EQView: View {
     if !d.tilt && shown.boostDb < 0.05 { return }
     let ghost = d.tilt ? curvePath(d.startBands, size: size, boost: d.startBoost)
                        : curvePath(shown.bands, size: size, boost: 0)
-    ctx.stroke(ghost, with: .color(.primary.opacity(0.28)),
-               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [3, 3]))
+    // Solid and faint: a dash crawls as the line moves.
+    ctx.stroke(ghost, with: .color(.primary.opacity(0.22)),
+               style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
   }
 
-  /// The 0 dB detent caught (the haptic's twin): a short solid stretch of the
-  /// 0 dB line under the held node, only while the snap holds it at 0.
+  /// The 0 dB detent caught (the haptic's twin): a short solid mark at 0 dB
+  /// under the held node, only while the snap holds it at 0.
   private func drawDetent(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand]) {
     guard let i = grabbed, snapped, bands.indices.contains(i) else { return }
     let nx = x(bands[i].freq, size.width), zy = y(0, size.height)
@@ -667,8 +650,9 @@ struct EQView: View {
 
   /// A/B on Original: the EQ isn't applied, so the curve is only a ghost.
   private func drawBypassed(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], boost: Double, color: Color) {
-    ctx.stroke(curvePath(bands, size: size, boost: boost), with: .color(color.opacity(0.35)),
-               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round, dash: [4, 3]))
+    // No nodes and a third of the ink: plainly not the sound you hear.
+    ctx.stroke(curvePath(bands, size: size, boost: boost), with: .color(color.opacity(0.32)),
+               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
   }
 
   private func lineChipView(_ text: String) -> some View {
@@ -1255,7 +1239,7 @@ private struct LimitOverlay: View {
         p.move(to: CGPoint(x: 0, y: max(lid, top + 2)))
         p.addLine(to: CGPoint(x: bassEdgeX, y: max(lid, top + 2)))
       }
-      .stroke(Color.orange.opacity(active ? 0.9 : 0.45), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+      .stroke(Color.orange.opacity(active ? 0.9 : 0.45), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
       .allowsHitTesting(false)
       // Badge.
       HStack(spacing: 3) {

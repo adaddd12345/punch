@@ -12,7 +12,7 @@ struct EQFrequencyArtwork: View {
   let style: EQVisual
   /// Hz span to light (the hovered or picked band); the rest dims to 45%.
   var focus: ClosedRange<Double>? = nil
-  /// Fades the data only, so Trace's graph paper stays while the analyser idles.
+  /// Fades the data only, so Trace's dB scale stays while the analyser idles.
   var dataOpacity: Double = 1
   /// Heat's stripes under Flow, Trace or Regions: the same frame twice, the
   /// stripes quieter so the line still reads on top.
@@ -46,7 +46,8 @@ struct EQFrequencyArtwork: View {
       }
       if layers.first == .heat {
         layer(.heat, notes: layers.count == 1, hi: hi, dark: dark)
-          .opacity(layers.count == 1 ? 1 : 0.55)
+          // Under a body of its own, quieter still: one mass, not two.
+          .opacity(layers.count == 1 ? 1 : 0.4)
           .blendMode(!dark && !hi ? .multiply : .normal)
           .mask {
             LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.05),
@@ -92,8 +93,8 @@ struct EQFrequencyArtwork: View {
     let plot = EQPlotGeometry(size: size, scale: context.environment.displayScale)
     let ink: Ink?
     switch mode {
-    case .flow: ink = flow(plot, hi: hi)
-    case .trace: ink = trace(plot, hi: hi)
+    case .flow: ink = flow(plot, hi: hi, dark: dark)
+    case .trace: ink = trace(plot, hi: hi, holes: labelHoles(context, size: size))
     case .heat: ink = heat(plot, context: context, hi: hi, dark: dark)
     case .regions: ink = regions(plot, hi: hi, dark: dark)
     case .phosphor: ink = phosphor(plot, context: context, hi: hi, dark: dark, field: field)
@@ -106,7 +107,7 @@ struct EQFrequencyArtwork: View {
     // strength and everything else at 45%.
     guard let focus, let span = plot.span(focus) else {
       ink(&context)
-      if style.drawsOwnGrid { clearLabels(&context, size: size) }
+      if style.drawsOwnGrid && mode != .trace { clearLabels(&context, size: size) }
       return
     }
     var outside = Path()
@@ -123,70 +124,77 @@ struct EQFrequencyArtwork: View {
     var lit = context
     lit.clip(to: Path(CGRect(x: span.lowerBound, y: 0, width: span.upperBound - span.lowerBound, height: size.height)))
     ink(&lit)
-    if style.drawsOwnGrid { clearLabels(&context, size: size) }
+    if style.drawsOwnGrid && mode != .trace { clearLabels(&context, size: size) }
     if notes { peakNote(&context, plot: plot, focus: focus, mode: mode, hi: hi, dark: dark) }
   }
 
-  /// Trace's dB numbers stay legible: no ink runs through them.
+  /// Trace's dB numbers stay legible: no pen or stripe runs through them.
   private func clearLabels(_ context: inout GraphicsContext, size: CGSize) {
-    let rows = EQTracePaper.rows(size: size, scale: context.environment.displayScale,
-                                 topDb: frame.topDb, bottomDb: frame.bottomDb, avoidY: avoidY)
-    var holes = Path()
-    for label in EQTracePaper.labels(rows, size: size, in: context, hi: false) {
-      holes.addRoundedRect(in: label.rect.insetBy(dx: -2, dy: -1), cornerSize: CGSize(width: 2, height: 2))
-    }
+    let holes = labelHoles(context, size: size)
     guard !holes.isEmpty else { return }
     var cut = context
     cut.blendMode = .destinationOut
     cut.fill(holes, with: .color(.black))
   }
 
+  private func labelHoles(_ context: GraphicsContext, size: CGSize) -> Path {
+    let rows = EQTracePaper.rows(size: size, scale: context.environment.displayScale,
+                                 topDb: frame.topDb, bottomDb: frame.bottomDb, avoidY: avoidY)
+    var holes = Path()
+    for label in EQTracePaper.labels(rows, size: size, in: context, hi: false) {
+      holes.addRoundedRect(in: label.rect.insetBy(dx: -2, dy: -1), cornerSize: CGSize(width: 2, height: 2))
+    }
+    return holes
+  }
+
   // MARK: Modes
 
-  /// The filled line: the fill's tint is fixed to the level scale, so a loud
-  /// bass hit never dims the treble's fill; brightness means level.
-  private func flow(_ plot: EQPlotGeometry, hi: Bool) -> Ink? {
+  /// A lit mass: everything under the line is filled, its tint fixed to the
+  /// level scale (so a loud bass hit never dims the treble's fill) and
+  /// brighter the louder. The edge is a rim of light inside the mass, never a
+  /// stroke above it: nothing is drawn where there's no sound.
+  private func flow(_ plot: EQPlotGeometry, hi: Bool, dark: Bool) -> Ink? {
     guard frame.line.count > 1 else { return nil }
-    let size = plot.size
-    let line = plot.path(frame.line, frame)
-    let hold = frame.hold.flatMap { $0.count > 1 ? plot.path($0, frame) : nil }
-    let top = plot.y(0.75)
-    var fill = line
-    fill.addLine(to: CGPoint(x: size.width, y: size.height))
-    fill.addLine(to: CGPoint(x: 0, y: size.height))
-    fill.closeSubpath()
+    let points = plot.points(frame.line, frame)
+    let line = EQPlotGeometry.path(points)
+    let mass = plot.mass(points)
+    let held = frame.hold.flatMap { plot.heldBand($0, under: points, frame) }
+    let a: (top: Double, mid: Double, low: Double) = hi ? (0.78, 0.44, 0.12) : (dark ? (0.62, 0.32, 0.07) : (0.5, 0.26, 0.06))
     let shading = GraphicsContext.Shading.linearGradient(
-      Gradient(colors: [color.opacity(hi ? 0.56 : 0.34), color.opacity(0.04)]),
-      startPoint: CGPoint(x: 0, y: top), endPoint: CGPoint(x: 0, y: size.height))
-    let stroke = color.opacity(hi ? 0.9 : 0.6), holdInk = color.opacity(hi ? 0.55 : 0.3)
+      Gradient(stops: [.init(color: color.opacity(a.top), location: 0), .init(color: color.opacity(a.mid), location: 0.4),
+                       .init(color: color.opacity(a.low), location: 0.8), .init(color: color.opacity(0), location: 1)]),
+      startPoint: CGPoint(x: 0, y: plot.y(1)), endPoint: CGPoint(x: 0, y: plot.y(0)))
+    let glow = color.opacity(hi ? 0.3 : 0.2), rim = color.opacity(hi ? 0.9 : (dark ? 0.6 : 0.7))
+    let holdInk = color.opacity(hi ? 0.16 : 0.09)
     return { ctx in
-      ctx.fill(fill, with: shading)
-      if let hold {
-        ctx.stroke(hold, with: .color(holdInk), style: StrokeStyle(lineWidth: 0.5, lineCap: .round, lineJoin: .round))
-      }
-      // Lighter than the EQ curve (2 pt), which is the thing you drag.
-      ctx.stroke(line, with: .color(stroke), style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+      // The hold: what was reached in the last second and is gone now.
+      if let held { ctx.fill(held, with: .color(holdInk)) }
+      ctx.fill(mass, with: shading)
+      // Half of each stroke lands inside the clip: a 4 pt glow, a 1 pt rim.
+      var inside = ctx
+      inside.clip(to: mass)
+      inside.stroke(line, with: .color(glow), style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+      inside.stroke(line, with: .color(rim), style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
     }
   }
 
-  /// The plain technical pen: primary ink only, no accent, fill or glow.
-  private func trace(_ plot: EQPlotGeometry, hi: Bool) -> Ink? {
+  /// The plain technical pen: primary ink only, no accent or glow, over a
+  /// flat ink wash, so the mass reads without turning it into Flow. The pen
+  /// keeps off the dB numbers (`holes`); the wash runs under them.
+  private func trace(_ plot: EQPlotGeometry, hi: Bool, holes: Path) -> Ink? {
     guard frame.line.count > 1 else { return nil }
-    let pen = plot.path(frame.line, frame)
-    // The hold: one dot per column, fixed in place (a dashed path would crawl
-    // as its length changes), and only where something is held above the pen.
-    var held = Path()
-    if let h = frame.hold, h.count == frame.line.count, h.count > 1 {
-      let last = CGFloat(h.count - 1)
-      for c in h.indices where h[c] > frame.line[c] + 1 && h[c] > frame.bottomDb {
-        let x = CGFloat(c) / last * plot.size.width, y = plot.y(frame.fraction(h[c]))
-        held.addRect(CGRect(x: x - 0.5, y: y - 0.5, width: 1, height: 1))
-      }
-    }
-    let penInk = Color.primary.opacity(hi ? 1 : 0.72), holdInk = Color.primary.opacity(hi ? 0.6 : 0.35)
+    let points = plot.points(frame.line, frame)
+    let pen = EQPlotGeometry.path(points)
+    let wash = plot.mass(points)
+    let held = frame.hold.flatMap { plot.heldBand($0, under: points, frame) }
+    let penInk = Color.primary.opacity(hi ? 1 : 0.72)
+    let washInk = Color.primary.opacity(hi ? 0.16 : 0.1), holdInk = Color.primary.opacity(hi ? 0.1 : 0.05)
     return { ctx in
-      ctx.fill(held, with: .color(holdInk))
-      ctx.stroke(pen, with: .color(penInk), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
+      if let held { ctx.fill(held, with: .color(holdInk)) }
+      ctx.fill(wash, with: .color(washInk))
+      var ink = ctx
+      if !holes.isEmpty { ink.clip(to: holes, options: .inverse) }
+      ink.stroke(pen, with: .color(penInk), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
     }
   }
 
@@ -247,7 +255,7 @@ struct EQFrequencyArtwork: View {
       }
     }
     let body = GraphicsContext.Shading.linearGradient(
-      Gradient(colors: [color.opacity(hi ? 0.5 : (dark ? 0.32 : 0.26)), color.opacity(hi ? 0.25 : (dark ? 0.10 : 0.07))]),
+      Gradient(colors: [color.opacity(hi ? 0.56 : (dark ? 0.42 : 0.32)), color.opacity(hi ? 0.25 : (dark ? 0.10 : 0.07))]),
       startPoint: .zero, endPoint: CGPoint(x: 0, y: floor))
     let edge = color.opacity(hi ? 0.9 : 0.7), capAlpha = hi ? 0.8 : 0.5
     return { ctx in
@@ -260,8 +268,9 @@ struct EQFrequencyArtwork: View {
   /// A persistence spectrum, as on a DPX analyser: each cell of frequency ×
   /// level glows by how much of the last half second the line spent there. A held
   /// note burns a bright point, a snare smears tall and soft, a limited master
-  /// is one tight ribbon. Time is afterglow, never an axis. The live line
-  /// rides on top as the beam.
+  /// is one tight ribbon. Time is afterglow, never an axis. Under it, the body:
+  /// how often each band reached at least that loud (solid where it always
+  /// did, feathered up to its peaks). The live line rides on top as the beam.
   private func phosphor(_ plot: EQPlotGeometry, context: GraphicsContext, hi: Bool, dark: Bool,
                         field: EQPhosphorField) -> Ink? {
     let n = frame.line.count
@@ -363,34 +372,64 @@ private struct EQPlotGeometry {
 
   /// The analyser columns as one polyline (column c of n sits at c/(n−1) of
   /// the width, the columns being evenly spaced in log f over 20 Hz–20 kHz).
-  func path(_ values: [Float], _ frame: SpectrumFrame) -> Path {
-    var path = Path()
+  func path(_ values: [Float], _ frame: SpectrumFrame) -> Path { Self.path(points(values, frame)) }
+
+  func points(_ values: [Float], _ frame: SpectrumFrame) -> [CGPoint] {
     let last = CGFloat(max(1, values.count - 1))
     let span = CGFloat(frame.topDb - frame.bottomDb)
-    for (index, value) in values.enumerated() {
+    return values.enumerated().map { index, value in
       // Below the range the line keeps going (under the clip), so silence
-      // shows bare paper rather than a line lying on the floor.
-      let f = value < frame.bottomDb && span > 0 && !value.isNaN ? CGFloat(value - frame.bottomDb) / span
+      // shows nothing rather than a line lying on the floor.
+      let f = value < frame.bottomDb && span > 0 && value.isFinite ? CGFloat(value - frame.bottomDb) / span
         : frame.fraction(value)
-      let point = CGPoint(x: CGFloat(index) / last * size.width, y: y(f))
-      if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
+      return CGPoint(x: CGFloat(index) / last * size.width, y: y(f))
+    }
+  }
+
+  static func path(_ points: [CGPoint]) -> Path {
+    var path = Path()
+    if let first = points.first {
+      path.move(to: first)
+      path.addLines(Array(points.dropFirst()))
     }
     return path
   }
+
+  /// Everything under the line, down past the floor (the view clips it).
+  func mass(_ points: [CGPoint]) -> Path {
+    var mass = Self.path(points)
+    guard let first = points.first, let last = points.last else { return mass }
+    let below = size.height + 8
+    mass.addLine(to: CGPoint(x: last.x, y: max(below, last.y)))
+    mass.addLine(to: CGPoint(x: first.x, y: max(below, first.y)))
+    mass.closeSubpath()
+    return mass
+  }
+
+  /// The band between the peak hold and the line: the range reached lately
+  /// and gone now. Nil when nothing is held above the line.
+  func heldBand(_ hold: [Float], under line: [CGPoint], _ frame: SpectrumFrame) -> Path? {
+    guard hold.count == line.count, hold.count > 1 else { return nil }
+    let top = points(hold, frame)
+    guard zip(top, line).contains(where: { $0.y < $1.y - 0.5 }) else { return nil }
+    var band = Self.path(top)
+    for point in line.reversed() { band.addLine(to: point) }
+    band.closeSubpath()
+    return band
+  }
 }
 
-// MARK: - Trace's graph paper
+// MARK: - Trace's dB scale
 
-/// Trace's own grid, in its own Canvas: its inputs rarely change, so it
+/// Trace's own scale, in its own Canvas: its inputs rarely change, so it
 /// isn't redrawn with every analyser frame, and it stays when the data fades.
+/// Numbers and short ticks at the left edge only: no lines across the sound.
 private struct EQTracePaper: View {
   let topDb: Float
   let bottomDb: Float
   var avoidY: CGFloat? = nil
   @Environment(\.colorSchemeContrast) private var contrast
 
-  private static let decades: [Double] = [100, 1_000, 10_000]
-  private static let minors: [Double] = [10.0, 100, 1_000].flatMap { d in (2...9).map { Double($0) * d } } + [20_000]
   private static let line: CGFloat = 1
 
   /// Centres a 1 pt line on whole device pixels, kept inside the view.
@@ -400,15 +439,14 @@ private struct EQTracePaper: View {
   }
 
   struct Rows {
-    var full = Path(), ticks = Path()
+    var ticks = Path()
     var marks: [(db: Float, y: CGFloat)] = []
     var avoidY: CGFloat?
   }
 
-  /// dB rows every 6 dB (12 dB on the 90 dB range). Labelled rows run full
-  /// width; the rows between are short edge ticks, so fewer lines sit behind
-  /// the curve at the same dB resolution. Numbers are thinned so they never
-  /// crowd a short graph. Shared with the analyser, which keeps off them.
+  /// dB rows every 6 dB (12 dB on the 90 dB range), each a 4 pt tick at the
+  /// left edge. Numbers are thinned so they never crowd a short graph.
+  /// Shared with the analyser, which keeps off them.
   static func rows(size: CGSize, scale: CGFloat, topDb: Float, bottomDb: Float, avoidY: CGFloat?) -> Rows {
     var out = Rows(avoidY: avoidY)
     guard size.width > 0, size.height > 0, topDb > bottomDb else { return out }
@@ -424,12 +462,7 @@ private struct EQTracePaper: View {
       guard db >= bottomDb - 0.01 else { break }
       let fraction = CGFloat(max(0, min(1, (db - bottomDb) / range)))
       let y = crisp(geo.y(fraction), size.height, scale: scale)
-      if k % 2 == 0 {
-        out.full.move(to: CGPoint(x: 0, y: y)); out.full.addLine(to: CGPoint(x: size.width, y: y))
-      } else {
-        out.ticks.move(to: CGPoint(x: 0, y: y)); out.ticks.addLine(to: CGPoint(x: 4, y: y))
-        out.ticks.move(to: CGPoint(x: size.width - 4, y: y)); out.ticks.addLine(to: CGPoint(x: size.width, y: y))
-      }
+      out.ticks.move(to: CGPoint(x: 0, y: y)); out.ticks.addLine(to: CGPoint(x: 4, y: y))
       if labels && k % labelEvery == 0 { out.marks.append((db, y)) }
       k += 1
     }
@@ -461,25 +494,9 @@ private struct EQTracePaper: View {
     Canvas(rendersAsynchronously: true) { context, size in
       guard size.width > 0, size.height > 0, topDb > bottomDb else { return }
       let scale = context.environment.displayScale
-      let geo = EQPlotGeometry(size: size, scale: scale)
-      let ink = Color.primary
-
-      var minor = Path(), major = Path()
-      for f in Self.minors {
-        let x = Self.crisp(geo.x(f), size.width, scale: scale)
-        minor.move(to: CGPoint(x: x, y: 0)); minor.addLine(to: CGPoint(x: x, y: size.height))
-      }
-      for f in Self.decades {
-        let x = Self.crisp(geo.x(f), size.width, scale: scale)
-        major.move(to: CGPoint(x: x, y: 0)); major.addLine(to: CGPoint(x: x, y: size.height))
-      }
       let rows = Self.rows(size: size, scale: scale, topDb: topDb, bottomDb: bottomDb, avoidY: avoidY)
-
-      let stroke = StrokeStyle(lineWidth: Self.line)
-      context.stroke(minor, with: .color(ink.opacity(hi ? 0.07 : 0.04)), style: stroke)
-      context.stroke(rows.full, with: .color(ink.opacity(hi ? 0.12 : 0.08)), style: stroke)
-      context.stroke(rows.ticks, with: .color(ink.opacity(hi ? 0.12 : 0.08)), style: stroke)
-      context.stroke(major, with: .color(ink.opacity(hi ? 0.16 : 0.1)), style: stroke)
+      context.stroke(rows.ticks, with: .color(Color.primary.opacity(hi ? 0.4 : 0.22)),
+                     style: StrokeStyle(lineWidth: Self.line))
       for label in Self.labels(rows, size: size, in: context, hi: hi) {
         context.draw(label.text, in: label.rect)
       }
@@ -631,10 +648,15 @@ final class EQPhosphorField {
   static let floor: Float = 0.03
   /// Steeper jumps between columns aren't filled (they read as smears).
   static let maxRun: Float = 6
+  /// The body's alpha at full level: well under the trail's, so where the
+  /// line sits still reads on top of the mass.
+  static let body: Float = 0.5
   private static let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
   private let lock = NSLock()
   private var grid: [Float] = []         // row-major, row 0 = bottomDb
+  /// The body: per cell, the recent share of time the band was at least that loud.
+  private var under: [Float] = []
   private var pixels: [UInt8] = []
   private var cols = 0, rows = 0
   private var range: (top: Float, bottom: Float) = (0, 0)
@@ -654,37 +676,79 @@ final class EQPhosphorField {
     if still || cols != n || rows != height || range.top != frame.topDb || range.bottom != frame.bottomDb {
       cols = n; rows = height; range = (frame.topDb, frame.bottomDb)
       grid = [Float](repeating: 0, count: n * height)
+      under = [Float](repeating: 0, count: n * height)
       pixels = [UInt8](repeating: 0, count: n * height * 4)
       dt = nil
     }
     last = now
 
-    if let dt {
-      // Decay, then deposit this frame (only when it's a new one).
-      let k = Float(exp(-dt / Self.seconds))
+    // Decay, then deposit this frame (only when it's a new one). First sight
+    // (k = nil): seed a settled cloud around the line, so a preview or a
+    // reopened view doesn't start from black. It decays like any other moment.
+    let k: Float? = dt.map { Float(exp(-$0 / Self.seconds)) }
+    if let k {
       if k < 0.9999 {
         for i in grid.indices { grid[i] *= k }
       }
       deposit(line, weight: 1 - k, bottom: frame.bottomDb, spread: 0)
     } else {
-      // First sight: seed a settled cloud around the line, so a preview or a
-      // reopened view doesn't start from black. It decays like any other moment.
       deposit(line, weight: 0.5, bottom: frame.bottomDb, spread: 2)
     }
 
+    // Each column's level above the floor; empty (−∞) within 1 dB of it.
+    let heights = line.map { v -> Float in
+      let h = v - frame.bottomDb
+      return h.isFinite && h > 1 ? h : -.infinity
+    }
+    // The body's strength by absolute level, as Heat's stripes: nothing within
+    // 12 dB of the floor (no slab of noise), full 6 dB under the top. Its hue
+    // is the ramp's, deep to warm with level; its alpha is its own, so a
+    // steep ramp (magma) doesn't make it a solid slab or a shallow one hide it.
+    let cold = Float(12), hot = max(cold + 1, span - 6)
     // Brightness eases up with time spent (a gentle curve, not a log one, so
-    // a passing moment stays faint and the held line stands out).
+    // a passing moment stays faint and the held line stands out). The trail
+    // is laid over the body, so a faint one still shows inside the mass.
+    let colCount = cols, rowCount = rows
     lut.withUnsafeBufferPointer { table in
-      pixels.withUnsafeMutableBufferPointer { out in
-        for i in 0..<rows {
-          let row = (rows - 1 - i) * cols
-          for c in 0..<cols {
-            let d = grid[i * cols + c]
-            let o = (row + c) * 4
-            guard d > Self.floor else { out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0; continue }
-            let b = max(0, min(1, powf(d, 0.6)))
-            let k = Int(b * 255 + 0.5) * 4
-            out[o] = table[k]; out[o + 1] = table[k + 1]; out[o + 2] = table[k + 2]; out[o + 3] = table[k + 3]
+      grid.withUnsafeBufferPointer { dwell in
+        under.withUnsafeMutableBufferPointer { body in
+          pixels.withUnsafeMutableBufferPointer { out in
+            for i in 0..<rowCount {
+              let row = (rowCount - 1 - i) * colCount
+              let level = Float(i)
+              let w = max(0, min(1, (level - cold) / (hot - cold)))
+              let hue = Int((0.25 + 0.3 * w) * 255 + 0.5) * 4
+              let unit = max(1, Float(table[hue + 3]))   // un-premultiplies the hue
+              let alpha = Self.body * w
+              let tint = (Float(table[hue]) / unit, Float(table[hue + 1]) / unit, Float(table[hue + 2]) / unit)
+              for c in 0..<colCount {
+                let cell = i * colCount + c
+                // Fraction of this 1 dB cell the band covers now (0 when empty).
+                let v = heights[c]
+                var u = body[cell]
+                if let k {
+                  u = u * k + (1 - k) * max(0, min(1, v - level + 0.5))
+                } else {
+                  u = max(0, min(1, (v - level) / 4 + 0.5))
+                }
+                body[cell] = u
+                let d = dwell[cell]
+                let mass = u * alpha                 // the body's alpha, 0…body
+                let o = (row + c) * 4
+                var r: Float = 0, g: Float = 0, b: Float = 0, a: Float = 0
+                if d > Self.floor {
+                  let t = Int(max(0, min(1, powf(d, 0.6))) * 255 + 0.5) * 4
+                  r = Float(table[t]); g = Float(table[t + 1]); b = Float(table[t + 2]); a = Float(table[t + 3])
+                }
+                if mass > 0.004 {
+                  // Trail over body (premultiplied).
+                  let rest = mass * (255 - a)
+                  r += tint.0 * rest; g += tint.1 * rest; b += tint.2 * rest; a += 255 * mass * (1 - a / 255)
+                }
+                out[o] = UInt8(min(255, r + 0.5)); out[o + 1] = UInt8(min(255, g + 0.5))
+                out[o + 2] = UInt8(min(255, b + 0.5)); out[o + 3] = UInt8(min(255, a + 0.5))
+              }
+            }
           }
         }
       }

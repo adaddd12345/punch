@@ -15,7 +15,7 @@ struct LiveEQVisualization: View {
   var avoidY: CGFloat? = nil
 
   var body: some View {
-    // Idle fades the data only, so Trace's graph paper stays put.
+    // Idle fades the data only, so Trace's dB scale stays put.
     EQFrequencyArtwork(frame: model.frame, color: color, style: style, focus: focus,
                        dataOpacity: model.idle ? 0 : 1, heatBehind: heatBehind, avoidY: avoidY)
       .animation(model.idle ? .easeOut(duration: 0.6) : .easeOut(duration: 0.12), value: model.idle)

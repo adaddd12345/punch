@@ -455,8 +455,8 @@ struct AppearancePanelView: View {
   /// One plain line for the selected choice (true to what it draws).
   private static func detail(_ visual: EQVisual) -> String {
     switch visual {
-    case .flow: return "What you hear now, as a filled line."
-    case .trace: return "A thin line on a dB grid."
+    case .flow: return "What you hear now, filled; brighter is louder."
+    case .trace: return "A plain ink line and wash, with a dBFS scale."
     case .heat: return "A stripe per frequency; brighter is louder."
     case .regions: return "How loud five ranges are, side by side."
     case .phosphor: return "Where the sound has sat lately: brighter means more often."
