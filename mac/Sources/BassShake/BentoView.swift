@@ -896,7 +896,6 @@ struct BentoView: View {
       }
       if flat || !detailsCollapsed {
         VStack(alignment: .leading, spacing: flat ? 16 : 8) {
-          if !controller.isMirror { TempoChips() }
           VStack(alignment: .leading, spacing: 6) {
             if let heroFullTools {
               fullSoundControls(t, rail: heroFullTools)
@@ -968,7 +967,6 @@ struct BentoView: View {
       }
       if flat || !detailsCollapsed {
         VStack(alignment: .leading, spacing: flat ? 12 : 8) {
-          if !controller.isMirror { TempoChips() }
           HStack(alignment: .center, spacing: 8) {
             soundChip(t)
             if live { abChip(compact: true) }

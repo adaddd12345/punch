@@ -1,22 +1,34 @@
 import SwiftUI
 
-/// A full-width utility row: three equal controls and a square window pin.
-/// The preset keeps its own row above, so long names never squeeze the tools.
+/// A full-width utility row under the preset: the Tempo popups as words
+/// (BPM, Key), and the obvious tools as square mini buttons (A/B, Size, Pin).
+/// Order: sound tools left, window tools right. The preset keeps its own row
+/// above, so long names never squeeze the tools.
 struct PlayerControlRail: View {
   @ObservedObject var controller: AudioController
+  @ObservedObject private var popups = TempoPopups.shared
   var windowControls = true
   let pin: () -> Void
   private var words: Bool { controller.settings.labelLevel == .full }
   private let height: CGFloat = 28
 
+  init(controller: AudioController, windowControls: Bool = true, pin: @escaping () -> Void) {
+    self.controller = controller
+    self.windowControls = windowControls
+    self.pin = pin
+  }
+
   var body: some View {
     let labels = controller.settings.labelLevel
     let size = controller.settings.viewSize
     let bypassed = controller.settings.enabled && controller.bypassed
+    // Tempo listens to this Mac's sound, so a remote controller has none.
+    let tempo = !controller.isMirror
     HStack(spacing: 6) {
       Button { controller.bypassed.toggle() } label: {
-        Text(bypassed ? "Original" : "A/B")
-          .frame(maxWidth: .infinity)
+        Image(systemName: "circle.lefthalf.filled")
+          .font(.system(size: 12, weight: .semibold))
+          .frame(width: height)
           .modifier(RailCell(height: height, selected: bypassed))
       }
       .disabled(!controller.settings.enabled)
@@ -26,8 +38,35 @@ struct PlayerControlRail: View {
       .pointerHint(Caption.ab(bypassed: bypassed,
         hotkey: controller.settings.bypassHotkey ? GlobalHotkey.bypassLabel : nil))
 
+      if tempo {
+        Button { popups.toggleBPM() } label: {
+          Text("BPM")
+            .lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .modifier(RailCell(height: height, selected: popups.bpm))
+        }
+        .accessibilityLabel("BPM")
+        .accessibilityValue(popups.bpm ? "Open" : "Closed")
+        .pointerHint("BPM", does: "Detects the song's tempo; metronome and YouTube speed.")
+
+        Button { popups.toggleKey() } label: {
+          Text("Key")
+            .lineLimit(1)
+            .frame(maxWidth: .infinity)
+            .modifier(RailCell(height: height, selected: popups.key))
+        }
+        .accessibilityLabel("Key")
+        .accessibilityValue(popups.key ? "Open" : "Closed")
+        .pointerHint("Key", does: "Detects the song's key; tuner from your Mac's sound.")
+      }
+
+      // Without words (or without the Tempo pair) Labels is a square too, so
+      // the window tools sit together on the right.
+      let labelsFlex = words && tempo
+      if !tempo { Spacer(minLength: 0) }
       Button { controller.settings.labelLevel = labels.next } label: {
-        cellLabel("Labels", symbol: labels.symbol)
+        cellLabel("Labels", symbol: labels.symbol, flex: labelsFlex)
+          .frame(width: labelsFlex ? nil : height)
           .modifier(RailCell(height: height))
       }
       .accessibilityLabel("Labels: \(labels.title)")
@@ -36,7 +75,9 @@ struct PlayerControlRail: View {
 
       if windowControls {
         Button { controller.settings.viewSize = size.next } label: {
-          cellLabel("Size", symbol: size.symbol)
+          Image(systemName: size.symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .frame(width: height)
             .modifier(RailCell(height: height))
         }
         .accessibilityLabel("View size: \(size.title)")
@@ -63,12 +104,12 @@ struct PlayerControlRail: View {
     .accessibilityLabel("Sound and window controls")
   }
 
-  private func cellLabel(_ title: String, symbol: String) -> some View {
+  private func cellLabel(_ title: String, symbol: String, flex: Bool) -> some View {
     HStack(spacing: 4) {
       Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
-      if words { Text(title).lineLimit(1) }
+      if flex { Text(title).lineLimit(1) }
     }
-    .frame(maxWidth: .infinity)
+    .frame(maxWidth: flex ? .infinity : nil)
   }
 }
 

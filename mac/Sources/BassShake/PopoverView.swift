@@ -34,7 +34,9 @@ struct PopoverView: View {
   @State private var showDJ = false
   @State private var showBeats = false
   /// The BPM and Key popups (one tray; both open: one parent bento).
-  @ObservedObject private var tempoPopups = TempoPopups.shared
+  /// Not observed: the popover only needs whether any popup is open (`tempoOpen`).
+  private let tempoPopups = TempoPopups.shared
+  @State private var tempoOpen = false
   @State private var showAppearance = false
   @ObservedObject private var beats = BeatPlayer.shared
   @ObservedObject private var latencyLab = LatencyLab.shared
@@ -288,7 +290,8 @@ struct PopoverView: View {
                       heroIconsTight: size == .full && labels == .full ? AnyView(windowTools(words: false)) : nil,
                       heroFullTools: AnyView(PlayerControlRail(controller: controller,
                         windowControls: role != .launchWindow,
-                        pin: { controller.setPinned(!controller.pinned, from: window.window) })),
+                        pin: { controller.setPinned(!controller.pinned, from: window.window) })
+                        .modifier(DrawerKeepClear(active: ownsDrawer))),
                       flat: !controller.settings.bento,
                       macBlock: AnyView(VStack(alignment: .leading, spacing: gaps.sibling) { macSlot; earsSlot }),
                       heroMacBlock: AnyView(VStack(alignment: .leading, spacing: gaps.sibling) {
@@ -481,7 +484,8 @@ struct PopoverView: View {
         LiveDrawer.shared.hide()
       }
     }
-    .onChange(of: tempoPopups.open) { _, on in
+    .onReceive(tempoPopups.openChanges) { if tempoOpen != $0 { tempoOpen = $0 } }
+    .onChange(of: tempoOpen) { _, on in
       if on {
         guard bindDrawerClose() else { tempoPopups.close(); return }
         showLive = false
@@ -1173,7 +1177,7 @@ struct PopoverView: View {
       .buttonStyle(FooterButtonStyle(chip: true))
       .accessibilityLabel("Beats")
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
-      TempoFooterButton(controller: controller, expanded: tempoPopups.open) {
+      TempoFooterButton(controller: controller, expanded: tempoOpen) {
         setAppearance(false)
         if !tempoPopups.open { showLive = false; showDJ = false; showBeats = false }
         tempoPopups.toggleAll()
@@ -1554,7 +1558,11 @@ struct SlimScroller: NSViewRepresentable {
 }
 
 struct OverflowScroll<Content: View>: View {
-  @ViewBuilder let content: () -> Content
+  /// Built once by the parent's body, not on every one of ours: re-running a
+  /// builder here made a new BentoView (fresh AnyView tools) on each height
+  /// measurement, re-rendering every block while the popup resized.
+  let content: Content
+  init(@ViewBuilder content: () -> Content) { self.content = content() }
   @State private var contentHeight: CGFloat?
   @State private var overflows = false
   @Environment(\.displayScale) private var displayScale
@@ -1562,7 +1570,7 @@ struct OverflowScroll<Content: View>: View {
   var body: some View {
     let scale = max(1, displayScale)
     ScrollView(.vertical) {
-      content()
+      content
         .onGeometryChange(for: CGFloat.self, of: { ceil($0.size.height * scale) / scale }) { h in
           guard h.isFinite, h >= 0, h != contentHeight else { return }
           // Geometry is already the animated result. Do not spring its
@@ -1583,6 +1591,22 @@ struct OverflowScroll<Content: View>: View {
       var transaction = Transaction(animation: nil)
       transaction.disablesAnimations = true
       withTransaction(transaction) { overflows = value }
+    }
+  }
+}
+
+/// Reports how far down the popup the tray row reaches (window points from
+/// its top), so the Tempo popups never float over it (LiveDrawer's overlap).
+/// A plain property, not state: nothing re-renders or re-lays out from it.
+private struct DrawerKeepClear: ViewModifier {
+  let active: Bool
+  func body(content: Content) -> some View {
+    if active {
+      content
+        .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .global).maxY }) { LiveDrawer.shared.overlapKeepClear = $0 }
+        .onDisappear { LiveDrawer.shared.overlapKeepClear = nil }
+    } else {
+      content
     }
   }
 }

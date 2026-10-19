@@ -139,6 +139,23 @@ struct MusicSenseSnapshot: Equatable {
   /// Sustained speech or other non-music sound (a podcast, a video's voice):
   /// tempo and key are hidden while true.
   var speech = false
+
+  /// True when a view would draw this differently from `o`: the listening
+  /// strip's `levels` (not drawn by the popups) are ignored, seconds heard
+  /// count whole, and the 0…1 figures count to 0.05 (progress to 0.01, as a
+  /// percentage). MusicSense publishes only on a visible change.
+  func differsVisibly(from o: MusicSenseSnapshot) -> Bool {
+    func q(_ x: Double, _ step: Double) -> Int { Int((x / step).rounded()) }
+    var a = self, b = o
+    a.levels = []; b.levels = []
+    a.heardSeconds = Double(q(heardSeconds, 1)); b.heardSeconds = Double(q(o.heardSeconds, 1))
+    a.tempoProgress = Double(q(tempoProgress, 0.01)); b.tempoProgress = Double(q(o.tempoProgress, 0.01))
+    a.keyProgress = Double(q(keyProgress, 0.01)); b.keyProgress = Double(q(o.keyProgress, 0.01))
+    a.bpmConfidence = Double(q(bpmConfidence, 0.05)); b.bpmConfidence = Double(q(o.bpmConfidence, 0.05))
+    a.keyConfidence = Double(q(keyConfidence, 0.05)); b.keyConfidence = Double(q(o.keyConfidence, 0.05))
+    a.musicLikelihood = Double(q(musicLikelihood, 0.05)); b.musicLikelihood = Double(q(o.musicLikelihood, 0.05))
+    return a != b
+  }
 }
 
 /// Tempo and key read from a track or video title ("… | 140 BPM | C minor",

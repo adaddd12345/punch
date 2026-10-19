@@ -7,12 +7,16 @@ import Foundation
 @main
 struct MusicSenseCheck {
   static var checks = 0
+  static var failures = 0
   static var notes: [String] = []
 
   static func check(_ ok: Bool, _ description: String) {
     guard ok else {
       FileHandle.standardError.write("FAIL: \(description)\n".data(using: .utf8)!)
-      exit(1)
+      // MUSIC_SENSE_KEEP_GOING=1 lists every failure (and still exits 1).
+      if ProcessInfo.processInfo.environment["MUSIC_SENSE_KEEP_GOING"] == nil { exit(1) }
+      failures += 1
+      return
     }
     checks += 1
   }
@@ -133,6 +137,111 @@ struct MusicSenseCheck {
 
   static func hz(_ midi: Int) -> Double { 440 * pow(2, Double(midi - 69) / 12) }
 
+  /// One drum hit added at `t` seconds: an 808-style kick (a long sine
+  /// falling to `bass` Hz), a snare (noise and a 190 Hz body) or a hat.
+  enum Drum { case kick, snare, hat }
+  static func hit(_ x: inout [Float], _ drum: Drum, at t: Double, rate: Double, gain: Double = 1, bass: Double = 49) {
+    let s = Int(t * rate), n = x.count
+    guard s >= 0, s < n else { return }
+    switch drum {
+    case .kick:
+      var ph = 0.0
+      for i in 0..<Int(0.5 * rate) where s + i < n {
+        let tt = Double(i) / rate
+        ph += 2 * .pi * (bass + 110 * exp(-tt / 0.02)) / rate
+        x[s + i] += Float(gain * 0.55 * sin(ph) * exp(-tt / 0.35))
+      }
+    case .snare:
+      var last = 0.0
+      for i in 0..<Int(0.2 * rate) where s + i < n {
+        let tt = Double(i) / rate
+        let v = random() * 2 - 1
+        x[s + i] += Float(gain * (0.3 * (v - 0.5 * last) * exp(-tt / 0.06) + 0.25 * sin(2 * .pi * 190 * tt) * exp(-tt / 0.04)))
+        last = v
+      }
+    case .hat:
+      var last = 0.0
+      for i in 0..<Int(0.03 * rate) where s + i < n {
+        let v = random() * 2 - 1
+        x[s + i] += Float(gain * 0.12 * (v - last) * exp(-Double(i) / rate / 0.008))
+        last = v
+      }
+    }
+  }
+
+  /// A sparse hip-hop beat: kick on 1 and the "and" of 3, snare on 2 and 4,
+  /// 16th hats (accented on the beat), with `trap` adding hat rolls (32nds) on
+  /// beat 4 of every other bar.
+  static func hipHop(bpm: Double, seconds: Double, rate: Double, offset: Double, trap: Bool = false) -> [Float] {
+    var x = [Float](repeating: 0, count: Int(seconds * rate))
+    let beat = 60 / bpm
+    var bar = 0
+    while offset + Double(bar * 4) * beat < seconds {
+      let b0 = offset + Double(bar * 4) * beat
+      hit(&x, .kick, at: b0, rate: rate)
+      hit(&x, .kick, at: b0 + 2.5 * beat, rate: rate, gain: 0.85)
+      hit(&x, .snare, at: b0 + beat, rate: rate)
+      hit(&x, .snare, at: b0 + 3 * beat, rate: rate)
+      for k in 0..<16 {
+        let roll = trap && bar % 2 == 1 && k >= 12
+        for r in 0..<(roll ? 2 : 1) {
+          hit(&x, .hat, at: b0 + (Double(k) + 0.5 * Double(r)) * beat / 4, rate: rate, gain: k % 4 == 0 ? 1 : 0.6)
+        }
+      }
+      bar += 1
+    }
+    return x
+  }
+
+  /// A rapped voice: syllables on a loose 16th grid (some early or late,
+  /// some skipped), each a voiced tone whose pitch and two formants glide.
+  static func rap(bpm: Double, seconds: Double, rate: Double) -> [Float] {
+    var x = [Float](repeating: 0, count: Int(seconds * rate))
+    let step = 60 / bpm / 4
+    var t = 0.3
+    while t < seconds {
+      if random() < 0.25 { t += step; continue }   // a breath
+      let s0 = Int((t + (random() - 0.5) * 0.04) * rate)
+      let len = Int(step * (1 + random()) * 0.9 * rate)
+      let f0 = 110 + 60 * random(), glide = (random() * 2 - 1) * 4
+      let fa = 500 + 400 * random(), fb = 1_200 + 900 * random(), fEnd = 0.6 + 0.8 * random()
+      let amp = 0.12 + 0.12 * random()
+      var ph = 0.0
+      for i in 0..<len where s0 + i >= 0 && s0 + i < x.count {
+        let u = Double(i) / Double(len)
+        let f = f0 * pow(2, glide * u / 12)
+        ph += 2 * .pi * f / rate
+        let env = sin(.pi * u) * sin(.pi * u)
+        let f1 = fa * (1 + (fEnd - 1) * u), f2 = fb * (1 + (fEnd - 1) * 0.5 * u)
+        var v = 0.0
+        for h in 1...24 {
+          let fh = Double(h) * f
+          let w = exp(-pow((fh - f1) / 150, 2)) + 0.6 * exp(-pow((fh - f2) / 250, 2)) + 0.15 / Double(h)
+          v += w * sin(Double(h) * ph)
+        }
+        x[s0 + i] += Float(amp * env * v)
+      }
+      t += step * (random() < 0.3 ? 2 : 1)
+    }
+    return x
+  }
+
+  /// A triplet shuffle at `bpm`: kick on 1 and 3, snare on 2 and 4, hats on
+  /// every triplet 8th (the swung "and" a little quieter). Its pulse at 3/2
+  /// the tempo is strong: it must read `bpm`, never flip to 1.5 × bpm.
+  static func shuffle(bpm: Double, seconds: Double, rate: Double, offset: Double) -> [Float] {
+    var x = [Float](repeating: 0, count: Int(seconds * rate))
+    let beat = 60 / bpm
+    var k = 0
+    while offset + Double(k) * beat < seconds {
+      let t = offset + Double(k) * beat
+      hit(&x, k % 2 == 0 ? .kick : .snare, at: t, rate: rate)
+      for j in 0..<3 { hit(&x, .hat, at: t + Double(j) * beat / 3, rate: rate, gain: j == 0 ? 1 : j == 2 ? 0.8 : 0.45) }
+      k += 1
+    }
+    return x
+  }
+
   /// Chords (saw-like partials) with the root doubled in octaves 2 and 3,
   /// plus an optional melody; each chord lasts `chordSeconds`.
   static func chords(_ progression: [[Int]], melody: [Int] = [], seconds: Double, rate: Double) -> [Float] {
@@ -219,6 +328,36 @@ struct MusicSenseCheck {
     return a.output().snapshot.tuner
   }
 
+  /// A groove that must show `bpm` (±1) within `within` s, reach `.found`,
+  /// and never show another tempo once shown. Returns when it showed.
+  @discardableResult
+  static func groove(_ name: String, _ x: [Float], bpm: Double, within: Double, rate: Double = 48_000) -> Double {
+    let a = MusicSenseAnalyzer(sampleRate: rate)
+    var shownAt: Double?, wrong: [String] = [], hidden = false
+    var seen: Set<Int> = []
+    run(a, x, rate: rate, base: 7_000) { t, out in
+      let s = out.snapshot
+      guard s.bpmShown, let b = s.bpm else {
+        if shownAt != nil { hidden = true }
+        return
+      }
+      if shownAt == nil, abs(b - bpm) <= 1 { shownAt = t }
+      if shownAt != nil || abs(b - bpm) > 1 { seen.insert(Int(b.rounded())) }
+      if abs(b - bpm) > 1, wrong.count < 4 { wrong.append(String(format: "%.1f at %.2f s", b, t)) }
+    }
+    let out = a.output().snapshot
+    check(wrong.isEmpty, "\(name): showed \(wrong.joined(separator: ", ")) (expected \(bpm))")
+    guard let at = shownAt else {
+      check(false, "\(name): \(bpm) BPM never shown (bpm \(out.bpm ?? 0), conf \(out.bpmConfidence), music \(out.musicLikelihood), speech \(out.speech), progress \(out.tempoProgress))")
+      return 0
+    }
+    check(at <= within, "\(name): \(bpm) BPM shown only at \(at) s")
+    check(!hidden, "\(name): the tempo was hidden after showing")
+    check(out.status == .found && out.tempoProgress == 1, "\(name): status \(out.status), progress \(out.tempoProgress)")
+    check(seen.count == 1, "\(name): the shown number changed (\(seen.sorted()))")
+    return at
+  }
+
   static func main() {
     // Camelot.
     check(MusicKey(pitchClass: 0, minor: false).camelot == "8B", "C major should be 8B")
@@ -233,6 +372,30 @@ struct MusicSenseCheck {
     run(quiet, (0..<(12 * 48_000)).map { _ in Float(0.3 * (random() * 2 - 1)) }, rate: 48_000, base: 0)
     let noise = quiet.output().snapshot
     check(noise.bpm == nil, "White noise should show no tempo (got \(noise.bpm ?? 0), conf \(noise.bpmConfidence))")
+
+    // Hip-hop: a sparse 85 BPM boom-bap with a rapped voice, the same as trap
+    // (hat rolls), and an 80 BPM triplet shuffle (strong 120 pulse).
+    let r = 48_000.0
+    let boomBap = zip(hipHop(bpm: 85, seconds: 20, rate: r, offset: 0.2), rap(bpm: 85, seconds: 20, rate: r)).map { $0 + $1 }
+    let tBoom = groove("Boom-bap 85 + rap", boomBap, bpm: 85, within: 8)
+    let trap = zip(hipHop(bpm: 85, seconds: 20, rate: r, offset: 0.35, trap: true), rap(bpm: 85, seconds: 20, rate: r)).map { $0 + $1 }
+    let tTrap = groove("Trap 85 + rap", trap, bpm: 85, within: 8)
+    let tShuffle = groove("Shuffle 80", shuffle(bpm: 80, seconds: 20, rate: r, offset: 0.1), bpm: 80, within: 8)
+    // A level change once shown: 85 boom-bap, then a plain 170 pulse (the
+    // same grid twice as dense). The number holds for at least 6 s, then
+    // changes at most once.
+    let levelA = MusicSenseAnalyzer(sampleRate: r)
+    var levelShown: [(Double, Int)] = []
+    run(levelA, hipHop(bpm: 85, seconds: 10, rate: r, offset: 0.2) + clicks(bpm: 170, seconds: 14, rate: r, offset: 0.2 + 0.0),
+        rate: r, base: 8_000) { t, out in
+      guard out.snapshot.bpmShown, let b = out.snapshot.bpm else { return }
+      let v = Int(b.rounded())
+      if levelShown.last?.1 != v { levelShown.append((t, v)) }
+    }
+    check(levelShown.first?.1 == 85, "Level change: first shown \(levelShown.first?.1 ?? 0)")
+    check(levelShown.count <= 2, "Level change: the number changed more than once \(levelShown.map { $0.1 })")
+    let levelHeld = levelShown.count > 1 ? levelShown[1].0 - 10 : 14
+    check(levelHeld >= 6, "Level change: switched level after only \(levelHeld) s")
 
     // Key.
     let aMinor = key(chords([[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]], seconds: 25, rate: 48_000), rate: 48_000)
@@ -339,7 +502,14 @@ struct MusicSenseCheck {
       sense.begin(sampleRate: 48_000, outputLatency: 0.01)
       let x = clicks(bpm: 120, seconds: 1, rate: 48_000, offset: 0)
       for c in 0..<30 { sense.consume(Array(x[(c * 1_600)..<((c + 1) * 1_600)]), count: 1_600) }
-      RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+      // Poll for a result (the analysis queue can be slow on a busy CI
+      // runner, e.g. beside the app's build): up to 5 s, never a fixed sleep.
+      func settle(_ ok: () -> Bool) {
+        let until = Date().addingTimeInterval(5)
+        while !ok() && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+      }
+      settle { sense.snapshot.status == .listening && sense.snapshot.levels.count == 38 &&
+        (sense.snapshot.levels.max() ?? 0) > 0.5 }
       check(sense.snapshot.status == .listening && sense.snapshot.levels.count == 38 &&
             (sense.snapshot.levels.max() ?? 0) > 0.5, "Coordinator should publish a listening snapshot")
       sense.reset()
@@ -354,19 +524,19 @@ struct MusicSenseCheck {
         if c % 10 == 9 { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
         if c == 300 { RunLoop.main.run(until: Date().addingTimeInterval(0.3)) }
       }
-      RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+      settle { sense.snapshot.bpmShown && sense.snapshot.bpmSource == .detected && abs((sense.snapshot.bpm ?? 0) - 128) <= 1 }
       check(sense.snapshot.bpmShown && sense.snapshot.bpmSource == .detected && abs((sense.snapshot.bpm ?? 0) - 128) <= 1,
             "Coordinator: 128 BPM not shown after 10 s (\(sense.snapshot.bpm ?? 0), shown \(sense.snapshot.bpmShown))")
       sense.setTrack("song-b")
-      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+      settle { !sense.snapshot.bpmShown && sense.snapshot.heardSeconds == 0 }
       check(!sense.snapshot.bpmShown && sense.snapshot.heardSeconds == 0, "A new track should start afresh")
       sense.setHints(title: "Night Drive | 92 BPM | Am")
-      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+      settle { sense.snapshot.bpm == 92 && sense.snapshot.key != nil }
       check(sense.snapshot.bpmShown && sense.snapshot.bpm == 92 && sense.snapshot.bpmSource == .title
             && sense.snapshot.key == MusicKey(pitchClass: 9, minor: true) && sense.snapshot.keySource == .title,
             "Title hints should show at once")
       sense.setTrack("song-a")
-      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+      settle { sense.snapshot.bpmShown && sense.snapshot.bpm == 128 }
       check(sense.snapshot.bpmShown && sense.snapshot.bpm == 128 && sense.snapshot.bpmSource == .remembered,
             "A remembered track should show its tempo at once (\(sense.snapshot.bpm ?? 0) \(sense.snapshot.bpmSource))")
       sense.end()
@@ -379,8 +549,10 @@ struct MusicSenseCheck {
       check(!sense.capturing, "end() should stop capturing")
     }
 
+    if failures > 0 { exit(1) }
     let extra = notes.isEmpty ? "" : "; " + notes.joined(separator: "; ")
     print("PASS Music Sense: \(checks) checks; 128 → \(t128); 90@96k → \(t90); "
+          + "boom-bap/trap/shuffle shown at \(tBoom)/\(tTrap)/\(tShuffle) s, level held; "
           + "switch 90→140 relocked in \(String(format: "%.2f", relock)) s; speech hidden; podcast intro shown at "
           + "\(String(format: "%.2f", podShown)) s, hidden \(String(format: "%.2f", podHidden)) s into speech"
           + "\(podKey.map { " (key \($0.name))" } ?? ""); "

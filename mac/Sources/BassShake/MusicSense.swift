@@ -25,6 +25,9 @@ final class MusicSense: ObservableObject {
   /// When beats are heard (host time domain = CACurrentMediaTime), nil until
   /// the tempo locks. Not @Published (read by a 12 fps clock).
   private(set) var beatGrid: BeatGrid?
+  /// The output delay added to `beatGrid` (heard = processed + this). The
+  /// Metronome takes it back off: its clicks go through the same output.
+  var heardDelay: Double { max(0, latency) }
   /// A4 reference for the tuner (432…446), default 440.
   var referenceHz: Double = 440 {
     didSet {
@@ -220,14 +223,15 @@ final class MusicSense: ObservableObject {
     publish(s, force: force)
   }
 
-  /// At most four publishes a second; a newer result waits for the slot.
+  /// At most four publishes a second, and only when something visible
+  /// changed (or `force`); a newer result waits for the slot.
   private func publish(_ s: MusicSenseSnapshot, force: Bool = false) {
     let now = CACurrentMediaTime()
     let wait = lastPublish + 0.25 - now
     if force || wait <= 0 {
       pending = nil
       lastPublish = now
-      if snapshot != s { snapshot = s }
+      if force ? snapshot != s : s.differsVisibly(from: snapshot) { snapshot = s }
       return
     }
     pending = s

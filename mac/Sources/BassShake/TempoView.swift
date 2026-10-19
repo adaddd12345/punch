@@ -4,8 +4,8 @@ import SwiftUI
 // The Tempo popups: BPM (a Tempo readout and the Metronome) and Key (a Key
 // readout and the Tuner). Each opens from its chip on the now-playing card;
 // the footer's Tempo button opens both. Open together they share one parent
-// bento, each keeping its own colours and container: side by side on a big
-// screen, stacked over the popup on a small one (LiveDrawer's overlap).
+// bento, each keeping its own colours and container, stacked BPM above Key
+// (over the popup on a small screen: LiveDrawer's overlap).
 //
 // The look: the drawers' language (blocks, near-black or near-white ink,
 // small cells) with a dot-matrix face, in colourways drawn from the theme
@@ -55,17 +55,10 @@ private struct TempoThemed: ViewModifier {
   static func panelCorner(_ s: Spacing) -> CGFloat { groupCorner(s) + s.panelMargin }
 
   var body: some View {
-    let both = popups.bpm && popups.key
-    let wide = Self.bigScreen
-    Group {
-      if both && wide {
-        HStack(alignment: .top, spacing: gaps.section) { bpmGroup; keyGroup }
-      } else {
-        VStack(spacing: gaps.section) {
-          if popups.bpm { bpmGroup }
-          if popups.key { keyGroup }
-        }
-      }
+    // Always one column, BPM above Key, in one parent panel.
+    VStack(spacing: gaps.section) {
+      if popups.bpm { bpmGroup }
+      if popups.key { keyGroup }
     }
     .padding(gaps.panelMargin)
     .animation(reduceMotion ? nil : Spacing.spring, value: gaps)
@@ -82,12 +75,6 @@ private struct TempoThemed: ViewModifier {
   }
   private var keyGroup: some View {
     TempoKeyGroup().frame(width: Self.groupWidth)
-  }
-
-  /// A big screen keeps the two side by side; a small one stacks them.
-  static var bigScreen: Bool {
-    guard let vis = (LiveDrawer.shared.host?.screen ?? NSScreen.main)?.visibleFrame else { return true }
-    return vis.width >= 1_680 && vis.height >= 1_000
   }
 }
 
@@ -538,7 +525,8 @@ private struct TempoThemed: ViewModifier {
   @AppStorage("tempo.tunerReference") private var reference = 440.0
   @State private var spotOn = false
   @State private var nearSince: Date?
-  @StateObject private var needle = TempoNeedle()
+  // Held, not observed: only the gauge redraws as the needle moves (60 Hz).
+  @State private var needle = TempoNeedle()
   @Environment(\.tempoPalette) private var palette
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -549,7 +537,7 @@ private struct TempoThemed: ViewModifier {
       Text("From your Mac").font(.system(size: 10, weight: .medium)).foregroundStyle(block.secondary.color))) {
       VStack(spacing: 0) {
         Color.clear.frame(height: 8)
-        TempoGauge(angle: needle.angle, live: reading != nil, spotOn: spotOn, block: block, palette: palette)
+        TempoNeedleGauge(needle: needle, live: reading != nil, spotOn: spotOn, block: block, palette: palette)
           .frame(height: 68)
           .accessibilityHidden(true)
         PixelText(reading?.name ?? "−", dot: 4.2,
@@ -644,6 +632,18 @@ private struct TempoThemed: ViewModifier {
 /// The round gauge: a soft track over ±50 cents (±60°), fine ticks at 0,
 /// ±25 and ±50, the in-tune zone, a fill from centre to the needle, and the
 /// needle on a hub. Continuous: no stepped angles.
+/// The gauge observing the needle, so its 60 Hz glide redraws only this.
+private struct TempoNeedleGauge: View {
+  @ObservedObject var needle: TempoNeedle
+  let live: Bool
+  let spotOn: Bool
+  let block: TempoPalette.Block
+  let palette: TempoPalette
+  var body: some View {
+    TempoGauge(angle: needle.angle, live: live, spotOn: spotOn, block: block, palette: palette)
+  }
+}
+
 private struct TempoGauge: View {
   let angle: Double
   let live: Bool
@@ -972,65 +972,7 @@ struct TempoMascot: View {
   }
 }
 
-// MARK: - Chips and the footer button
-
-/// On the now-playing card: "93 BPM" and "A min · 8A", each shown only once
-/// it's been heard (or a backup is known), opening its popup.
-@MainActor struct TempoChips: View {
-  @ObservedObject private var sense = MusicSense.shared
-  @ObservedObject private var popups = TempoPopups.shared
-  @Environment(\.popupChrome) private var chrome
-  @Environment(\.popupTint) private var tint
-  @Environment(\.colorScheme) private var scheme
-  @Environment(\.colorSchemeContrast) private var contrast
-
-  var body: some View {
-    let s = sense.snapshot
-    let palette = TempoPalette.make(chrome: chrome, tint: tint, scheme: scheme, contrast: contrast)
-    let bpm = s.bpmShown ? s.bpm : nil
-    let key = s.keyShown ? s.key : nil
-    if bpm != nil || key != nil {
-      HStack(spacing: 6) {
-        if let bpm {
-          chip(block: palette.tempo, open: popups.bpm,
-               dim: s.bpmSource != .detected || s.bpmRecalibrating,
-               label: "Tempo, \(Int(bpm.rounded())) BPM", action: { TempoPopups.shared.toggleBPM() }) {
-            PixelText("\(Int(bpm.rounded()))", dot: 2, color: palette.tempo.ink.color)
-            Text("BPM").font(.system(size: 10, weight: .semibold))
-          }
-        }
-        if let key {
-          chip(block: palette.key, open: popups.key,
-               dim: s.keySource != .detected || s.keyRecalibrating,
-               label: "Key, \(key.name)", action: { TempoPopups.shared.toggleKey() }) {
-            PixelText(key.tonic, dot: 2, color: palette.key.ink.color)
-            Text("\(key.minor ? "min" : "maj") · \(key.camelot)").font(.system(size: 10, weight: .semibold))
-          }
-        }
-        Spacer(minLength: 0)
-      }
-      .frame(height: 26)
-      .transition(.opacity)
-    }
-  }
-
-  private func chip<Label: View>(block: TempoPalette.Block, open: Bool, dim: Bool, label: String,
-                                 action: @escaping () -> Void, @ViewBuilder content: () -> Label) -> some View {
-    Button(action: action) {
-      HStack(spacing: 5) { content() }
-        .foregroundStyle(block.ink.color)
-        .padding(.horizontal, 10)
-        .frame(height: 26)
-        .background(Capsule().fill(block.fill.color))
-        .overlay(Capsule().strokeBorder(block.ink.color.opacity(open ? 0.55 : 0), lineWidth: 1.2))
-        .opacity(dim ? 0.7 : 1)
-        .contentShape(Capsule())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel(label)
-    .accessibilityValue(open ? "Open" : "Closed")
-  }
-}
+// MARK: - The footer button
 
 /// Footer tool 6: opens both popups (the Metronome and Tuner are always
 /// there); lit while the metronome runs or follows the song. It also keeps

@@ -359,6 +359,14 @@ final class MSTempo {
   static let gate = 0.25
   /// Updates a different tempo must win in a row to replace the current one.
   static let switchWins = 3
+  /// Once the tempo is shown (`levelLocked`), updates (0.5 s apart) a
+  /// related level (×2, ×½, ×3/2, ×2/3, ×3, ×⅓: the same groove counted
+  /// another way) must win in a row to replace it: 7 s. Half-time against
+  /// double-time hats, or a shuffle's triplets, never flip the number.
+  static let levelWins = 14
+  /// The prior's centre: 105 BPM (σ = 1 octave), so 70–100 BPM hip-hop is
+  /// not pushed up to its double; above 150 BPM a shoulder favours half-time.
+  static let priorCentre = 105.0
   /// Updates (0.5 s apart) a tempo that is not an octave of the locked one
   /// must win the short window in a row to relock (a beat switch).
   static let relockVotes = 3
@@ -380,6 +388,8 @@ final class MSTempo {
   private let phase: MSBuffer
 
   private(set) var lag: Int?
+  /// The tempo is shown: a related level needs `levelWins` to take over.
+  var levelLocked = false
   private var challenger: Int?
   private var challengerWins = 0
   private var candidate: Int?
@@ -387,6 +397,7 @@ final class MSTempo {
   /// Refined beat period of the current choice, in onset frames.
   private(set) var period = 0.0
   private(set) var bpm: Double?
+  private var shownLag = 0
   private(set) var confidence = 0.0
   private(set) var alternative: Double?
   /// One beat (PLL-smoothed), as a fractional onset frame.
@@ -430,8 +441,9 @@ final class MSTempo {
     shortScore = [Double](repeating: 0, count: lagMax + 2)
     prior = [Double](repeating: 0, count: lagMax + 2)
     for l in max(1, lagMin)...lagMax {
-      let oct = log2(60 * frameRate / Double(l) / 120)
-      prior[l] = exp(-0.5 * oct * oct)   // σ = 1 octave
+      let bpm = 60 * frameRate / Double(l)
+      let oct = log2(bpm / Self.priorCentre)
+      prior[l] = exp(-0.5 * oct * oct) * (1 - 0.1 * max(0, min(1, (bpm - 150) / 30)))   // σ = 1 octave
     }
     phase = MSBuffer(lagMax + 2)
   }
@@ -443,6 +455,7 @@ final class MSTempo {
     challengerWins = 0
     candidate = nil
     candidateVotes = 0
+    levelLocked = false
     period = 0
     bpm = nil
     confidence = 0
@@ -471,6 +484,14 @@ final class MSTempo {
   private func near(_ a: Int, _ b: Int) -> Bool { abs(a - b) <= max(1, Int((0.03 * Double(b)).rounded())) }
   /// Same tempo, or half or double it.
   private func octaveRelated(_ a: Int, _ b: Int) -> Bool { near(a, b) || near(a, 2 * b) || near(2 * a, b) }
+  /// Lag a × q ≈ b × p within 2.2% (the integer lags resolve ~1%).
+  private func ratio(_ a: Int, _ b: Int, _ p: Int, _ q: Int) -> Bool {
+    abs(Double(a * q) - Double(b * p)) <= 0.022 * Double(b * p)
+  }
+  /// The same groove at another metrical level: an octave, 3:2 or 3:1.
+  func related(_ a: Int, _ b: Int) -> Bool {
+    octaveRelated(a, b) || ratio(a, b, 3, 2) || ratio(a, b, 2, 3) || ratio(a, b, 3, 1) || ratio(a, b, 1, 3)
+  }
 
   /// Index of the largest value of `a` within ±w of c (inside 1…top).
   private func peak(_ a: UnsafeMutablePointer<Float>, _ c: Int, _ w: Int, top: Int) -> Int {
@@ -545,7 +566,7 @@ final class MSTempo {
     defer {
       // Deciding on a beat switch, or the new tempo's phase is still settling.
       var switching = votes > 0
-      if challengerWins > 0, let c = challenger, let l = lag, !octaveRelated(c, l) { switching = true }
+      if challengerWins > 0, let c = challenger, let l = lag, !related(c, l) { switching = true }
       if let f = relockFrame, onset.frames - f < Int(3 * frameRate), !phaseStable { switching = true }
       recalibrating = switching
     }
@@ -568,9 +589,25 @@ final class MSTempo {
     if winner > 0 {
       var agree = 0.0
       for w in winners.prefix(winnerCount) where w > 0 {
-        if near(w, winner) { agree += 1 } else if octaveRelated(w, winner) { agree += 0.5 }
+        if near(w, winner) { agree += 1 } else if related(w, winner) { agree += 0.5 }
       }
       pulse *= agree / Double(max(3, winnerCount))
+    }
+    // The short window still beating at the locked groove (any level of it)
+    // is a steady pulse too, even while its own winner hops between levels
+    // (a sparse beat under a rapped voice).
+    if let cur = lag, let short {
+      var fam = 0.0
+      for (p, q) in [(1, 1), (2, 1), (1, 2), (3, 2), (2, 3)] {
+        let c = Int((Double(cur * p) / Double(q)).rounded())
+        guard c - 1 >= lagMin, c + 1 <= lagMax else { continue }
+        fam = max(fam, shortScore[c - 1], shortScore[c], shortScore[c + 1])
+      }
+      // Weighted by how many recent winners belong to that groove (speech's
+      // wander off it, even when the long window has latched onto one).
+      var family = 0.0
+      for w in winners.prefix(winnerCount) where w > 0 && related(w, cur) { family += 1 }
+      pulse = max(pulse, 0.9 * short.conf(fam) * family / Double(max(3, winnerCount)))
     }
 
     if let cur = lag {
@@ -579,10 +616,19 @@ final class MSTempo {
         challenger = nil
         challengerWins = 0
       } else if winnerOK {
-        if let ch = challenger, near(long.best, ch) { challengerWins += 1 } else { challengerWins = 1 }
+        let level = related(long.best, cur)
+        var held = 0.0
+        for l in max(lagMin, cur - 1)...min(lagMax, cur + 1) { held = max(held, score[l]) }
+        if level && levelLocked && long.score < 1.1 * held {
+          challengerWins = 0   // another level only just ahead: not evidence
+        } else if let ch = challenger, near(long.best, ch) {
+          challengerWins += 1
+        } else {
+          challengerWins = 1
+        }
         challenger = long.best
-        if challengerWins >= Self.switchWins {
-          if !octaveRelated(long.best, cur) { startSegment(onset, from: onset.frames - shortFrames) }
+        if challengerWins >= (level && levelLocked ? Self.levelWins : Self.switchWins) {
+          if !level { startSegment(onset, from: onset.frames - shortFrames) }
           lag = long.best
           challenger = nil
           challengerWins = 0
@@ -603,7 +649,7 @@ final class MSTempo {
     if let cur = lag, let short, short.best > lagMin, short.best < lagMax {
       var held = 0.0
       for l in max(lagMin, cur - 1)...min(lagMax, cur + 1) { held = max(held, shortScore[l]) }
-      if !octaveRelated(short.best, cur), short.conf(short.score) >= 0.35, held < 0.7 * short.score {
+      if !related(short.best, cur), short.conf(short.score) >= 0.35, held < 0.7 * short.score {
         if let t = voteTarget, near(short.best, t) {
           votes += 1
         } else {
@@ -637,7 +683,12 @@ final class MSTempo {
     confidence = long.conf(s)
     period = refine(local, top: long.top)
     let raw = 60 * frameRate / period
-    if confidence >= Self.gate { bpm = (raw * 10).rounded() / 10 }
+    // The reading moves only by half a BPM or more (or with a new level), so
+    // a tempo near x.5 doesn't flicker between two whole numbers.
+    if confidence >= Self.gate {
+      let r = (raw * 10).rounded() / 10
+      if let b = bpm, abs(r - b) < 0.5, near(local, shownLag) {} else { bpm = r; shownLag = local }
+    }
     // The octave partner, when it was close behind.
     alternative = nil
     var altScore = 0.8 * s
@@ -1253,8 +1304,12 @@ struct MSShowGate {
   private(set) var goodFor = 0.0
   private var poorFor = 0.0
 
+  /// A moment that isn't good (a dip in the cues) takes back twice its
+  /// length instead of starting over: a reading that is good most of the
+  /// time still shows (a sparse beat under a rapped voice dips now and then).
+  /// Only a veto starts over.
   mutating func step(_ dt: Double, good: Bool, poor: Bool, veto: Bool, showAfter: Double, hideAfter: Double) {
-    goodFor = good && !veto ? goodFor + dt : 0
+    goodFor = veto ? 0 : good ? goodFor + dt : max(0, goodFor - 2 * dt)
     poorFor = poor ? poorFor + dt : 0
     if veto || (shown && poorFor >= hideAfter) {
       shown = false
@@ -1297,6 +1352,8 @@ final class MusicSenseAnalyzer {
   static let emitInterval = 0.25
   /// Clear tempo/key for this long shows it (less when a backup agrees).
   static let showSeconds = 3.0, confirmedShowSeconds = 1.5
+  /// A tempo that stands out clearly (confidence ≥ 0.6) shows sooner.
+  static let clearShowSeconds = 2.5
   /// Unclear for this long hides it.
   static let bpmHideSeconds = 6.0, keyHideSeconds = 8.0
   /// Silence longer than this hides both.
@@ -1565,7 +1622,9 @@ final class MusicSenseAnalyzer {
     let (t, _, _) = tempoReading()
     bpmGate.step(dt, good: t.value != nil && t.confidence >= 0.35 && musicLikelihood >= 0.4,
                  poor: t.value == nil || t.confidence < MSTempo.gate, veto: veto,
-                 showAfter: t.confirmed ? Self.confirmedShowSeconds : Self.showSeconds, hideAfter: Self.bpmHideSeconds)
+                 showAfter: t.confirmed ? Self.confirmedShowSeconds : t.confidence >= 0.6 ? Self.clearShowSeconds : Self.showSeconds,
+                 hideAfter: Self.bpmHideSeconds)
+    tempo.levelLocked = bpmGate.shown
     let (k, _) = keyReading()
     keyGate.step(dt, good: k.value != nil && k.confidence >= 0.15 && musicLikelihood >= 0.55,
                  poor: k.value == nil || k.confidence < 0.07 || musicLikelihood < 0.3, veto: veto,

@@ -66,6 +66,9 @@ final class LiveDrawer {
   /// On a small screen, float over the popup's lower part instead of hanging
   /// off it (the Tempo popups); on a big one, sit apart from it as usual.
   private var overlapWhenSmall = false
+  /// How far down from the popup's top the tray row reaches (points), set by
+  /// the popup. Overlap may cover only what's below it (unknown: the lower half).
+  var overlapKeepClear: CGFloat?
   /// Set while the popup hangs from the Dock: never under it (where the Dock
   /// is). On a bottom Dock (`liftable`) the popup can move up instead.
   var preferSide = false
@@ -249,9 +252,14 @@ final class LiveDrawer {
     // A big screen has room to keep things apart; a small one would push a
     // beside panel far from the pointer.
     let big = vis.map { $0.width >= 1_680 && $0.height >= 1_000 } ?? true
+    // Over the popup's lower part only while it stays clear of the tray row
+    // (and on screen); otherwise below or beside like the other drawers.
+    let overlapY = r.minY + 10
+    let clear = min(r.height, max(0, overlapKeepClear ?? r.height / 2))
+    let fitsOverlap = overlapY + h <= r.maxY - clear - 4 && vis.map { overlapY + h <= $0.maxY - 4 } ?? true
     if decide {
       decidedOn = host?.screen
-      if overlapWhenSmall && !big { placement = .overlap; noRoom = false }
+      if overlapWhenSmall && !big && fitsOverlap { placement = .overlap; noRoom = false }
       else if side { placement = .beside; noRoom = false }
       // Decided by geometry, not only the Dock flag (a late close event can
       // clear it): no room under the popup means it hangs near the Dock.
@@ -259,7 +267,10 @@ final class LiveDrawer {
       else { placement = .below; noRoom = false }
     } else {
       // Grown past the room it had: beside from now on (this show).
+      // One way only (overlap → below → beside), so it can't flip back and forth.
       switch placement {
+      case .overlap where !fitsOverlap:
+        if fitsBelow && !preferSide { placement = .below; noRoom = false } else { placement = .beside; noRoom = true }
       case .below where !fitsBelow, .liftedBelow where !fitsLifted: placement = .beside; noRoom = true
       default: break
       }
@@ -275,7 +286,7 @@ final class LiveDrawer {
     case .overlap:
       // Over the popup's lower part, centred, a little in from its bottom edge.
       var x = r.midX - w / 2
-      var y = r.minY + 10
+      var y = overlapY
       if let vis {
         x = min(max(x, vis.minX + 4), vis.maxX - 4 - w)
         y = min(max(y, vis.minY + 4), vis.maxY - 4 - h)

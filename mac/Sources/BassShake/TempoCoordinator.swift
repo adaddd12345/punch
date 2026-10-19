@@ -13,6 +13,11 @@ final class TempoPopups: ObservableObject {
   @Published private(set) var key = false
   var open: Bool { bpm || key }
 
+  /// Whether any popup is open, only when that changes (the popover observes
+  /// this, not the object, so switching BPM ⇄ Key doesn't re-render it).
+  private(set) lazy var openChanges: AnyPublisher<Bool, Never> =
+    $bpm.combineLatest($key).map { $0 || $1 }.removeDuplicates().eraseToAnyPublisher()
+
   func toggleBPM() { bpm.toggle() }
   func toggleKey() { key.toggle() }
   /// The footer's Tempo button: both, or close whatever is open.
