@@ -75,15 +75,19 @@ struct EQFrequencyArtwork: View {
   }
 
   private func layer(_ mode: EQVisual, notes: Bool, hi: Bool, dark: Bool) -> some View {
-    Canvas(rendersAsynchronously: true) { context, size in
-      draw(&context, size: size, mode: mode, notes: notes, hi: hi, dark: dark)
+    // Read here, on the main thread: the Canvas renders off it, where a
+    // view's state isn't reliable.
+    let field = phosphorField
+    return Canvas(rendersAsynchronously: true) { context, size in
+      draw(&context, size: size, mode: mode, notes: notes, hi: hi, dark: dark, field: field)
     }
     .opacity(dataOpacity)
   }
 
   private typealias Ink = (inout GraphicsContext) -> Void
 
-  private func draw(_ context: inout GraphicsContext, size: CGSize, mode: EQVisual, notes: Bool, hi: Bool, dark: Bool) {
+  private func draw(_ context: inout GraphicsContext, size: CGSize, mode: EQVisual, notes: Bool, hi: Bool, dark: Bool,
+                    field: EQPhosphorField) {
     guard size.width > 0, size.height > 0 else { return }
     let plot = EQPlotGeometry(size: size, scale: context.environment.displayScale)
     let ink: Ink?
@@ -92,7 +96,7 @@ struct EQFrequencyArtwork: View {
     case .trace: ink = trace(plot, hi: hi)
     case .heat: ink = heat(plot, context: context, hi: hi, dark: dark)
     case .regions: ink = regions(plot, hi: hi, dark: dark)
-    case .phosphor: ink = phosphor(plot, context: context, hi: hi, dark: dark)
+    case .phosphor: ink = phosphor(plot, context: context, hi: hi, dark: dark, field: field)
     case .off: ink = nil
     }
     guard let ink else { return }
@@ -254,14 +258,15 @@ struct EQFrequencyArtwork: View {
   }
 
   /// A persistence spectrum, as on a DPX analyser: each cell of frequency ×
-  /// level glows by how much of the last moment the line spent there. A held
+  /// level glows by how much of the last half second the line spent there. A held
   /// note burns a bright point, a snare smears tall and soft, a limited master
   /// is one tight ribbon. Time is afterglow, never an axis. The live line
   /// rides on top as the beam.
-  private func phosphor(_ plot: EQPlotGeometry, context: GraphicsContext, hi: Bool, dark: Bool) -> Ink? {
+  private func phosphor(_ plot: EQPlotGeometry, context: GraphicsContext, hi: Bool, dark: Bool,
+                        field: EQPhosphorField) -> Ink? {
     let n = frame.line.count
     guard n > 1, frame.topDb > frame.bottomDb,
-          let image = phosphorField.image(frame, lut: EQHeatRamp.shared.table(rampKey(context, hi: hi, dark: dark)),
+          let image = field.image(frame, lut: EQHeatRamp.shared.table(rampKey(context, hi: hi, dark: dark)),
                                           now: CACurrentMediaTime(), still: still) else { return nil }
     // Pixel centres on the plot: column c at c/(n−1) of the width, row i
     // (bottomDb + i dB) at its level, so the cloud sits exactly under the line.
@@ -619,8 +624,13 @@ private final class EQHeatRamp {
 /// decays by wall-clock time, so a redraw without a new frame adds nothing and
 /// any frame rate reads the same. Canvas renders off the main thread, so it's locked.
 final class EQPhosphorField {
-  /// The afterglow's time constant.
-  static let seconds: Double = 1.5
+  /// The afterglow's time constant: short, so it shows the moment's movement
+  /// rather than piling up everything heard.
+  static let seconds: Double = 0.5
+  /// Below this share of the recent past a cell is dark (no faint haze).
+  static let floor: Float = 0.03
+  /// Steeper jumps between columns aren't filled (they read as smears).
+  static let maxRun: Float = 6
   private static let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
 
   private let lock = NSLock()
@@ -659,10 +669,11 @@ final class EQPhosphorField {
     } else {
       // First sight: seed a settled cloud around the line, so a preview or a
       // reopened view doesn't start from black. It decays like any other moment.
-      deposit(line, weight: 0.6, bottom: frame.bottomDb, spread: 3)
+      deposit(line, weight: 0.5, bottom: frame.bottomDb, spread: 2)
     }
 
-    // Brightness is logarithmic in time: a moment that came once still shows.
+    // Brightness eases up with time spent (a gentle curve, not a log one, so
+    // a passing moment stays faint and the held line stands out).
     lut.withUnsafeBufferPointer { table in
       pixels.withUnsafeMutableBufferPointer { out in
         for i in 0..<rows {
@@ -670,8 +681,8 @@ final class EQPhosphorField {
           for c in 0..<cols {
             let d = grid[i * cols + c]
             let o = (row + c) * 4
-            guard d > 0.0025 else { out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0; continue }
-            let b = max(0, min(1, 1 + log10f(d) / 2.6))
+            guard d > Self.floor else { out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0; continue }
+            let b = max(0, min(1, powf(d, 0.6)))
             let k = Int(b * 255 + 0.5) * 4
             out[o] = table[k]; out[o + 1] = table[k + 1]; out[o + 2] = table[k + 2]; out[o + 3] = table[k + 3]
           }
@@ -709,7 +720,7 @@ final class EQPhosphorField {
           let x = Float(d) / spread
           grid[i * cols + c] = min(1, grid[i * cols + c] + w * expf(-0.5 * x * x))
         }
-      } else if hi - lo < 1 {
+      } else if hi - lo < 1 || hi - lo > Self.maxRun {
         let r = min(top, v), i0 = Int(r), f = r - Float(i0)
         grid[i0 * cols + c] = min(1, grid[i0 * cols + c] + w * (1 - f))
         if i0 + 1 < rows { grid[(i0 + 1) * cols + c] = min(1, grid[(i0 + 1) * cols + c] + w * f) }

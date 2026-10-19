@@ -33,6 +33,8 @@ struct PopoverView: View {
   @Environment(\.colorSchemeContrast) private var contrast
   @State private var showDJ = false
   @State private var showBeats = false
+  /// The Tempo drawer (Key & BPM, Tuner & Metronome).
+  @State private var showTempo = false
   @State private var showAppearance = false
   @ObservedObject private var beats = BeatPlayer.shared
   @ObservedObject private var latencyLab = LatencyLab.shared
@@ -129,6 +131,7 @@ struct PopoverView: View {
     showLive = false
     showDJ = false
     showBeats = false
+    showTempo = false
     if p == .drivers { controller.scanDrivers() }
     withAnimation {
       switch p {
@@ -347,7 +350,7 @@ struct PopoverView: View {
     .background(sizeShortcuts)
     .onChange(of: controller.settings.viewSize) { _, new in
       // Mini has no footer, so no Live/DJ tray either (and no rearranging).
-      if new == .mini { showLive = false; showDJ = false; showBeats = false; reshuffle.set(false) }
+      if new == .mini { showLive = false; showDJ = false; showBeats = false; showTempo = false; reshuffle.set(false) }
     }
     .padding(12)
     // "Updated to …": the popup grows a band at the top for the capsule, so it
@@ -425,9 +428,10 @@ struct PopoverView: View {
         guard bindDrawerClose() else { return }
         showDJ = false
         showBeats = false
+        showTempo = false
         LiveDrawer.shared.appearance = drawerAppearance
         LiveDrawer.shared.show(model: controller.live)
-      } else if !showDJ && !showBeats {
+      } else if !showDJ && !showBeats && !showTempo {
         LiveDrawer.shared.hide()
       }
     }
@@ -436,9 +440,10 @@ struct PopoverView: View {
         guard bindDrawerClose() else { return }
         controller.dj.listening = true  // the panel may only be re-ordered in (no onAppear)
         showBeats = false
+        showTempo = false
         LiveDrawer.shared.appearance = drawerAppearance
         LiveDrawer.shared.show(DJView(controller: controller), height: Drawer.height)
-      } else if !showLive && !showBeats {
+      } else if !showLive && !showBeats && !showTempo {
         LiveDrawer.shared.hide()
       }
     }
@@ -447,8 +452,21 @@ struct PopoverView: View {
         guard bindDrawerClose() else { return }
         showLive = false
         showDJ = false
+        showTempo = false
         showBeatsDrawer()
-      } else if !showLive && !showDJ {
+      } else if !showLive && !showDJ && !showTempo {
+        LiveDrawer.shared.hide()
+      }
+    }
+    .onChange(of: showTempo) { _, on in
+      if on {
+        guard bindDrawerClose() else { return }
+        showLive = false
+        showDJ = false
+        showBeats = false
+        LiveDrawer.shared.appearance = drawerAppearance
+        LiveDrawer.shared.show(TempoView(controller: controller), height: Drawer.height)
+      } else if !showLive && !showDJ && !showBeats {
         LiveDrawer.shared.hide()
       }
     }
@@ -467,95 +485,7 @@ struct PopoverView: View {
       if report == nil { showDoctorReport = false }
       else { presentDoctorReport() }
     }
-    .onAppear {
-      visible = true
-      DispatchQueue.main.async { presentDoctorReport() }
-      popupOpening += 1
-      updateTaper = updates.justUpdatedTo != nil
-      reshuffle.canStart = { [weak controller] in
-        // Take Control: the layout is this Mac's; rearrange it from its own popup.
-        guard let c = controller, !c.isMirror else { return false }
-        return c.settings.viewSize != .mini || role == .launchWindow
-      }
-      if let w = window.window { reshuffle.attach(w) }
-      if !Self.splashShown {
-        Self.splashShown = true
-        UserDefaults.standard.set(true, forKey: "trophyShown")
-        if !(reduceMotion || controller.settings.powerSaver) {
-          splash = true
-          DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: false)) {
-            withAnimation(.easeOut(duration: 0.35)) { splash = false }
-          }
-        }
-      }
-      // 30 Hz meters (10 Hz under Power Saver) only while this is on screen (nothing runs when closed).
-      var artworkScratch: [Float] = []
-      ticker.start(slow: controller.settings.powerSaver) { [controller, meters, role, window] in
-        // A hidden or fully covered window (NSPopover/launch window kept
-        // alive off screen) draws nothing: don't drive SwiftUI updates.
-        let reactionOwner = ObjectIdentifier(window)
-        guard let w = window.window, w.isVisible, w.occlusionState.contains(.visible) else {
-          if role != .launchWindow { controller.artworkReaction.stop(owner: reactionOwner) }
-          return
-        }
-        NowPlaying.shared.noteVisible()
-        meters.update(controller.pollMeters())
-        let s = controller.settings
-        let reaction = controller.artworkReaction
-        if role != .launchWindow {
-          var source: ArtworkReaction.Source?
-          var rate = 0.0
-          if s.backgroundStyle == .artwork, s.artworkBackgroundLive,
-             !s.powerSaver, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-             !controller.isMirror, s.enabled, !controller.bypassed,
-             case .running(_, let sampleRate) = controller.status,
-             controller.live.outputActivityKnown,
-             let lead = NowStack.shared.lead {
-            let detail = NowPlaying.shared.describe(lead)
-            if let artwork = detail.artwork, !detail.paused,
-               !NowPlaying.shared.isMuted(lead.app.id), lead.item?.muted != true,
-               !controller.live.shakerOff.contains(lead.app.id),
-               controller.live.apps.contains(where: { $0.id == lead.app.id && $0.isPlaying }) {
-              source = .init(entry: lead.id, artwork: ObjectIdentifier(artwork), device: controller.currentDeviceID)
-              rate = sampleRate
-            }
-          }
-          if reaction.beginFrame(source: source, sampleRate: rate, owner: reactionOwner) {
-            if artworkScratch.isEmpty { artworkScratch = [Float](repeating: 0, count: 8192) }
-            // The engine stops enqueueing when its bounded ring fills. Empty it
-            // before enabling fan-out, or reopening would react to old music.
-            for _ in 0..<8 {
-              if controller.readAnalyzer(&artworkScratch) < artworkScratch.count { break }
-            }
-            reaction.didDiscardBacklog()
-          }
-        }
-        var visualPulled = false
-        if s.waveform && s.enabled && canReadAnalyzer {
-          controller.spectrum.pull(controller)
-          visualPulled = true
-        }
-        if role != .launchWindow {
-          if reaction.captureActive, !visualPulled {
-            if artworkScratch.isEmpty { artworkScratch = [Float](repeating: 0, count: 8192) }
-            // Scope and Spectrum normally own the destructive reader. Only
-            // supply a reader here when neither ran, so no sample is stolen.
-            for _ in 0..<8 {
-              if controller.readAnalyzer(&artworkScratch) < artworkScratch.count { break }
-            }
-          }
-          reaction.finishFrame()
-        }
-      }
-      if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
-      NowPlaying.shared.attach(home)
-      PlayingApps.shared.attach(home.live)
-      NowPlaying.shared.windowAppeared()
-      RemoteControl.shared.popupShown(true)
-      latencyLab.startMonitoring()
-      controller.macVolume.refresh()
-      updates.checkInBackgroundIfStale()
-    }
+    .onAppear { appeared() }
     .onDisappear {
       visible = false
       showDoctorReport = false
@@ -568,6 +498,7 @@ struct PopoverView: View {
       showLayoutEditor = false
       showDJ = false
       showBeats = false
+      showTempo = false
       if ownsDrawer { LiveDrawer.shared.hide() }
       controller.live.setMetering(false)
       controller.live.stopEarsMetering()
@@ -593,16 +524,113 @@ struct PopoverView: View {
       showLive = false
       showDJ = false
       showBeats = false
+      showTempo = false
       return false
     }
     LiveDrawer.shared.onHide = { [weak controller] in
       showLive = false
       showDJ = false
       showBeats = false
+      showTempo = false
       controller?.dj.held = []
       controller?.dj.listening = false
     }
     return true
+  }
+
+  /// The popup is on screen: present what's waiting, and start the 30 Hz
+  /// ticker (meters, the analyser, Live React) for as long as it stays.
+  private func appeared() {
+    visible = true
+    DispatchQueue.main.async { presentDoctorReport() }
+    popupOpening += 1
+    updateTaper = updates.justUpdatedTo != nil
+    reshuffle.canStart = { [weak controller] in
+      // Take Control: the layout is this Mac's; rearrange it from its own popup.
+      guard let c = controller, !c.isMirror else { return false }
+      return c.settings.viewSize != .mini || role == .launchWindow
+    }
+    if let w = window.window { reshuffle.attach(w) }
+    if !Self.splashShown {
+      Self.splashShown = true
+      UserDefaults.standard.set(true, forKey: "trophyShown")
+      if !(reduceMotion || controller.settings.powerSaver) {
+        splash = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: false)) {
+          withAnimation(.easeOut(duration: 0.35)) { splash = false }
+        }
+      }
+    }
+    // 30 Hz meters (10 Hz under Power Saver) only while this is on screen (nothing runs when closed).
+    var artworkScratch: [Float] = []
+    ticker.start(slow: controller.settings.powerSaver) { [controller, meters, role, window] in
+      // A hidden or fully covered window (NSPopover/launch window kept
+      // alive off screen) draws nothing: don't drive SwiftUI updates.
+      let reactionOwner = ObjectIdentifier(window)
+      guard let w = window.window, w.isVisible, w.occlusionState.contains(.visible) else {
+        if role != .launchWindow { controller.artworkReaction.stop(owner: reactionOwner) }
+        return
+      }
+      NowPlaying.shared.noteVisible()
+      meters.update(controller.pollMeters())
+      let s = controller.settings
+      let reaction = controller.artworkReaction
+      if role != .launchWindow {
+        let found = PopoverView.reactionSource(controller)
+        if reaction.beginFrame(source: found?.source, sampleRate: found?.rate ?? 0, owner: reactionOwner) {
+          if artworkScratch.isEmpty { artworkScratch = [Float](repeating: 0, count: 8192) }
+          // The engine stops enqueueing when its bounded ring fills. Empty it
+          // before enabling fan-out, or reopening would react to old music.
+          for _ in 0..<8 {
+            if controller.readAnalyzer(&artworkScratch) < artworkScratch.count { break }
+          }
+          reaction.didDiscardBacklog()
+        }
+      }
+      var visualPulled = false
+      if s.waveform && s.enabled && canReadAnalyzer {
+        controller.spectrum.pull(controller)
+        visualPulled = true
+      }
+      if role != .launchWindow {
+        if reaction.captureActive, !visualPulled {
+          if artworkScratch.isEmpty { artworkScratch = [Float](repeating: 0, count: 8192) }
+          // Scope and Spectrum normally own the destructive reader. Only
+          // supply a reader here when neither ran, so no sample is stolen.
+          for _ in 0..<8 {
+            if controller.readAnalyzer(&artworkScratch) < artworkScratch.count { break }
+          }
+        }
+        reaction.finishFrame()
+      }
+    }
+    if ownsDrawer, let w = window.window, LiveDrawer.shared.host !== w { LiveDrawer.shared.host = w }
+    NowPlaying.shared.attach(home)
+    PlayingApps.shared.attach(home.live)
+    NowPlaying.shared.windowAppeared()
+    RemoteControl.shared.popupShown(true)
+    latencyLab.startMonitoring()
+    controller.macVolume.refresh()
+    updates.checkInBackgroundIfStale()
+  }
+
+  /// What Live React follows right now (the playing lead's artwork), and the
+  /// feed's rate; nil when it shouldn't react.
+  private static func reactionSource(_ controller: AudioController) -> (source: ArtworkReaction.Source, rate: Double)? {
+    let s = controller.settings
+    guard s.backgroundStyle == .artwork, s.artworkBackgroundLive,
+          !s.powerSaver, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+          !controller.isMirror, s.enabled, !controller.bypassed,
+          case .running(_, let sampleRate) = controller.status,
+          controller.live.outputActivityKnown,
+          let lead = NowStack.shared.lead else { return nil }
+    let detail = NowPlaying.shared.describe(lead)
+    guard let artwork = detail.artwork, !detail.paused,
+          !NowPlaying.shared.isMuted(lead.app.id), lead.item?.muted != true,
+          !controller.live.shakerOff.contains(lead.app.id),
+          controller.live.apps.contains(where: { $0.id == lead.app.id && $0.isPlaying }) else { return nil }
+    return (ArtworkReaction.Source(entry: lead.id, artwork: ObjectIdentifier(artwork), device: controller.currentDeviceID),
+            sampleRate)
   }
 
   private func showBeatsDrawer() {
@@ -1088,7 +1116,7 @@ struct PopoverView: View {
       }
       Button {
         setAppearance(false)
-        if showDJ { showDJ = false } else { showLive = false; showBeats = false; showDJ = true }
+        if showDJ { showDJ = false } else { showLive = false; showBeats = false; showTempo = false; showDJ = true }
       } label: {
         Image(systemName: "dial.medium")
           .font(.system(size: 13, weight: .regular))
@@ -1102,7 +1130,7 @@ struct PopoverView: View {
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
       Button {
         setAppearance(false)
-        if showBeats { showBeats = false } else { showLive = false; showDJ = false; showBeats = true }
+        if showBeats { showBeats = false } else { showLive = false; showDJ = false; showTempo = false; showBeats = true }
       } label: {
         Group {
           if beats.playing {
@@ -1121,6 +1149,10 @@ struct PopoverView: View {
       .buttonStyle(FooterButtonStyle(chip: true))
       .accessibilityLabel("Beats")
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
+      TempoFooterButton(expanded: showTempo) {
+        setAppearance(false)
+        if showTempo { showTempo = false } else { showLive = false; showDJ = false; showBeats = false; showTempo = true }
+      }
       LatencyChip(lab: latencyLab, iconOnly: true) { withAnimation { showLatencyLab = true } }
     }
   }
@@ -1167,6 +1199,7 @@ struct PopoverView: View {
       showLive = false
       showDJ = false
       showBeats = false
+      showTempo = false
       showDoctorReport = false
       reshuffle.set(false)
     }

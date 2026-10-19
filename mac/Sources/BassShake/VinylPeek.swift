@@ -663,7 +663,7 @@ struct VinylRevealPose {
 }
 
 /// Every fifth deliberate pull (a rest of a quarter second) per launch, a
-/// light sweeps the record once.
+/// little fairy dust comes off the record once.
 @MainActor enum VinylGlint {
   static var pulls = 0
   static let every = 5
@@ -730,26 +730,45 @@ struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
     .frame(width: g.size, height: g.size, alignment: .topLeading)
   }
 
-  /// One soft band of light across the grooves and a brief star at the rim.
+  /// Fairy dust: a few dozen pinpoints shaken off the record's top edge,
+  /// each twinkling on its own beat and drifting down as it fades. Round
+  /// specks with a warm halo, never a drawn star.
   private func glintLight(_ d: CGFloat) -> some View {
-    let t = glint, bloom = sin(.pi * t)
-    return ZStack {
-      LinearGradient(stops: [.init(color: .white.opacity(0), location: 0),
-                             .init(color: .white.opacity(dark ? 0.32 : 0.42), location: 0.5),
-                             .init(color: .white.opacity(0), location: 1)],
-                     startPoint: .leading, endPoint: .trailing)
-        .frame(width: d * 0.35, height: d * 1.6)
-        .rotationEffect(.degrees(28))
-        .offset(x: (t * 2 - 1) * d * 0.8)
-        .frame(width: d, height: d)
-        .mask(Circle())
-      Image(systemName: "sparkle")
-        .font(.system(size: max(6, d * 0.13), weight: .medium))
-        .foregroundStyle(.white)
-        .scaleEffect(0.4 + 0.6 * bloom)
-        .opacity(bloom)
-        .offset(x: d * 0.3, y: -d * 0.31)
+    let t = glint, warm = Color(red: 1, green: 0.92, blue: 0.72)
+    let side = d * 1.5
+    return Canvas { ctx, size in
+      let c = CGPoint(x: size.width / 2, y: size.height / 2)
+      let count = 26
+      for i in 0..<count {
+        // Fixed per speck (a cheap hash), so the same pull draws the same dust.
+        func r(_ k: Int) -> CGFloat {
+          let x = sin(Double(i * 7919 + k * 104_729) * 12.9898) * 43_758.5453
+          return CGFloat(x - floor(x))
+        }
+        let born = CGFloat(i) / CGFloat(count) * 0.5, life: CGFloat = 0.5
+        let u = (t - born) / life
+        guard u > 0, u < 1 else { continue }
+        // From the rim's upper right, outward a little, then falling.
+        let angle = (-80 + 110 * r(1)) * .pi / 180
+        let rim = d / 2 * (0.9 + 0.12 * r(2))
+        let out = d * (0.03 + 0.07 * r(3)) * u
+        let fall = d * (0.06 + 0.08 * r(4)) * u * u
+        let p = CGPoint(x: c.x + cos(angle) * (rim + out) + d * 0.02 * u,
+                        y: c.y + sin(angle) * (rim + out) + fall)
+        let twinkle = 0.5 + 0.5 * sin(.pi * 2 * (r(5) * 3 + 2.5) * u + .pi * 2 * r(6))
+        let alpha = Double(pow(1 - u, 1.3) * (0.35 + 0.65 * twinkle))
+        let core = max(0.5, (0.5 + 1.1 * r(7)) * (1 - 0.4 * u))
+        if i % 4 == 0 {   // a few carry a soft glow
+          let halo = core * 3.2
+          ctx.fill(Path(ellipseIn: CGRect(x: p.x - halo, y: p.y - halo, width: halo * 2, height: halo * 2)),
+                   with: .radialGradient(Gradient(colors: [warm.opacity(alpha * 0.45), warm.opacity(0)]),
+                                         center: p, startRadius: 0, endRadius: halo))
+        }
+        ctx.fill(Path(ellipseIn: CGRect(x: p.x - core / 2, y: p.y - core / 2, width: core, height: core)),
+                 with: .color(.white.opacity(alpha)))
+      }
     }
+    .frame(width: side, height: side)
     .blendMode(.plusLighter)
     .allowsHitTesting(false)
   }
@@ -810,8 +829,8 @@ struct VinylPeekArt: View {
       VinylGlint.pulls += 1
       guard VinylGlint.pulls % VinylGlint.every == 0 else { return }
       glint = 0
-      withAnimation(.easeInOut(duration: 0.7).delay(0.05)) { glint = 1 }
-      try? await Task.sleep(for: .milliseconds(800))
+      withAnimation(.linear(duration: 1.2).delay(0.08)) { glint = 1 }
+      try? await Task.sleep(for: .milliseconds(1_350))
       var reset = Transaction(); reset.disablesAnimations = true
       withTransaction(reset) { glint = 0 }
     }

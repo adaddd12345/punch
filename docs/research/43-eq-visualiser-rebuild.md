@@ -78,7 +78,7 @@ Old saves ("scope" was Bars, "spectrum" was Flow, or no key) all load as Flow. W
 ## Round 3 (2026-10-19): Phosphor, Heat behind, the artwork flight
 
 ### Phosphor
-- A persistence spectrum, as on a Tektronix DPX analyser. Each cell of column × 1 dB glows by how much of the last ~1.5 s the line spent there: brightness is the log of that time.
+- A persistence spectrum, as on a Tektronix DPX analyser. Each cell of column × 1 dB glows by how much of the last ~0.5 s the line spent there (brightness = share^0.6; under 3% is dark). The first cut (1.5 s, log brightness) piled up into haze.
 - A held note burns a bright point; a snare smears tall and soft. Time is afterglow, never an axis.
 - The cells decay by wall-clock time, so a redraw adds nothing and any frame rate reads the same.
 - Cost: a 200 × 67–91 cell image per frame, about the same as Heat.

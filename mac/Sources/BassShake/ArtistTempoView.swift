@@ -35,7 +35,7 @@ private struct ArtistTempoEditor: View {
   @State private var original: String
   @State private var desired: String
   @State private var suggested: Bool
-  @State private var taps: [TimeInterval] = []
+  @State private var tapper = TapTempo()
   @Environment(\.artworkCardPalette) private var palette
 
   init(target: BrowserTempoTarget) {
@@ -50,7 +50,8 @@ private struct ArtistTempoEditor: View {
   private static func number(_ value: Double) -> String { String(format: "%.1f", value).replacingOccurrences(of: ".0", with: "") }
   private func parse(_ s: String) -> Double? { Double(s.replacingOccurrences(of: ",", with: ".")) }
   private var valid: Bool {
-    guard let a = parse(original), let b = parse(desired) else { return false }
+    // The same BPM twice would apply 1× and start a session that does nothing.
+    guard let a = parse(original), let b = parse(desired), abs(a - b) >= 0.05 else { return false }
     return BrowserTempoScript.rate(original: a, target: b) != nil
   }
   private var active: BrowserTempo.Session? {
@@ -64,7 +65,7 @@ private struct ArtistTempoEditor: View {
         Label("Tempo", systemImage: "metronome")
           .font(.system(size: 11, weight: .semibold))
         Spacer(minLength: 4)
-        Button("Tap BPM", action: tap)
+        Button("Tap Original", action: tap)
           .help("Tap along to the beat to set the original BPM.")
         if active != nil {
           Button("Restore") { tempo.restore() }
@@ -77,6 +78,7 @@ private struct ArtistTempoEditor: View {
       HStack(alignment: .bottom, spacing: 8) {
         bpmField("Original", text: $original)
         Image(systemName: "arrow.right").font(.system(size: 11, weight: .semibold)).padding(.bottom, 8)
+          .accessibilityHidden(true)
         bpmField("Target", text: $desired)
         Button(action: apply) {
           Text(tempo.busy ? "Wait…" : "Apply")
@@ -124,15 +126,12 @@ private struct ArtistTempoEditor: View {
     tempo.apply(target, original: a, bpm: b)
   }
 
+  /// Shared tap tempo (median of recent taps, outliers dropped): a value
+  /// from the second tap, to one decimal as the fields take.
   private func tap() {
-    let now = ProcessInfo.processInfo.systemUptime
-    if let last = taps.last, now - last > 2.5 { taps = [] }
-    taps.append(now)
-    taps = Array(taps.suffix(9))
-    guard taps.count >= 3, let first = taps.first else { return }
-    let bpm = 60 * Double(taps.count - 1) / (now - first)
-    guard bpm.isFinite, (30...300).contains(bpm) else { return }
-    original = Self.number(bpm.rounded())
+    guard let bpm = tapper.tap(at: ProcessInfo.processInfo.systemUptime), bpm.isFinite,
+          (30...300).contains(bpm) else { return }
+    original = Self.number((bpm * 10).rounded() / 10)
     if desired.isEmpty { desired = original }
   }
 }

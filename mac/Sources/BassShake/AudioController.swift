@@ -587,6 +587,8 @@ final class AudioController: ObservableObject {
     if isMirror { return 0 }
     let n = buf.withUnsafeMutableBufferPointer { Int(punch_read_analyzer(engine, $0.baseAddress, $0.count)) }
     if artworkReaction.captureActive { artworkReaction.consume(buf, count: n) }
+    // The Tempo drawer's listener gets a copy too (it returns at once when off).
+    MusicSense.shared.consume(buf, count: n)
     return n
   }
 
