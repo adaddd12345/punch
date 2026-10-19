@@ -80,8 +80,6 @@ struct EQLinePreview: View {
         }
       }
       let dark = scheme == .dark
-      EQLineArtwork.drawReference(in: ctx, width: size.width, zeroY: zero,
-                                  dark: dark, highContrast: contrast == .increased, prism: style == .prism)
       if style == .prism {
         EQLineArtwork.drawPrism(in: ctx, points: points, size: size, zeroY: zero,
                                 color: color, dark: dark, highContrast: contrast == .increased,

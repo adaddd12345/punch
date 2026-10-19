@@ -11,21 +11,8 @@ enum EQLineStyle: String, Codable, CaseIterable, Identifiable {
 /// The caller supplies the real response in view coordinates: the light edge
 /// always follows those points, including the real Boost offset.
 enum EQLineArtwork {
-  /// A fixed 0 dB datum. Individual circles remain round at any backing scale,
-  /// and their cadence is anchored to the left edge as the response changes.
-  static func drawReference(in ctx: GraphicsContext, width: CGFloat, zeroY: CGFloat,
-                            dark: Bool, highContrast: Bool, prism: Bool = false) {
-    guard width.isFinite, width > 0, zeroY.isFinite else { return }
-    let radius: CGFloat = highContrast ? 0.8 : (prism ? 0.75 : 0.65)
-    var dots = Path()
-    for x in stride(from: CGFloat(3), through: width, by: CGFloat(5)) {
-      dots.addEllipse(in: CGRect(x: x - radius, y: zeroY - radius, width: 2 * radius, height: 2 * radius))
-    }
-    let ice = dark ? Color(red: 0.48, green: 0.74, blue: 0.80) : Color(red: 0.18, green: 0.38, blue: 0.48)
-    let ink = highContrast ? Color.primary.opacity(0.40)
-      : (prism ? ice.opacity(dark ? 0.55 : 0.48) : Color.primary.opacity(dark ? 0.24 : 0.20))
-    ctx.fill(dots, with: .color(ink))
-  }
+  // No 0 dB line: the "0 dB" label, the curve's wash (which ends flat on
+  // 0 dB) and nodes resting on it place it without a rule across the sound.
 
   /// A transverse stud marks a resting control without adding a second orb.
   /// Active and keyboard-selected controls retain their larger colored rings.
@@ -58,8 +45,9 @@ enum EQLineArtwork {
         contribution.closeSubpath()
         ctx.fill(contribution, with: .color(bandInk.opacity(highContrast ? 0.24 : (dark ? 0.16 : 0.12))))
       }
-      ctx.stroke(comparison, with: .color(bandInk.opacity(highContrast ? 0.68 : 0.48)),
-                 style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [2, 3]))
+      // Solid: the shaded gap already says which line is which.
+      ctx.stroke(comparison, with: .color(bandInk.opacity(highContrast ? 0.6 : 0.4)),
+                 style: StrokeStyle(lineWidth: 0.75, lineCap: .round, lineJoin: .round))
     }
 
     if pressed {

@@ -108,3 +108,30 @@ Old saves ("scope" was Bars, "spectrum" was Flow, or no key) all load as Flow. W
 ### Spotify covers
 - Spotify's AppleScript gives the 300 px print; the card shows about 600 px. The 640 px print of the same image is now fetched (`ab67616d0000b273`), falling back to the original.
 - Power Saver and Low Power Mode keep 300 px, and YouTube's mq still.
+
+## Round 4 (2026-10-19): bodies, and no lines across the sound
+
+Adam: no dotted line on the EQ, no divider lines for their own sake, and the body under the line shouldn't be blank, because people want to feel the music. A visual designer, a sound-visual engineer and a reviewer worked on it.
+
+### Lines removed
+- The dotted 0 dB reference is gone, along with the region-edge verticals and the ±6/12 dB rulers. Trace's graph paper is gone too.
+- 0 dB is now placed by the "0 dB · Boost" label, the flat edge of the curve's wash, and the nodes resting on it. There's no tick: a stub would read as what's left of the dotted line.
+- Trace keeps its dBFS numbers, each with a 4 pt tick at the left edge, plus the Hz ruler. Only the pen is cut clear of the numbers; the wash runs under them.
+- Dashes are now solid and faint. This covers the tilt and Boost ghost, the A/B Original curve (no nodes, a third of the ink), Contribution's comparison line and the Limit lid. A dash crawls as a line moves.
+
+### Bodies (all on the level scale, so brighter means louder)
+- **Flow**: everything under the line is filled. The tint is fixed to the level scale: α 0.62 at the top, 0.32, 0.07, then 0 at the floor. The edge is a clipped inner rim, a 4 pt glow and a 1 pt rim, both inside the mass. Nothing is drawn above the line, because that would show sound that isn't there. The peak hold is a faint band between the hold and the line: what was reached in the last second and is gone now.
+- **Trace**: a plain ink pen over a flat ink wash (0.10). The hold is a 0.05 band.
+- **Phosphor**: a body under the trail. Each cell keeps an exponential moving average of "this band was at least this loud" on the same 0.5 s wall-clock decay. A steady band shows as a solid column; a pumping one is solid up to its quiet level and feathered up to its peaks. Its strength rises with absolute level, as Heat's does: nothing within 12 dB of the floor, full strength 6 dB under the top, alpha up to 0.5. Its hue comes from the ramp, deep to warm, but its alpha is its own, so magma doesn't turn it into a slab and the accent ramp's toe doesn't hide it. The trail is laid over it in premultiplied form, so a faint trail still shows inside the mass.
+- **Regions**: a slightly stronger top (0.42 on dark). **Heat**: unchanged. Heat behind is now 0.4, because every line now carries its own body.
+- The Classic wash is lighter over a live body (0.08 on dark), so the colours don't turn milky. Every live mode gets the keyline.
+
+### Rejected
+Crest sparkles, beat pulses, a halo above the line, a rim that follows 0 dB, a blur filter per frame (it would need an offscreen layer every frame), and a CGImage body for Flow (its crest goes hair-thin on steep slopes).
+
+### Check by eye
+- Each mode with music, on dark and light, and on a grey theme (magma).
+- With Boost +8, the wash's edge still says where 0 dB is.
+- In Phosphor, a pumping kick shows a feathered top and a sustained pad a solid one.
+- The Trace numbers still read over the wash.
+- A/B on Original shows the faint solid curve.
