@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Rasterises the app icon from its source of truth, docs/icon-concepts/F-shaker-cube/build.mjs,
-# into the files bundle.sh uses (committed, so CI needs no Node or SVG renderer):
-#   node docs/icon-concepts/F-shaker-cube/build.mjs && mac/scripts/make_app_icon.sh
+# Rasterises the app icon from its source of truth, the parametric isometric model in
+# docs/icon-concepts/K-isometric/A-origami-cube/gen.py, into the files bundle.sh uses
+# (committed, so CI needs no Python or SVG renderer):
+#   (cd docs/icon-concepts/K-isometric/A-origami-cube && python3 gen.py --release) && mac/scripts/make_app_icon.sh
 #   mac/Resources/AppIcon.png              pre-composited 1024 master (824 squircle body) -> AppIcon.icns
 #   mac/Resources/AppIcon.icon/Assets/*.png  Icon Composer layers (default/dark/mono)      -> Assets.car (macOS 26)
 #   mac/Resources/AppIconVariants/{light,dark,freezing,ember}.png  pre-composited colourways for the icon picker
@@ -10,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-SRC=docs/icon-concepts/F-shaker-cube
+SRC=docs/icon-concepts/K-isometric/A-origami-cube/release
 RES=mac/Resources
 A="$RES/AppIcon.icon/Assets"
 V="$RES/AppIconVariants"
