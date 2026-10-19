@@ -422,7 +422,12 @@ struct NowArt: View {
   @Environment(\.artworkStyle) private var setting
   @Environment(\.artworkFoil) private var foil
   @Environment(\.drawPaused) private var drawPaused
+  @Environment(\.artworkPointerOver) private var pointerOver
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var hovering = false
+
+  /// Own hover, or the inspect target's above it.
+  private var engaged: Bool { (hovering || pointerOver) && !drawPaused && !Reshuffle.anyOn }
 
   var body: some View {
     Group {
@@ -436,6 +441,8 @@ struct NowArt: View {
     }.modifier(ArtworkCoverPerspective())
   }
 
+  private var lifted: Bool { pointerOver && engaged && size >= 36 && !reduceMotion && !powerSaver }
+
   private var cover: some View {
     let radius = cornerRadius ?? size * 0.22
     let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -444,7 +451,7 @@ struct NowArt: View {
         EffectArtworkImage(image: artwork, size: size)
           .clipShape(shape)
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-          .overlay { ArtworkFoil(size: size, radius: radius, engaged: hovering) }
+          .overlay { ArtworkFoil(size: size, radius: radius, engaged: engaged) }
           .modifier(ArtworkSleeveFinish(radius: radius))
           .compositingGroup()
           .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(0.18), radius: 3, y: 1))
@@ -454,7 +461,7 @@ struct NowArt: View {
         let side = (size * 0.6).rounded()
         shape.fill(Color.primary.opacity(0.07))
           .overlay(shape.strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
-          .overlay { ArtworkFoil(size: size, radius: radius, blank: true, engaged: hovering) }
+          .overlay { ArtworkFoil(size: size, radius: radius, blank: true, engaged: engaged) }
           .overlay(
             Image(nsImage: favicon)
               .resizable()
@@ -469,7 +476,7 @@ struct NowArt: View {
         ZStack {
           if foil && size >= 28 {
             shape.fill(Color.primary.opacity(0.05))
-              .overlay { ArtworkFoil(size: size, radius: radius, blank: true, engaged: hovering) }
+              .overlay { ArtworkFoil(size: size, radius: radius, blank: true, engaged: engaged) }
           }
           Image(nsImage: icon)
             .resizable()
@@ -482,6 +489,10 @@ struct NowArt: View {
       }
     }
     .frame(width: size, height: size)
+    // The header cover lifts a touch under the pointer (inspectable art only).
+    .scaleEffect(lifted ? 1.02 : 1)
+    .offset(y: lifted ? -1.5 : 0)
+    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: lifted)
     .artworkInspectionSource()
     .contentShape(Rectangle())
     .onHover { hovering = $0 && !drawPaused && !Reshuffle.anyOn }
@@ -658,10 +669,10 @@ extension Caption {
   /// mute can only be all tabs at once.
   static func tileMute(_ name: String, muted: Bool, browser: Bool = false) -> PointerHint {
     if browser {
-      return muted ? PointerHint("Unmute \(name) (all tabs)", does: "Muted until you unmute it or quit The Bass Shaker.")
-                   : PointerHint("Mute \(name) (all tabs)", does: "A single tab can't be muted; this silences every \(name) tab.")
+      return muted ? PointerHint("Unmute \(name) (all tabs)", does: "Quitting The Bass Shaker also unmutes it.")
+                   : PointerHint("Mute \(name) (all tabs)", does: "One tab can't be muted on its own.")
     }
-    return muted ? PointerHint("Unmute \(name)", does: "Muted until you unmute it or quit The Bass Shaker.")
+    return muted ? PointerHint("Unmute \(name)", does: "Quitting The Bass Shaker also unmutes it.")
                  : PointerHint("Mute \(name)", does: "Silences only \(name); everything else keeps playing.")
   }
 
@@ -682,7 +693,7 @@ extension Caption {
                          does: "Uses your Mac’s play/pause key. Sound is never muted automatically.")
     case .mute:
       if chosen {
-        return PointerHint(word, does: "Pausing is off; turn it on in ⋯ › Presets & Settings.")
+        return PointerHint(word, does: "Pausing is off: ⋯ › What's Playing › Pause Any App with Media Keys.")
       }
       return PointerHint(word, does: "\(name) has no pause key, so this mutes it.")
     }

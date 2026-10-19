@@ -337,7 +337,7 @@ struct PopoverView: View {
     .confirmationDialog("Reset all settings?", isPresented: $confirmReset) {
       Button("Reset Everything", role: .destructive) { controller.resetAllSettings() }
     } message: {
-      Text("Your EQ, presets and options go back to how they were on first launch.")
+      Text("Deletes your saved presets and puts every setting back to first launch.")
     }
     .confirmationDialog("Reset sound to defaults?", isPresented: $confirmSoundReset) {
       Button("Reset Sound") { controller.resetSoundSettings() }
@@ -969,11 +969,11 @@ struct PopoverView: View {
     case _ where controller.balanceIsOff && !controller.settings.balanceLock:
       Banner(symbol: "dial.low", tint: .orange,
              text: "Your sound is panned to the \((controller.balance ?? 0.5) < 0.5 ? "left" : "right") by macOS's balance setting, so one side is quieter or silent.",
-             action: ("Center It", controller.centerBalance),
-             secondary: ("Keep Centered", { controller.settings.balanceLock = true; controller.centerBalance() }))
+             action: ("Centre It", controller.centerBalance),
+             secondary: ("Keep Centred", { controller.settings.balanceLock = true; controller.centerBalance() }))
     case _ where controller.steppedAside:
       Banner(symbol: "speaker.slash", tint: .orange,
-             text: "No audio reached the capture. EQ is temporarily bypassed; this can also happen when an app keeps a silent stream open. Retrying automatically.",
+             text: "No sound reached The Bass Shaker, so effects are off for now. Retrying.",
              action: ("Try Again", { controller.checkAndFix() }), secondary: nil)
     case .starting:
       EmptyView()  // shown late, as an overlay: see slowStart

@@ -5,11 +5,17 @@ import SwiftUI
 enum PlayerArtworkLayout: String, Codable, CaseIterable, Identifiable {
   case compact, large, expanded
   var id: String { rawValue }
-  var title: String { rawValue.capitalized }
+  var title: String {
+    switch self {
+    case .compact: return "Small"
+    case .large: return "Large"
+    case .expanded: return "Banner"
+    }
+  }
   var detail: String {
     switch self {
     case .compact: return "A small cover beside your track."
-    case .large: return "A generous cover with room to breathe."
+    case .large: return "A large centred cover above your track."
     case .expanded: return "An artwork banner that fades into your controls."
     }
   }

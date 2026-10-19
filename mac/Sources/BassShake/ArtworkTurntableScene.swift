@@ -15,19 +15,22 @@ struct ArtworkTurntableScene: NSViewRepresentable {
   var glass = false
   /// Closing ends a turn in flight on the nearest front pose.
   var closing = false
+  /// The card flips over into place as it flies in, and back out as it
+  /// leaves: half a turn on the flight's own spring, the cover on both faces.
+  var flips = false
 
   func makeNSView(context: Context) -> ArtworkTurntableView {
     let view = ArtworkTurntableView(frame: .zero)
     view.configure(image: image, reverse: reverse, turn: turn,
                    reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize,
-                   perspective: perspective, glass: glass, closing: closing)
+                   perspective: perspective, glass: glass, closing: closing, flips: flips)
     return view
   }
 
   func updateNSView(_ view: ArtworkTurntableView, context: Context) {
     view.configure(image: image, reverse: reverse, turn: turn,
                    reducedMotion: reducedMotion, powerSaver: powerSaver, artworkSize: artworkSize,
-                   perspective: perspective, glass: glass, closing: closing)
+                   perspective: perspective, glass: glass, closing: closing, flips: flips)
   }
 
   static func dismantleNSView(_ view: ArtworkTurntableView, coordinator: ()) {
@@ -61,6 +64,19 @@ enum ArtworkTurntableFactory {
     return 1 - exp(-9.80 * s) * (cos(7.87 * s) + 0.911 * sin(7.87 * s)) / 2
   }
 
+  /// The flight's springs, matching SwiftUI's `.spring(response:dampingFraction:)`
+  /// so the half turn and the move share one curve.
+  static let arrival = (response: 0.55, damping: 0.86)
+  static let departure = (response: 0.42, damping: 0.92)
+
+  /// Progress (0…1, slightly past 1 when underdamped) of a spring from rest.
+  static func springProgress(_ t: Double, response: Double, damping: Double) -> Double {
+    guard t > 0 else { return 0 }
+    let w0 = 2 * Double.pi / response, decay = damping * w0
+    let wd = w0 * (1 - damping * damping).squareRoot()
+    return 1 - exp(-decay * t) * (cos(wd * t) + decay / wd * sin(wd * t))
+  }
+
   /// A moderate lens gives the turn real depth. Transparent overscan contains
   /// the near edge without shrinking the intended front-facing footprint.
   static func fit(_ camera: SCNNode, imageSize: CGSize, artworkSize: CGSize, viewport: CGSize) {
@@ -81,6 +97,8 @@ enum ArtworkTurntableFactory {
     let camera: SCNNode
     let rim: SCNMaterial
     let shadow: SCNNode
+    /// The reverse's material: it carries the print during a flight.
+    let back: SCNMaterial
   }
 
   /// A soft, centre-weighted blot, built once.
@@ -237,7 +255,7 @@ enum ArtworkTurntableFactory {
     keyNode.light = key
     keyNode.position = SCNVector3(-3, 4, 6)
     scene.rootNode.addChildNode(keyNode)
-    return Study(scene: scene, card: card, camera: camera, rim: rim, shadow: shadow)
+    return Study(scene: scene, card: card, camera: camera, rim: rim, shadow: shadow, back: backMaterial)
   }
 }
 
@@ -249,6 +267,11 @@ final class ArtworkTurntableView: SCNView {
   private var card: SCNNode?
   private var rim: SCNMaterial?
   private var contactShadow: SCNNode?
+  private var back: SCNMaterial?
+  private var backContents: Any?
+  /// The flight in is played once per view; the flight out once too.
+  private var arrived = false
+  private var departed = false
   private var turn: Int?
   private var generation = 0
   private var artworkSize = CGSize.zero
@@ -273,7 +296,7 @@ final class ArtworkTurntableView: SCNView {
 
   func configure(image: NSImage, reverse: NSColor, turn requestedTurn: Int,
                  reducedMotion: Bool, powerSaver: Bool, artworkSize: CGSize, perspective: Bool = false, glass: Bool = false,
-                 closing: Bool = false) {
+                 closing: Bool = false, flips: Bool = false) {
     self.artworkSize = artworkSize
     backgroundColor = .clear
     allowsCameraControl = false
@@ -291,15 +314,22 @@ final class ArtworkTurntableView: SCNView {
       card = study.card
       rim = study.rim
       contactShadow = study.shadow
+      back = study.back
+      backContents = study.back.diffuse.contents
       source = image
       pigment = reverse
       turn = requestedTurn
       study.card.eulerAngles = SCNVector3(perspective ? CGFloat.pi / 60 : 0, CGFloat(requestedTurn) * .pi + (perspective ? -CGFloat.pi * 7 / 180 : 0), 0)
       updateProjection()
+      if flips && !closing && !arrived && !reducedMotion && !powerSaver { fly(arriving: true) }
+      arrived = true
       return
     }
     updateProjection()
-    if closing { settle(); return }
+    if closing {
+      if flips && !reducedMotion && !powerSaver { fly(arriving: false) } else { settle() }
+      return
+    }
     guard requestedTurn != turn, let card else { return }
     let previousTurn = turn ?? requestedTurn
     turn = requestedTurn
@@ -358,6 +388,79 @@ final class ArtworkTurntableView: SCNView {
         self.needsDisplay = true
       }
     }
+  }
+
+  /// Half a turn on the flight's spring: in, from the reverse (wearing the
+  /// print, so the cover shows throughout) to the front; out, from the
+  /// nearest front back to the reverse. Lifts and lights the rim like a turn.
+  private func fly(arriving: Bool) {
+    guard let card, let back, let source else { return }
+    if !arriving {
+      guard !departed else { return }
+      departed = true
+    }
+    generation += 1
+    let currentGeneration = generation
+    let restPitch: CGFloat = perspective ? .pi / 60 : 0
+    let restYaw: CGFloat = perspective ? -.pi * 7 / 180 : 0
+    let from: CGFloat, target: CGFloat
+    if arriving {
+      from = CGFloat(turn ?? 0) * .pi + restYaw - .pi
+      target = from + .pi
+    } else {
+      let now = card.presentation.eulerAngles.y
+      from = now
+      target = ((now - restYaw) / (2 * .pi)).rounded() * 2 * .pi + restYaw - .pi
+    }
+    // The reverse carries the print, lit like the front, for the flight.
+    back.diffuse.contents = source
+    back.lightingModel = .phong
+    back.ambient.contents = NSColor.white
+    back.specular.contents = NSColor(white: glass ? 0.38 : 0.08, alpha: 1)
+    back.shininess = glass ? 110 : 45
+    let fromPitch = card.presentation.eulerAngles.x
+    let fromScale = card.presentation.scale.x
+    card.removeAllActions()
+    card.opacity = 1
+    card.eulerAngles = SCNVector3(arriving ? restPitch : fromPitch, from, 0)
+    let spring = arriving ? ArtworkTurntableFactory.arrival : ArtworkTurntableFactory.departure
+    let duration: TimeInterval = arriving ? 0.75 : 0.55
+    let rim = self.rim, shadow = self.contactShadow
+    let rimPeak: CGFloat = glass ? 1 : 0.6
+    let span = target - from
+    isPlaying = true
+    card.runAction(.customAction(duration: duration) { node, elapsed in
+      let f = ArtworkTurntableFactory.springProgress(Double(elapsed), response: spring.response, damping: spring.damping)
+      let held = CGFloat(min(1, max(0, f)))
+      let lift = sin(.pi * held)
+      let yaw = from + span * CGFloat(f)
+      let pitch = (arriving ? restPitch : fromPitch + (restPitch - fromPitch) * held) + lift * -0.018
+      node.eulerAngles = SCNVector3(pitch, yaw, 0)
+      let scale = (arriving ? 1 : fromScale + (1 - fromScale) * held) + 0.04 * lift
+      node.scale = SCNVector3(scale, scale, scale)
+      rim?.emission.intensity = pow(abs(sin(yaw - restYaw)), 12) * rimPeak
+      shadow?.opacity = 0.22 * lift
+      shadow?.scale = SCNVector3(max(0.3, abs(cos(yaw - restYaw))), 1, 1)
+    }, forKey: "turn") { [weak self] in
+      DispatchQueue.main.async {
+        guard let self, self.generation == currentGeneration else { return }
+        self.card?.eulerAngles = SCNVector3(restPitch, target, 0)
+        self.card?.scale = SCNVector3(1, 1, 1)
+        self.rim?.emission.intensity = 0
+        self.contactShadow?.opacity = 0
+        if arriving { self.restoreBack() }
+        self.isPlaying = false
+        self.needsDisplay = true
+      }
+    }
+  }
+
+  /// The reverse goes back to the blurred cover once the card faces front.
+  private func restoreBack() {
+    guard let back else { return }
+    back.diffuse.contents = backContents
+    back.lightingModel = .constant
+    back.specular.contents = NSColor.black
   }
 
   func stop() {

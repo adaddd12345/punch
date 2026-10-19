@@ -222,7 +222,7 @@ private struct LimitPill: View {
   let reductionDb: Double
   @Environment(\.colorSchemeContrast) private var contrast
   var body: some View {
-    Text(active ? String(format: "LIMIT %.0f", reductionDb) : "LIMIT")
+    Text(active ? String(format: "LIMIT \u{2212}%.0f", reductionDb) : "LIMIT")
       .font(.system(size: 8, weight: .semibold, design: .rounded))
       .monospacedDigit()
       .padding(.horizontal, 5)
@@ -231,6 +231,6 @@ private struct LimitPill: View {
       .background(Capsule().fill(active ? MeterModel.limitRed : .primary.opacity(0.08)))
       .overlay { if contrast == .increased { Capsule().strokeBorder(.primary.opacity(0.45), lineWidth: 1) } }
       .animation(.easeOut(duration: 0.15), value: active)
-      .help("Lights up when the limiter is holding peaks under −1 dBFS.")
+      .help("Lit while Limit turns peaks down; the number is how far.")
   }
 }

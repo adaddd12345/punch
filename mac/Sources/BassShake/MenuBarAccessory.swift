@@ -7,7 +7,7 @@ enum MenuBarContent: String, Codable, CaseIterable, Identifiable {
   var title: String {
     switch self {
     case .icon: return "Icon Only"
-    case .nowPlaying: return "Now Playing"
+    case .nowPlaying: return "What’s Playing"
     case .volume: return "Volume Slider"
     case .stocks: return "Stock Ticker"
     }

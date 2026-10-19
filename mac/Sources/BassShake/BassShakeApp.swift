@@ -258,7 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     installScrollMonitor()
     controller.$earAlerts.dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in
       guard let self, !self.popover.isShown else { return }
-      self.notifyProblem("Ear Protector caught a sudden loud sound and turned it down. Click to open (and mute).")
+      self.notifyProblem("Ear Protector turned down a sudden loud sound.")
     }.store(in: &cancellables)
     // Unpinned, the popover goes away with the app losing focus or a Space change.
     let nc = NotificationCenter.default

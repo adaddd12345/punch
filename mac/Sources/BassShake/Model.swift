@@ -312,8 +312,8 @@ enum ListeningMode: String, Codable, CaseIterable, Identifiable {
   /// One plain line on what the mode does (true to the engine).
   var description: String {
     switch self {
-    case .off: return "No listening mode."
-    case .study: return "Calm sound for focus; swaps out your preset until turned off."
+    case .off: return "Your preset plays as set."
+    case .study: return "Calm, level sound for focus; replaces your preset."
     case .sleep: return "Soft, dark sound that fades out on a timer; replaces your preset."
     case .lateNight: return "Mellow, underwater warmth for late hours; layers on your sound."
     }
@@ -378,7 +378,7 @@ enum BassCharacter: String, Codable, CaseIterable, Identifiable {
   var description: String {
     switch self {
     case .off: return "Bass as the music has it."
-    case .distort: return "Drives the 808 into gritty distortion, level-matched."
+    case .distort: return "Gritty distortion on the 808, no louder overall."
     case .punch: return "Snappier kick attack, shorter boom, a touch of warmth."
     }
   }
@@ -592,7 +592,7 @@ enum ScopeColor: String, Codable, CaseIterable, Identifiable {
 
 extension Settings {
   /// What draws behind the curve. `waveform` stays the on/off master, so
-  /// Curve only keeps the last mode for when live sound comes back.
+  /// Off keeps the last mode for when live sound comes back.
   var eqVisual: EQVisual {
     get { waveform ? eqVisualMode : .off }
     set {
@@ -675,7 +675,7 @@ extension Settings {
 
 /// What draws behind the curve (all on the EQ's frequency axis, all measured).
 enum EQVisual: String, Codable, CaseIterable, Identifiable {
-  case flow, trace, heat, regions, off
+  case flow, trace, heat, regions, phosphor, off
   var id: String { rawValue }
   var title: String {
     switch self {
@@ -683,7 +683,8 @@ enum EQVisual: String, Codable, CaseIterable, Identifiable {
     case .trace: return "Trace"
     case .heat: return "Heat"
     case .regions: return "Regions"
-    case .off: return "Curve only"
+    case .phosphor: return "Phosphor"
+    case .off: return "Off"
     }
   }
   /// Trace brings its own graph paper and dB scale.
@@ -853,6 +854,8 @@ struct Settings: Codable, Equatable {
   var waveform = true
   /// The live view's mode while `waveform` is on (never .off).
   var eqVisualMode: EQVisual = .flow
+  /// Heat's stripes under the chosen mode (Flow, Trace, Regions).
+  var eqHeatBehind = false
   /// The analyser's technical settings (Appearance › Equalizer › Technical).
   var spectrumSpeed: SpectrumSpeed = .medium
   var spectrumPeakHold: PeakHold = .oneSecond
@@ -1107,6 +1110,7 @@ struct Settings: Codable, Equatable {
     // Old saves (Bars or Flow, no key) all come back as Flow.
     let mode = (try? c.decodeIfPresent(String.self, forKey: .eqVisualMode)).flatMap { $0 }.flatMap(EQVisual.fromStored)
     eqVisualMode = mode == nil || mode == .off ? d.eqVisualMode : mode!
+    eqHeatBehind = (try? c.decodeIfPresent(Bool.self, forKey: .eqHeatBehind)) ?? d.eqHeatBehind
     spectrumSpeed = (try? c.decodeIfPresent(SpectrumSpeed.self, forKey: .spectrumSpeed)) ?? d.spectrumSpeed
     spectrumPeakHold = (try? c.decodeIfPresent(PeakHold.self, forKey: .spectrumPeakHold)) ?? d.spectrumPeakHold
     spectrumRange = (try? c.decodeIfPresent(SpectrumRange.self, forKey: .spectrumRange)) ?? d.spectrumRange
@@ -1321,16 +1325,16 @@ extension Settings {
   }
 }
 
-/// What's Playing's own size. Match Size keeps the old behaviour: compact in
+/// What's Playing's own size. Follow Popup keeps the old behaviour: compact in
 /// the Compact popup, expanded at Full.
 enum NowPlayingSize: String, Codable, CaseIterable, Identifiable {
   case matchSize, compact, expanded
   var id: String { rawValue }
   var title: String {
     switch self {
-    case .matchSize: return "Match Size"
+    case .matchSize: return "Follow Popup"
     case .compact: return "Compact"
-    case .expanded: return "Expanded"
+    case .expanded: return "Full"
     }
   }
 }

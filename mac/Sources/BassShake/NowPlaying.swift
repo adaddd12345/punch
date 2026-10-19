@@ -1211,10 +1211,11 @@ final class NowPlaying: ObservableObject {
       if c.scheme?.lowercased() == "http" { c.scheme = "https" }
       guard let u = c.url, Self.isSpotifyArt(u) else { return }
       artLoading.insert(key)
-      artSession.dataTask(with: u) { [weak self] data, _, _ in
-        let img = data.flatMap { Self.thumbnail($0) }
-        DispatchQueue.main.async { self?.artLoaded(img, key: key, cacheKey: key, id: p.rawValue) }
-      }.resume()
+      // The header and the open card show it near 600 px: ask for Spotify's
+      // 640 px print of the same cover, falling back to the one given. Power
+      // Saver and Low Power Mode keep the 300 px one.
+      let large = Self.lightArt ? nil : Self.largeSpotifyArt(u)
+      fetchSpotifyArt(large ?? u, fallback: large == nil ? nil : u, key: key, id: p.rawValue)
     case .music:
       // A click is queued: postpone (the next poll asks again while the cover is missing).
       if NowPlayingScripts.urgentWaiting { return }
@@ -1230,6 +1231,33 @@ final class NowPlaying: ObservableObject {
         DispatchQueue.main.async { self?.artLoaded(img, key: key, cacheKey: r?.id ?? key, id: p.rawValue) }
       }
     }
+  }
+
+  private func fetchSpotifyArt(_ u: URL, fallback: URL?, key: String, id: String) {
+    artSession.dataTask(with: u) { [weak self] data, response, _ in
+      let ok = (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? true
+      let img = ok ? data.flatMap { Self.thumbnail($0) } : nil
+      DispatchQueue.main.async {
+        guard let self else { return }
+        if img == nil, let fallback, self.artworkMayRefresh {
+          self.fetchSpotifyArt(fallback, fallback: nil, key: key, id: id)
+        } else {
+          self.artLoaded(img, key: key, cacheKey: key, id: id)
+        }
+      }
+    }.resume()
+  }
+
+  /// Lighter covers: Power Saver, or the Mac's Low Power Mode.
+  static var lightArt: Bool { PowerSaver.isOn || ProcessInfo.processInfo.isLowPowerModeEnabled }
+
+  /// Spotify's 640 px print of a 300 px cover URL (the same image ID).
+  static func largeSpotifyArt(_ u: URL) -> URL? {
+    let small = "/image/ab67616d00001e02", large = "/image/ab67616d0000b273"
+    guard u.host?.lowercased() == "i.scdn.co", u.path.hasPrefix(small),
+          var c = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return nil }
+    c.path = large + u.path.dropFirst(small.count)
+    return c.url
   }
 
   /// https on one of Spotify's own image hosts.
@@ -1404,7 +1432,7 @@ final class NowPlaying: ObservableObject {
     guard artworkMayRefresh, !stillLoading.contains(vid),
           ProcessInfo.processInfo.systemUptime >= (stillRetryAfter[vid] ?? 0) else { return }
     stillLoading.insert(vid)
-    loadStillVariant(vid, large: true)
+    loadStillVariant(vid, large: !Self.lightArt)
   }
 
   private func loadStillVariant(_ vid: String, large: Bool) {

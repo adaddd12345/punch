@@ -155,7 +155,7 @@ struct EQView: View {
       HStack {
         Text("EQ").font(.system(size: 12, weight: .semibold, design: .rounded))
         Spacer()
-        Text(controller.settings.waveform ? "Live sound · " + controller.settings.eqVisual.title : "Curve only")
+        Text(controller.settings.waveform ? "Live sound · " + controller.settings.eqVisual.title : "Live sound off")
           .font(.system(size: 10, weight: .medium, design: .rounded))
           .foregroundStyle(.artworkSecondary)
       }
@@ -190,14 +190,17 @@ struct EQView: View {
             let t = demo.still ? 1.03 : timeline.date.timeIntervalSince(demo.start)
             EQFrequencyArtwork(frame: SpectrumFrame.still(EQPreviewDemo.levels(t: t, curveDb: shape, boostDb: boostDb),
                                                           params: params),
-                               color: spectrumColor, style: controller.settings.eqVisual, focus: focus)
+                               color: spectrumColor, style: controller.settings.eqVisual, focus: focus,
+                               heatBehind: controller.settings.eqHeatBehind, avoidY: y(0, size.height),
+                               still: demo.still)
           }
             .padding(.bottom, 20)
             .allowsHitTesting(false)
             .transition(.opacity)
         } else if controller.settings.waveform && controller.settings.enabled {
           LiveEQVisualization(model: controller.spectrum, color: spectrumColor,
-                              style: controller.settings.eqVisual, focus: focus)
+                              style: controller.settings.eqVisual, focus: focus,
+                              heatBehind: controller.settings.eqHeatBehind, avoidY: y(0, size.height))
             .padding(.bottom, 20)
             .allowsHitTesting(false)
             .transition(.opacity)
@@ -308,7 +311,9 @@ struct EQView: View {
   private var visualGrid: Bool { visualShown && controller.settings.eqVisual.drawsOwnGrid }
   /// Heat and Regions fill the field with colour, so the line gets a keyline.
   private var needsKeyline: Bool {
-    visualShown && (controller.settings.eqVisual == .heat || controller.settings.eqVisual == .regions)
+    let mode = controller.settings.eqVisual
+    return visualShown && (mode == .heat || mode == .regions || mode == .phosphor
+                           || (controller.settings.eqHeatBehind && mode != .off))
   }
 
   /// The node being worked on: held, hovered, or picked with the keys.

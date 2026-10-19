@@ -703,13 +703,13 @@ enum Caption {
   /// otherwise the classic slider. `shaker`: the preset uses the Bass Shaker
   /// (punch on hits, body, clean harmonics) instead of the harmonic enhancer.
   static func strength(_ bass: Double, scrub: Bool, shaker: Bool = false) -> PointerHint {
-    PointerHint("Strength", does: shaker ? "Bass enhancement: changes kick punch and low-end body, not the overall volume."
-                                         : "Bass enhancement: adds harmonics so deep bass is easier to hear. Not the overall volume.",
+    PointerHint("Strength", does: shaker ? "More kick punch and low-end body; not the volume."
+                                         : "Adds harmonics so deep bass carries; not the volume.",
                 gestures: scrub ? [drag, resetTap] : [])
   }
 
   static func boost(_ db: Double, scrub: Bool) -> PointerHint {
-    PointerHint("Boost", does: "Overall gain: raises the whole processed signal in decibels, not just the bass. Limit can keep peaks in check.",
+    PointerHint("Boost", does: "Turns everything up, not just bass; Limit can catch peaks.",
                 gestures: scrub ? [drag, resetTap] : [])
   }
 
@@ -736,8 +736,8 @@ enum Caption {
 
   /// The red notice shown while Mac Volume is hidden and the Mac is silent.
   static func macSilent(mini: Bool) -> PointerHint {
-    PointerHint("Mac Volume", does: mini ? "Hidden: press ⌘2, then ⋯ › Presets & Settings › Show Mac Volume."
-                                         : "Hidden: turn on ⋯ › Presets & Settings › Show Mac Volume.")
+    PointerHint("Mac Volume", does: mini ? "Hidden: press ⌘2, then ⋯ › Layout › Edit Layout…"
+                                         : "Hidden: show it in ⋯ › Layout › Edit Layout…")
   }
 
   static func checkAndFix(menu: Bool = false) -> PointerHint {
@@ -769,7 +769,7 @@ enum Caption {
 
   /// Late Night's Haze.
   static func haze(_ v: Double, scrub: Bool) -> PointerHint {
-    PointerHint("Haze", does: "More haze rolls off more treble, for a darker, softer sound.",
+    PointerHint("Haze", does: "Rolls off treble for a darker, softer sound.",
                 gestures: scrub ? [drag, resetTap] : [])
   }
 
@@ -797,7 +797,7 @@ enum Caption {
                 gestures: ["Right-click: rename, recolor, hide, delete"])
   }
 
-  static let savePreset = PointerHint("Save Preset", does: "Keeps EQ, Strength and Boost; not Studio Ears, Loudness or Limit.")
+  static let savePreset = PointerHint("Save Preset", does: "Saves EQ, Strength and Boost; not Studio Ears, Loudness or Limit.")
 
   /// One plain sentence per built-in preset (their subtitles are for experts).
   private static let plain: [String: String] = [
@@ -844,7 +844,7 @@ enum Caption {
   /// The EQ line itself (between nodes): dragging it is Boost.
   static func eqLine(boostDb: Double) -> PointerHint {
     PointerHint("Boost", value: String(format: "+%.0f dB", boostDb.rounded()),
-                does: "Raises or lowers the level without changing the EQ shape.",
+                does: "Lifts the whole curve without changing its shape.",
                 gestures: ["Drag ↕", "Double-click: 0 dB", "⌥-drag: bass vs treble", "Hold ⇧: fine"])
   }
 

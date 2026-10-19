@@ -102,7 +102,7 @@ struct SettingsMenuContent: View {
       }
       Toggle("Remember Sound per Device", isOn: bind(\.perDevice))
       Toggle("AirPods HQ Guard (keep Bluetooth in stereo)", isOn: bind(\.hqGuard))
-      Toggle("Balance Lock (keep left/right centered)", isOn: Binding(
+      Toggle("Balance Lock (keep left/right centred)", isOn: Binding(
         get: { controller.settings.balanceLock },
         set: { controller.settings.balanceLock = $0; if $0 { controller.centerBalance() } }))
       Divider()
@@ -131,9 +131,9 @@ struct SettingsMenuContent: View {
       }
       if controller.settings.backgroundStyle == .artwork {
         Toggle("Bleed", isOn: bind(\.artworkBackgroundBleed))
-          .help("Let one cover’s colours flow into the next. Visual only; audio is unchanged.")
-        Toggle("Live React", isOn: bind(\.artworkBackgroundLive))
-          .help("Moves the artwork gradient gently with this Mac’s audio, especially bass.")
+          .help("Let one cover’s colours flow into the next.")
+        Toggle("Move with Bass", isOn: bind(\.artworkBackgroundLive))
+          .help("The gradient moves with the bass you hear.")
       }
       // The stock ticker (market panel), with any background (Wall Street turns it on),
       // and which layers it carries (delayed, not for trading).
@@ -187,7 +187,7 @@ struct SettingsMenuContent: View {
           ForEach(VinylMaterial.allCases) { Text($0.title).tag($0) }
         }
         Divider()
-        Picker("Effects", selection: bind(\.artworkEffect)) {
+        Picker("Finish", selection: bind(\.artworkEffect)) {
           ForEach(ArtworkEffect.allCases) { Text($0.title).tag($0) }
         }
         .pickerStyle(.inline)
@@ -268,7 +268,7 @@ struct SettingsMenuContent: View {
         Text("Move to Applications to open at login")
       }
       Toggle("A/B Hotkey (\(GlobalHotkey.bypassLabel))", isOn: bind(\.bypassHotkey))
-      Text("Open/Close Anywhere: \(GlobalHotkey.openLabel)")
+      Text("Open/Close Hotkey: \(GlobalHotkey.openLabel)")
       if let c = controller.hotkeyConflict { Text("In use by another app: \(c)") }
       Divider()
       Toggle("Check for Updates Automatically", isOn: Binding(get: { updates.automaticChecks },
@@ -305,7 +305,7 @@ struct SoundFeatureItems: View {
   @ObservedObject var controller: AudioController
 
   var body: some View {
-    Toggle("Ear Protector (duck sudden loud blasts)", isOn: Binding(get: { controller.settings.earProtector },
+    Toggle("Ear Protector (turn down sudden loud blasts)", isOn: Binding(get: { controller.settings.earProtector },
                                                                     set: { controller.settings.earProtector = $0 }))
     Toggle("Fair Level (even out loudness between apps)", isOn: Binding(get: { controller.settings.fairLevel },
                                                                         set: { controller.settings.fairLevel = $0 }))

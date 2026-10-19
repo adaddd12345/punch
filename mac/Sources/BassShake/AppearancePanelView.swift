@@ -145,14 +145,15 @@ struct AppearancePanelView: View {
   private var liveEQPreview: some View {
     let s = controller.settings
     let status = testing ? "Sample music, shaped by your curve"
-      : !s.enabled ? "Processing off"
-      : s.eqVisual == .off ? "Curve only"
+      : !s.enabled ? "Power off"
+      : s.eqVisual == .off ? "Live sound off"
       : somethingPlaying ? "Live" : "Nothing playing"
     return VStack(spacing: 6) {
       EQTile(controller: controller, full: false, preview: true,
              demo: testing ? EQDemoSource(start: testStart, still: reduceMotion, slow: powerSaver) : nil)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("EQ preview, \(s.eqLineStyle.title), \(s.eqVisual.title). \(status)")
+        .accessibilityLabel("EQ preview, \(s.eqLineStyle.title) curve, "
+                            + (s.eqVisual == .off ? "live sound off." : "\(s.eqVisual.title). \(status)"))
       HStack(spacing: 8) {
         Text(status)
           .font(.system(size: 11))
@@ -165,8 +166,8 @@ struct AppearancePanelView: View {
         }
         .controlSize(.small)
         .disabled(s.eqVisual == .off)
-        .help(s.eqVisual == .off ? "Curve only has no live sound to show." : "")
-        .pointerHint("Test", does: "Shows a sample signal here; nothing plays aloud.")
+        .help(s.eqVisual == .off ? "Pick a live view above to test." : "")
+        .pointerHint("Test", does: "Draws sample music here; nothing plays aloud.")
       }
       .frame(height: 22)
     }
@@ -237,7 +238,6 @@ struct AppearancePanelView: View {
               }
             }
           }
-          .help(layout.detail)
         }
       }
       Text(controller.settings.playerArtworkLayout.detail)
@@ -262,8 +262,8 @@ struct AppearancePanelView: View {
         HStack(spacing: 12) {
           Toggle("Bleed", isOn: bind(\.artworkBackgroundBleed))
             .help("Let one cover’s colours flow into the next.")
-          Toggle("Live React", isOn: bind(\.artworkBackgroundLive))
-            .help("Move the artwork gradient gently with this Mac’s audio.")
+          Toggle("Move with Bass", isOn: bind(\.artworkBackgroundLive))
+            .help("The gradient moves with the bass you hear.")
         }
         .toggleStyle(.switch)
         .controlSize(.mini)
@@ -289,13 +289,12 @@ struct AppearancePanelView: View {
             }
           }
           .accessibilityLabel(style.title)
-          .help(style.title)
         }
       }
       Toggle("Cover perspective", isOn: bind(\.artworkPerspective))
         .toggleStyle(.switch).controlSize(.small)
         .font(.system(size: 11, weight: .medium, design: .rounded))
-        .help("A shallow tilt shared by artwork throughout the app.")
+        .help("Tilts artwork slightly, everywhere it appears.")
       }
     }
   }
@@ -316,7 +315,8 @@ struct AppearancePanelView: View {
               previewSurface {
                 ZStack {
                   if style != .off {
-                    EQFrequencyArtwork(frame: sample, color: eqPreviewColor, style: style)
+                    EQFrequencyArtwork(frame: sample, color: eqPreviewColor, style: style,
+                                       heatBehind: controller.settings.eqHeatBehind, still: true)
                   }
                   EQLinePreview(style: controller.settings.eqLineStyle, color: eqPreviewColor,
                                 response: curve, nodeFrequencies: [], boost: shown.boostDb)
@@ -330,6 +330,13 @@ struct AppearancePanelView: View {
         Text(Self.detail(controller.settings.eqVisual))
           .font(.system(size: 11))
           .foregroundStyle(chrome?.secondary ?? Color.secondary)
+        // Heat is a layer as well as a mode: its stripes can sit under a line.
+        if [.flow, .trace, .regions].contains(controller.settings.eqVisual) {
+          Toggle("Heat behind", isOn: bind(\.eqHeatBehind))
+            .toggleStyle(.switch).controlSize(.small)
+            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .help("Adds Heat’s stripes underneath; brighter is louder.")
+        }
       }
       section("Curve style") {
         HStack(spacing: 8) {
@@ -363,7 +370,7 @@ struct AppearancePanelView: View {
         withAnimation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver)) { technicalOpen.toggle() }
       } label: {
         HStack {
-          Text("Technical").font(.system(size: 12, weight: .semibold, design: .rounded))
+          Text("Analyser").font(.system(size: 12, weight: .semibold, design: .rounded))
           Spacer()
           Image(systemName: "chevron.down")
             .font(.system(size: 10, weight: .semibold))
@@ -379,9 +386,11 @@ struct AppearancePanelView: View {
           techRow("Speed", bind(\.spectrumSpeed), SpectrumSpeed.allCases) { $0.title }
             .pointerHint("Speed", does: "Average shows the overall balance, not the moment.")
           techRow("Peak hold", bind(\.spectrumPeakHold), PeakHold.allCases) { $0.title }
-            .pointerHint("Peak hold", does: "Max keeps each band's loudest moment until reopened.")
+            .pointerHint("Peak hold", does: "1 s marks recent peaks; Max keeps them until reopened.")
+            // Heat and Phosphor draw no hold.
+            .disabled(s.eqVisual == .heat || s.eqVisual == .phosphor)
           techRow("Range", bind(\.spectrumRange), SpectrumRange.allCases) { $0.title }
-            .pointerHint("Range", does: "Deeper shows quiet detail, like where lossy files stop.")
+            .pointerHint("Range", does: "90 dB shows quiet detail, like where lossy files stop.")
           techRow("Slope", bind(\.spectrumSlope), SpectrumSlope.allCases) { $0.title }
             .pointerHint("Slope", does: "3 draws pink noise flat; 4.5 matches mixing analysers.")
           techRow("Detail", bind(\.spectrumResolution), SpectrumResolution.allCases) { $0.title }
@@ -425,10 +434,11 @@ struct AppearancePanelView: View {
   private static func detail(_ visual: EQVisual) -> String {
     switch visual {
     case .flow: return "What you hear now, as a filled line."
-    case .trace: return "A plain analyser trace on a dBFS scale."
-    case .heat: return "Each frequency glows as loud as it is."
+    case .trace: return "A thin line on a dB grid."
+    case .heat: return "A stripe per frequency; brighter is louder."
     case .regions: return "How loud five ranges are, side by side."
-    case .off: return "Just your curve; nothing is measured."
+    case .phosphor: return "Where the sound has sat lately: brighter means more often."
+    case .off: return "Only your curve."
     }
   }
   private static func detail(_ style: EQLineStyle) -> String {
@@ -484,7 +494,6 @@ struct AppearancePanelView: View {
             }
           }
           .accessibilityLabel(effect == .none ? "Original" : effect.title)
-          .help(effect == .none ? "Original artwork" : effect.title)
         }
       }
     }
@@ -669,7 +678,7 @@ struct AppearancePanelView: View {
 }
 
 private enum AppearanceCategory: String, CaseIterable, Identifiable {
-  case artwork = "Artwork", background = "Background", equalizer = "Equalizer"
+  case artwork = "Artwork", background = "Background", equalizer = "EQ"
   var id: String { rawValue }
 }
 

@@ -74,3 +74,37 @@ Old saves ("scope" was Bars, "spectrum" was Flow, or no key) all load as Flow. W
 - The focus span and peak note on a bass-heavy track.
 - Pinch Q on a bell.
 - ⌘Z after arrow-key edits.
+
+## Round 3 (2026-10-19): Phosphor, Heat behind, the artwork flight
+
+### Phosphor
+- A persistence spectrum, as on a Tektronix DPX analyser. Each cell of column × 1 dB glows by how much of the last ~1.5 s the line spent there: brightness is the log of that time.
+- A held note burns a bright point; a snare smears tall and soft. Time is afterglow, never an axis.
+- The cells decay by wall-clock time, so a redraw adds nothing and any frame rate reads the same.
+- Cost: a 200 × 67–91 cell image per frame, about the same as Heat.
+- Runner-up: Overtones, a harmonic comb that finds the bass note and its overtones. It's fascinating but fragile: in dense mixes the confidence gate would often show nothing. Kept for later.
+
+### Heat behind
+- Heat is also a layer: its stripes sit under Flow, Trace or Regions at 55%.
+- "Off" replaces "Curve only".
+
+### Trace clipping
+- The analyser ends 20 pt above the Hz ruler, so the pen used to stop dead there. Flow and Trace now fade over the bottom 16%.
+- No ink runs through the dB numbers, and a number never sits on the EQ's 0 dB line.
+
+### Artwork open and close
+- The 3D card flies in with half a turn on the move's own spring. Its back wears the cover for the flight, so the cover shows throughout and it never reads as blank.
+- The launching sleeve steps aside during the inspection, so there's no double image.
+- The record slides out with a 40° turn after landing.
+- The words follow the art 0.16 s later.
+- Close mirrors the open (spring 0.42 / 0.92) onto where the sleeve is now, then crossfades in 0.14 s.
+
+### Header hover
+- The inspect button took the hover from the art beneath it. Its hover is now passed down.
+- The sleeve nudges left and the record slides out with a 25° turn.
+- A glint sweeps the record on every fifth deliberate pull per launch.
+- A plain cover lifts by 2%.
+
+### Spotify covers
+- Spotify's AppleScript gives the 300 px print; the card shows about 600 px. The 640 px print of the same image is now fetched (`ab67616d0000b273`), falling back to the original.
+- Power Saver and Low Power Mode keep 300 px, and YouTube's mq still.

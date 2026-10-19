@@ -54,6 +54,20 @@ private struct InspectArtworkKey: EnvironmentKey {
 private struct PrefetchArtworkKey: EnvironmentKey {
   static let defaultValue: ((NSImage, ArtworkEffect) -> Void)? = nil
 }
+private struct ArtworkInspectingKey: EnvironmentKey { static let defaultValue = false }
+private struct InspectionSourceReportKey: EnvironmentKey {
+  static let defaultValue: ((CGRect) -> Void)? = nil
+}
+private struct ArtworkPointerOverKey: EnvironmentKey { static let defaultValue = false }
+
+extension EnvironmentValues {
+  /// The pointer is over inspectable artwork. Its click target sits on top
+  /// and takes the hover, so the art's own reveal reads this as well.
+  var artworkPointerOver: Bool {
+    get { self[ArtworkPointerOverKey.self] }
+    set { self[ArtworkPointerOverKey.self] = newValue }
+  }
+}
 private extension EnvironmentValues {
   var inspectArtwork: ((NSImage, CGRect, ArtworkEffect, Bool, Bool, NowEntry?, ArtworkInspectionDesign) -> Void)? {
     get { self[InspectArtworkKey.self] }
@@ -62,6 +76,16 @@ private extension EnvironmentValues {
   var prefetchArtwork: ((NSImage, ArtworkEffect) -> Void)? {
     get { self[PrefetchArtworkKey.self] }
     set { self[PrefetchArtworkKey.self] = newValue }
+  }
+  /// A card is flying from, or open over, the artwork that launched it.
+  var artworkInspecting: Bool {
+    get { self[ArtworkInspectingKey.self] }
+    set { self[ArtworkInspectingKey.self] = newValue }
+  }
+  /// Where the launching sleeve is now, so the card lands back on it.
+  var reportInspectionSource: ((CGRect) -> Void)? {
+    get { self[InspectionSourceReportKey.self] }
+    set { self[InspectionSourceReportKey.self] = newValue }
   }
 }
 
@@ -98,22 +122,41 @@ private struct InspectableArtwork: ViewModifier {
   @Environment(\.popupChrome) private var chrome
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.artworkInspecting) private var inspecting
+  @Environment(\.reportInspectionSource) private var report
+  @State private var hovered = false
+  /// This artwork launched the open card: it steps aside while the card is up.
+  @State private var launched = false
 
   func body(content: Content) -> some View {
-    content.overlayPreferenceValue(ArtworkInspectionSourceKey.self) { anchor in
+    let away = launched && inspecting
+    content
+      .environment(\.artworkPointerOver, hovered && !inspecting)
+      // The card that flies out is this art: no second copy left behind. The
+      // short crossfade hides the two shapes' small differences.
+      .opacity(away ? 0 : 1)
+      .animation(.easeOut(duration: 0.14), value: away)
+      .onChange(of: inspecting) { _, open in if !open { launched = false } }
+      .overlayPreferenceValue(ArtworkInspectionSourceKey.self) { anchor in
       if let image, let inspect {
         GeometryReader { geometry in
+          let local = anchor.map { geometry[$0] } ?? CGRect(origin: .zero, size: geometry.size)
+          let origin = geometry.frame(in: .global).origin
+          let rect = local.offsetBy(dx: origin.x, dy: origin.y)
           Button {
-            let local = anchor.map { geometry[$0] } ?? CGRect(origin: .zero, size: geometry.size)
-            let origin = geometry.frame(in: .global).origin
-            inspect(image, local.offsetBy(dx: origin.x, dy: origin.y), effect, reduceMotion, powerSaver, entry,
+            launched = true
+            inspect(image, rect, effect, reduceMotion, powerSaver, entry,
                     ArtworkInspectionDesign(style: style, material: material, perspective: perspective, glass: glass, chrome: chrome))
           } label: {
             Color.clear.contentShape(Rectangle())
           }
           .buttonStyle(.plain)
+          .onChange(of: rect) { _, now in if launched && inspecting { report?(now) } }
           // Warm the caches on approach so a click starts the turn at once.
-          .onHover { inside in if inside { prefetch?(image, effect) } }
+          .onHover { inside in
+            hovered = inside
+            if inside { prefetch?(image, effect) }
+          }
           .accessibilityLabel("Inspect artwork")
           .help("Inspect artwork")
         }
@@ -142,6 +185,10 @@ private struct ArtworkInspectionRoot: ViewModifier {
   @State private var fitted = false
   /// The controls' own height, measured while nothing is inspected.
   @State private var measuredHeight: CGFloat?
+  /// Where the launching sleeve is now (it can shift while the card is up).
+  @State private var liveSource: CGRect?
+  /// The card has flown home: it crossfades into the sleeve, then clears.
+  @State private var landing = false
 
   @ViewBuilder func body(content: Content) -> some View {
     if enabled {
@@ -162,10 +209,15 @@ private struct ArtworkInspectionRoot: ViewModifier {
         .disabled(request != nil)
         .accessibilityHidden(request != nil)
         .environment(\.drawPaused, inheritedPause || request != nil)
+        .environment(\.artworkInspecting, request.map { !$0.reduceMotion } == true && !landing)
+        .environment(\.reportInspectionSource) { rect in
+          if request != nil, !closing { liveSource = rect }
+        }
         .overlay {
           if let request {
-            ArtworkInspectionOverlay(request: request, revealed: $revealed, holdResize: $holdResize,
-                                     closing: closing, dismiss: dismiss)
+            ArtworkInspectionOverlay(request: request, source: liveSource ?? request.source,
+                                     revealed: $revealed, holdResize: $holdResize,
+                                     closing: closing, landing: landing, dismiss: dismiss)
               .environment(\.artworkStyle, request.design.style)
               .environment(\.vinylMaterial, request.design.material)
               .environment(\.artworkPerspective, request.design.perspective)
@@ -220,6 +272,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
       inspectionHeight = originalContentHeight
       if let window, window.styleMask.contains(.titled) { originalWindowFrame = window.frame }
       holdResize = false; pendingHeight = nil; fitted = false
+      liveSource = nil; landing = false
       request = ArtworkInspectionRequest(image: output, rawArtwork: image, entry: entry, effect: effect, source: source, reverse: reverse,
                                          reduceMotion: reduced, powerSaver: saver, design: design, scale: scale)
       closing = false
@@ -242,16 +295,21 @@ private struct ArtworkInspectionRoot: ViewModifier {
     guard let request, !closing else { return }
     let id = request.id
     let reduced = request.reduceMotion
-    let duration = reduced ? 0.2 : 0.30
+    let duration = reduced ? 0.2 : 0.42
     pendingHeight = nil
-    // Closing settles faster than opening. The overlay leaves when the motion
-    // completes, not on a separate timer that can race its last frame.
-    withAnimation(reduced ? Animation.easeInOut(duration: duration) : Animation.smooth(duration: duration),
+    // Closing mirrors opening, a little quicker and without overshoot: the
+    // card flips back down onto the sleeve, crossfades into it, then clears.
+    // The overlay leaves when the motion completes, not on a racing timer.
+    withAnimation(reduced ? Animation.easeInOut(duration: duration) : Animation.spring(response: 0.42, dampingFraction: 0.92),
                   completionCriteria: .logicallyComplete) {
       closing = true; revealed = false
     } completion: {
       guard self.request?.id == id, closing else { return }
-      clear()
+      guard !reduced else { clear(); return }
+      withAnimation(.easeOut(duration: 0.14)) { landing = true } completion: {
+        guard self.request?.id == id, closing else { return }
+        clear()
+      }
     }
     // A titled window and its SwiftUI height move in lockstep on one curve.
     // A popover animates its own frame (one clock): its height changes at once.
@@ -261,7 +319,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
     if let frame = originalWindowFrame { resizeWindow(to: frame, duration: reduced ? 0 : duration) }
     // Backstop only: the completion normally clears first.
     dismissal = Task { @MainActor in
-      do { try await Task.sleep(for: .seconds(duration + 0.25)) } catch { return }
+      do { try await Task.sleep(for: .seconds(duration + 0.6)) } catch { return }
       guard self.request?.id == id, closing else { return }
       clear()
     }
@@ -318,6 +376,8 @@ private struct ArtworkInspectionRoot: ViewModifier {
     fitted = false
     revealed = false
     closing = false
+    landing = false
+    liveSource = nil
   }
 }
 
@@ -335,9 +395,12 @@ private struct ArtworkSlotKey: PreferenceKey {
 
 private struct ArtworkInspectionOverlay: View {
   let request: ArtworkInspectionRequest
+  /// The launching sleeve, in global points (it may have moved since the click).
+  let source: CGRect
   @Binding var revealed: Bool
   @Binding var holdResize: Bool
   let closing: Bool
+  let landing: Bool
   let dismiss: () -> Void
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   @Environment(\.popupChrome) private var chrome
@@ -360,12 +423,14 @@ private struct ArtworkInspectionOverlay: View {
   @State private var hoverTurn: Task<Void, Never>?
   /// When the last turn landed: a hover right after it is not intent.
   @State private var restAt: CFTimeInterval = 0
+  /// Vinyl: the record slides out once the card has landed, and tucks away first on close.
+  @State private var recordOut = false
   @FocusState private var closeFocused: Bool
 
-  init(request: ArtworkInspectionRequest, revealed: Binding<Bool>, holdResize: Binding<Bool>,
-       closing: Bool, dismiss: @escaping () -> Void) {
-    self.request = request; _revealed = revealed; _holdResize = holdResize
-    self.closing = closing; self.dismiss = dismiss
+  init(request: ArtworkInspectionRequest, source: CGRect, revealed: Binding<Bool>, holdResize: Binding<Bool>,
+       closing: Bool, landing: Bool, dismiss: @escaping () -> Void) {
+    self.request = request; self.source = source; _revealed = revealed; _holdResize = holdResize
+    self.closing = closing; self.landing = landing; self.dismiss = dismiss
     _selection = State(initialValue: request.entry)
     _face = State(initialValue: request.image)
     _labelArtwork = State(initialValue: request.rawArtwork)
@@ -447,26 +512,31 @@ private struct ArtworkInspectionOverlay: View {
           }
         }
       }
+      // The words and controls follow the art: in a beat after it leaves the
+      // sleeve, out at once on close, so the flight reads on its own.
       .opacity(revealed && !closing ? 1 : 0)
+      .animation(contentMotion, value: revealed && !closing)
       .overlayPreferenceValue(ArtworkSlotKey.self) { anchor in
         GeometryReader { overlay in
           if let anchor {
             let slot = overlay[anchor]
             let origin = overlay.frame(in: .global).origin
-            let source = request.source.offsetBy(dx: -origin.x, dy: -origin.y)
+            let source = self.source.offsetBy(dx: -origin.x, dy: -origin.y)
             let travels = !request.reduceMotion && (!closing || entry?.id == request.entry?.id)
             let settled = revealed && !closing
             artwork(width: artWidth, height: artWidth / ratio)
               .scaleEffect(settled || !travels ? 1 : min(source.width, source.height * ratio) / artWidth)
               .position(x: settled || !travels ? slot.midX : source.midX,
                         y: settled || !travels ? slot.midY : source.midY)
-              .opacity(request.reduceMotion || (!travels && closing) ? (settled ? 1 : 0) : 1)
+              .opacity(request.reduceMotion || (!travels && closing) ? (settled ? 1 : 0) : (landing ? 0 : 1))
           }
         }
         .allowsHitTesting(false)
         .zIndex(100)
       }
-      .overlay(alignment: .top) { header.opacity(revealed && !closing ? 1 : 0) }
+      .overlay(alignment: .top) {
+        header.opacity(revealed && !closing ? 1 : 0).animation(contentMotion, value: revealed && !closing)
+      }
       .foregroundStyle(palette.ink.color)
       .environment(\.colorScheme, palette.dark ? .dark : .light)
       .environment(\.artworkCardPalette, palette)
@@ -491,13 +561,22 @@ private struct ArtworkInspectionOverlay: View {
         withAnimation(.smooth(duration: 0.30)) { revealed = true }
         opening = false
       } else {
-        // Front-facing all the way: an opening turn showed the edge and the
-        // blurred back first, which read as blank. A rest on the cover turns it.
-        withAnimation(.smooth(duration: 0.42)) { revealed = true }
+        // Half a turn into place on one spring: the card's back wears the
+        // cover for the flight (ArtworkTurntableScene), so it never reads blank.
+        withAnimation(.spring(response: ArtworkTurntableFactory.arrival.response,
+                              dampingFraction: ArtworkTurntableFactory.arrival.damping)) { revealed = true }
         opening = false
-        restAt = CACurrentMediaTime() + 0.42
+        restAt = CACurrentMediaTime() + 0.6
       }
       transport.select(entry)
+      // Vinyl: once the card is down, the record slides out with a little turn.
+      if request.reduceMotion || request.powerSaver {
+        recordOut = true
+      } else {
+        try? await Task.sleep(for: .milliseconds(380))
+        guard !Task.isCancelled, !closing else { return }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.78)) { recordOut = true }
+      }
     }
     .task(id: closing ? -1 : turn) {
       guard !closing, turn > 0 else { return }
@@ -511,15 +590,21 @@ private struct ArtworkInspectionOverlay: View {
     .onChange(of: turning) { _, value in holdResize = value }
     .onChange(of: closing) { _, value in
       if value { faceToken = UUID(); hoverTurn?.cancel(); hoverTurn = nil }
+      if value && !request.reduceMotion { withAnimation(.easeIn(duration: 0.16)) { recordOut = false } }
     }
     .onChange(of: imageIdentity) { _, _ in refreshFace() }
     .onChange(of: entry?.item?.url) { _, _ in transport.select(entry) }
     .onDisappear { faceToken = UUID(); hoverTurn?.cancel(); transport.stop() }
   }
 
+  private var contentMotion: Animation {
+    if request.reduceMotion { return .easeInOut(duration: 0.2) }
+    return revealed && !closing ? .easeOut(duration: 0.26).delay(0.16) : .easeOut(duration: 0.12)
+  }
+
   private var header: some View {
     HStack {
-      Text(entry == nil ? "Artwork" : "Now Playing")
+      Text(entry == nil ? "Artwork" : "What’s Playing")
         .font(.system(size: 14, weight: .semibold, design: .rounded))
       Spacer()
       Button(action: dismiss) {
@@ -545,6 +630,7 @@ private struct ArtworkInspectionOverlay: View {
                              center: .center, startRadius: 0, endRadius: width * 0.72))
         .frame(width: width * 1.5, height: width * 1.5)
         .offset(y: -18)
+        .opacity(revealed && !closing ? 1 : 0)
         .allowsHitTesting(false)
       let peek = artworkStyle == .vinyl ? height * 0.23 : 0
       ZStack {
@@ -554,12 +640,15 @@ private struct ArtworkInspectionOverlay: View {
             label: colours.label(dark: palette.dark), diameter: height * 0.92,
             dark: palette.dark, spinning: false)
             .frame(width: height * 0.92, height: height * 0.92)
-            .offset(x: width / 2 - height * 0.23)
+            .rotationEffect(.degrees(recordOut ? 0 : -40))
+            .offset(x: width / 2 - height * (recordOut ? 0.23 : 0.46))
+            .opacity(recordOut ? 1 : 0)
             .modifier(ArtworkCoverPerspective())
         }
         ArtworkTurntableScene(image: face, reverse: reverse, turn: turn, artworkSize: size,
                               reducedMotion: request.reduceMotion, powerSaver: request.powerSaver,
-                              perspective: perspective, glass: glass && !reduceTransparency, closing: closing)
+                              perspective: perspective, glass: glass && !reduceTransparency, closing: closing,
+                              flips: closing ? entry?.id == request.entry?.id : opening)
           .id(selection?.id ?? request.id.uuidString)
           .frame(width: width + overscan * 2, height: height + overscan * 2)
           .allowsHitTesting(false)

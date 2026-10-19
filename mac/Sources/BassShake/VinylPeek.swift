@@ -68,11 +68,13 @@ struct OnSleeve<Overlay: View>: ViewModifier {
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.drawPaused) private var drawPaused
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.artworkPointerOver) private var pointerOver
   @State private var hovering = false
 
   private var canReveal: Bool {
     style.resolved(for: size) == .vinyl && size >= 36 && !reduceMotion && !powerSaver && !drawPaused
   }
+  private var engaged: Bool { (hovering || (pointerOver && !Reshuffle.anyOn)) && canReveal }
 
   func body(content: Content) -> some View {
     content.overlay(alignment: .topLeading) {
@@ -82,8 +84,8 @@ struct OnSleeve<Overlay: View>: ViewModifier {
         // stationary hover region and timing as the underlying artwork.
         overlay()
           .frame(width: g.sleeve, height: g.sleeve, alignment: alignment)
-          .offset(x: hovering && canReveal ? -size * 3 / 48 : 0, y: g.sleeveRect.minY)
-          .animation(canReveal ? .smooth(duration: 0.36) : nil, value: hovering && canReveal)
+          .offset(x: engaged ? VinylRevealPose(progress: 1).sleeveShift(g) : 0, y: g.sleeveRect.minY)
+          .animation(canReveal ? VinylRevealPose.motion(engaged) : nil, value: engaged)
       } else {
         overlay().frame(width: size, height: size, alignment: alignment)
       }
@@ -652,21 +654,42 @@ struct VinylRevealPose {
     resting + (g.size * 4 / 48) * p
   }
   func sleeveShift(_ g: VinylGeometry) -> CGFloat { -g.size * 3 / 48 * p }
+  /// The record turns a little as it's drawn out (follows the overshoot).
+  var spin: Angle { .degrees(25 * Double(progress)) }
+  /// Out with a little give; back in calmly.
+  static func motion(_ out: Bool) -> Animation {
+    out ? .spring(response: 0.42, dampingFraction: 0.78) : .spring(response: 0.5, dampingFraction: 0.9)
+  }
+}
+
+/// Every fifth deliberate pull (a rest of a quarter second) per launch, a
+/// light sweeps the record once.
+@MainActor enum VinylGlint {
+  static var pulls = 0
+  static let every = 5
 }
 
 /// Only the pose interpolates. Record, paper and cover stay mounted, with a
 /// paper back beneath the transparent material and a contact shade at its mouth.
 struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
   var progress: CGFloat
+  /// The glint's sweep across the record, 0…1 (0 and 1: no glint).
+  var glint: CGFloat = 0
   let geometry: VinylGeometry
   let restingCenter: CGFloat
   let dark: Bool
   let record: Record
   let sleeve: Sleeve
 
-  var animatableData: CGFloat {
-    get { progress }
-    set { progress = newValue }
+  init(progress: CGFloat, glint: CGFloat = 0, geometry: VinylGeometry, restingCenter: CGFloat, dark: Bool,
+       record: Record, sleeve: Sleeve) {
+    self.progress = progress; self.glint = glint; self.geometry = geometry
+    self.restingCenter = restingCenter; self.dark = dark; self.record = record; self.sleeve = sleeve
+  }
+
+  var animatableData: AnimatablePair<CGFloat, CGFloat> {
+    get { AnimatablePair(progress, glint) }
+    set { progress = newValue.first; glint = newValue.second }
   }
 
   var body: some View {
@@ -683,6 +706,8 @@ struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
         .offset(x: shift + g.size * 0.00625, y: g.sleeveRect.minY)
       record
         .frame(width: g.record, height: g.record)
+        .rotationEffect(pose.spin)
+        .overlay { if glint > 0 && glint < 1 { glintLight(g.record) } }
         .position(x: center, y: g.size / 2)
       LinearGradient(colors: [.black.opacity(dark ? 0.38 : 0.30), .clear],
                      startPoint: .leading, endPoint: .trailing)
@@ -704,6 +729,30 @@ struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
     }
     .frame(width: g.size, height: g.size, alignment: .topLeading)
   }
+
+  /// One soft band of light across the grooves and a brief star at the rim.
+  private func glintLight(_ d: CGFloat) -> some View {
+    let t = glint, bloom = sin(.pi * t)
+    return ZStack {
+      LinearGradient(stops: [.init(color: .white.opacity(0), location: 0),
+                             .init(color: .white.opacity(dark ? 0.32 : 0.42), location: 0.5),
+                             .init(color: .white.opacity(0), location: 1)],
+                     startPoint: .leading, endPoint: .trailing)
+        .frame(width: d * 0.35, height: d * 1.6)
+        .rotationEffect(.degrees(28))
+        .offset(x: (t * 2 - 1) * d * 0.8)
+        .frame(width: d, height: d)
+        .mask(Circle())
+      Image(systemName: "sparkle")
+        .font(.system(size: max(6, d * 0.13), weight: .medium))
+        .foregroundStyle(.white)
+        .scaleEffect(0.4 + 0.6 * bloom)
+        .opacity(bloom)
+        .offset(x: d * 0.3, y: -d * 0.31)
+    }
+    .blendMode(.plusLighter)
+    .allowsHitTesting(false)
+  }
 }
 
 /// Vinyl Peek art in a fixed `size` square: hover eases the record out to the right.
@@ -721,6 +770,9 @@ struct VinylPeekArt: View {
   @State private var settled = false
   @State private var slides = false
   @State private var hovering = false
+  @State private var glint: CGFloat = 0
+  @Environment(\.artworkPointerOver) private var pointerOver
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   @Environment(\.colorScheme) private var scheme
   @Environment(\.vinylMaterial) private var material
   @Environment(\.powerSaver) private var powerSaver
@@ -739,8 +791,8 @@ struct VinylPeekArt: View {
     let p = ArtPalettes.shared.cached(source) ?? (palette?.id == id ? palette?.value : nil) ?? .neutral
     let center = out ? g.playingCenter : g.pausedCenter
     let shape = RoundedRectangle(cornerRadius: g.sleeveRadius, style: .continuous)
-    let engaged = hovering && canReveal
-    VinylRevealScene(progress: engaged ? 1 : 0, geometry: g, restingCenter: center, dark: dark,
+    let engaged = (hovering || (pointerOver && !Reshuffle.anyOn)) && canReveal
+    VinylRevealScene(progress: engaged ? 1 : 0, glint: glint, geometry: g, restingCenter: center, dark: dark,
       record: VinylRecord(material: material, artwork: artwork, record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
                           spinning: material == .artwork && spinning && !reduceMotion && !powerSaver && !drawPaused),
       sleeve: sleeve(g, p, dark: dark, shape: shape, engaged: engaged)
@@ -749,7 +801,20 @@ struct VinylPeekArt: View {
     // This stationary region owns hover, not the sliding layers inside it.
     .contentShape(Rectangle())
     .onHover { hovering = $0 && canReveal && !Reshuffle.anyOn }
-    .animation(canReveal ? .smooth(duration: 0.36) : nil, value: engaged)
+    .animation(canReveal ? VinylRevealPose.motion(engaged) : nil, value: engaged)
+    .task(id: engaged) {
+      // A deliberate pull counts (a quarter second's rest); every fifth one glints.
+      guard engaged, !reduceTransparency else { return }
+      try? await Task.sleep(for: .milliseconds(250))
+      guard !Task.isCancelled else { return }
+      VinylGlint.pulls += 1
+      guard VinylGlint.pulls % VinylGlint.every == 0 else { return }
+      glint = 0
+      withAnimation(.easeInOut(duration: 0.7).delay(0.05)) { glint = 1 }
+      try? await Task.sleep(for: .milliseconds(800))
+      var reset = Transaction(); reset.disablesAnimations = true
+      withTransaction(reset) { glint = 0 }
+    }
     .animation(reduceMotion || powerSaver || drawPaused || !slides ? nil : .spring(response: 0.55, dampingFraction: 0.82), value: out)
     .opacity(settled ? 1 : 0)
     .task {
