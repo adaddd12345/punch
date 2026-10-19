@@ -58,6 +58,8 @@ jobs:
         run: bash mac/scripts/browser-tempo-check.sh
       - name: Tempo, key and tuner detection checks
         run: bash mac/scripts/music-sense-check.sh
+      - name: Tempo colourway contrast checks
+        run: bash mac/scripts/tempo-palette-check.sh
       - name: Artwork color and contrast checks
         run: bash mac/scripts/artwork-card-check.sh
       - name: Artwork background and bass reaction checks

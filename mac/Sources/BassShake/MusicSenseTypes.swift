@@ -110,4 +110,104 @@ struct MusicSenseSnapshot: Equatable {
 
   /// Recent loudness for the listening strip, oldest first, each 0…1.
   var levels: [Float] = []
+
+  // MARK: What to show (decided with hysteresis by the analyser)
+
+  /// Where a shown value comes from. `.title` and `.remembered` are backups
+  /// (shown dimmer): the track's title said so, or this track was heard
+  /// clearly before. Once listening confirms them, the source is `.detected`.
+  enum Source: Equatable {
+    case detected, title, remembered
+  }
+
+  /// Show `bpm`: the tempo has been clear for ~3 s (1.5 s when the title or
+  /// memory agrees), or a backup is available. Hidden after ~6 s of unclear
+  /// tempo, > 4 s of silence, or sustained speech.
+  var bpmShown = false
+  /// Show `key`: the key is clear and the sound is music (not speech/noise).
+  var keyShown = false
+  var bpmSource: Source = .detected
+  var keySource: Source = .detected
+  /// A tempo or key change is being checked (beat switch, modulation); the
+  /// shown value may be about to change. Either of the two below.
+  var recalibrating = false
+  var bpmRecalibrating = false
+  var keyRecalibrating = false
+  /// 0…1: how much the sound is like music (a steady pulse or held harmony)
+  /// rather than speech or noise. Smoothed over ~1 s.
+  var musicLikelihood: Double = 0
+  /// Sustained speech or other non-music sound (a podcast, a video's voice):
+  /// tempo and key are hidden while true.
+  var speech = false
+}
+
+/// Tempo and key read from a track or video title ("… | 140 BPM | C minor",
+/// "Am 92bpm"). Plain text parsing; nothing is looked up.
+struct MusicTitleHints: Equatable {
+  var bpm: Double?
+  var key: MusicKey?
+  var isEmpty: Bool { bpm == nil && key == nil }
+
+  init(bpm: Double? = nil, key: MusicKey? = nil) {
+    self.bpm = bpm
+    self.key = key
+  }
+
+  init(title: String?) {
+    guard let title, !title.isEmpty else { return }
+    let ns = title as NSString
+    let all = NSRange(location: 0, length: ns.length)
+    // BPM: "140 BPM", "140bpm", "140-bpm", "bpm 140", "BPM: 140" (60–200).
+    for re in Self.bpmPatterns {
+      for m in re.matches(in: title, range: all).reversed() {
+        guard let v = Double(ns.substring(with: m.range(at: 1))), v >= 60, v <= 200 else { continue }
+        bpm = v
+        break
+      }
+      if bpm != nil { break }
+    }
+    // Key: long forms ("C minor", "F# Minor", "Bb maj", "A♭ major", "Cmin")
+    // anywhere; short forms ("Am", "C#m", "Ebm") only beside a BPM or a
+    // "key" word, so "I Am" alone isn't A minor.
+    for m in Self.longKey.matches(in: title, range: all) {
+      if let k = Self.key(ns, m) { key = k; return }
+    }
+    let shortAllowed = bpm != nil || Self.keyWord.firstMatch(in: title, range: all) != nil
+    guard shortAllowed else { return }
+    for m in Self.shortKey.matches(in: title, range: all) {
+      if let k = Self.key(ns, m) { key = k; return }
+    }
+  }
+
+  private static func key(_ ns: NSString, _ m: NSTextCheckingResult) -> MusicKey? {
+    let letter = ns.substring(with: m.range(at: 1))
+    let base: [String: Int] = ["C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11]
+    guard var pc = base[letter] else { return nil }
+    if m.range(at: 2).location != NSNotFound {
+      let acc = ns.substring(with: m.range(at: 2)).lowercased()
+      if acc.contains("#") || acc.contains("♯") || acc.contains("sharp") {
+        pc += 1
+      } else if acc == "b" || acc.contains("♭") || acc.contains("flat") {
+        pc -= 1
+      }
+    }
+    let mode = ns.substring(with: m.range(at: 3))
+    let minor = mode == "m" || mode.lowercased().hasPrefix("min")
+    return MusicKey(pitchClass: pc, minor: minor)
+  }
+
+  private static func re(_ p: String, _ opts: NSRegularExpression.Options = []) -> NSRegularExpression {
+    try! NSRegularExpression(pattern: p, options: opts)
+  }
+  private static let bpmPatterns = [
+    re(#"(?<![\d.])(\d{2,3}(?:\.\d+)?)\s*-?\s*bpm(?![a-z])"#, .caseInsensitive),
+    re(#"(?<![a-z])bpm\s*[:=\-]?\s*(\d{2,3}(?:\.\d+)?)(?![\d])"#, .caseInsensitive),
+  ]
+  /// Letter, accidental, mode word. The letter is a capital; the boundary
+  /// before it is not a letter or digit ("5AM" is no key).
+  private static let accidental = #"(#|♯|b|♭|\s?-?sharp|\s?-?flat)?"#
+  private static let longKey = re(#"(?<![\p{L}\d])([A-G])"# + accidental
+    + #"[\s\-]?((?i:minor|major|min|maj))(?![\p{L}\d])"#)
+  private static let shortKey = re(#"(?<![\p{L}\d])([A-G])"# + accidental + #"(m)(?![\p{L}\d])"#)
+  private static let keyWord = re(#"(?<![\p{L}])key(?![\p{L}])"#, .caseInsensitive)
 }

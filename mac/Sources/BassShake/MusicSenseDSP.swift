@@ -359,16 +359,23 @@ final class MSTempo {
   static let gate = 0.25
   /// Updates a different tempo must win in a row to replace the current one.
   static let switchWins = 3
+  /// Updates (0.5 s apart) a tempo that is not an octave of the locked one
+  /// must win the short window in a row to relock (a beat switch).
+  static let relockVotes = 3
   /// Beats summed for the phase estimate.
   static let phaseBeats = 8
 
   let frameRate: Double
   let lagMin: Int, lagMax: Int, maxLag: Int
+  /// The long window (8 s) and the short one (4 s) that hears tempo changes.
   let windowFrames: Int
+  let shortFrames: Int
   let minFrames: Int
   private let work: MSBuffer
   private let acf: MSBuffer
+  private let shortAcf: MSBuffer
   private var score: [Double]
+  private var shortScore: [Double]
   private var prior: [Double]
   private let phase: MSBuffer
 
@@ -385,16 +392,42 @@ final class MSTempo {
   /// One beat (PLL-smoothed), as a fractional onset frame.
   private(set) var anchor: Double?
 
+  /// 0…1: how clearly the last 4 s pulse at any one tempo (a music cue;
+  /// speech and noise stay low).
+  private(set) var pulse = 0.0
+  private(set) var pulseMeasured = false
+  private var winners = [Int](repeating: 0, count: 6)
+  private var winnerPos = 0
+  private var winnerCount = 0
+  /// A beat switch is being checked, or the new tempo's phase is settling.
+  private(set) var recalibrating = false
+  /// Beat switches followed since the last reset.
+  private(set) var relocks = 0
+  private var votes = 0
+  private var voteTarget: Int?
+  private var firstVoteFrame = 0
+  private var relockFrame: Int?
+  /// First onset frame of the current tempo's stretch: windows and the
+  /// phase never reach back past a beat switch.
+  private var segmentStart = 0
+  /// The beat grid is trustworthy: the phase has held still for a few updates.
+  private(set) var phaseStable = false
+  private var phaseError = 0.25
+  private var phaseUpdates = 0
+
   init(frameRate: Double) {
     self.frameRate = frameRate
     lagMin = Int((60 * frameRate / Self.maxBpm).rounded(.down))
     lagMax = Int((60 * frameRate / Self.minBpm).rounded(.up))
     maxLag = 4 * lagMax + 2
     windowFrames = Int((8 * frameRate).rounded())
-    minFrames = Int((5 * frameRate).rounded())
+    shortFrames = Int((4 * frameRate).rounded())
+    minFrames = shortFrames
     work = MSBuffer(windowFrames)
     acf = MSBuffer(maxLag + 1)
+    shortAcf = MSBuffer(maxLag + 1)
     score = [Double](repeating: 0, count: lagMax + 2)
+    shortScore = [Double](repeating: 0, count: lagMax + 2)
     prior = [Double](repeating: 0, count: lagMax + 2)
     for l in max(1, lagMin)...lagMax {
       let oct = log2(60 * frameRate / Double(l) / 120)
@@ -414,29 +447,52 @@ final class MSTempo {
     bpm = nil
     confidence = 0
     alternative = nil
-    anchor = nil
+    pulse = 0
+    pulseMeasured = false
+    winnerPos = 0
+    winnerCount = 0
+    relocks = 0
+    resetPhase()
   }
 
   /// After a gap: the onset timeline restarts, so the phase does too. The
   /// tempo (and its octave choice) is held until the new audio confirms or
   /// replaces it.
-  func resetPhase() { anchor = nil }
+  func resetPhase() {
+    anchor = nil
+    phaseStable = false
+    segmentStart = 0
+    votes = 0
+    voteTarget = nil
+    relockFrame = nil
+    recalibrating = false
+  }
 
   private func near(_ a: Int, _ b: Int) -> Bool { abs(a - b) <= max(1, Int((0.03 * Double(b)).rounded())) }
+  /// Same tempo, or half or double it.
+  private func octaveRelated(_ a: Int, _ b: Int) -> Bool { near(a, b) || near(a, 2 * b) || near(2 * a, b) }
 
-  /// Index of the largest ACF value within ±w of c (inside 1…top).
-  private func peak(_ c: Int, _ w: Int, top: Int) -> Int {
+  /// Index of the largest value of `a` within ±w of c (inside 1…top).
+  private func peak(_ a: UnsafeMutablePointer<Float>, _ c: Int, _ w: Int, top: Int) -> Int {
     let lo = max(1, min(top, c - w)), hi = max(lo, min(top, c + w))
     var m = max(lo, min(hi, c))
-    for l in lo...hi where acf.p[l] > acf.p[m] { m = l }
+    for l in lo...hi where a[l] > a[m] { m = l }
     return m
   }
 
-  /// One estimate from the onset history. `gated` = enough fresh sound and
-  /// not silent; otherwise the published state is held.
-  func update(_ onset: MSOnset, gated: Bool) {
-    let n = min(onset.frames, windowFrames)
-    guard n >= minFrames else { return }
+  private struct Comb {
+    var best: Int
+    var score: Double
+    var mean: Double
+    var top: Int
+    /// How far the peak stands above the mean of the weighted comb: ~0.1
+    /// for noise, 0.4–1 for a steady groove.
+    func conf(_ s: Double) -> Double { max(0, min(1, (s - mean) / 0.5)) }
+  }
+
+  /// Unbiased autocorrelation (r(0) = 1) of the newest `n` onset frames into
+  /// `out`, then the prior-weighted comb over T, 2T, 4T into `sc`.
+  private func comb(_ onset: MSOnset, n: Int, into out: MSBuffer, score sc: inout [Double]) -> Comb? {
     let first = onset.frames - n
     for i in 0..<n { work.p[i] = onset.value(first + i) }
     var mean: Float = 0
@@ -445,61 +501,132 @@ final class MSTempo {
     vDSP_vsadd(work.p, 1, &mean, work.p, 1, vDSP_Length(n))
     var r0: Float = 0
     vDSP_dotpr(work.p, 1, work.p, 1, &r0, vDSP_Length(n))
-    guard r0 > 1e-12 else {
-      if gated { confidence = 0 }
-      return
-    }
-    // Unbiased autocorrelation, normalised to r(0) = 1.
+    guard r0 > 1e-12 else { return nil }
     let top = min(n - 2, maxLag)
-    acf.p[0] = 1
+    let a = out.p
+    a[0] = 1
     for l in 1...top {
       var d: Float = 0
       vDSP_dotpr(work.p, 1, work.p + l, 1, &d, vDSP_Length(n - l))
-      acf.p[l] = d * Float(n) / (Float(n - l) * r0)
+      a[l] = d * Float(n) / (Float(n - l) * r0)
     }
-    // Comb over T, 2T, 4T, weighted by the tempo prior.
     var sum = 0.0, best = lagMin, bestScore = -Double.infinity
     for t in lagMin...lagMax {
-      var c = Double(acf.p[t]), terms = 1.0
-      if 2 * t + 1 <= top { c += Double(acf.p[peak(2 * t, 1, top: top)]); terms += 1 }
-      if 4 * t + 2 <= top { c += Double(acf.p[peak(4 * t, 2, top: top)]); terms += 1 }
+      var c = Double(a[t]), terms = 1.0
+      if 2 * t + 1 <= top { c += Double(a[peak(a, 2 * t, 1, top: top)]); terms += 1 }
+      if 4 * t + 2 <= top { c += Double(a[peak(a, 4 * t, 2, top: top)]); terms += 1 }
       let s = c / terms * prior[t]
-      score[t] = s
+      sc[t] = s
       sum += s
       if s > bestScore { bestScore = s; best = t }
     }
-    let meanScore = sum / Double(lagMax - lagMin + 1)
-    // How far the peak stands above the mean of the weighted comb: ~0.1 for
-    // noise, 0.4–1 for a steady groove.
-    func conf(_ s: Double) -> Double { max(0, min(1, (s - meanScore) / 0.5)) }
-    let winnerOK = best > lagMin && best < lagMax && conf(bestScore) >= Self.gate
+    return Comb(best: best, score: bestScore, mean: sum / Double(lagMax - lagMin + 1), top: top)
+  }
+
+  /// The window: 8 s, but never reaching back past a beat switch (at least 4 s).
+  private func windowLength(_ onset: MSOnset) -> Int {
+    min(onset.frames, windowFrames, max(onset.frames - segmentStart, shortFrames))
+  }
+
+  /// One estimate from the onset history. `gated` = enough fresh sound and
+  /// not silent; otherwise the published state is held.
+  func update(_ onset: MSOnset, gated: Bool) {
+    var n = windowLength(onset)
+    guard n >= minFrames else { return }
+    guard var long = comb(onset, n: n, into: acf, score: &score) else {
+      if gated {
+        confidence = 0
+        pulse = 0
+      }
+      return
+    }
+    let winnerOK = long.best > lagMin && long.best < lagMax && long.conf(long.score) >= Self.gate
     guard gated else { return }
+    defer {
+      // Deciding on a beat switch, or the new tempo's phase is still settling.
+      var switching = votes > 0
+      if challengerWins > 0, let c = challenger, let l = lag, !octaveRelated(c, l) { switching = true }
+      if let f = relockFrame, onset.frames - f < Int(3 * frameRate), !phaseStable { switching = true }
+      recalibrating = switching
+    }
+    // The short window: the pulse cue, and beat switches.
+    let short = comb(onset, n: min(n, shortFrames), into: shortAcf, score: &shortScore)
+    var winner = 0
+    if let short, short.best > lagMin, short.best < lagMax {
+      pulse = short.conf(short.score)
+      winner = short.best
+    } else {
+      pulse = 0
+    }
+    pulseMeasured = true
+    // A beat keeps winning at one tempo; speech's best lag wanders. Weight
+    // the pulse by how many of the last 3 s of winners agree (an octave
+    // counts half).
+    winners[winnerPos] = winner
+    winnerPos = (winnerPos + 1) % winners.count
+    winnerCount = min(winnerCount + 1, winners.count)
+    if winner > 0 {
+      var agree = 0.0
+      for w in winners.prefix(winnerCount) where w > 0 {
+        if near(w, winner) { agree += 1 } else if octaveRelated(w, winner) { agree += 0.5 }
+      }
+      pulse *= agree / Double(max(3, winnerCount))
+    }
 
     if let cur = lag {
-      if near(best, cur) {
-        lag = best
+      if near(long.best, cur) {
+        lag = long.best
         challenger = nil
         challengerWins = 0
       } else if winnerOK {
-        if let ch = challenger, near(best, ch) { challengerWins += 1 } else { challengerWins = 1 }
-        challenger = best
+        if let ch = challenger, near(long.best, ch) { challengerWins += 1 } else { challengerWins = 1 }
+        challenger = long.best
         if challengerWins >= Self.switchWins {
-          lag = best
+          if !octaveRelated(long.best, cur) { startSegment(onset, from: onset.frames - shortFrames) }
+          lag = long.best
           challenger = nil
           challengerWins = 0
           anchor = nil   // a new period: re-acquire the phase
+          phaseStable = false
         }
       }
     } else if winnerOK {
-      if let c = candidate, near(best, c) { candidateVotes += 1 } else { candidateVotes = 1 }
-      candidate = best
+      if let c = candidate, near(long.best, c) { candidateVotes += 1 } else { candidateVotes = 1 }
+      candidate = long.best
       if candidateVotes >= 2 {
-        lag = best
+        lag = long.best
         candidate = nil
       }
     }
+    // A beat switch: a tempo that isn't an octave of the locked one wins the
+    // short window clearly, while the locked one has faded there.
+    if let cur = lag, let short, short.best > lagMin, short.best < lagMax {
+      var held = 0.0
+      for l in max(lagMin, cur - 1)...min(lagMax, cur + 1) { held = max(held, shortScore[l]) }
+      if !octaveRelated(short.best, cur), short.conf(short.score) >= 0.35, held < 0.7 * short.score {
+        if let t = voteTarget, near(short.best, t) {
+          votes += 1
+        } else {
+          votes = 1
+          firstVoteFrame = onset.frames
+        }
+        voteTarget = short.best
+        if votes >= Self.relockVotes {
+          // It started winning about half a short window before the first vote.
+          startSegment(onset, from: firstVoteFrame - shortFrames / 2)
+          lag = short.best
+          challenger = nil
+          challengerWins = 0
+          n = windowLength(onset)
+          if let fresh = comb(onset, n: n, into: acf, score: &score) { long = fresh }
+        }
+      } else {
+        votes = 0
+        voteTarget = nil
+      }
+    }
     guard let cur = lag else {
-      confidence = winnerOK ? conf(bestScore) : 0
+      confidence = winnerOK ? long.conf(long.score) : 0
       return
     }
     // Settle on the local best at the chosen octave.
@@ -507,8 +634,8 @@ final class MSTempo {
     for l in max(lagMin, cur - 1)...min(lagMax, cur + 1) where score[l] > score[local] { local = l }
     lag = local
     let s = score[local]
-    confidence = conf(s)
-    period = refine(local, top: top)
+    confidence = long.conf(s)
+    period = refine(local, top: long.top)
     let raw = 60 * frameRate / period
     if confidence >= Self.gate { bpm = (raw * 10).rounded() / 10 }
     // The octave partner, when it was close behind.
@@ -527,19 +654,31 @@ final class MSTempo {
     if confidence >= Self.gate { updatePhase(onset) }
   }
 
+  /// A new tempo from frame `from`: forget the old one's phase and history.
+  private func startSegment(_ onset: MSOnset, from: Int) {
+    segmentStart = max(0, min(onset.frames - 2, from))
+    relockFrame = onset.frames
+    relocks += 1
+    votes = 0
+    voteTarget = nil
+    anchor = nil
+    phaseStable = false
+  }
+
   /// Sub-frame period: the parabolic peak at T, then a least-squares fit
   /// through the peaks at T, 2T and 4T (precision grows with k).
   private func refine(_ l: Int, top: Int) -> Double {
-    let p1 = peak(l, 1, top: top)
+    let a = acf.p
+    let p1 = peak(a, l, 1, top: top)
     guard p1 > 1, p1 < top else { return Double(l) }
-    var period = Double(p1) + msParabola(Double(acf.p[p1 - 1]), Double(acf.p[p1]), Double(acf.p[p1 + 1]))
+    var period = Double(p1) + msParabola(Double(a[p1 - 1]), Double(a[p1]), Double(a[p1 + 1]))
     var num = period, den = 1.0
     for k in stride(from: 2, through: 4, by: 2) {
       let c = Int((Double(k) * period).rounded())
       guard c + 3 <= top else { break }
-      let m = peak(c, 2, top: top)
+      let m = peak(a, c, 2, top: top)
       guard m > 1, m < top else { break }
-      num += Double(k) * (Double(m) + msParabola(Double(acf.p[m - 1]), Double(acf.p[m]), Double(acf.p[m + 1])))
+      num += Double(k) * (Double(m) + msParabola(Double(a[m - 1]), Double(a[m]), Double(a[m + 1])))
       den += Double(k * k)
     }
     period = num / den
@@ -548,14 +687,16 @@ final class MSTempo {
 
   /// Scores every phase offset by the onset strength at the last 8 beat
   /// positions, then nudges the anchor towards the best (≤ 10% of a period
-  /// per update).
+  /// per update). The grid counts as stable once the raw estimate has stayed
+  /// within ~10% of a period of the prediction for two updates.
   private func updatePhase(_ onset: MSOnset) {
     let p = period
     guard p > 2 else { return }
     let newest = Double(onset.frames - 1)
-    let oldest = Double(max(0, onset.frames - MSOnset.history + 2))
+    let oldest = Double(max(segmentStart, onset.frames - MSOnset.history + 2))
     let steps = min(phase.count, Int(p.rounded(.up)))
     var best = 0
+    var total: Float = 0
     for phi in 0..<steps {
       var s = 0.0
       for j in 0..<Self.phaseBeats {
@@ -564,20 +705,33 @@ final class MSTempo {
         s += onset.value(at: x)
       }
       phase.p[phi] = Float(s)
+      total += phase.p[phi]
       if phase.p[phi] > phase.p[best] { best = phi }
     }
     guard phase.p[best] > 0 else { return }
+    // How far the best phase stands above the average one (1 = flat).
+    let sharp = Double(phase.p[best]) * Double(steps) / Double(max(total, 1e-12))
     let d = msParabola(Double(phase.p[(best - 1 + steps) % steps]), Double(phase.p[best]),
                        Double(phase.p[(best + 1) % steps]))
     let beat = newest - (Double(best) + d)
     guard let a = anchor else {
       anchor = beat
+      phaseError = 0.25
+      phaseUpdates = 0
+      phaseStable = false
       return
     }
     let k = ((beat - a) / p).rounded()
     let predicted = a + k * p
     let e = beat - predicted
     anchor = predicted + max(-0.1 * p, min(0.1 * p, 0.5 * e))
+    phaseError += 0.4 * (min(0.5, abs(e) / p) - phaseError)
+    phaseUpdates += 1
+    if phaseStable {
+      if phaseError > 0.18 || sharp < 1.1 { phaseStable = false }
+    } else if phaseUpdates >= 2, phaseError < 0.1, sharp >= 1.25 {
+      phaseStable = true
+    }
   }
 }
 
@@ -602,20 +756,34 @@ final class MSKey {
   static let harmonics = 4
   static let harmonicDecay = 0.6
   static let tau = 25.0
+  /// The short memory that hears key changes, and how long it must disagree
+  /// with the long one (on one key, not its relative) before the key switches.
+  static let shortTau = 6.0
+  static let changeSeconds = 10.0
   /// Updates a different key must win in a row to replace the current one.
   static let switchWins = 4
   /// Smallest margin (r1 − r2) / r1 that publishes a key.
   static let gate = 0.02
+  /// Chroma frames apart (2048 hops: ~0.68 s) compared for harmonic stability.
+  static let stabilityLag = 4
 
   private let spectrum: MSSpectrum
   private let binHz: Double
   private let kLo: Int, kHi: Int
   private let alpha: Double
+  private let shortAlpha: Double
+  private let stabilityAlpha: Double
+  private let hopSeconds: Double
   private let peakHz: MSBuffer
   private let peakMag: MSBuffer
   private var hpcp = [Double](repeating: 0, count: 36)
   private var chroma = [Double](repeating: 0, count: 12)
   private var average = [Double](repeating: 0, count: 12)
+  private var shortAverage = [Double](repeating: 0, count: 12)
+  /// The last `stabilityLag` normalised chroma frames.
+  private var recent = [Double](repeating: 0, count: 12 * stabilityLag)
+  private var recentCount = 0
+  private var recentPos = 0
   private var profiles: [[Double]] = []   // 24 × 12, z-normalised; 0–11 major, 12–23 minor
   private var r = [Double](repeating: 0, count: 24)
   private var tuneSin = 0.0, tuneCos = 0.0, tuneWeight = 0.0
@@ -633,12 +801,28 @@ final class MSKey {
   private(set) var confidence = 0.0
   private(set) var runnerUp: MusicKey?
 
+  /// 0…1: chords that hold (chroma ~0.7 s apart agree, and a few pitch
+  /// classes stand out). High for music, low for speech's gliding pitch and
+  /// for noise. Smoothed over ~1 s; held through silence.
+  private(set) var harmony = 0.0
+  private(set) var harmonyFrames = 0
+  /// The short memory has disagreed on one key for a while (a key change?).
+  private(set) var recalibrating = false
+  /// Key changes followed since the last reset.
+  private(set) var changes = 0
+  private var otherKey: Int?
+  private var otherSeconds = 0.0
+  private var shortR = [Double](repeating: 0, count: 24)
+
   init(rate: Double, setup: FFTSetup) {
     spectrum = MSSpectrum(size: Self.fftSize, setup: setup)
     binHz = rate / Double(Self.fftSize)
     kLo = max(2, Int((Self.minHz / binHz).rounded(.up)))
     kHi = min(spectrum.bins - 2, Int((min(Self.maxHz, 0.45 * rate) / binHz).rounded(.down)))
     alpha = 1 - exp(-Double(Self.hop) / rate / Self.tau)
+    shortAlpha = 1 - exp(-Double(Self.hop) / rate / Self.shortTau)
+    stabilityAlpha = 1 - exp(-Double(Self.hop) / rate / 1.0)
+    hopSeconds = Double(Self.hop) / rate
     peakHz = MSBuffer(kHi / 2 + 2)
     peakMag = MSBuffer(kHi / 2 + 2)
     for minor in [false, true] {
@@ -653,7 +837,18 @@ final class MSKey {
   }
 
   func reset() {
-    for i in 0..<12 { average[i] = 0 }
+    for i in 0..<12 {
+      average[i] = 0
+      shortAverage[i] = 0
+    }
+    recentCount = 0
+    recentPos = 0
+    harmony = 0
+    harmonyFrames = 0
+    recalibrating = false
+    changes = 0
+    otherKey = nil
+    otherSeconds = 0
     tuneSin = 0
     tuneCos = 0
     tuneWeight = 0
@@ -749,9 +944,72 @@ final class MSKey {
       peakBin = max(peakBin, chroma[p])
     }
     guard peakBin > 0 else { return false }
-    for p in 0..<12 { average[p] += alpha * (chroma[p] / peakBin - average[p]) }
+    var mean = 0.0
+    for p in 0..<12 {
+      let c = chroma[p] / peakBin
+      chroma[p] = c
+      mean += c / 12
+      average[p] += alpha * (c - average[p])
+      shortAverage[p] += shortAlpha * (c - shortAverage[p])
+    }
+    // Harmonic stability: the correlation with the frame ~0.7 s ago (no
+    // overlap), times how much the strongest pitch classes stand out.
+    if recentCount >= Self.stabilityLag {
+      let old = recentPos * 12
+      var om = 0.0
+      for p in 0..<12 { om += recent[old + p] / 12 }
+      var sxy = 0.0, sxx = 0.0, syy = 0.0
+      for p in 0..<12 {
+        let a = chroma[p] - mean, b = recent[old + p] - om
+        sxy += a * b
+        sxx += a * a
+        syy += b * b
+      }
+      let corr = sxx > 1e-12 && syy > 1e-12 ? sxy / sqrt(sxx * syy) : 0
+      // Chord-like: 2–5 clear pitch classes (one is a lone bass or kick
+      // pitch; many is noise or a gliding voice), the rest well below.
+      var strong = 0
+      for p in 0..<12 where chroma[p] >= 0.5 { strong += 1 }
+      let chordlike = strong >= 2 && strong <= 5 ? 1.0 : strong == 1 ? 0.4 : 0.0
+      let contrast = 1 - mean   // the peak is 1: 0 = flat, → 1 = a few clear notes
+      let h = max(0, corr) * chordlike * min(1, max(0, (contrast - 0.25) / 0.35))
+      harmony += stabilityAlpha * (h - harmony)
+      harmonyFrames += 1
+    }
+    for p in 0..<12 { recent[recentPos * 12 + p] = chroma[p] }
+    recentPos = (recentPos + 1) % Self.stabilityLag
+    recentCount = min(recentCount + 1, Self.stabilityLag)
     frames += 1
     return true
+  }
+
+  /// Pearson correlation of a profile with all 24 keys into `out`; the best key.
+  private func correlate(_ v: [Double], into out: inout [Double]) -> Int? {
+    let mean = v.reduce(0, +) / 12
+    var norm = 0.0
+    for p in 0..<12 { norm += (v[p] - mean) * (v[p] - mean) }
+    norm = sqrt(norm)
+    guard norm > 1e-9 else { return nil }
+    var best = 0
+    for k in 0..<24 {
+      var s = 0.0
+      let prof = profiles[k]
+      for p in 0..<12 { s += (v[p] - mean) * prof[p] }
+      out[k] = s / norm
+      if out[k] > out[best] { best = k }
+    }
+    return best
+  }
+
+  /// The margin (r1 − r2) / r1 of key k over the best key that is neither it
+  /// nor its relative.
+  private func margin(_ k: Int, _ rs: [Double]) -> Double {
+    let rel = Self.relative(k)
+    var other: Int?
+    for j in 0..<24 where j != k && j != rel {
+      if other == nil || rs[j] > rs[other!] { other = j }
+    }
+    return rs[k] > 0 ? (rs[k] - rs[other ?? k]) / rs[k] : 0
   }
 
   private static func relative(_ k: Int) -> Int { k < 12 ? (k + 9) % 12 + 12 : (k - 12 + 3) % 12 }
@@ -759,21 +1017,32 @@ final class MSKey {
 
   /// Correlates the averaged profile with all 24 keys. `publish` = enough
   /// sound has been heard to show a key.
-  func estimate(publish: Bool) {
+  func estimate(publish: Bool, seconds: Double) {
     guard frames > 0 else { return }
-    let mean = average.reduce(0, +) / 12
-    var norm = 0.0
-    for p in 0..<12 { norm += (average[p] - mean) * (average[p] - mean) }
-    norm = sqrt(norm)
-    guard norm > 1e-9 else { return }
-    var best = 0
-    for k in 0..<24 {
-      var s = 0.0
-      let prof = profiles[k]
-      for p in 0..<12 { s += (average[p] - mean) * prof[p] }
-      r[k] = s / norm
-      if r[k] > r[best] { best = k }
+    // A key change: the short memory settles on another key (not the
+    // current one's relative) and keeps it for `changeSeconds`; then the
+    // long memory is replaced by the short one.
+    if let cur = current, let sb = correlate(shortAverage, into: &shortR) {
+      let differs = sb != cur && sb != Self.relative(cur) && shortR[sb] > 0.3 && margin(sb, shortR) >= 0.05
+      if differs {
+        if let o = otherKey, o == sb || o == Self.relative(sb) { otherSeconds += seconds } else { otherSeconds = seconds }
+        otherKey = sb
+        if otherSeconds >= Self.changeSeconds {
+          for p in 0..<12 { average[p] = shortAverage[p] }
+          current = sb
+          challenger = nil
+          challengerWins = 0
+          changes += 1
+          otherKey = nil
+          otherSeconds = 0
+        }
+      } else {
+        otherKey = nil
+        otherSeconds = 0
+      }
+      recalibrating = otherSeconds >= 3
     }
+    guard let best = correlate(average, into: &r) else { return }
     if let cur = current {
       if best == cur {
         challenger = nil
@@ -782,9 +1051,21 @@ final class MSKey {
         if challenger == best { challengerWins += 1 } else { challengerWins = 1 }
         challenger = best
         if challengerWins >= Self.switchWins {
-          current = best
           challenger = nil
           challengerWins = 0
+          if let o = otherKey, otherSeconds >= 3 {
+            // Mid key change: the long memory is a blend of old and new
+            // (often the new key's relative); take the short memory's key.
+            for p in 0..<12 { average[p] = shortAverage[p] }
+            current = o
+            changes += 1
+            otherKey = nil
+            otherSeconds = 0
+            recalibrating = false
+            _ = correlate(average, into: &r)
+          } else {
+            current = best
+          }
         }
       }
     } else {
@@ -965,12 +1246,46 @@ struct MSClock {
 
 // MARK: - Analyser
 
+/// Show/hide with hysteresis: shown once `good` has held for `showAfter`
+/// seconds; hidden once `poor` has held for `hideAfter`, or at once on `veto`.
+struct MSShowGate {
+  private(set) var shown = false
+  private(set) var goodFor = 0.0
+  private var poorFor = 0.0
+
+  mutating func step(_ dt: Double, good: Bool, poor: Bool, veto: Bool, showAfter: Double, hideAfter: Double) {
+    goodFor = good && !veto ? goodFor + dt : 0
+    poorFor = poor ? poorFor + dt : 0
+    if veto || (shown && poorFor >= hideAfter) {
+      shown = false
+    } else if !shown && goodFor >= showAfter {
+      shown = true
+    }
+  }
+
+  mutating func reset() { self = MSShowGate() }
+}
+
 /// Everything for one sample rate. Feed contiguous pieces with their
 /// arrival (host) time; read `output()`.
+///
+/// What to show is decided here, with hysteresis, against a music
+/// likelihood: the short-window pulse (a steady beat) or the harmonic
+/// stability (held chords), whichever is stronger. Speech has neither: its
+/// syllables come at irregular 3–6 Hz and its pitch glides. Title hints and
+/// remembered values back up a weak detection; detection agreeing with them
+/// confirms it (raised confidence, a quicker show).
 final class MusicSenseAnalyzer {
   struct Output {
     var snapshot: MusicSenseSnapshot
     var beatGrid: BeatGrid?
+  }
+
+  /// Values known without listening: from the title, or from an earlier
+  /// clear listen to the same track.
+  struct Backup: Equatable {
+    var bpm: Double?
+    var key: MusicKey?
   }
 
   static let levelCount = 38
@@ -978,12 +1293,24 @@ final class MusicSenseAnalyzer {
   static let gapSeconds = 0.5
   static let silenceSeconds = 1.5
   static let silenceRms: Float = 0.001   // −60 dBFS
-  static let tempoListen = 6.0, keyListen = 15.0
+  static let tempoListen = 4.0, keyListen = 6.0, tuningListen = 15.0
   static let emitInterval = 0.25
+  /// Clear tempo/key for this long shows it (less when a backup agrees).
+  static let showSeconds = 3.0, confirmedShowSeconds = 1.5
+  /// Unclear for this long hides it.
+  static let bpmHideSeconds = 6.0, keyHideSeconds = 8.0
+  /// Silence longer than this hides both.
+  static let hideSilenceSeconds = 4.0
+  /// Non-music this long is speech (hides both); music this long ends it.
+  static let speechSeconds = 3.5, musicSeconds = 2.0
 
   let sampleRate: Double
   var referenceHz = 440.0
   var outputLatency = 0.0
+  /// From the track's title (MusicSense.setHints).
+  var hints = Backup()
+  /// From an earlier listen to this track (MusicSense.setTrack).
+  var remembered = Backup()
 
   private let setup: FFTSetup
   private let decimator: MSDecimator
@@ -995,6 +1322,7 @@ final class MusicSenseAnalyzer {
   private let tuner: MSTuner
   private var clock = MSClock()
   private let blockLength: Int
+  private let keyHopSeconds: Double
   private var blockSum = 0.0
   private var blockFill = 0
   private var levels = [Float](repeating: 0, count: levelCount)
@@ -1011,7 +1339,21 @@ final class MusicSenseAnalyzer {
   private var silentSeconds = 0.0
   private var everHeard = false
 
+  private var bpmGate = MSShowGate()
+  private var keyGate = MSShowGate()
+  /// 0…1, smoothed over ~0.5–1 s of sound.
+  private(set) var musicLikelihood = 0.0
+  /// Sustained non-music (speech, noise).
+  private(set) var speech = false
+  private var nonMusicFor = 0.0
+  private var musicFor = 0.0
+
   var silent: Bool { !everHeard || silentSeconds > Self.silenceSeconds }
+  /// The two music cues (0…1), for checks and tuning.
+  var cues: (pulse: Double, harmony: Double) { (tempo.pulse, key.harmony) }
+  /// Beat switches and key changes followed since the last reset.
+  var relocks: Int { tempo.relocks }
+  var keyChanges: Int { key.changes }
 
   init(sampleRate: Double) {
     self.sampleRate = sampleRate
@@ -1025,12 +1367,14 @@ final class MusicSenseAnalyzer {
     key = MSKey(rate: rate, setup: setup)
     tuner = MSTuner(rate: rate, setup: setup)
     blockLength = max(1, Int((sampleRate / 10).rounded()))
+    keyHopSeconds = Double(MSKey.hop) / rate
     nextTempoFrame = tempo.minFrames
   }
 
   deinit { vDSP_destroy_fftsetup(setup) }
 
-  /// Forget everything (a new song).
+  /// Forget everything heard (a new song). Hints and remembered values are
+  /// the caller's to change.
   func reset() {
     restartTimeline()
     tempo.reset()
@@ -1046,6 +1390,12 @@ final class MusicSenseAnalyzer {
     lastArrival = nil
     lastEmit = -Double.infinity
     keyFramesAtEstimate = 0
+    bpmGate.reset()
+    keyGate.reset()
+    musicLikelihood = 0
+    speech = false
+    nonMusicFor = 0
+    musicFor = 0
   }
 
   /// The samples no longer follow on from the last ones: restart everything
@@ -1088,7 +1438,8 @@ final class MusicSenseAnalyzer {
       }
       key.run(ring)
       if key.frames >= keyFramesAtEstimate + 3 {
-        key.estimate(publish: heardSeconds >= Self.keyListen)
+        key.estimate(publish: heardSeconds >= Self.keyListen,
+                     seconds: Double(key.frames - keyFramesAtEstimate) * keyHopSeconds)
         keyFramesAtEstimate = key.frames
       }
       tuner.run(ring)
@@ -1124,7 +1475,8 @@ final class MusicSenseAnalyzer {
       levels[levelPos] = Float(max(0, min(1, (db + 60) / 60)))
       levelPos = (levelPos + 1) % Self.levelCount
       let seconds = Double(blockLength) / sampleRate
-      if rms < Double(Self.silenceRms) {
+      let sounding = rms >= Double(Self.silenceRms)
+      if !sounding {
         silentSeconds += seconds
       } else {
         // A quiet moment inside the music still counts as listening; only a
@@ -1137,7 +1489,87 @@ final class MusicSenseAnalyzer {
       }
       blockSum = 0
       blockFill = 0
+      stepVisibility(seconds, sounding: sounding)
     }
+  }
+
+  // MARK: What to show
+
+  @inline(__always) private static func unit(_ x: Double) -> Double { max(0, min(1, x)) }
+
+  /// Detection, raised when it agrees with a backup.
+  private struct Reading<Value> {
+    var value: Value?
+    var confidence: Double
+    var confirmed = false
+  }
+
+  /// The tempo, scaled to the backup's octave when they agree (within 2%,
+  /// or 2% of double or half): producers' labels pick the octave.
+  private func tempoReading() -> (Reading<Double>, factor: Double, alternative: Double?) {
+    var r = Reading(value: tempo.bpm, confidence: tempo.confidence)
+    var alternative = tempo.alternative
+    guard let d = tempo.bpm, let ref = remembered.bpm ?? hints.bpm, ref > 0 else { return (r, 1, alternative) }
+    var factor = 0.0
+    if abs(d / ref - 1) <= 0.02 { factor = 1 } else if abs(2 * d / ref - 1) <= 0.02 { factor = 2 } else if abs(d / (2 * ref) - 1) <= 0.02 { factor = 0.5 }
+    guard factor > 0 else { return (r, 1, alternative) }
+    r.confirmed = true
+    r.confidence += (1 - r.confidence) * 0.6
+    if factor != 1 {
+      r.value = (d * factor * 10).rounded() / 10
+      alternative = d
+    }
+    return (r, factor, alternative)
+  }
+
+  /// The key; agreeing with a backup (the same key or its relative), the
+  /// backup's spelling wins: titles settle the relative major/minor.
+  private func keyReading() -> (Reading<MusicKey>, runnerUp: MusicKey?) {
+    guard let d = key.key else { return (Reading(value: nil, confidence: 0), nil) }
+    var r = Reading(value: d, confidence: key.confidence)
+    var runnerUp = key.runnerUp
+    guard let ref = remembered.key ?? hints.key, d == ref || d.relative == ref else { return (r, runnerUp) }
+    r.confirmed = true
+    r.confidence += (1 - r.confidence) * 0.6
+    if d != ref {
+      r.value = ref
+      runnerUp = d
+    }
+    return (r, runnerUp)
+  }
+
+  private var vetoed: Bool { silentSeconds > Self.hideSilenceSeconds || speech }
+
+  /// Every 0.1 s of input: the music likelihood, speech, and the two gates.
+  private func stepVisibility(_ dt: Double, sounding: Bool) {
+    if sounding {
+      let pulse = tempo.pulseMeasured ? Self.unit((tempo.pulse - 0.2) / 0.35) : 0
+      let harmony = Self.unit((key.harmony - 0.3) / 0.4)
+      // Rises over ~1 s, falls over ~0.5 s (speech after music hides sooner).
+      let target = max(pulse, harmony)
+      musicLikelihood += (target - musicLikelihood) * (1 - exp(-dt / (target < musicLikelihood ? 0.5 : 1.0)))
+      // Judge only once there is evidence: a pulse measured, or ~2 s of chroma compared.
+      if tempo.pulseMeasured || key.harmonyFrames >= 12 {
+        if musicLikelihood < 0.35 {
+          nonMusicFor += dt
+          musicFor = 0
+        } else if musicLikelihood >= 0.5 {
+          musicFor += dt
+          nonMusicFor = 0
+        }
+        if !speech, nonMusicFor >= Self.speechSeconds { speech = true }
+        if speech, musicFor >= Self.musicSeconds { speech = false }
+      }
+    }
+    let veto = vetoed
+    let (t, _, _) = tempoReading()
+    bpmGate.step(dt, good: t.value != nil && t.confidence >= 0.35 && musicLikelihood >= 0.4,
+                 poor: t.value == nil || t.confidence < MSTempo.gate, veto: veto,
+                 showAfter: t.confirmed ? Self.confirmedShowSeconds : Self.showSeconds, hideAfter: Self.bpmHideSeconds)
+    let (k, _) = keyReading()
+    keyGate.step(dt, good: k.value != nil && k.confidence >= 0.15 && musicLikelihood >= 0.55,
+                 poor: k.value == nil || k.confidence < 0.07 || musicLikelihood < 0.3, veto: veto,
+                 showAfter: k.confirmed ? Self.confirmedShowSeconds : Self.showSeconds, hideAfter: Self.keyHideSeconds)
   }
 
   /// The output, at most every 0.25 s of arrival time.
@@ -1150,27 +1582,61 @@ final class MusicSenseAnalyzer {
   func output() -> Output {
     var s = MusicSenseSnapshot()
     let quiet = silent
-    s.status = quiet ? .silent : (tempo.bpm != nil ? .found : .listening)
+    let veto = vetoed
     s.heardSeconds = heardSeconds
-    s.tempoProgress = tempo.bpm != nil ? 1 : min(1, freshSeconds / 8)
-    s.keyProgress = key.key != nil ? 1 : min(1, heardSeconds / 20)
-    s.bpm = tempo.bpm
-    s.bpmConfidence = tempo.confidence
-    s.bpmAlternative = tempo.bpm != nil ? tempo.alternative : nil
-    s.key = key.key
-    s.keyConfidence = key.key != nil ? key.confidence : 0
-    s.keyRunnerUp = key.key != nil ? key.runnerUp : nil
-    if heardSeconds >= Self.keyListen, key.tuningClarity >= 0.25 {
+
+    let (t, factor, alternative) = tempoReading()
+    s.bpm = t.value
+    s.bpmConfidence = t.confidence
+    s.bpmAlternative = t.value != nil ? alternative : nil
+    s.bpmShown = bpmGate.shown
+    if !s.bpmShown, !veto, let b = remembered.bpm ?? hints.bpm {
+      s.bpm = b
+      s.bpmSource = remembered.bpm != nil ? .remembered : .title
+      s.bpmConfidence = t.confirmed ? t.confidence : 0
+      s.bpmAlternative = nil
+      s.bpmShown = true
+    }
+
+    let (k, runnerUp) = keyReading()
+    s.key = k.value
+    s.keyConfidence = k.confidence
+    s.keyRunnerUp = runnerUp
+    s.keyShown = keyGate.shown
+    if !s.keyShown, !veto, let b = remembered.key ?? hints.key {
+      s.key = b
+      s.keySource = remembered.key != nil ? .remembered : .title
+      s.keyConfidence = k.confirmed ? k.confidence : 0
+      s.keyRunnerUp = nil
+      s.keyShown = true
+    }
+
+    s.status = quiet ? .silent : (s.bpmShown ? .found : .listening)
+    s.tempoProgress = s.bpmShown ? 1
+      : min(0.95, (min(freshSeconds, Self.tempoListen) + bpmGate.goodFor) / (Self.tempoListen + Self.showSeconds))
+    s.keyProgress = s.keyShown ? 1
+      : min(0.95, (min(heardSeconds, Self.keyListen) + keyGate.goodFor) / (Self.keyListen + Self.showSeconds))
+    s.bpmRecalibrating = tempo.recalibrating && s.bpmShown && s.bpmSource == .detected
+    s.keyRecalibrating = key.recalibrating && s.keyShown && s.keySource == .detected
+    s.recalibrating = s.bpmRecalibrating || s.keyRecalibrating
+    s.musicLikelihood = (musicLikelihood * 100).rounded() / 100
+    s.speech = speech
+
+    if heardSeconds >= Self.tuningListen, key.tuningClarity >= 0.25 {
       var c = key.tuning440 - 1200 * log2(referenceHz / 440)
       c -= 100 * (c / 100).rounded()
       s.tuningCents = (c * 10).rounded() / 10
     }
     if !quiet, let hz = tuner.hz { s.tuner = TunerReading(hz: hz, reference: referenceHz) }
     s.levels = (0..<Self.levelCount).map { levels[($0 + levelPos) % Self.levelCount] }
+    // The grid only for a shown, heard tempo whose phase holds still: no
+    // grid beats a wrong one.
     var grid: BeatGrid?
-    if !quiet, tempo.bpm != nil, let a = tempo.anchor, let origin = clock.origin, tempo.period > 0 {
+    if !quiet, s.bpmShown, s.bpmSource == .detected, tempo.phaseStable, tempo.bpm != nil,
+       let a = tempo.anchor, let origin = clock.origin, tempo.period > 0 {
       let input = onset.time(ofFrame: a) * Double(decimator.factor) - decimator.delay
-      grid = BeatGrid(anchor: origin + input / sampleRate + outputLatency, period: tempo.period / onset.frameRate)
+      grid = BeatGrid(anchor: origin + input / sampleRate + outputLatency,
+                      period: tempo.period / onset.frameRate / factor)
     }
     return Output(snapshot: s, beatGrid: grid)
   }

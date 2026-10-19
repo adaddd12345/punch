@@ -1,7 +1,9 @@
 import Foundation
 
 /// Music Sense on synthetic audio: tempo (+ beat phase), key, tuner,
-/// Camelot codes, and one pass through the MusicSense coordinator.
+/// Camelot codes, what to show (beat switch, speech, a podcast's intro),
+/// title hints, and the MusicSense coordinator (reset, memory per track).
+/// MUSIC_SENSE_TRACE=1 prints the show/hide timelines.
 @main
 struct MusicSenseCheck {
   static var checks = 0
@@ -23,20 +25,84 @@ struct MusicSenseCheck {
     return Double(seed % 1_000_001) / 1_000_000
   }
 
+  static let trace = ProcessInfo.processInfo.environment["MUSIC_SENSE_TRACE"] != nil
+
   /// Feeds `x` the way the popup's ticker does: ~30 chunks a second, each
   /// read 0–12 ms after its last sample was processed. Returns DSP seconds.
+  /// `watch` sees the output every 0.25 s of audio (t = seconds fed).
   @discardableResult
-  static func run(_ a: MusicSenseAnalyzer, _ x: [Float], rate: Double, base: Double) -> Double {
+  static func run(_ a: MusicSenseAnalyzer, _ x: [Float], rate: Double, base: Double,
+                  watch: ((Double, MusicSenseAnalyzer.Output) -> Void)? = nil) -> Double {
     let chunk = Int(rate / 30)
-    var pos = 0
-    let start = ProcessInfo.processInfo.systemUptime
+    var pos = 0, nextWatch = 0.25
+    var elapsed = 0.0
     while pos < x.count {
       let n = min(chunk, x.count - pos)
       let arrival = base + Double(pos + n) / rate + 0.012 * random()
+      let start = ProcessInfo.processInfo.systemUptime
       x.withUnsafeBufferPointer { a.process($0.baseAddress! + pos, count: n, arrival: arrival) }
+      elapsed += ProcessInfo.processInfo.systemUptime - start
       pos += n
+      if let watch, Double(pos) / rate >= nextWatch {
+        let out = a.output()
+        watch(Double(pos) / rate, out)
+        if trace {
+          let s = out.snapshot
+          print(String(format: "        cues pulse %.2f harmony %.2f", a.cues.pulse, a.cues.harmony))
+          print(String(format: "  %5.2f bpm %@%@ %5.1f c%.2f | key %@%@ c%.2f | music %.2f%@%@ grid %@", Double(pos) / rate,
+                       s.bpmShown ? "ON " : "-- ", "\(s.bpmSource)".prefix(3) as CVarArg, s.bpm ?? 0, s.bpmConfidence,
+                       s.keyShown ? "ON " : "-- ", (s.key?.name ?? "–") as CVarArg, s.keyConfidence, s.musicLikelihood,
+                       s.speech ? " SPEECH" : "", s.recalibrating ? " RECAL" : "",
+                       out.beatGrid.map { String(format: "%.1f", 60 / $0.period) } ?? "–"))
+        }
+        nextWatch += 0.25
+      }
     }
-    return ProcessInfo.processInfo.systemUptime - start
+    return elapsed
+  }
+
+  /// Speech-like sound: syllables at an irregular ~4–5 a second (voiced
+  /// harmonic bursts gliding up to ±5 semitones, noise bursts for
+  /// consonants), in phrases of 1–3 s with pauses.
+  static func speech(seconds: Double, rate: Double) -> [Float] {
+    let n = Int(seconds * rate)
+    var x = [Float](repeating: 0, count: n)
+    var t = 0.0
+    var phraseEnd = 1.2 + 1.8 * random()
+    while t < seconds {
+      if t >= phraseEnd {
+        t += 0.25 + 0.45 * random()
+        phraseEnd = t + 1.2 + 1.8 * random()
+        continue
+      }
+      let s0 = Int(t * rate)
+      let amp = 0.15 + 0.25 * random()
+      var voiced = s0
+      if random() < 0.35 {
+        let len = Int((0.04 + 0.06 * random()) * rate)
+        var last = 0.0
+        for i in 0..<len where s0 + i < n {
+          let v = random() * 2 - 1
+          x[s0 + i] += Float(0.6 * amp * (v - last) * sin(.pi * Double(i) / Double(len)))
+          last = v
+        }
+        voiced += len / 2
+      }
+      let dur = 0.1 + 0.14 * random()
+      let len = Int(dur * rate)
+      let f0 = 95 + 120 * random(), glide = (random() * 2 - 1) * 5
+      var ph = 0.0
+      for i in 0..<len where voiced + i < n {
+        let u = Double(i) / Double(len)
+        ph += 2 * .pi * f0 * pow(2, glide * u / 12) / rate
+        let env = sin(.pi * u) * sin(.pi * u)
+        var v = 0.0
+        for h in 1...10 { v += sin(Double(h) * ph) / Double(h) }
+        x[voiced + i] += Float(0.5 * amp * env * v)
+      }
+      t = Double(voiced + len) / rate + 0.02 + 0.04 * random()
+    }
+    return x
   }
 
   /// Kick on every beat (pitch-dropping sine), closed hat on the off-beats.
@@ -187,6 +253,86 @@ struct MusicSenseCheck {
     guard let e2 = tuner(82.41, rate: 48_000) else { return check(false, "82.41 Hz: no tuner reading") }
     check(e2.name == "E2" && abs(e2.cents) <= 3, "82.41 Hz read as \(e2.name) \(e2.cents)")
 
+    // What to show. (a) A beat switch: 90 BPM for 12 s, then 140.
+    let switchA = MusicSenseAnalyzer(sampleRate: 48_000)
+    let switchBase = 2_000.0
+    var firstShown: Double?, hiddenAfterShown = false, relockedAt: Double?, sawRecal = false
+    run(switchA, clicks(bpm: 90, seconds: 12, rate: 48_000, offset: 0.25)
+                 + clicks(bpm: 140, seconds: 10, rate: 48_000, offset: 0.25), rate: 48_000, base: switchBase) { t, out in
+      let s = out.snapshot
+      if s.bpmShown, firstShown == nil { firstShown = t }
+      if firstShown != nil, !s.bpmShown { hiddenAfterShown = true }
+      if s.recalibrating { sawRecal = true }
+      if t > 12, relockedAt == nil, s.bpmShown, abs((s.bpm ?? 0) - 140) <= 1 { relockedAt = t - 12 }
+    }
+    guard let shownAt = firstShown else { return check(false, "Beat switch: 90 BPM never shown") }
+    check(shownAt <= 9, "Beat switch: 90 BPM shown only at \(shownAt) s")
+    guard let relock = relockedAt else { return check(false, "Beat switch: never relocked to 140") }
+    check(relock <= 5, "Beat switch: relocked to 140 after \(relock) s")
+    check(!hiddenAfterShown, "Beat switch: the tempo was hidden during the switch")
+    check(sawRecal, "Beat switch: recalibrating never set")
+    let switchOut = switchA.output()
+    guard let g140 = switchOut.beatGrid else { return check(false, "Beat switch: no beat grid at 140") }
+    check(abs(g140.period - 60 / 140) < 0.004, "Beat switch: grid period \(g140.period) after the switch")
+    var e140 = (g140.anchor - switchBase - 12.25) / g140.period
+    e140 -= e140.rounded()
+    check(abs(e140 * g140.period) < 0.025, "Beat switch: grid phase off by \(e140 * g140.period * 1_000) ms")
+
+    // (b) Speech-like sound: nothing shown.
+    let talk = MusicSenseAnalyzer(sampleRate: 48_000)
+    var talkShown = false, talkMax = 0.0
+    run(talk, speech(seconds: 15, rate: 48_000), rate: 48_000, base: 3_000) { t, out in
+      if out.snapshot.bpmShown || out.snapshot.keyShown { talkShown = true }
+      if t > 6 { talkMax = max(talkMax, out.snapshot.musicLikelihood) }
+    }
+    check(!talkShown, "Speech: tempo or key was shown")
+    check(talk.output().snapshot.speech, "Speech: not recognised as speech (music likelihood up to \(talkMax))")
+
+    // (c) A podcast: a 10 s music intro (120 BPM, Am / C), then speech.
+    let pod = MusicSenseAnalyzer(sampleRate: 48_000)
+    let intro = zip(clicks(bpm: 120, seconds: 10, rate: 48_000, offset: 0.1),
+                    chords([[57, 60, 64], [60, 64, 67]], seconds: 10, rate: 48_000)).map { $0 + 0.7 * $1 }
+    var podShownAt: Double?, podHiddenAt: Double?, podReshown = false, podKey: MusicKey?
+    run(pod, intro + speech(seconds: 15, rate: 48_000), rate: 48_000, base: 4_000) { t, out in
+      let s = out.snapshot
+      if s.bpmShown, podShownAt == nil { podShownAt = t }
+      if s.keyShown, t <= 10.5 { podKey = s.key }
+      if t > 10, podShownAt != nil, !s.bpmShown, podHiddenAt == nil { podHiddenAt = t - 10 }
+      if podHiddenAt != nil, s.bpmShown { podReshown = true }
+    }
+    guard let podShown = podShownAt, podShown <= 10.25 else {
+      return check(false, "Podcast: BPM not shown during the intro (at \(podShownAt ?? -1) s)")
+    }
+    guard let podHidden = podHiddenAt else { return check(false, "Podcast: BPM still shown over speech") }
+    check(podHidden <= 8, "Podcast: BPM hidden only \(podHidden) s into the speech")
+    check(!podReshown, "Podcast: BPM came back during speech")
+    if let k = podKey {
+      check(k == MusicKey(pitchClass: 9, minor: true) || k == MusicKey(pitchClass: 0, minor: false), "Podcast: intro key \(k.name)")
+    }
+
+    // (d) Title hints.
+    let typeBeat = MusicTitleHints(title: "(FREE) Drake Type Beat - \"5AM IN FOREST HILL\" | 140 BPM | C minor")
+    check(typeBeat.bpm == 140 && typeBeat.key == MusicKey(pitchClass: 0, minor: true),
+          "Title: type beat read as \(typeBeat.bpm ?? 0) \(typeBeat.key?.name ?? "–")")
+    let short = MusicTitleHints(title: "Am 92bpm")
+    check(short.bpm == 92 && short.key == MusicKey(pitchClass: 9, minor: true), "Title: \"Am 92bpm\" read as \(short)")
+    check(MusicTitleHints(title: "Podcast Ep. 12").isEmpty, "Title: \"Podcast Ep. 12\" has no hints")
+    for (title, k) in [("bpm 128 F# Minor", MusicKey(pitchClass: 6, minor: true)), ("Bb maj 100 BPM", MusicKey(pitchClass: 10, minor: false)),
+                       ("A♭ major", MusicKey(pitchClass: 8, minor: false)), ("Cmin", MusicKey(pitchClass: 0, minor: true)),
+                       ("C#m | 150bpm", MusicKey(pitchClass: 1, minor: true))] {
+      check(MusicTitleHints(title: title).key == k, "Title: \"\(title)\" read as \(MusicTitleHints(title: title).key?.name ?? "–")")
+    }
+    check(MusicTitleHints(title: "I Am Here").key == nil, "Title: \"I Am Here\" is no key")
+    // A title backs up a weak detection, then detection confirms it (at the title's octave).
+    let hinted = MusicSenseAnalyzer(sampleRate: 48_000)
+    hinted.hints = .init(bpm: 140, key: nil)
+    let early = hinted.output().snapshot
+    check(early.bpmShown && early.bpm == 140 && early.bpmSource == .title, "Title hint not shown before listening")
+    run(hinted, clicks(bpm: 70, seconds: 12, rate: 48_000, offset: 0.25), rate: 48_000, base: 5_000)
+    let confirmed = hinted.output().snapshot
+    check(confirmed.bpmSource == .detected && abs((confirmed.bpm ?? 0) - 140) <= 1 && confirmed.bpmConfidence > 0.8,
+          "Title hint 140 with 70 BPM heard: \(confirmed.bpm ?? 0) \(confirmed.bpmSource) conf \(confirmed.bpmConfidence)")
+
     // The coordinator: chunks in, a snapshot out on main, reset, unavailable.
     MainActor.assumeIsolated {
       let sense = MusicSense.shared
@@ -198,6 +344,35 @@ struct MusicSenseCheck {
             (sense.snapshot.levels.max() ?? 0) > 0.5, "Coordinator should publish a listening snapshot")
       sense.reset()
       check(sense.snapshot.heardSeconds == 0 && sense.snapshot.status == .silent, "Reset should clear the snapshot")
+      // Memory per track: hear one clearly, switch away, come back.
+      sense.setTrack("song-a")
+      // Faster than real time; outputs come at most every 0.25 s of arrival
+      // time, so the last 0.5 s goes in after a pause.
+      let song = clicks(bpm: 128, seconds: 10.5, rate: 48_000, offset: 0.1)
+      for c in 0..<(song.count / 1_600) {
+        sense.consume(Array(song[(c * 1_600)..<((c + 1) * 1_600)]), count: 1_600)
+        if c % 10 == 9 { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        if c == 300 { RunLoop.main.run(until: Date().addingTimeInterval(0.3)) }
+      }
+      RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+      check(sense.snapshot.bpmShown && sense.snapshot.bpmSource == .detected && abs((sense.snapshot.bpm ?? 0) - 128) <= 1,
+            "Coordinator: 128 BPM not shown after 10 s (\(sense.snapshot.bpm ?? 0), shown \(sense.snapshot.bpmShown))")
+      sense.setTrack("song-b")
+      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+      check(!sense.snapshot.bpmShown && sense.snapshot.heardSeconds == 0, "A new track should start afresh")
+      sense.setHints(title: "Night Drive | 92 BPM | Am")
+      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+      check(sense.snapshot.bpmShown && sense.snapshot.bpm == 92 && sense.snapshot.bpmSource == .title
+            && sense.snapshot.key == MusicKey(pitchClass: 9, minor: true) && sense.snapshot.keySource == .title,
+            "Title hints should show at once")
+      sense.setTrack("song-a")
+      RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+      check(sense.snapshot.bpmShown && sense.snapshot.bpm == 128 && sense.snapshot.bpmSource == .remembered,
+            "A remembered track should show its tempo at once (\(sense.snapshot.bpm ?? 0) \(sense.snapshot.bpmSource))")
+      sense.end()
+      sense.begin(sampleRate: 48_000, outputLatency: 0.01)
+      check(sense.snapshot.bpm == 128 && sense.capturing, "Results should persist across end()/begin()")
+      sense.setTrack(nil)
       sense.setUnavailable("Listening works on this Mac only.")
       check(sense.snapshot.status == .unavailable("Listening works on this Mac only."), "Unavailable should show")
       sense.end()
@@ -206,6 +381,9 @@ struct MusicSenseCheck {
 
     let extra = notes.isEmpty ? "" : "; " + notes.joined(separator: "; ")
     print("PASS Music Sense: \(checks) checks; 128 → \(t128); 90@96k → \(t90); "
+          + "switch 90→140 relocked in \(String(format: "%.2f", relock)) s; speech hidden; podcast intro shown at "
+          + "\(String(format: "%.2f", podShown)) s, hidden \(String(format: "%.2f", podHidden)) s into speech"
+          + "\(podKey.map { " (key \($0.name))" } ?? ""); "
           + "Am–F–C–G → \(am.name) (conf \(String(format: "%.2f", aMinor.keyConfidence)), runner-up \(aMinor.keyRunnerUp?.name ?? "–")); "
           + "C → \(cMajor.key!.name) (conf \(String(format: "%.2f", cMajor.keyConfidence)), tuning \(cMajor.tuningCents!)¢); "
           + "tuner \(a4.name) \(String(format: "%+.2f", a4.cents))¢, \(sharp.name) \(String(format: "%+.2f", sharp.cents))¢, "

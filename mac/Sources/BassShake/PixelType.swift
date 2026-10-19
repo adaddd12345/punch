@@ -96,6 +96,13 @@ struct PixelText: View {
       var x: CGFloat = 0
       for ch in text {
         if ch == " " { x += 4 * dot; continue }
+        // A dash is one soft bar, not five dots (a run reads as a dotted line).
+        if ch == "−" || ch == "-" {
+          path.addRoundedRect(in: CGRect(x: x + inset, y: 3 * dot + inset, width: 5 * dot - 2 * inset, height: side),
+                              cornerSize: CGSize(width: side / 2, height: side / 2))
+          x += CGFloat(PixelFont.columns + 1) * dot
+          continue
+        }
         for (c, r) in PixelFont.cells(ch) {
           path.addRoundedRect(in: CGRect(x: x + CGFloat(c) * dot + inset, y: CGFloat(r) * dot + inset,
                                          width: side, height: side),

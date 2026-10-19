@@ -25,7 +25,7 @@ struct SettingsMenuContent: View {
     soundMenu
     Button("Beat Inbox…") { DownloadQueueWindow.show(controller: controller) }
     Toggle("Artist Mode", isOn: bind(\.artistMode))
-      .help("Show tempo controls for Beats and supported YouTube videos, with pitch preserved.")
+      .help("Tempo controls for Beats, and YouTube speed in the BPM popup (pitch kept).")
     devicesMenu
     LightsOutMenu(controller: controller)
     lookMenu

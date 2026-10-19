@@ -10,6 +10,12 @@ import QuartzCore
 /// `MusicSenseAnalyzer` (MusicSenseDSP.swift). Results come back to main
 /// and are published at most four times a second. No HAL calls; main never
 /// waits on the DSP (the FIFO lock only covers a memcpy).
+///
+/// Runs whenever the popup is visible: begin()/end() are cheap to call
+/// often, and results persist across end()/begin() at the same rate. What
+/// to show is in the snapshot (`bpmShown`, `keyShown`, their sources).
+/// Backups: `setHints(title:)` parses a BPM/key from the track's title;
+/// `setTrack(_:)` recalls the last clear result for a track id.
 @MainActor
 final class MusicSense: ObservableObject {
   nonisolated static let shared = MusicSense()
@@ -50,7 +56,13 @@ final class MusicSense: ObservableObject {
   private nonisolated let queue = DispatchQueue(label: "bassshake.musicsense", qos: .utility)
   private nonisolated let worker = MusicSenseWorker()   // touched only on `queue`
   private var rate = 0.0
+  private var latency = -1.0
   private var generation = 0
+  private var hints = MusicTitleHints()
+  private var track: String?
+  /// The last clear (detected, shown) result per track id, least recent first.
+  private var memory: [(id: String, bpm: Double?, key: MusicKey?)] = []
+  static let memorySize = 20
   private var unavailable: String?
   private var lastStatus: MusicSenseSnapshot.Status = .silent
   private var lastPublish: CFTimeInterval = -1
@@ -58,9 +70,9 @@ final class MusicSense: ObservableObject {
   private var flushScheduled = false
 
   private nonisolated init() {
-    worker.deliver = { [weak self] output, generation in
+    worker.deliver = { [weak self] output, generation, now in
       DispatchQueue.main.async {
-        MainActor.assumeIsolated { self?.apply(output, generation: generation) }
+        MainActor.assumeIsolated { self?.apply(output, generation: generation, force: now) }
       }
     }
   }
@@ -69,36 +81,96 @@ final class MusicSense: ObservableObject {
   /// `outputLatency` seconds is added to beat times (heard = processed + latency).
   func begin(sampleRate: Double, outputLatency: Double) {
     guard sampleRate.isFinite, sampleRate > 0 else { return }
-    let latency = outputLatency.isFinite ? max(0, outputLatency) : 0
+    let seconds = outputLatency.isFinite ? max(0, outputLatency) : 0
     if sampleRate != rate {
       rate = sampleRate
+      latency = seconds
       generation += 1
       clearResults()
       let gen = generation, reference = referenceHz
       ingress.restart(epoch: gen)
       queue.async { [worker] in
-        worker.configure(rate: sampleRate, latency: latency, reference: reference, generation: gen)
+        worker.configure(rate: sampleRate, latency: seconds, reference: reference, generation: gen)
       }
-    } else {
-      queue.async { [worker] in worker.setLatency(latency) }
+    } else if seconds != latency {
+      latency = seconds
+      queue.async { [worker] in worker.setLatency(seconds) }
     }
+    guard !capturing else { return }
     capturing = true
     ingress.setCapturing(true)
   }
 
-  /// Stop; keep the last results for display.
+  /// Stop; keep the last results for display (and for the next begin()).
   func end() {
+    guard capturing else { return }
     capturing = false
     ingress.setCapturing(false)
   }
 
-  /// Forget everything and listen again (new song).
+  /// Forget everything and listen again ("Listen again"). The title hints
+  /// stay; this track's remembered result is dropped (it may be wrong).
   func reset() {
+    if let id = track { memory.removeAll { $0.id == id } }
+    restartDetection(remembered: MusicSenseAnalyzer.Backup())
+  }
+
+  /// The track or video now playing (nil = unknown). A different id starts
+  /// detection afresh (like reset()) and clears the title hints; an id heard
+  /// clearly before shows its remembered tempo and key at once while
+  /// listening confirms them. Memory keeps the last 20 tracks.
+  func setTrack(_ id: String?) {
+    guard id != track else { return }
+    track = id
+    hints = MusicTitleHints()
+    var recalled = MusicSenseAnalyzer.Backup()
+    if let id, let i = memory.firstIndex(where: { $0.id == id }) {
+      let m = memory.remove(at: i)
+      memory.append(m)
+      recalled = MusicSenseAnalyzer.Backup(bpm: m.bpm, key: m.key)
+    }
+    restartDetection(remembered: recalled, clearHints: true)
+  }
+
+  /// The track's title, for a BPM ("140 BPM", "bpm 140") and key ("C minor",
+  /// "F# Minor", "Bb maj", "Am") to show while detection is weak, and to
+  /// confirm it when they agree.
+  func setHints(title: String?) {
+    let parsed = MusicTitleHints(title: title)
+    guard parsed != hints else { return }
+    hints = parsed
+    let backup = MusicSenseAnalyzer.Backup(bpm: parsed.bpm, key: parsed.key)
+    queue.async { [worker] in worker.setHints(backup) }
+  }
+
+  private func restartDetection(remembered: MusicSenseAnalyzer.Backup, clearHints: Bool = false) {
     generation += 1
     clearResults()
     let gen = generation
     ingress.restart(epoch: gen)
-    queue.async { [worker] in worker.reset(generation: gen) }
+    queue.async { [worker] in
+      worker.reset(generation: gen)
+      if clearHints { worker.setHints(MusicSenseAnalyzer.Backup()) }
+      worker.setRemembered(remembered)
+    }
+  }
+
+  /// Keeps a clear detected result for the current track.
+  private func remember(_ s: MusicSenseSnapshot) {
+    guard let id = track else { return }
+    let bpm = s.bpmShown && s.bpmSource == .detected ? s.bpm : nil
+    let key = s.keyShown && s.keySource == .detected ? s.key : nil
+    guard bpm != nil || key != nil else { return }
+    var entry = (id: id, bpm: bpm, key: key)
+    if let i = memory.firstIndex(where: { $0.id == id }) {
+      let old = memory[i]
+      if memory.count - 1 == i, (bpm ?? old.bpm) == old.bpm, (key ?? old.key) == old.key { return }   // unchanged
+      entry.bpm = bpm ?? old.bpm
+      entry.key = key ?? old.key
+      memory.remove(at: i)
+    }
+    memory.append(entry)
+    if memory.count > Self.memorySize { memory.removeFirst(memory.count - Self.memorySize) }
   }
 
   /// Mark unavailable with a reason ("Turn on The Bass Shaker to listen." /
@@ -134,17 +206,18 @@ final class MusicSense: ObservableObject {
     publish(s, force: true)
   }
 
-  private func apply(_ output: MusicSenseAnalyzer.Output, generation gen: Int) {
+  private func apply(_ output: MusicSenseAnalyzer.Output, generation gen: Int, force: Bool = false) {
     guard gen == generation else { return }   // from before a reset
     lastStatus = output.snapshot.status
     var s = output.snapshot
+    remember(s)
     if let reason = unavailable {
       s.status = .unavailable(reason)
       beatGrid = nil
     } else {
       beatGrid = output.beatGrid
     }
-    publish(s)
+    publish(s, force: force)
   }
 
   /// At most four publishes a second; a newer result waits for the slot.
@@ -173,12 +246,15 @@ final class MusicSense: ObservableObject {
 // MARK: - Worker (DSP queue only)
 
 final class MusicSenseWorker: @unchecked Sendable {
-  /// Set once in MusicSense's init, before any work arrives.
-  var deliver: ((MusicSenseAnalyzer.Output, Int) -> Void)?
+  /// Set once in MusicSense's init, before any work arrives. The Bool asks
+  /// for an immediate publish (a backup changed).
+  var deliver: ((MusicSenseAnalyzer.Output, Int, Bool) -> Void)?
   private var analyzer: MusicSenseAnalyzer?
   private var generation = 0
   private var reference = 440.0
   private var latency = 0.0
+  private var hints = MusicSenseAnalyzer.Backup()
+  private var remembered = MusicSenseAnalyzer.Backup()
   private var lastArrival = 0.0
   private let scratch = MSBuffer(MSDecimator.maxBlock)
 
@@ -193,11 +269,30 @@ final class MusicSenseWorker: @unchecked Sendable {
     self.reference = reference
     analyzer?.outputLatency = latency
     analyzer?.referenceHz = reference
+    analyzer?.hints = hints
+    analyzer?.remembered = remembered
   }
 
   func reset(generation: Int) {
     analyzer?.reset()
     self.generation = generation
+  }
+
+  func setHints(_ b: MusicSenseAnalyzer.Backup) {
+    hints = b
+    analyzer?.hints = b
+    emitNow()
+  }
+
+  func setRemembered(_ b: MusicSenseAnalyzer.Backup) {
+    remembered = b
+    analyzer?.remembered = b
+    emitNow()
+  }
+
+  private func emitNow() {
+    guard let analyzer else { return }
+    deliver?(analyzer.output(), generation, true)
   }
 
   func setLatency(_ seconds: Double) {
@@ -220,7 +315,7 @@ final class MusicSenseWorker: @unchecked Sendable {
       any = true
     }
     guard any, let analyzer, let output = analyzer.outputIfDue(now: lastArrival) else { return }
-    deliver?(output, generation)
+    deliver?(output, generation, false)
   }
 }
 

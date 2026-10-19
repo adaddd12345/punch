@@ -33,8 +33,8 @@ struct PopoverView: View {
   @Environment(\.colorSchemeContrast) private var contrast
   @State private var showDJ = false
   @State private var showBeats = false
-  /// The Tempo drawer (Key & BPM, Tuner & Metronome).
-  @State private var showTempo = false
+  /// The BPM and Key popups (one tray; both open: one parent bento).
+  @ObservedObject private var tempoPopups = TempoPopups.shared
   @State private var showAppearance = false
   @ObservedObject private var beats = BeatPlayer.shared
   @ObservedObject private var latencyLab = LatencyLab.shared
@@ -131,7 +131,7 @@ struct PopoverView: View {
     showLive = false
     showDJ = false
     showBeats = false
-    showTempo = false
+    tempoPopups.close()
     if p == .drivers { controller.scanDrivers() }
     withAnimation {
       switch p {
@@ -350,7 +350,7 @@ struct PopoverView: View {
     .background(sizeShortcuts)
     .onChange(of: controller.settings.viewSize) { _, new in
       // Mini has no footer, so no Live/DJ tray either (and no rearranging).
-      if new == .mini { showLive = false; showDJ = false; showBeats = false; showTempo = false; reshuffle.set(false) }
+      if new == .mini { showLive = false; showDJ = false; showBeats = false; tempoPopups.close(); reshuffle.set(false) }
     }
     .padding(12)
     // "Updated to …": the popup grows a band at the top for the capsule, so it
@@ -428,10 +428,10 @@ struct PopoverView: View {
         guard bindDrawerClose() else { return }
         showDJ = false
         showBeats = false
-        showTempo = false
+        tempoPopups.close()
         LiveDrawer.shared.appearance = drawerAppearance
         LiveDrawer.shared.show(model: controller.live)
-      } else if !showDJ && !showBeats && !showTempo {
+      } else if !showDJ && !showBeats && !tempoPopups.open {
         LiveDrawer.shared.hide()
       }
     }
@@ -440,10 +440,10 @@ struct PopoverView: View {
         guard bindDrawerClose() else { return }
         controller.dj.listening = true  // the panel may only be re-ordered in (no onAppear)
         showBeats = false
-        showTempo = false
+        tempoPopups.close()
         LiveDrawer.shared.appearance = drawerAppearance
         LiveDrawer.shared.show(DJView(controller: controller), height: Drawer.height)
-      } else if !showLive && !showBeats && !showTempo {
+      } else if !showLive && !showBeats && !tempoPopups.open {
         LiveDrawer.shared.hide()
       }
     }
@@ -452,20 +452,20 @@ struct PopoverView: View {
         guard bindDrawerClose() else { return }
         showLive = false
         showDJ = false
-        showTempo = false
+        tempoPopups.close()
         showBeatsDrawer()
-      } else if !showLive && !showDJ && !showTempo {
+      } else if !showLive && !showDJ && !tempoPopups.open {
         LiveDrawer.shared.hide()
       }
     }
-    .onChange(of: showTempo) { _, on in
+    .onChange(of: tempoPopups.open) { _, on in
       if on {
-        guard bindDrawerClose() else { return }
+        guard bindDrawerClose() else { tempoPopups.close(); return }
         showLive = false
         showDJ = false
         showBeats = false
         LiveDrawer.shared.appearance = drawerAppearance
-        LiveDrawer.shared.show(TempoView(controller: controller), height: Drawer.height)
+        LiveDrawer.shared.show(TempoPopupsView(controller: controller), overlapWhenSmall: true)
       } else if !showLive && !showDJ && !showBeats {
         LiveDrawer.shared.hide()
       }
@@ -498,7 +498,7 @@ struct PopoverView: View {
       showLayoutEditor = false
       showDJ = false
       showBeats = false
-      showTempo = false
+      tempoPopups.close()
       if ownsDrawer { LiveDrawer.shared.hide() }
       controller.live.setMetering(false)
       controller.live.stopEarsMetering()
@@ -524,14 +524,14 @@ struct PopoverView: View {
       showLive = false
       showDJ = false
       showBeats = false
-      showTempo = false
+      tempoPopups.close()
       return false
     }
     LiveDrawer.shared.onHide = { [weak controller] in
       showLive = false
       showDJ = false
       showBeats = false
-      showTempo = false
+      tempoPopups.close()
       controller?.dj.held = []
       controller?.dj.listening = false
     }
@@ -1116,7 +1116,7 @@ struct PopoverView: View {
       }
       Button {
         setAppearance(false)
-        if showDJ { showDJ = false } else { showLive = false; showBeats = false; showTempo = false; showDJ = true }
+        if showDJ { showDJ = false } else { showLive = false; showBeats = false; tempoPopups.close(); showDJ = true }
       } label: {
         Image(systemName: "dial.medium")
           .font(.system(size: 13, weight: .regular))
@@ -1130,7 +1130,7 @@ struct PopoverView: View {
       .help("DJ pads: kill bass/mids/highs, echo, crush, drive and a filter sweep")
       Button {
         setAppearance(false)
-        if showBeats { showBeats = false } else { showLive = false; showDJ = false; showTempo = false; showBeats = true }
+        if showBeats { showBeats = false } else { showLive = false; showDJ = false; tempoPopups.close(); showBeats = true }
       } label: {
         Group {
           if beats.playing {
@@ -1149,9 +1149,10 @@ struct PopoverView: View {
       .buttonStyle(FooterButtonStyle(chip: true))
       .accessibilityLabel("Beats")
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
-      TempoFooterButton(expanded: showTempo) {
+      TempoFooterButton(controller: controller, expanded: tempoPopups.open) {
         setAppearance(false)
-        if showTempo { showTempo = false } else { showLive = false; showDJ = false; showBeats = false; showTempo = true }
+        if !tempoPopups.open { showLive = false; showDJ = false; showBeats = false }
+        tempoPopups.toggleAll()
       }
       LatencyChip(lab: latencyLab, iconOnly: true) { withAnimation { showLatencyLab = true } }
     }
@@ -1199,7 +1200,7 @@ struct PopoverView: View {
       showLive = false
       showDJ = false
       showBeats = false
-      showTempo = false
+      tempoPopups.close()
       showDoctorReport = false
       reshuffle.set(false)
     }

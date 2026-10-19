@@ -63,6 +63,9 @@ final class LiveDrawer {
   /// Asked for beside the popup (a slim card to its right, or left if
   /// there's no room) instead of under it.
   private var side = false
+  /// On a small screen, float over the popup's lower part instead of hanging
+  /// off it (the Tempo popups); on a big one, sit apart from it as usual.
+  private var overlapWhenSmall = false
   /// Set while the popup hangs from the Dock: never under it (where the Dock
   /// is). On a bottom Dock (`liftable`) the popup can move up instead.
   var preferSide = false
@@ -83,7 +86,7 @@ final class LiveDrawer {
   /// moves to another screen); afterwards it only changes when the tray or
   /// popup grows and would no longer fit, so it never flips back and forth
   /// as rows arrive.
-  private enum Placement { case below, liftedBelow, beside }
+  private enum Placement { case below, liftedBelow, beside, overlap }
   private var placement = Placement.below
   /// Beside because there was no room under (not asked for).
   private var noRoom = false
@@ -97,9 +100,11 @@ final class LiveDrawer {
   /// what was there. `height`: content of a known, fixed height (DJ, Beats)
   /// sizes the panel first, so under vs beside is decided on the real size
   /// (no lift-then-move when it turns out not to fit).
-  func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil, height: CGFloat? = nil) {
+  func show<Content: View>(_ content: Content, side: Bool = false, width: CGFloat? = nil, height: CGFloat? = nil,
+                           overlapWhenSmall: Bool = false) {
     guard let host, host.isVisible else { return }
     self.side = side || sideOnly
+    self.overlapWhenSmall = overlapWhenSmall
     if panel == nil {
       let p = DrawerPanel(contentRect: NSRect(x: 0, y: 0, width: anchorRect?.width ?? host.frame.width, height: 120),
                           styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -236,9 +241,13 @@ final class LiveDrawer {
       guard liftable, let vis else { return false }
       return r.maxY - popupLift() + liftBy <= vis.maxY - 12
     }()
+    // A big screen has room to keep things apart; a small one would push a
+    // beside panel far from the pointer.
+    let big = vis.map { $0.width >= 1_680 && $0.height >= 1_000 } ?? true
     if decide {
       decidedOn = host?.screen
-      if side { placement = .beside; noRoom = false }
+      if overlapWhenSmall && !big { placement = .overlap; noRoom = false }
+      else if side { placement = .beside; noRoom = false }
       // Decided by geometry, not only the Dock flag (a late close event can
       // clear it): no room under the popup means it hangs near the Dock.
       else if preferSide || !fitsBelow { placement = fitsLifted ? .liftedBelow : .beside; noRoom = placement == .beside }
@@ -254,7 +263,19 @@ final class LiveDrawer {
     if placement == .liftedBelow { verifyLift() }
     switch placement {
     case .below:
-      panel.setFrameOrigin(NSPoint(x: r.minX, y: below))
+      // A tray wider than the popup stays on screen.
+      var x = r.minX
+      if let vis { x = min(max(x, vis.minX + 4), vis.maxX - 4 - w) }
+      panel.setFrameOrigin(NSPoint(x: x, y: below))
+    case .overlap:
+      // Over the popup's lower part, centred, a little in from its bottom edge.
+      var x = r.midX - w / 2
+      var y = r.minY + 10
+      if let vis {
+        x = min(max(x, vis.minX + 4), vis.maxX - 4 - w)
+        y = min(max(y, vis.minY + 4), vis.maxY - 4 - h)
+      }
+      panel.setFrameOrigin(NSPoint(x: x, y: y))
     case .liftedBelow:
       // Rides with the popup as it glides (a child window moves with it).
       panel.setFrameOrigin(NSPoint(x: r.minX, y: r.minY - liftGap - h))
