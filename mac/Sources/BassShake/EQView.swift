@@ -221,7 +221,7 @@ struct EQView: View {
           let nx: CGFloat = min(max(x(bands[i].freq, size.width), half), size.width - half)
           let ny: CGFloat = nodeY(bands[i], response(bands), size.height, boost: boostDb)
           readout(text, color: nodeColor(bands[i]))
-            .position(x: nx, y: ny < 30 ? ny + 24 : ny - 22)
+            .position(x: nx, y: ny < 30 ? ny + 24 + (grabbed == i ? 4 : 0) : ny - 22 - (grabbed == i ? 4 : 0))
             .allowsHitTesting(false)
             .transition(.opacity)
         }
@@ -404,8 +404,11 @@ struct EQView: View {
       // Grid: one line per region edge (200, 600, 2.5k, 6k), stopping above
       // the labels, plus quiet ±6 / +12 dB rulers for dragging.
       var grid = Path()
-      for f in SpectrumFrame.regionEdges.dropFirst().dropLast() {
-        grid.move(to: CGPoint(x: x(f, w), y: 0)); grid.addLine(to: CGPoint(x: x(f, w), y: h - 16))
+      // Regions' own 1 pt gaps already mark these edges.
+      if !(visualShown && controller.settings.eqVisual == .regions) {
+        for f in SpectrumFrame.regionEdges.dropFirst().dropLast() {
+          grid.move(to: CGPoint(x: x(f, w), y: 0)); grid.addLine(to: CGPoint(x: x(f, w), y: h - 16))
+        }
       }
       for g in [-6.0, 6, 12] {
         grid.move(to: CGPoint(x: 0, y: y(g, h))); grid.addLine(to: CGPoint(x: w, y: y(g, h)))
@@ -418,7 +421,9 @@ struct EQView: View {
     // "0 dB" sits on whichever side of the line the curve's top end isn't.
     let zeroY = y(0, h)
     let highEnd = sample(resp, at: 20_000) + boost
-    ctx.draw(Text("0 dB").font(Self.labelFont).foregroundColor(labelInk),
+    // With Boost on, the line sits above 0 dB by exactly that much: say so.
+    let zeroLabel = boost >= 0.5 ? "0 dB · Boost +\(Int(boost.rounded()))" : "0 dB"
+    ctx.draw(Text(zeroLabel).font(Self.labelFont).foregroundColor(labelInk),
              at: CGPoint(x: w - 4, y: highEnd < 0 ? zeroY - 7 : zeroY + 7), anchor: .trailing)
     if ownGrid {
       drawHzRuler(ctx, width: w, y: h - 7, ink: labelInk)
@@ -427,6 +432,11 @@ struct EQView: View {
     }
 
     drawGhost(ctx, size: size)
+    if controller.bypassed {
+      drawBypassed(ctx, size: size, bands: bands, boost: boost, color: curveInk)
+      return
+    }
+    drawDetent(ctx, size: size, bands: bands)
     if controller.settings.eqLineStyle == .prism {
       drawKeyline(ctx, curve: curvePath(bands, size: size, boost: boost), lineWidth: 2)
       drawPrism(ctx, size: size, bands: bands, boost: boost, color: spectrumColor)
@@ -460,7 +470,7 @@ struct EQView: View {
     (1_000, "1k"), (2_000, "2k"), (5_000, "5k"), (10_000, "10k"),
   ]
   /// Shorter names for a region too narrow for the full one.
-  private static let shortRegionNames = ["Low-mids": "Lo-mids", "High-mids": "Hi-mids"]
+  private static let shortRegionNames = ["Low-mids": "Lo-mids"]
 
   private func drawHzRuler(_ ctx: GraphicsContext, width w: CGFloat, y: CGFloat, ink: Color) {
     for (f, label) in Self.rulerMarks {
@@ -473,10 +483,14 @@ struct EQView: View {
   /// shortened, or left out, where the name would not fit.
   private func drawRegionNames(_ ctx: GraphicsContext, width w: CGFloat, y: CGFloat, ink: Color) {
     let edges = SpectrumFrame.regionEdges, names = SpectrumFrame.regionNames
+    let focus = focusSpan
     for k in names.indices where k + 1 < edges.count {
       let x0 = x(edges[k], w), x1 = x(edges[k + 1], w)
+      // The range(s) the touched band acts on read in full ink.
+      let lit = focus.map { $0.lowerBound < edges[k + 1] && $0.upperBound > edges[k] } ?? false
+      let tone = lit ? (palette?.ink ?? Color.primary) : ink
       for name in [names[k], Self.shortRegionNames[names[k]]].compactMap({ $0 }) {
-        let text = ctx.resolve(Text(name).font(Self.labelFont).foregroundColor(ink))
+        let text = ctx.resolve(Text(name).font(Self.labelFont).foregroundColor(tone))
         guard text.measure(in: CGSize(width: w, height: 40)).width + 4 <= x1 - x0 else { continue }
         ctx.draw(text, at: CGPoint(x: (x0 + x1) / 2, y: y), anchor: .center)
         break
@@ -489,8 +503,8 @@ struct EQView: View {
   private func drawKeyline(_ ctx: GraphicsContext, curve: Path, lineWidth: CGFloat) {
     guard needsKeyline else { return }
     let surface = palette?.surface ?? Color(nsColor: .windowBackgroundColor)
-    ctx.stroke(curve, with: .color(surface.opacity(0.5)),
-               style: StrokeStyle(lineWidth: lineWidth + 3, lineCap: .round, lineJoin: .round))
+    ctx.stroke(curve, with: .color(surface.opacity(0.6)),
+               style: StrokeStyle(lineWidth: lineWidth + 2, lineCap: .round, lineJoin: .round))
   }
 
   /// Classic: the hovered or held band's own share of the line, filled from
@@ -566,6 +580,11 @@ struct EQView: View {
       drawRegionNames(ctx, width: w, y: h - 7, ink: palette?.secondary ?? .secondary)
     }
     drawGhost(ctx, size: size)
+    if controller.bypassed {
+      drawBypassed(ctx, size: size, bands: bands, boost: boost, color: color)
+      return
+    }
+    drawDetent(ctx, size: size, bands: bands)
     if controller.settings.eqLineStyle == .prism {
       drawKeyline(ctx, curve: curvePath(bands, size: size, boost: boost), lineWidth: 2)
       drawPrism(ctx, size: size, bands: bands, boost: boost, color: color)
@@ -620,10 +639,31 @@ struct EQView: View {
   }
 
   /// ⌥-drag (tilt): where the line was when it was grabbed.
+  /// While the line is held: ⌥ tilt shows where it started; a Boost drag
+  /// shows the EQ alone, so the gap is exactly the Boost.
   private func drawGhost(_ ctx: GraphicsContext, size: CGSize) {
-    guard let d = lineDrag, d.tilt else { return }
-    ctx.stroke(curvePath(d.startBands, size: size, boost: d.startBoost), with: .color(.primary.opacity(0.28)),
+    guard let d = lineDrag else { return }
+    if !d.tilt && shown.boostDb < 0.05 { return }
+    let ghost = d.tilt ? curvePath(d.startBands, size: size, boost: d.startBoost)
+                       : curvePath(shown.bands, size: size, boost: 0)
+    ctx.stroke(ghost, with: .color(.primary.opacity(0.28)),
                style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [3, 3]))
+  }
+
+  /// The 0 dB detent caught (the haptic's twin): a short solid stretch of the
+  /// 0 dB line under the held node, only while the snap holds it at 0.
+  private func drawDetent(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand]) {
+    guard let i = grabbed, snapped, bands.indices.contains(i) else { return }
+    let nx = x(bands[i].freq, size.width), zy = y(0, size.height)
+    var seg = Path()
+    seg.move(to: CGPoint(x: nx - 20, y: zy)); seg.addLine(to: CGPoint(x: nx + 20, y: zy))
+    ctx.stroke(seg, with: .color(nodeColor(bands[i]).opacity(0.7)), lineWidth: 1)
+  }
+
+  /// A/B on Original: the EQ isn't applied, so the curve is only a ghost.
+  private func drawBypassed(_ ctx: GraphicsContext, size: CGSize, bands: [EQBand], boost: Double, color: Color) {
+    ctx.stroke(curvePath(bands, size: size, boost: boost), with: .color(color.opacity(0.35)),
+               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round, dash: [4, 3]))
   }
 
   private func lineChipView(_ text: String) -> some View {
@@ -647,13 +687,34 @@ struct EQView: View {
         EQLineArtwork.drawStud(in: ctx, at: c, color: tone)
         continue
       }
-      let r: CGFloat = active ? 7.5 : 5.5
+      let held = grabbed == i
+      // Resting, pointed at, held: three sizes, and a small lift while held.
+      let r: CGFloat = held ? 8.5 : (active ? 7.5 : 5.5)
       if active {
         ctx.fill(Path(ellipseIn: CGRect(x: c.x - 14, y: c.y - 14, width: 28, height: 28)),
-                 with: .color(tone.opacity(0.18)))
+                 with: .color(tone.opacity(held ? 0.24 : 0.18)))
       }
       let disc = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
-      ctx.fill(disc, with: .color(tone))
+      if b.kind == .bell {
+        if held && !powerSaver {
+          ctx.drawLayer { lift in
+            lift.addFilter(.shadow(color: .black.opacity(0.22), radius: 2, y: 1))
+            lift.fill(disc, with: .color(tone))
+          }
+        } else {
+          ctx.fill(disc, with: .color(tone))
+        }
+      } else {
+        // A shelf works on everything to one side of its corner: solid on
+        // that side (left for the low shelf, right for the high).
+        ctx.fill(disc, with: .color(tone.opacity(0.35)))
+        let side = b.kind == .lowShelf ? CGRect(x: c.x - r, y: c.y - r, width: r, height: 2 * r)
+                                       : CGRect(x: c.x, y: c.y - r, width: r, height: 2 * r)
+        ctx.drawLayer { half in
+          half.clip(to: Path(side))
+          half.fill(disc, with: .color(tone))
+        }
+      }
       ctx.stroke(disc, with: .color(.white.opacity(0.85)), lineWidth: 1.2)
       // A hairline outside the white ring keeps every node's edge on light glass.
       let rim = Path(ellipseIn: CGRect(x: c.x - r - 1, y: c.y - r - 1, width: 2 * r + 2, height: 2 * r + 2))
@@ -983,7 +1044,8 @@ struct EQView: View {
     guard shown.bands.indices.contains(i) else { return }
     var b = shown.bands[i]
     // The presses push no undo step (only a moved drag does), so this one does.
-    if b.gain != 0 { pushUndo() }
+    guard b.gain != 0 else { return }  // already flat: no step, no tick
+    pushUndo()
     b.gain = 0
     controller.update(band: i, to: b, animated: true)
     NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)

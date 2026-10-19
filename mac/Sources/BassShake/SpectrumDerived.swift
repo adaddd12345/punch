@@ -354,8 +354,11 @@ final class SpectrumBallistics {
       guard falls else { continue }
       let t = min(age[i] + dt, 10)
       age[i] = t
-      let falling = max(0, min(dt, t - holdSeconds))
-      hold[i] = max(value[i], hold[i] - holdFallDbPerSecond * falling)
+      let late = t - holdSeconds
+      guard late > 0 else { continue }
+      // Eases into the fall over 0.25 s, like a real peak marker.
+      let rate = holdFallDbPerSecond * min(1, late / 0.25)
+      hold[i] = max(value[i], hold[i] - rate * min(dt, late))
     }
   }
 

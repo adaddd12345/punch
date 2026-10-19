@@ -28,6 +28,16 @@ struct EQFrequencyArtwork: View {
           draw(&context, size: size, hi: hi, dark: dark)
         }
         .opacity(dataOpacity)
+        .blendMode(style == .heat && !dark && !hi ? .multiply : .normal)
+        .mask {
+          if style == .heat {
+            LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.05),
+                                   .init(color: .black, location: 0.82), .init(color: .black.opacity(0.4), location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+          } else {
+            Color.black
+          }
+        }
       }
     }
     .allowsHitTesting(false)
@@ -44,7 +54,7 @@ struct EQFrequencyArtwork: View {
     case .flow: ink = flow(plot, hi: hi)
     case .trace: ink = trace(plot, hi: hi)
     case .heat: ink = heat(plot, context: context, hi: hi, dark: dark)
-    case .regions: ink = regions(plot, hi: hi)
+    case .regions: ink = regions(plot, hi: hi, dark: dark)
     case .off: ink = nil
     }
     guard let ink else { return }
@@ -72,14 +82,14 @@ struct EQFrequencyArtwork: View {
 
   // MARK: Modes
 
-  /// The filled line: the fill's strongest tint starts at the trace's own
-  /// peak, so it always sits right under the line, whatever the level.
+  /// The filled line: the fill's tint is fixed to the level scale, so a loud
+  /// bass hit never dims the treble's fill; brightness means level.
   private func flow(_ plot: EQPlotGeometry, hi: Bool) -> Ink? {
     guard frame.line.count > 1 else { return nil }
     let size = plot.size
     let line = plot.path(frame.line, frame)
     let hold = frame.hold.flatMap { $0.count > 1 ? plot.path($0, frame) : nil }
-    let top = min(line.boundingRect.minY, size.height - EQPlotGeometry.headroom)
+    let top = plot.y(0.75)
     var fill = line
     fill.addLine(to: CGPoint(x: size.width, y: size.height))
     fill.addLine(to: CGPoint(x: 0, y: size.height))
@@ -93,7 +103,8 @@ struct EQFrequencyArtwork: View {
       if let hold {
         ctx.stroke(hold, with: .color(holdInk), style: StrokeStyle(lineWidth: 0.5, lineCap: .round, lineJoin: .round))
       }
-      ctx.stroke(line, with: .color(stroke), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+      // Lighter than the EQ curve (2 pt), which is the thing you drag.
+      ctx.stroke(line, with: .color(stroke), style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
     }
   }
 
@@ -101,12 +112,19 @@ struct EQFrequencyArtwork: View {
   private func trace(_ plot: EQPlotGeometry, hi: Bool) -> Ink? {
     guard frame.line.count > 1 else { return nil }
     let pen = plot.path(frame.line, frame)
-    let hold = frame.hold.flatMap { $0.count > 1 ? plot.path($0, frame) : nil }
-    let penInk = Color.primary.opacity(hi ? 1 : 0.85), holdInk = Color.primary.opacity(hi ? 0.6 : 0.35)
-    return { ctx in
-      if let hold {
-        ctx.stroke(hold, with: .color(holdInk), style: StrokeStyle(lineWidth: 0.5, dash: [1, 1.5]))
+    // The hold: one dot per column, fixed in place (a dashed path would crawl
+    // as its length changes), and only where something is held above the pen.
+    var held = Path()
+    if let h = frame.hold, h.count == frame.line.count, h.count > 1 {
+      let last = CGFloat(h.count - 1)
+      for c in h.indices where h[c] > frame.line[c] + 1 && h[c] > frame.bottomDb {
+        let x = CGFloat(c) / last * plot.size.width, y = plot.y(frame.fraction(h[c]))
+        held.addRect(CGRect(x: x - 0.5, y: y - 0.5, width: 1, height: 1))
       }
+    }
+    let penInk = Color.primary.opacity(hi ? 1 : 0.72), holdInk = Color.primary.opacity(hi ? 0.6 : 0.35)
+    return { ctx in
+      ctx.fill(held, with: .color(holdInk))
       ctx.stroke(pen, with: .color(penInk), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
     }
   }
@@ -124,40 +142,51 @@ struct EQFrequencyArtwork: View {
     let top = max(r, g, b), saturation = top > 0 ? (top - min(r, g, b)) / top : 0
     let ramp = EQHeatRamp.Key(r: UInt8((r * 255).rounded()), g: UInt8((g * 255).rounded()),
                               b: UInt8((b * 255).rounded()), dark: dark, magma: hi || saturation < 0.2)
-    guard let image = EQHeatRamp.shared.stripes(frame.line, cold: frame.bottomDb + 12,
-                                                hot: frame.topDb - 6, ramp: ramp) else { return nil }
+    let scale = max(1, context.environment.displayScale)
+    let px = max(1, Int((plot.size.width * scale).rounded()))
+    guard let image = EQHeatRamp.shared.stripes(frame.line, cold: frame.bottomDb + 12, hot: frame.topDb - 6,
+                                                ramp: ramp, width: px, pitch: scale >= 2 ? 4 : 3) else { return nil }
     let resolved = context.resolve(Image(decorative: image, scale: 1).interpolation(.none))
-    let stripe = n > 1 ? plot.size.width / CGFloat(n - 1) : plot.size.width
-    let rect = CGRect(x: n > 1 ? -stripe / 2 : 0, y: 0, width: stripe * CGFloat(n), height: plot.size.height)
+    let rect = CGRect(x: 0, y: 0, width: CGFloat(px) / scale, height: plot.size.height)
     return { ctx in ctx.draw(resolved, in: rect) }
   }
 
   /// Five blocks at the true log widths of the named regions, 1 pt apart,
   /// rising from the floor to each region's average power.
-  private func regions(_ plot: EQPlotGeometry, hi: Bool) -> Ink? {
+  private func regions(_ plot: EQPlotGeometry, hi: Bool, dark: Bool) -> Ink? {
     let edges = SpectrumFrame.regionEdges
     let count = edges.count - 1
     guard count > 0, frame.regions.count >= count else { return nil }
     let floor = plot.size.height
-    var fill = Path(), tops = Path(), caps = Path()
+    var fill = Path(), tops = Path()
+    var caps: [(rect: CGRect, alpha: Double)] = []
     for i in 0..<count {
       let x0 = plot.snap(plot.x(edges[i]) + (i == 0 ? 0 : 0.5))
       let x1 = plot.snap(plot.x(edges[i + 1]) - (i == count - 1 ? 0 : 0.5))
       guard x1 > x0 else { continue }
       let y = plot.snap(plot.y(frame.fraction(frame.regions[i])))
-      fill.addRect(CGRect(x: x0, y: y, width: x1 - x0, height: max(0, floor - y)))
-      tops.addRect(CGRect(x: x0, y: min(y, floor - 1), width: x1 - x0, height: 1))
-      if let hold = frame.regionHold, i < hold.count {
+      // Only the top corners round: the bottom runs past the floor (clipped).
+      let r = min(2, max(0, (floor - y) / 2))
+      fill.addRoundedRect(in: CGRect(x: x0, y: y, width: x1 - x0, height: max(0, floor - y) + r),
+                          cornerSize: CGSize(width: r, height: r))
+      tops.addRoundedRect(in: CGRect(x: x0, y: min(y, floor - 1), width: x1 - x0, height: 1),
+                          cornerSize: CGSize(width: 0.5, height: 0.5))
+      // The hold: a short dash, a memory of the level, fading in as the block
+      // drops away from it (never a second edge stacked on the top).
+      if let hold = frame.regionHold, i < hold.count, x1 - x0 > 8 {
         let hy = plot.snap(plot.y(frame.fraction(hold[i])))
-        caps.addRect(CGRect(x: x0, y: max(0, hy - 1.5), width: x1 - x0, height: 1.5))
+        let away = Double(max(0, min(1, (y - hy - 1) / 3)))
+        if away > 0 { caps.append((CGRect(x: x0 + 3, y: max(0, hy - 1), width: x1 - x0 - 6, height: 1), away)) }
       }
     }
-    let body = color.opacity(hi ? 0.4 : 0.22), edge = color.opacity(hi ? 0.9 : 0.7)
-    let cap = color.opacity(hi ? 1 : 0.8)
+    let body = GraphicsContext.Shading.linearGradient(
+      Gradient(colors: [color.opacity(hi ? 0.5 : (dark ? 0.32 : 0.26)), color.opacity(hi ? 0.25 : (dark ? 0.10 : 0.07))]),
+      startPoint: .zero, endPoint: CGPoint(x: 0, y: floor))
+    let edge = color.opacity(hi ? 0.9 : 0.7), capAlpha = hi ? 0.8 : 0.5
     return { ctx in
-      ctx.fill(fill, with: .color(body))
+      ctx.fill(fill, with: body)
       ctx.fill(tops, with: .color(edge))
-      if !caps.isEmpty { ctx.fill(caps, with: .color(cap)) }
+      for cap in caps { ctx.fill(Path(cap.rect), with: .color(color.opacity(capAlpha * cap.alpha))) }
     }
   }
 
@@ -244,8 +273,13 @@ private struct EQPlotGeometry {
   func path(_ values: [Float], _ frame: SpectrumFrame) -> Path {
     var path = Path()
     let last = CGFloat(max(1, values.count - 1))
+    let span = CGFloat(frame.topDb - frame.bottomDb)
     for (index, value) in values.enumerated() {
-      let point = CGPoint(x: CGFloat(index) / last * size.width, y: y(frame.fraction(value)))
+      // Below the range the line keeps going (under the clip), so silence
+      // shows bare paper rather than a line lying on the floor.
+      let f = value < frame.bottomDb && span > 0 && !value.isNaN ? CGFloat(value - frame.bottomDb) / span
+        : frame.fraction(value)
+      let point = CGPoint(x: CGFloat(index) / last * size.width, y: y(f))
       if index == 0 { path.move(to: point) } else { path.addLine(to: point) }
     }
     return path
@@ -295,7 +329,9 @@ private struct EQTracePaper: View {
       let rowPoints = CGFloat(step / range) * geo.height
       let labelEvery = max(1, Int((16 / max(1, rowPoints)).rounded(.up)))
       let labels = size.height >= 60 && size.width >= 100
-      var rows = Path()
+      // Labelled rows run full width; the rows between are short edge ticks,
+      // so fewer lines sit behind the curve at the same dB resolution.
+      var rows = Path(), ticks = Path()
       var marks: [(db: Float, y: CGFloat)] = []
       var k = 1
       while true {
@@ -303,18 +339,27 @@ private struct EQTracePaper: View {
         guard db >= bottomDb - 0.01 else { break }
         let fraction = CGFloat(max(0, min(1, (db - bottomDb) / range)))
         let y = crisp(geo.y(fraction), size.height)
-        rows.move(to: CGPoint(x: 0, y: y)); rows.addLine(to: CGPoint(x: size.width, y: y))
+        if k % 2 == 0 {
+          rows.move(to: CGPoint(x: 0, y: y)); rows.addLine(to: CGPoint(x: size.width, y: y))
+        } else {
+          ticks.move(to: CGPoint(x: 0, y: y)); ticks.addLine(to: CGPoint(x: 4, y: y))
+          ticks.move(to: CGPoint(x: size.width - 4, y: y)); ticks.addLine(to: CGPoint(x: size.width, y: y))
+        }
         if labels && k % labelEvery == 0 { marks.append((db, y)) }
         k += 1
       }
 
       let stroke = StrokeStyle(lineWidth: line)
       context.stroke(minor, with: .color(ink.opacity(hi ? 0.07 : 0.04)), style: stroke)
-      context.stroke(rows, with: .color(ink.opacity(hi ? 0.1 : 0.06)), style: stroke)
+      context.stroke(rows, with: .color(ink.opacity(hi ? 0.12 : 0.08)), style: stroke)
+      context.stroke(ticks, with: .color(ink.opacity(hi ? 0.12 : 0.08)), style: stroke)
       context.stroke(major, with: .color(ink.opacity(hi ? 0.16 : 0.1)), style: stroke)
-      for mark in marks {
-        let text = context.resolve(Text("\u{2212}\(Int(abs(mark.db).rounded()))")
-          .font(.system(size: 9).monospacedDigit())
+      // The left numbers are dBFS (the right-hand "0 dB" is EQ gain): the top
+      // label says so once. None lands in the Hz ruler's row.
+      for (n, mark) in marks.enumerated() where mark.y <= size.height - 14 {
+        let value = "\u{2212}\(Int(abs(mark.db).rounded()))" + (n == 0 ? " dBFS" : "")
+        let text = context.resolve(Text(value)
+          .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
           .foregroundColor(ink.opacity(hi ? 0.7 : 0.45)))
         let height = text.measure(in: size).height
         guard mark.y - 1.5 - height >= 0 else { continue }
@@ -341,11 +386,12 @@ private final class EQHeatRamp {
   private var tables: [(key: Key, rgba: [UInt8])] = []   // a few ramps: the live view and previews may differ
   private var pixels: [UInt8] = []
 
-  /// A count×1 premultiplied RGBA image of `line`, mapped linearly in dB from
-  /// `cold` (clear) to `hot`.
-  func stripes(_ line: [Float], cold: Float, hot: Float, ramp key: Key) -> CGImage? {
+  /// A `width`×1 premultiplied RGBA image (device pixels): even stripes every
+  /// `pitch` pixels with a clear last pixel, each the level at its centre's
+  /// frequency, mapped linearly in dB from `cold` (clear) to `hot`.
+  func stripes(_ line: [Float], cold: Float, hot: Float, ramp key: Key, width: Int, pitch: Int) -> CGImage? {
     let n = line.count
-    guard n > 0, hot > cold else { return nil }
+    guard n > 1, hot > cold, width > 0, pitch > 1 else { return nil }
     lock.lock(); defer { lock.unlock() }
     let lut: [UInt8]
     if let found = tables.first(where: { $0.key == key }) {
@@ -355,20 +401,31 @@ private final class EQHeatRamp {
       tables.append((key, lut))
       if tables.count > 4 { tables.removeFirst() }
     }
-    if pixels.count != n * 4 { pixels = [UInt8](repeating: 0, count: n * 4) }
+    if pixels.count != width * 4 { pixels = [UInt8](repeating: 0, count: width * 4) }
     let span = hot - cold
+    let last = Float(n - 1), w = Float(max(1, width - 1))
     lut.withUnsafeBufferPointer { table in
       pixels.withUnsafeMutableBufferPointer { out in
-        for c in 0..<n {
-          let v = line[c]
-          let t = v.isFinite ? max(0, min(1, (v - cold) / span)) : 0
-          let k = Int(t * 255 + 0.5) * 4, o = c * 4
-          out[o] = table[k]; out[o + 1] = table[k + 1]; out[o + 2] = table[k + 2]; out[o + 3] = table[k + 3]
+        var x = 0
+        while x < width {
+          // The stripe's centre, as a fractional column (log f across the width).
+          let centre = Float(min(width - 1, x + (pitch - 1) / 2)) / w * last
+          let i = Int(centre), f = centre - Float(i)
+          let a = line[i], b = line[min(n - 1, i + 1)]
+          let v = a.isFinite && b.isFinite ? a + (b - a) * f : cold
+          let t = max(0, min(1, (v - cold) / span))
+          let k = Int(t * 255 + 0.5) * 4
+          for p in x..<min(width, x + pitch) {
+            let o = p * 4
+            if p == x + pitch - 1 { out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0; continue }
+            out[o] = table[k]; out[o + 1] = table[k + 1]; out[o + 2] = table[k + 2]; out[o + 3] = table[k + 3]
+          }
+          x += pitch
         }
       }
     }
-    guard let data = CFDataCreate(nil, pixels, n * 4), let provider = CGDataProvider(data: data) else { return nil }
-    return CGImage(width: n, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: n * 4,
+    guard let data = CFDataCreate(nil, pixels, width * 4), let provider = CGDataProvider(data: data) else { return nil }
+    return CGImage(width: width, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
                    space: Self.space, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
                    provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
   }
@@ -394,9 +451,30 @@ private final class EQHeatRamp {
     return [(0, r, g, b, 0), (0.3, r, g, b, 0.35), (0.6, r, g, b, 0.85), (1, hot.0, hot.1, hot.2, 1)]
   }
 
+  private static func smoothstep(_ e0: Double, _ e1: Double, _ x: Double) -> Double {
+    let t = max(0, min(1, (x - e0) / (e1 - e0)))
+    return t * t * (3 - 2 * t)
+  }
+
   private static func build(_ key: Key) -> [UInt8] {
     let stops = stops(key)
     var out = [UInt8](repeating: 0, count: 256 * 4)
+    func byte(_ v: Double) -> UInt8 { UInt8(max(0, min(255, (v * 255).rounded()))) }
+    if !key.magma {
+      // The accent ramp as one smooth curve: a flat toe keeps the noise floor
+      // clear, then accent eases to hot over the top half.
+      let r = Double(key.r) / 255, g = Double(key.g) / 255, b = Double(key.b) / 255
+      let toward = key.dark ? 1.0 : 0.0, amount = key.dark ? 0.55 : 0.4
+      for i in 0..<256 {
+        let t = Double(i) / 255
+        let a = smoothstep(0.06, 0.75, t), u = smoothstep(0.5, 1, t) * amount
+        out[i * 4] = byte((r + (toward - r) * u) * a)
+        out[i * 4 + 1] = byte((g + (toward - g) * u) * a)
+        out[i * 4 + 2] = byte((b + (toward - b) * u) * a)
+        out[i * 4 + 3] = byte(a)
+      }
+      return out
+    }
     for i in 0..<256 {
       let t = Double(i) / 255
       let upper = stops.firstIndex(where: { $0.t >= t }) ?? stops.count - 1
@@ -404,7 +482,6 @@ private final class EQHeatRamp {
       let u = hi.t > lo.t ? max(0, min(1, (t - lo.t) / (hi.t - lo.t))) : 1
       func mix(_ a: Double, _ b: Double) -> Double { a + (b - a) * u }
       let a = mix(lo.a, hi.a)
-      func byte(_ v: Double) -> UInt8 { UInt8(max(0, min(255, (v * 255).rounded()))) }
       out[i * 4] = byte(mix(lo.r, hi.r) * a)
       out[i * 4 + 1] = byte(mix(lo.g, hi.g) * a)
       out[i * 4 + 2] = byte(mix(lo.b, hi.b) * a)

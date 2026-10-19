@@ -15,7 +15,7 @@ struct LiveEQVisualization: View {
     // Idle fades the data only, so Trace's graph paper stays put.
     EQFrequencyArtwork(frame: model.frame, color: color, style: style, focus: focus,
                        dataOpacity: model.idle ? 0 : 1)
-      .animation(.easeOut(duration: 0.25), value: model.idle)
+      .animation(model.idle ? .easeOut(duration: 0.6) : .easeOut(duration: 0.12), value: model.idle)
       .allowsHitTesting(false)
       .accessibilityHidden(true)
   }
