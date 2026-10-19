@@ -42,6 +42,18 @@ jobs:
           fi
           xcodebuild -version
           swift --version
+      # The app's compile (one big Swift module, twice for a universal app)
+      # is most of the job, so it starts first and the tests and checks run
+      # beside it; "Wait for the app build" joins it. Branches other than
+      # the shipping one build only the runner's own architecture.
+      - name: Start the app build
+        env:
+          ARCHS: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/claude/macos-audio-routing-research-xpbcuk') && 'arm64 x86_64' || 'native' }}
+        run: |
+          mkdir -p build
+          ( mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"; echo $? > build/bundle.exit ) \
+            > build/bundle.log 2>&1 &
+          echo "Building ($ARCHS) in the background"
       - name: DSP core tests
         run: |
           cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
@@ -67,8 +79,12 @@ jobs:
           bash mac/scripts/artwork-backdrop-check.sh
           bash mac/scripts/artwork-bleed-check.sh
           bash mac/scripts/artwork-reaction-check.sh
-      - name: Build app bundle
-        run: mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"
+      - name: Wait for the app build
+        run: |
+          while [ ! -f build/bundle.exit ]; do sleep 2; done
+          cat build/bundle.log
+          CODE="$(cat build/bundle.exit)"
+          [ "$CODE" = 0 ] || { echo "::error::bundle.sh failed (status $CODE)"; exit 1; }
       # Launch the built app and make sure it stays up. No one answers the
       # System Audio Recording prompt on CI (and first run shows onboarding
       # before asking), so the tap may never start: that's fine. Only the

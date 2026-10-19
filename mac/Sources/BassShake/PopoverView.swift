@@ -244,20 +244,11 @@ struct PopoverView: View {
     }
   }
 
-  /// Themed by PopupChromeTheme in body, with every other panel.
-  private var controlStack: some View {
-    // Between groups (the blocks, the footer, the Dock header): Breathing
-    // room's section gap; Mini stays dense at 8.
-    let groupGap = size == .mini ? 8 : gaps.section
+  /// The sound controls' blocks (split from controlStack so neither body is
+  /// slow to type-check: it was 3.7 s per architecture).
+  private func soundBlocks(gap groupGap: CGFloat) -> some View {
+    let isClassicMini = !controller.settings.bento && size == .mini
     return VStack(alignment: .leading, spacing: groupGap) {
-      let isClassicMini = !controller.settings.bento && size == .mini
-      // Opened from the Dock: the footer's controls in a header (icon, name, groups).
-      if dockHeaderShown {
-        dockHeader
-      }
-      // Retain the sound controls' identity and local disclosure state while
-      // Appearance takes their place. They cannot receive input while hidden.
-      VStack(alignment: .leading, spacing: groupGap) {
       // Take Control: who this popup is driving, always on top (and Switch Back).
       if let t = takeover {
         TakeoverBanner(session: t)
@@ -323,7 +314,22 @@ struct PopoverView: View {
       }
       // Under the stack, so a mute never pushes What's Playing down.
       mutedNotice
+    }
+  }
+
+  /// Themed by PopupChromeTheme in body, with every other panel.
+  private var controlStackBase: some View {
+    // Between groups (the blocks, the footer, the Dock header): Breathing
+    // room's section gap; Mini stays dense at 8.
+    let groupGap = size == .mini ? 8 : gaps.section
+    return VStack(alignment: .leading, spacing: groupGap) {
+      // Opened from the Dock: the footer's controls in a header (icon, name, groups).
+      if dockHeaderShown {
+        dockHeader
       }
+      // Retain the sound controls' identity and local disclosure state while
+      // Appearance takes their place. They cannot receive input while hidden.
+      soundBlocks(gap: groupGap)
       .frame(height: showAppearance ? 0 : nil)
       .opacity(showAppearance ? 0 : 1)
       .clipped()
@@ -357,6 +363,10 @@ struct PopoverView: View {
       // Mini has no footer, so no Live/DJ tray either (and no rearranging).
       if new == .mini { showLive = false; showDJ = false; showBeats = false; tempoPopups.close(); reshuffle.set(false) }
     }
+  }
+
+  private var controlStackFramed: some View {
+    controlStackBase
     .padding(12)
     // "Updated to …": the popup grows a band at the top for the capsule, so it
     // covers nothing, and the band collapses once the capsule has rolled out.
@@ -406,6 +416,12 @@ struct PopoverView: View {
         .transition(.opacity)
       }
     }
+  }
+
+  /// controlStack in three getters, so none is slow to type-check (the one
+  /// chain took 3.7 s per architecture on every build).
+  private var controlStack: some View {
+    controlStackFramed
     .accessibilityElement(children: .contain)
     .accessibilityAction(named: "Rearrange blocks") {
       if canReshuffle { withAnimation { reshuffle.set(true) } }
