@@ -7,13 +7,14 @@ extension Settings {
   func resettingSound() -> Settings {
     var sound = self
     let defaults = Settings()
-    sound.bands = defaults.bands
+    // The default preset's real curve and stage, not just its name.
+    sound.bands = Preset.all[1].bands()
     sound.presetName = defaults.presetName
     sound.userPresetID = defaults.userPresetID
     sound.editedFrom = defaults.editedFrom
     sound.bass = defaults.bass
     sound.boostDb = defaults.boostDb
-    sound.character = defaults.character
+    sound.character = Preset.all[1].character
     sound.studioEars = defaults.studioEars
     sound.bassCharacter = defaults.bassCharacter
     sound.bassAmount = defaults.bassAmount

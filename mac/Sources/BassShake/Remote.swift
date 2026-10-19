@@ -613,7 +613,7 @@ final class RemoteControl: ObservableObject, RemoteHostDelegate {
       let n = command.str ?? ""
       if let up = c.settings.visibleUserPresets.first(where: { $0.name == n }) {
         c.apply(userPreset: up)
-      } else if let p = Preset.all.first(where: { $0.name == n }) {
+      } else if let p = Preset.named(n) {
         c.apply(preset: p)
       } else {
         reply(false, "\(here) has no preset called \(n).")

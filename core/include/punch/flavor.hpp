@@ -41,6 +41,10 @@ struct BassCharacterParams {
   BassCharacterKind kind = BassCharacterKind::Off;
   float amount = 0.6f;     // 0..1
   float driveScale = 1.f;  // 0..1: caps Distort's drive (Late Night uses 0.6)
+  // 0..12 dB: lifts the lows into Distort's shaper and its level match, so
+  // Distort bites as hard as it did behind Bass Shake Classic's +8 dB lift
+  // (and the lows come out that much hotter). Distort only; 0 = unchanged.
+  float feedDb = 0.f;
 
   friend bool operator==(const BassCharacterParams&, const BassCharacterParams&) = default;
 };
@@ -71,7 +75,7 @@ class BassCharacter {
   BassCharacterParams p_;
   BassCharacterKind active_ = BassCharacterKind::Off;  // kind being rendered
   float mix_ = 0.f, mixStep_ = 0.f;                    // linear switch ramp
-  Smoothed amount_, driveScale_;
+  Smoothed amount_, driveScale_, feed_;  // feed_: linear gain
   float coeffAmount_ = -1.f;  // amount the filters were last built for
 
   // Per channel: the low-delay split, the bass level (for the weights) and

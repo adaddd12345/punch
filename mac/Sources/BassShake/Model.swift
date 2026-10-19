@@ -75,19 +75,63 @@ extension Preset {
     [(105, 5, 0.71), (55, 3, 1.2), (250, -2, 1), (1_000, 0, 1), (3_500, 1.5, 1), (10_000, 1.5, 0.71)]
 
   /// Saves from before the Bass Shaker: "Bass Shake" with the old, unedited
-  /// curve and no stage set becomes the new Bass Shake (the old one lives on
-  /// as Bass Shake Classic). Anything edited or saved as a user preset keeps
-  /// its classic sound.
-  static func migrateBassShake(presetName: String?, bands: inout [EQBand], character: inout SoundCharacter) {
-    guard presetName == "Bass Shake", character == .neutral, let new = all.first(where: { $0.name == "Bass Shake" }) else { return }
+  /// curve and no stage set becomes the new Bass Shake. True when it moved
+  /// (the caller keeps the old curve in My Sounds as Bass Shake Classic).
+  /// Anything edited or saved as a user preset keeps its classic sound.
+  @discardableResult
+  static func migrateBassShake(presetName: String?, bands: inout [EQBand], character: inout SoundCharacter) -> Bool {
+    guard presetName == "Bass Shake", character == .neutral, let new = all.first(where: { $0.name == "Bass Shake" }) else { return false }
     let old = zip(EQBand.defaults, classicBassShakeNodes).map { b, n in
       var x = b; x.freq = n.freq; x.gain = n.gain; x.q = n.q; return x
     }
     guard bands.count == old.count,
           zip(bands, old).allSatisfy({ abs($0.freq - $1.freq) < 0.5 && abs($0.gain - $1.gain) < 0.05 && abs($0.q - $1.q) < 0.01 && $0.kind == $1.kind })
-    else { return }
+    else { return false }
     bands = new.bands()
     character = new.character
+    return true
+  }
+
+  /// The Bass Shake before the merge (Shaker stage, -1.5 dB at 250 Hz).
+  static let shakerBassShakeNodes: [(freq: Double, gain: Double, q: Double)] =
+    [(105, 0, 0.71), (55, 0, 1.2), (250, -1.5, 1), (1_000, 0, 1), (3_500, 1.5, 1), (10_000, 1.5, 0.71)]
+
+  static func matches(_ bands: [EQBand], _ nodes: [(freq: Double, gain: Double, q: Double)]) -> Bool {
+    bands.count == nodes.count && zip(bands, zip(EQBand.defaults, nodes)).allSatisfy { b, d in
+      abs(b.freq - d.1.freq) < 0.5 && abs(b.gain - d.1.gain) < 0.05 && abs(b.q - d.1.q) < 0.01 && b.kind == d.0.kind
+    }
+  }
+
+  /// Bass Shake and Bass Shake Classic became one Bass Shake (2026-10-19).
+  /// An unedited Classic moves to it (true: the caller keeps a My Sounds copy
+  /// of the old curve); an edited Classic keeps its curve and stage as a
+  /// custom sound; the earlier Bass Shake gets the new cut and the Distort feed.
+  @discardableResult
+  static func unifyBassShake(presetName: inout String?, bands: inout [EQBand], character: inout SoundCharacter) -> Bool {
+    guard let new = all.first(where: { $0.name == "Bass Shake" }) else { return false }
+    switch presetName {
+    case "Bass Shake Classic":
+      if matches(bands, classicBassShakeNodes) && character.bassStage == .classic {
+        presetName = new.name
+        bands = new.bands()
+        character = new.character
+        return true
+      }
+      presetName = nil
+      return false
+    case "Bass Shake" where character.bassStage == .shaker && character.distortFeedDb == 0:
+      if matches(bands, shakerBassShakeNodes) { bands = new.bands() }
+      character.distortFeedDb = new.character.distortFeedDb
+      return false
+    default:
+      return false
+    }
+  }
+
+  /// Older peers (and old menus) may still name the merged preset.
+  static func named(_ name: String) -> Preset? {
+    let n = name == "Bass Shake Classic" ? "Bass Shake" : name
+    return all.first { $0.name == n }
   }
 
   // Anchored to the Harman in-room bass target (~+4…6 dB shelf near 105 Hz).
@@ -95,15 +139,12 @@ extension Preset {
   static let all: [Preset] = [
     Preset(name: "Flat", nodes: [(80, 0, 0.71), (150, 0, 1), (400, 0, 1), (1_500, 0, 1), (4_000, 0, 1), (10_000, 0, 0.71)],
            bass: 0, symbol: "minus"),
-    // The Bass Shaker stage owns the low end (Strength): no fixed low boost.
-    // The 250 Hz cut is -1.5 as in the R&D runs (the stage dips 260 Hz itself).
-    Preset(name: "Bass Shake", nodes: [(105, 0, 0.71), (55, 0, 1.2), (250, -1.5, 1), (1_000, 0, 1), (3_500, 1.5, 1), (10_000, 1.5, 0.71)],
-           bass: 0.55, symbol: "waveform.path", character: SoundCharacter(bassStage: .shaker)),
-    // The original Bass Shake, kept to compare by ear: fixed low shelf and
-    // 55 Hz bell plus the classic harmonic enhancer.
-    Preset(name: "Bass Shake Classic", nodes: Preset.classicBassShakeNodes,
-           bass: 0.55, symbol: "waveform",
-           subtitle: "The first Bass Shake: a fixed bass lift plus added harmonics."),
+    // One Bass Shake (it and Classic merged, docs/research/42): the Bass Shaker
+    // stage owns the low end (punch, body, mono lows, headroom-aware), with
+    // Classic's 250 Hz cut ahead of Distort. With Distort on, the lows feed it
+    // 6 dB hotter, as Classic's fixed lift did; without Distort there's no lift.
+    Preset(name: "Bass Shake", nodes: [(105, 0, 0.71), (55, 0, 1.2), (250, -2, 1), (1_000, 0, 1), (3_500, 1.5, 1), (10_000, 1.5, 0.71)],
+           bass: 0.55, symbol: "waveform.path", character: SoundCharacter(bassStage: .shaker, distortFeedDb: 6)),
     // Warm, close, treated-booth voice (the SM7B sound): rumble trimmed,
     // chest at 165 Hz, room box out at 420 Hz, 1-4 kHz speech band left
     // within about 1 dB, sibilance and top softened. Narrower stereo pulls
@@ -175,13 +216,18 @@ struct SoundCharacter: Codable, Equatable {
   var crossfeed: Double = 0     // 0...1 (headphones only)
   var ceilingDb: Double = -1    // limiter ceiling
   var bassStage: BassStage = .classic  // what Strength drives (saves without it: classic)
+  /// dB lifting the lows into Distort (Bass Character) only: Bass Shake bites
+  /// as hard as Classic's fixed +8 dB lift did, without that lift otherwise.
+  var distortFeedDb: Double = 0
 
   static let neutral = SoundCharacter()
 
   init(compressor: Compressor? = nil, saturator: Saturator? = nil, ambience: Ambience? = nil,
-       width: Double = 1.0, crossfeed: Double = 0, ceilingDb: Double = -1, bassStage: BassStage = .classic) {
+       width: Double = 1.0, crossfeed: Double = 0, ceilingDb: Double = -1, bassStage: BassStage = .classic,
+       distortFeedDb: Double = 0) {
     self.compressor = compressor; self.saturator = saturator; self.ambience = ambience
     self.width = width; self.crossfeed = crossfeed; self.ceilingDb = ceilingDb; self.bassStage = bassStage
+    self.distortFeedDb = distortFeedDb
   }
 
   // Tolerant: a field added later must not make the whole settings blob
@@ -195,6 +241,7 @@ struct SoundCharacter: Codable, Equatable {
     crossfeed = (try? c.decodeIfPresent(Double.self, forKey: .crossfeed)) ?? 0
     ceilingDb = (try? c.decodeIfPresent(Double.self, forKey: .ceilingDb)) ?? -1
     bassStage = (try? c.decodeIfPresent(BassStage.self, forKey: .bassStage)) ?? .classic
+    distortFeedDb = (try? c.decodeIfPresent(Double.self, forKey: .distortFeedDb)) ?? 0
   }
 }
 
@@ -1154,11 +1201,24 @@ struct Settings: Codable, Equatable {
       beforeMode = nil
     }
     noiseOn = false
-    Preset.migrateBassShake(presetName: presetName, bands: &bands, character: &character)
+    var classicMoved = Preset.migrateBassShake(presetName: presetName, bands: &bands, character: &character)
+    let wasClassic = presetName == "Bass Shake Classic"
+    if Preset.unifyBassShake(presetName: &presetName, bands: &bands, character: &character) { classicMoved = true }
+    // An edited Classic keeps its name as "edited from".
+    if wasClassic && presetName == nil && editedFrom == nil { editedFrom = "Bass Shake Classic" }
     deviceSounds = deviceSounds.mapValues { d in
       var d = d
-      Preset.migrateBassShake(presetName: d.presetName, bands: &d.bands, character: &d.character)
+      if Preset.migrateBassShake(presetName: d.presetName, bands: &d.bands, character: &d.character) { classicMoved = true }
+      if Preset.unifyBassShake(presetName: &d.presetName, bands: &d.bands, character: &d.character) { classicMoved = true }
       return d
+    }
+    // The old Classic curve stays one click away, in My Sounds (once).
+    if classicMoved && !userPresets.contains(where: { $0.name == "Bass Shake Classic" }) {
+      let old = zip(EQBand.defaults, Preset.classicBassShakeNodes).map { b, n in
+        var x = b; x.freq = n.freq; x.gain = n.gain; x.q = n.q; return x
+      }
+      userPresets.append(UserPreset(name: "Bass Shake Classic", icon: PresetIcon.choices[0], bands: old,
+                                    bass: 0.55, boostDb: 0, character: .neutral))
     }
   }
 

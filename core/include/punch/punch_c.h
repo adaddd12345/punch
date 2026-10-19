@@ -97,6 +97,10 @@ void punch_set_ambience(PunchEngine* e, bool enabled, float mix, float size, flo
  * 808), 2 Punch (boom-bap transient snap + warmth). amount 0..1 (glides).
  * Only the low band changes and the lows end up mono. Off = bit-exact. */
 void punch_set_bass_character(PunchEngine* e, int kind, float amount);
+/* Distort's feed, 0..12 dB (glides): lifts the lows into Distort's shaper so
+ * it bites harder and the lows come out that much hotter. Distort only;
+ * 0 (the default) changes nothing. Non-finite values mean 0. */
+void punch_set_bass_character_feed(PunchEngine* e, float feed_db);
 /* Late Night: mellow, underwater master tone (low-pass 5 -> 2.5 kHz with
  * haze 0..1, warm shelf, tape drive, glue compression, short room). Fades in
  * and out over ~300 ms; caps Distort's drive while on. Off = bit-exact. */

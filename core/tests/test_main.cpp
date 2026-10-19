@@ -2060,6 +2060,91 @@ TEST(master_fade_bit_exact_ramps_to_silence) {
   punch_engine_destroy(c);
 }
 
+// Distort's feed (the unified Bass Shake): 0 changes nothing, it only feeds
+// Distort, it lifts the low band by about its own amount, and it glides.
+TEST(bass_character_distort_feed) {
+  const auto in = pinkStereo(48000 * 3, -18.f, 11);
+  auto render = [&](BassCharacterParams p) {
+    BassCharacter bc;
+    bc.prepare(48000, 2);
+    bc.setParams(p);
+    auto x = in;
+    runStereo(bc, x);
+    return x;
+  };
+  CHECK((render({BassCharacterKind::Distort, 0.6f, 1.f, 0.f}) == render({BassCharacterKind::Distort, 0.6f, 1.f})));
+  CHECK((render({BassCharacterKind::Off, 0.6f, 1.f, 6.f}) == in));
+  CHECK((render({BassCharacterKind::Punch, 0.6f, 1.f, 6.f}) == render({BassCharacterKind::Punch, 0.6f, 1.f})));
+  CHECK((render({BassCharacterKind::Distort, 0.6f, 1.f, NAN}) == render({BassCharacterKind::Distort, 0.6f, 1.f})));
+  auto lowDb = [](const std::vector<float>& x) {
+    std::vector<float> l(x.size() / 2);
+    for (size_t i = 0; i < l.size(); ++i) l[i] = x[i * 2];
+    l = bctest::zeroPhase(l, FilterType::LowPass, 120.0);
+    double s = 0;
+    for (size_t i = l.size() / 2; i < l.size(); ++i) s += double(l[i]) * l[i];
+    return 10 * std::log10(s / double(l.size() / 2) + 1e-30);
+  };
+  const auto f0 = render({BassCharacterKind::Distort, 0.6f, 1.f, 0.f});
+  const auto f6 = render({BassCharacterKind::Distort, 0.6f, 1.f, 6.f});
+  const double lift = lowDb(f6) - lowDb(f0);
+  std::printf("    distort feed 6 dB: low band %+.2f dB\n", lift);
+  // Part of the lift leaves as harmonics above the 120 Hz band measured here.
+  CHECK(lift > 2.5 && lift < 8.0);
+  float peak = 0.f;
+  for (float v : f6) { CHECK(std::isfinite(v)); peak = std::max(peak, std::fabs(v)); }
+  CHECK(peak < 4.f);
+  // A feed change mid-stream glides: no bigger sample step than the steady run.
+  BassCharacter bc;
+  bc.prepare(48000, 2);
+  bc.setParams({BassCharacterKind::Distort, 0.6f, 1.f, 0.f});
+  auto x = in;
+  const size_t half = (in.size() / 2) & ~size_t(511);
+  for (size_t i = 0; i < x.size(); i += 512) {
+    if (i == half) bc.setParams({BassCharacterKind::Distort, 0.6f, 1.f, 6.f});
+    std::vector<float> l(256), r(256);
+    const size_t n = std::min<size_t>(512, x.size() - i) / 2;
+    for (size_t k = 0; k < n; ++k) { l[k] = x[i + 2 * k]; r[k] = x[i + 2 * k + 1]; }
+    float* ch[2] = {l.data(), r.data()};
+    bc.process(ch, 2, int(n));
+    for (size_t k = 0; k < n; ++k) { x[i + 2 * k] = l[k]; x[i + 2 * k + 1] = r[k]; }
+  }
+  auto maxStep = [](const std::vector<float>& v, size_t a, size_t b) {
+    float m = 0.f;
+    for (size_t i = a + 2; i < b; i += 2) m = std::max(m, std::fabs(v[i] - v[i - 2]));
+    return m;
+  };
+  const float atSwitch = maxStep(x, half - 2048, half + 4800);
+  const float steady = maxStep(f6, half - 2048, half + 4800);
+  std::printf("    feed switch step %.4f vs steady %.4f\n", atSwitch, steady);
+  CHECK(atSwitch <= steady * 1.25f + 1e-3f);
+  // The lift is a shelf: the lows rise, the low mids are not carved.
+  auto toneDb = [&](double hz, float feedDb) {
+    std::vector<float> t(48000 * 2 * 2);
+    for (size_t i = 0; i < t.size() / 2; ++i)
+      t[i * 2] = t[i * 2 + 1] = 0.03f * float(std::sin(2 * std::numbers::pi * hz * double(i) / 48000.0));
+    BassCharacter b;
+    b.prepare(48000, 2);
+    b.setParams({BassCharacterKind::Distort, 0.6f, 1.f, feedDb});
+    runStereo(b, t);
+    return rmsDb(t, t.size() / 2);
+  };
+  const double at50 = toneDb(50, 6) - toneDb(50, 0), at250 = toneDb(250, 6) - toneDb(250, 0),
+               at300 = toneDb(300, 6) - toneDb(300, 0);
+  std::printf("    feed 6 dB tones: 50 Hz %+.2f, 250 Hz %+.2f, 300 Hz %+.2f dB\n", at50, at250, at300);
+  CHECK(at50 > 3.0);
+  CHECK(at250 > -1.0 && at300 > -1.0);
+  // C API.
+  PunchEngine* e = punch_engine_create();
+  punch_engine_prepare(e, 48000, 2, 512);
+  punch_set_bass_character(e, 1, 0.6f);
+  punch_set_bass_character_feed(e, 6.f);
+  punch_engine_publish(e);
+  std::vector<float> buf(512 * 2, 0.2f);
+  punch_process_interleaved(e, buf.data(), buf.data(), 2, 512);
+  for (float v : buf) CHECK(std::isfinite(v));
+  punch_engine_destroy(e);
+}
+
 int main() {
   for (const auto& t : registry()) {
     const int before = g_failures;

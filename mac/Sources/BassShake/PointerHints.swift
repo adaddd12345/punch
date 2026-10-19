@@ -806,7 +806,6 @@ enum Caption {
     // keep working.
     "Flat": "Clears EQ and Strength; Boost, Limit, Studio Ears and Loudness still apply.",
     "Bass Shake": "Bass that hits on kicks and eases off under long notes.",
-    "Bass Shake Classic": "The original Bass Shake: a fixed bass lift plus harmonics.",
     "Bass Boost": "Lots more low bass; everything else stays the same.",
     "Laptop": "Helps small laptop speakers sound fuller and less thin.",
     "Vocal": "Makes voices clearer and easier to follow.",

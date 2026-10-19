@@ -48,6 +48,7 @@ void BassCharacter::prepare(double sampleRate, int numChannels) {
   numChannels_ = std::clamp(numChannels, 1, kMaxChannels);
   amount_.prepare(sampleRate, 10.0);
   driveScale_.prepare(sampleRate, 10.0);
+  feed_.prepare(sampleRate, 10.0);
   mixStep_ = float(1.0 / (0.025 * sampleRate));
   envCoeff_ = coeffFor(300.0, sampleRate);
   aFast_ = coeffFor(0.5, sampleRate);
@@ -64,6 +65,7 @@ void BassCharacter::prepare(double sampleRate, int numChannels) {
   setParams(p_);
   amount_.snap(amount_.target());
   driveScale_.snap(driveScale_.target());
+  feed_.snap(feed_.target());
   active_ = p_.kind;
   mix_ = active_ != BassCharacterKind::Off ? 1.f : 0.f;
   reset();
@@ -86,6 +88,8 @@ void BassCharacter::setParams(const BassCharacterParams& p) {
   if (p_.kind != BassCharacterKind::Distort && p_.kind != BassCharacterKind::Punch) p_.kind = BassCharacterKind::Off;
   amount_.setTarget(std::isfinite(p.amount) ? std::clamp(p.amount, 0.f, 1.f) : 0.6f);
   driveScale_.setTarget(std::isfinite(p.driveScale) ? std::clamp(p.driveScale, 0.f, 1.f) : 1.f);
+  // Exactly 1 at 0 dB, so a zero feed leaves Distort bit-identical.
+  feed_.setTarget(std::isfinite(p.feedDb) && p.feedDb > 0.f ? dbToGain(std::min(p.feedDb, 12.f)) : 1.f);
 }
 
 void BassCharacter::updateCoeffs(float a) {
@@ -170,9 +174,10 @@ void BassCharacter::process(float* const* ch, int numChannels, int numFrames) {
   if (numChannels < 1) return;
   if (active_ == BassCharacterKind::Off && p_.kind == BassCharacterKind::Off) {
     // Keep the glides current so a later switch starts from the right place.
-    if (!amount_.settled() || !driveScale_.settled()) {
+    if (!amount_.settled() || !driveScale_.settled() || !feed_.settled()) {
       amount_.snap(amount_.target());
       driveScale_.snap(driveScale_.target());
+      feed_.snap(feed_.target());
     }
     return;  // bit-exact
   }
@@ -193,6 +198,7 @@ void BassCharacter::process(float* const* ch, int numChannels, int numFrames) {
       mix_ = std::min(1.f, mix_ + mixStep_);
     }
     amount_.next();
+    const float feed = feed_.next();
     if (active_ == BassCharacterKind::Off) {
       if (p_.kind == BassCharacterKind::Off) return;  // the rest of the block stays untouched
       continue;
@@ -211,12 +217,19 @@ void BassCharacter::process(float* const* ch, int numChannels, int numFrames) {
     const float m = mix_;
     const float a = amount_.current();
     float add = 0.f;  // mono part, shared out by weight_
+    bool lift = false;  // Distort with a feed: a shelf carries the lift
     if (active_ == BassCharacterKind::Distort) {
       // Only what the distortion changed is added: the dry signal (and so the
       // kick's onset) passes untouched.
       const float g = dbToGain((6.f + 18.f * a) * driveScale_.next());
       const float bias = 0.2f + 0.3f * a;  // asymmetry 0.2..0.5: even harmonics
-      add = distort(mono, g, bias) - mono;
+      // The feed drives the shaper (and its level match) hotter, and the shaper
+      // adds only its grit. The lift itself is a minimum-phase low shelf
+      // (below): an in-phase copy of the split's lagging lows would cancel the
+      // low mids (about -4 dB at 300 Hz).
+      add = distort(feed * mono, g, bias) - feed * mono;
+      lift = feed != 1.f;
+      if (lift && (i & 15) == 0 && std::fabs(gainToDb(feed) - shelfDb_) > 0.01f) buildShelf(gainToDb(feed));
     } else {
       const float gdb = punchGainDb(mono);
       if ((i & 15) == 0 && std::fabs(gdb - shelfDb_) > 0.01f) buildShelf(gdb);
@@ -228,8 +241,15 @@ void BassCharacter::process(float* const* ch, int numChannels, int numFrames) {
     }
     dc_ += dcCoeff_ * (add - dc_);
     add -= dc_;
-    if (active_ == BassCharacterKind::Distort) {
+    if (active_ == BassCharacterKind::Distort && !lift) {
       for (int c = 0; c < numChannels; ++c) ch[c][i] += m * weight_[size_t(c)] * add;
+    } else if (active_ == BassCharacterKind::Distort) {
+      for (int c = 0; c < numChannels; ++c) {
+        Chan& s = st_[size_t(c)];
+        const float x = ch[c][i];
+        const float y = s.shelf.tick(shelf_, x) + weight_[size_t(c)] * add;
+        ch[c][i] = x + m * (y - x);
+      }
     } else {
       // Punch: one moving shelf (same coefficients on every channel).
       for (int c = 0; c < numChannels; ++c) {

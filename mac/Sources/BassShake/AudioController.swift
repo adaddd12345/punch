@@ -711,7 +711,11 @@ final class AudioController: ObservableObject {
     guard !isMirror else { return }
     stopMorph(keepWhereItIs: false)
     UserDefaults.standard.removeObject(forKey: Settings.key)
-    settings = Settings()
+    // First-run sound: the Bass Shake curve and stage, not just its name.
+    var fresh = Settings()
+    fresh.bands = Preset.all[1].bands()
+    fresh.character = Preset.all[1].character
+    settings = fresh
   }
 
   func exportPresets() {
@@ -1411,6 +1415,9 @@ final class AudioController: ObservableObject {
     let shaker = s.character.bassStage == .shaker
     punch_set_bass_mode(e, shaker ? 1 : 0)
     punch_set_bass_character(e, s.bassCharacter.kind, Float(max(0, min(1, s.bassAmount))))
+    // Bass Shake drives Distort as hard as Classic's +8 dB lift did (Distort only).
+    let distortFeed = s.bassCharacter == .distort ? max(0, min(12, s.character.distortFeedDb)) : 0
+    punch_set_bass_character_feed(e, Float(distortFeed))
     punch_set_late_night(e, s.mode == .lateNight, Float(max(0, min(1, s.lateNightHaze))))
 
     let c = s.character
@@ -1459,14 +1466,14 @@ final class AudioController: ObservableObject {
       audioPeakDb = punch_eq_peak_boost_db(e)
     }
     let bassPeak = shaker ? bass * Double(punch_bass_shaker_strength_scale()) * Self.shakerPeakDbPerS : bass * Self.bassPeakDb
-    let eqPeak = max(0, audioPeakDb + bassPeak + punchPeak)
+    let eqPeak = max(0, audioPeakDb + bassPeak + punchPeak + distortFeed)
     var auto = loudnessMakeup + fair
     if auto > 0 { auto = min(auto, max(0, Self.maxLiftDb - eqPeak - max(0, boost))) }
     let lift = boost + auto
     // The Bass Shaker's punch is allowed ~3 dB over the ceiling on hits
     // (its headroom rule), so with it on the safety net always runs: without
     // it a mastered track peaked at +2.4 dBFS in the R&D harness.
-    let safetyLimit = eqPeak + max(0, lift) > Self.autoLimitAboveDb || (shaker && bass > 0.001)
+    let safetyLimit = eqPeak + max(0, lift) > Self.autoLimitAboveDb || (shaker && bass > 0.001) || distortFeed > 0
     let outGain = lift + fade.musicDb + currentQuietFloorDb
     punch_set_output_gain_db(e, Float(outGain))
     // The Shaker leaves room for what follows it (Boost and the automatic lifts).

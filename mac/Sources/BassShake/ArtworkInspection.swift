@@ -140,12 +140,24 @@ private struct ArtworkInspectionRoot: ViewModifier {
   @State private var holdResize = false
   @State private var pendingHeight: CGFloat?
   @State private var fitted = false
+  /// The controls' own height, measured while nothing is inspected.
+  @State private var measuredHeight: CGFloat?
 
   @ViewBuilder func body(content: Content) -> some View {
     if enabled {
       content
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+          if request == nil { measuredHeight = h }
+        }
+        // The controls keep their own height, pinned to the top edge (the one
+        // that doesn't move) and clipped to the window: nothing re-lays out or
+        // grows a scroller, and the window's edge just wipes over them. The
+        // opaque player surface covers them (no blur, so no ghosting).
+        .frame(height: request == nil ? nil : originalContentHeight, alignment: .top)
         .frame(height: request == nil ? nil : inspectionHeight, alignment: .top)
-        .blur(radius: revealed && !reduceTransparency && request?.powerSaver != true ? 14 : 0)
+        .clipped()
+        .frame(maxHeight: request == nil ? nil : .infinity, alignment: .top)
+        .background { if let request { Color(nsColor: request.reverse) } }
         .allowsHitTesting(request == nil)
         .disabled(request != nil)
         .accessibilityHidden(request != nil)
@@ -184,6 +196,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
     ArtworkEffectImages.shared.image(for: image, size: ArtworkInspectionRender.width(ratio), scale: renderScale,
                                     effect: effect, aspectRatio: ratio) { _ in }
     ArtworkCardPalettes.shared.palette(for: image) { _ in }
+    ArtPalettes.shared.palette(for: image) { _ in }  // the vinyl label's colours
   }
 
   private func present(_ image: NSImage, _ source: CGRect, _ effect: ArtworkEffect,
@@ -203,7 +216,7 @@ private struct ArtworkInspectionRoot: ViewModifier {
       guard loadingID == token, request == nil else { return }
       let rgb = palette?.surface ?? ArtworkBackdropPalette.neutral.dominant
       let reverse = NSColor(srgbRed: rgb.r, green: rgb.g, blue: rgb.b, alpha: 1)
-      originalContentHeight = window?.contentView?.bounds.height
+      originalContentHeight = measuredHeight ?? window?.contentView?.bounds.height
       inspectionHeight = originalContentHeight
       if let window, window.styleMask.contains(.titled) { originalWindowFrame = window.frame }
       holdResize = false; pendingHeight = nil; fitted = false
@@ -241,7 +254,8 @@ private struct ArtworkInspectionRoot: ViewModifier {
       clear()
     }
     // A titled window and its SwiftUI height move in lockstep on one curve.
-    withAnimation(reduced ? nil : (originalWindowFrame != nil ? Animation.easeInOut(duration: duration) : Animation.smooth(duration: duration))) {
+    // A popover animates its own frame (one clock): its height changes at once.
+    withAnimation(reduced || originalWindowFrame == nil ? nil : Animation.easeInOut(duration: duration)) {
       inspectionHeight = originalContentHeight
     }
     if let frame = originalWindowFrame { resizeWindow(to: frame, duration: reduced ? 0 : duration) }
@@ -264,7 +278,8 @@ private struct ArtworkInspectionRoot: ViewModifier {
     guard abs((inspectionHeight ?? 0) - height) > 1 else { return }
     let duration = request.reduceMotion ? 0 : 0.24
     let titled = originalWindowFrame != nil
-    withAnimation(duration == 0 ? nil : (titled ? Animation.easeInOut(duration: duration) : PopupMotion.resize)) {
+    // A popover animates its own frame from the new preferred size (one clock).
+    withAnimation(duration == 0 || !titled ? nil : Animation.easeInOut(duration: duration)) {
       inspectionHeight = height
     }
     // Popovers follow SwiftUI's preferred height. The ordinary Dock window
@@ -425,7 +440,7 @@ private struct ArtworkInspectionOverlay: View {
               })
               .frame(maxWidth: .infinity, alignment: .top)
             }
-            .scrollIndicators(.automatic)
+            .scrollIndicators(holdResize || closing ? .never : .automatic)
             .onChange(of: selection?.id) { _, _ in
               scroll.scrollTo("selected-artwork", anchor: .center)
             }
@@ -458,8 +473,7 @@ private struct ArtworkInspectionOverlay: View {
       .environment(\.popupChrome, chrome ?? PopupChromePalette(source: palette))
       .background {
         // Power Saver skips the blur behind, so the surface carries more.
-        palette.surface.color.opacity(revealed && !closing
-          ? (reduceTransparency ? 1 : request.powerSaver ? 0.96 : 0.88) : 0)
+        palette.surface.color.opacity(revealed && !closing ? 1 : 0)
       }
       .frame(width: geometry.size.width, height: geometry.size.height)
 
@@ -467,10 +481,9 @@ private struct ArtworkInspectionOverlay: View {
     .task(id: closing) {
       guard !closing, opening else { return }
       closeFocused = true
-      // One clock: travel, backdrop and blur share a curve, and the turn starts
-      // in the same tick (the renderer already exists by the time a task runs).
-      // One complete turn lands on the printed front. Hover repeats it; click
-      // opens the source. Reduce Motion crossfades; Power Saver travels flat.
+      // One clock: travel and backdrop share a curve. A rest on the cover turns
+      // it; click opens the source. Reduce Motion crossfades; Power Saver
+      // travels flat.
       if request.reduceMotion {
         withAnimation(.easeInOut(duration: 0.2)) { revealed = true }
         opening = false
@@ -478,8 +491,11 @@ private struct ArtworkInspectionOverlay: View {
         withAnimation(.smooth(duration: 0.30)) { revealed = true }
         opening = false
       } else {
+        // Front-facing all the way: an opening turn showed the edge and the
+        // blurred back first, which read as blank. A rest on the cover turns it.
         withAnimation(.smooth(duration: 0.42)) { revealed = true }
-        turning = true; turn = 2
+        opening = false
+        restAt = CACurrentMediaTime() + 0.42
       }
       transport.select(entry)
     }

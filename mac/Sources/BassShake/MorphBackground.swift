@@ -15,6 +15,8 @@ struct MorphGradient: View {
 
   let style: BackgroundStyle
   let t: Double
+  /// Full strength (the Appearance swatch); the popup keeps it below full.
+  var full = false
   @Environment(\.colorScheme) private var scheme
 
   var body: some View {
@@ -29,7 +31,7 @@ struct MorphGradient: View {
       }
     }
     // Below full strength so the popover material keeps text and controls readable.
-    .opacity(field.dark ? 0.78 : 0.72)
+    .opacity(full ? 1 : (field.dark ? 0.78 : 0.72))
   }
 }
 

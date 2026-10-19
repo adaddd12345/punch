@@ -201,3 +201,51 @@ struct LaunchSplash: View {
       .accessibilityHidden(true)
   }
 }
+
+/// The Appearance panel's preview of a background: the colourway itself at full
+/// strength. The popup draws the same colours under its material and scrim so
+/// controls stay readable; a swatch has nothing to keep readable.
+struct BackgroundSwatch: View {
+  let style: BackgroundStyle
+
+  var body: some View {
+    if let palette = AmbientPalette.for(style) {
+      AmbientSwatch(palette: palette)
+    } else if style.morph {
+      MorphGradient(style: style, t: MorphGradient.stillTime, full: true)
+    } else if style == .system {
+      LinearGradient(colors: [Color(nsColor: .windowBackgroundColor), Color(nsColor: .underPageBackgroundColor)],
+                     startPoint: .top, endPoint: .bottom)
+    } else {
+      // Scenes and Artwork Match: the still itself, on an opaque base.
+      ZStack {
+        Color(nsColor: .windowBackgroundColor)
+        PopupBackground(style: style, active: false)
+      }
+      .environment(\.artworkBackdropContext, .local)
+      .environment(\.powerSaver, true)
+      .environment(\.drawPaused, true)
+    }
+  }
+}
+
+/// The ambient plumes as one crisp field: no blur and no dark wash.
+private struct AmbientSwatch: View {
+  let palette: AmbientPalette
+
+  var body: some View {
+    let p = palette.plumes.isEmpty ? [palette.dark] : palette.plumes
+    let c = { (i: Int) in p[i % p.count] }
+    if #available(macOS 15, *) {
+      MeshGradient(width: 3, height: 3,
+                   points: [[0, 0], [0.5, 0], [1, 0], [0, 0.5], [0.55, 0.45], [1, 0.5], [0, 1], [0.5, 1], [1, 1]],
+                   colors: [c(0), c(1), c(2), c(3), c(4), c(1), c(2), c(0), c(3)],
+                   smoothsColors: true, colorSpace: .perceptual)
+    } else {
+      ZStack {
+        LinearGradient(colors: [c(0), c(1), c(3)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        RadialGradient(colors: [c(2), c(2).opacity(0)], center: .center, startRadius: 0, endRadius: 44)
+      }
+    }
+  }
+}

@@ -544,7 +544,7 @@ struct BentoView: View {
   private var presetBass: Double {
     if let p = s.mode.preset { return p.bass }
     if let p = userPreset { return p.bass }
-    return Preset.all.first(where: { $0.name == presetSource.name })?.bass ?? 0.55
+    return presetSource.name.flatMap(Preset.named)?.bass ?? 0.55
   }
 
   private var presetBoost: Double { userPreset?.boostDb ?? 0 }
@@ -1792,7 +1792,7 @@ struct BentoTint: Equatable {
   /// presets, Custom) hashes its name to one, the same every launch.
   static func forPreset(_ name: String?) -> BentoTint {
     switch name {
-    case "Bass Shake", "Bass Shake Classic", "Bass Boost", "Basic Enhance": return .butter
+    case "Bass Shake", "Bass Boost", "Basic Enhance": return .butter
     case "Laptop", "Treble", "Ambience": return .aqua
     case "Vocal", "Podcast": return .mint
     case "Flat", "Loudness", "Underground Rap", nil: return .sand

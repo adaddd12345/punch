@@ -10,6 +10,11 @@ struct AppearancePanelView: View {
   @Environment(\.colorScheme) private var scheme
   @Environment(\.popupChrome) private var chrome
   @Environment(\.powerSaver) private var powerSaver
+  @Environment(\.appGlassEnabled) private var glassEnabled
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+  @Environment(\.colorSchemeContrast) private var contrast
   @ObservedObject private var stack = NowStack.shared
   @ObservedObject private var now = NowPlaying.shared
   @State private var category = AppearanceCategory.artwork
@@ -210,23 +215,7 @@ struct AppearancePanelView: View {
   private var backgrounds: some View {
     section("Background") {
       LazyVGrid(columns: columns, spacing: 10) {
-        ForEach(backgroundOrder) { style in
-          choice(style.title, selected: controller.settings.backgroundStyle == style,
-                 action: { controller.settings.setBackground(style) }) {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-              .fill(.regularMaterial)
-              .overlay {
-                PopupBackground(style: style, active: false)
-                  .environment(\.artworkBackdropContext, .local)
-                  .environment(\.powerSaver, true)
-                  .environment(\.drawPaused, true)
-                  .environment(\.colorScheme, style == .artwork ? scheme
-                    : (PopupChromePalette.fixed(style, dark: scheme == .dark).artwork.dark ? .dark : .light))
-              }
-              .aspectRatio(1, contentMode: .fit)
-              .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-          }
-        }
+        ForEach(backgroundOrder) { style in backgroundChoice(style) }
       }
       if controller.settings.backgroundStyle == .artwork {
         HStack(spacing: 12) {
@@ -397,6 +386,72 @@ struct AppearancePanelView: View {
       RoundedRectangle(cornerRadius: 14, style: .continuous)
         .fill(.chromeSurface)
     }
+  }
+
+  /// A background is shown as its colourway, crisp and at full strength; on
+  /// Liquid Glass each sits in its own glass tile. The theme's accent rings
+  /// the one in use (a small check too when colour alone isn't enough).
+  private func backgroundChoice(_ style: BackgroundStyle) -> some View {
+    let selected = controller.settings.backgroundStyle == style
+    let strong = reduceTransparency || contrast == .increased
+    let glass: Bool = {
+      if #available(macOS 26, *) { return glassEnabled && !strong }
+      return false
+    }()
+    let ink = chrome?.ink ?? (scheme == .dark ? Color.white : Color.black)
+    let accent = chrome?.accent ?? Color.accentColor
+    let inset: CGFloat = glass ? 3 : 0
+    let swatchShape = RoundedRectangle(cornerRadius: BentoRadius.tile - inset, style: .continuous)
+    let swatch = BackgroundSwatch(style: style)
+      .environment(\.colorScheme, style == .artwork ? scheme
+        : (PopupChromePalette.fixed(style, dark: scheme == .dark).artwork.dark ? .dark : .light))
+      .aspectRatio(1.3, contentMode: .fit)
+      .clipShape(swatchShape)
+      .overlay(swatchShape.strokeBorder(Color.white.opacity(strong ? 0 : 0.22), lineWidth: 0.5).blendMode(.plusLighter))
+      .background(swatchShape.inset(by: -0.5).stroke(Color.black.opacity(strong ? 0.34 : 0.08), lineWidth: 0.5))
+    return Button { controller.settings.setBackground(style) } label: {
+      VStack(spacing: 5) {
+        Group {
+          if glass {
+            swatch.padding(inset)
+              .modifier(AppGlassSurface(radius: BentoRadius.tile, interactive: !reduceMotion, selected: selected))
+          } else {
+            swatch
+          }
+        }
+        .overlay {
+          if selected {
+            RoundedRectangle(cornerRadius: BentoRadius.tile + 2, style: .continuous)
+              .stroke(accent, lineWidth: strong ? 2.5 : 2)
+              .padding(-2)
+          }
+        }
+        .overlay(alignment: .bottomTrailing) {
+          if selected && (differentiateWithoutColor || strong) {
+            Image(systemName: "checkmark").font(.system(size: 7, weight: .bold))
+              .foregroundStyle(Color.white)
+              .frame(width: 12, height: 12)
+              .background(Circle().fill(accent))
+              .padding(4)
+          }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        Text(style.title)
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundStyle(strong ? ink : (chrome?.secondary ?? Color.secondary))
+          .lineLimit(1)
+          .minimumScaleFactor(0.8)
+          .frame(maxWidth: .infinity)
+      }
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(AppearanceChoicePressStyle())
+    .accessibilityElement(children: .ignore)
+    .accessibilityAddTraits(.isButton)
+    .accessibilityLabel(style.title)
+    .accessibilityValue(selected ? "Selected" : "Not selected")
+    .accessibilityAddTraits(selected ? [.isSelected] : [])
   }
 
   private func choice<Preview: View>(_ title: String, selected: Bool, labelLines: Int = 2,

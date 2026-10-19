@@ -161,7 +161,10 @@ void Engine::applySnapshot(const EngineParams& p) {
   hearing_.setParams(p.hearing);
   eq_.setParams(p.eq);
   BassCharacterParams bc = p.bassCharacter;
-  if (p.lateNight.enabled) bc.driveScale = std::min(bc.driveScale, 0.6f);  // mellow: cap Distort's drive
+  if (p.lateNight.enabled) {
+    bc.driveScale = std::min(bc.driveScale, 0.6f);  // mellow: cap Distort's drive
+    bc.feedDb *= bc.driveScale;                     // and its feed
+  }
   bassChar_.setParams(bc);
   if (p.bassShaker) {
     bass_.setParams({});

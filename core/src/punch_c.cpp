@@ -120,6 +120,10 @@ void punch_set_bass_character(PunchEngine* e, int kind, float amount) {
   b.amount = amount;
 }
 
+void punch_set_bass_character_feed(PunchEngine* e, float feed_db) {
+  e->engine.edit().bassCharacter.feedDb = feed_db;
+}
+
 void punch_set_late_night(PunchEngine* e, bool on, float haze) {
   auto& l = e->engine.edit().lateNight;
   l.enabled = on;
