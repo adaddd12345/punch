@@ -8,4 +8,4 @@ swiftc -O -swift-version 5 -target "$(uname -m)-apple-macosx14.4" \
   "$REPO_ROOT/mac/Sources/BassShake/Spectrum.swift" \
   "$REPO_ROOT/mac/Sources/BassShake/SpectrumDerived.swift" \
   "$REPO_ROOT/mac/scripts/spectrum-calibration-check.swift" -o "$CHECK_DIR/check"
-"$CHECK_DIR/check"
+"$CHECK_DIR/check" "$@"

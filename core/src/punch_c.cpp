@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <vector>
 
 #include "punch/autoeq.hpp"
 #include "punch/engine.hpp"
@@ -208,9 +207,20 @@ size_t punch_export_equalizer_apo(const PunchEngine* e, char* buf, size_t buf_le
 }
 
 void punch_eq_curve(const PunchEngine* e, double lo_hz, double hi_hz, double* out_db, size_t n) {
-  std::vector<double> v(n);
-  punch::eqResponseCurve(e->engine.pending().eq, e->engine.sampleRate(), lo_hz, hi_hz, v);
-  std::copy(v.begin(), v.end(), out_db);
+  punch::eqResponseCurve(e->engine.pending().eq, e->engine.sampleRate(), lo_hz, hi_hz, std::span<double>(out_db, n));
+}
+
+void punch_eq_curve_for_bands(const PunchEQBand* bands, size_t band_count, double sample_rate, float preamp_db,
+                              double lo_hz, double hi_hz, double* out_db, size_t n) {
+  if (n == 0) return;
+  punch::EqParams eq;
+  eq.numBands = bands ? int(std::min(band_count, size_t(punch::kMaxEqBands))) : 0;
+  eq.preampDb = preamp_db;
+  for (int i = 0; i < eq.numBands; ++i) {
+    const auto& b = bands[size_t(i)];
+    eq.bands[size_t(i)] = {static_cast<punch::FilterType>(b.type), b.freq_hz, b.gain_db, b.q, b.enabled};
+  }
+  punch::eqResponseCurve(eq, sample_rate, lo_hz, hi_hz, std::span<double>(out_db, n));
 }
 
 void punch_process_interleaved(PunchEngine* e, const float* in, float* out, int num_channels, int num_frames) {

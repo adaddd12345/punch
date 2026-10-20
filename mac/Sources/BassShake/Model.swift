@@ -984,6 +984,12 @@ struct Settings: Codable, Equatable {
   var nowPlayingSize: NowPlayingSize = .matchSize
   /// The record material; Artwork Tint preserves the original per-cover look.
   var vinylMaterial: VinylMaterial = .artwork
+  /// Vinyl Peek's record: a disc for video and vinyl for music, or one look always.
+  var peekRecord: PeekRecord = .match
+  /// The optical disc's finish when Vinyl Peek shows a disc.
+  var discMaterial: DiscMaterial = .bluray
+  /// Mono (⋯ › Look): no artwork anywhere, plain background (MonoStyle.swift).
+  var monoStyle = false
   /// A treatment for cover art and video stills, independent of cover / vinyl.
   /// None adds no stylization; automatic padding removal still applies.
   var artworkEffect: ArtworkEffect = .none
@@ -1169,6 +1175,9 @@ struct Settings: Codable, Equatable {
     playerArtworkLayout = (try? c.decodeIfPresent(PlayerArtworkLayout.self, forKey: .playerArtworkLayout)) ?? d.playerArtworkLayout
     nowPlayingSize = (try? c.decodeIfPresent(NowPlayingSize.self, forKey: .nowPlayingSize)) ?? d.nowPlayingSize
     vinylMaterial = (try? c.decodeIfPresent(VinylMaterial.self, forKey: .vinylMaterial)) ?? d.vinylMaterial
+    peekRecord = (try? c.decodeIfPresent(PeekRecord.self, forKey: .peekRecord)) ?? d.peekRecord
+    discMaterial = (try? c.decodeIfPresent(DiscMaterial.self, forKey: .discMaterial)) ?? d.discMaterial
+    monoStyle = (try? c.decodeIfPresent(Bool.self, forKey: .monoStyle)) ?? d.monoStyle
     artworkEffect = (try? c.decodeIfPresent(ArtworkEffect.self, forKey: .artworkEffect)) ?? d.artworkEffect
     artworkPerspective = (try? c.decodeIfPresent(Bool.self, forKey: .artworkPerspective)) ?? d.artworkPerspective
     artworkFoil = (try? c.decodeIfPresent(Bool.self, forKey: .artworkFoil)) ?? d.artworkFoil

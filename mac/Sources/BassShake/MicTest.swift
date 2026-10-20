@@ -37,7 +37,8 @@ final class MicTest: ObservableObject {
   private weak var controller: AudioController?
   private var wasBypassed = false
   private var timer: Timer?
-  private var stepStart = Date()
+  private var stepStart: TimeInterval = 0
+  private let sessionEpoch = OperationEpoch()
 
   // Filled on the audio thread, read on main after the step ends.
   private let lock = NSLock()
@@ -56,12 +57,16 @@ final class MicTest: ObservableObject {
 
   func start() {
     stopAll()
+    let ticket = sessionEpoch.current
     result = nil
     switch AVCaptureDevice.authorizationStatus(for: .audio) {
     case .authorized: begin()
     case .notDetermined:
-      AVCaptureDevice.requestAccess(for: .audio) { ok in
+      AVCaptureDevice.requestAccess(for: .audio) { [weak self] ok in
         DispatchQueue.main.async {
+          // Closing the panel while the system prompt is open must not
+          // start a recording when its old permission answer arrives.
+          guard let self, self.sessionEpoch.contains(ticket) else { return }
           if ok { self.begin() } else { self.phase = .permissionDenied }
         }
       }
@@ -194,6 +199,7 @@ final class MicTest: ObservableObject {
   }
 
   func stopAll() {
+    sessionEpoch.advance()
     timer?.invalidate()
     timer = nil
     stopInput()
@@ -205,11 +211,12 @@ final class MicTest: ObservableObject {
 
   private func runStep(seconds: Double, then done: @escaping () -> Void) {
     timer?.invalidate()
-    stepStart = Date()
+    let ticket = sessionEpoch.current
+    stepStart = ProcessInfo.processInfo.systemUptime
     progress = 0
     let t = Timer(timeInterval: 1.0 / 20, repeats: true) { [weak self] t in
-      guard let self else { t.invalidate(); return }
-      let p = Date().timeIntervalSince(self.stepStart) / seconds
+      guard let self, self.sessionEpoch.contains(ticket) else { t.invalidate(); return }
+      let p = (ProcessInfo.processInfo.systemUptime - self.stepStart) / seconds
       self.progress = min(1, p)
       self.lock.lock()
       let live = self.liveRms

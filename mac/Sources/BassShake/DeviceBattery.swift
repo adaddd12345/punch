@@ -34,14 +34,12 @@ final class DeviceBatteryMonitor: ObservableObject {
     while !Task.isCancelled {
       let cancellation = DeviceBatteryCancellation()
       let result = await withTaskCancellationHandler {
-        await Task.detached(priority: .utility) {
-          DeviceBatteryProvider.read(output, cancellation: cancellation)
-        }.value
+        await DeviceBatteryProvider.readAsync(output, cancellation: cancellation)
       } onCancel: {
         cancellation.cancel()
       }
       guard !Task.isCancelled, self.generation == generation else { return }
-      reading = result
+      if reading != result { reading = result }
       do {
         try await Task.sleep(nanoseconds: output.isBluetooth ? 60_000_000_000 : 30_000_000_000)
       } catch { return }
@@ -131,6 +129,18 @@ struct DeviceBatteryGlyph: View {
 }
 
 enum DeviceBatteryProvider {
+  // system_profiler is a bounded blocking operation. Keep it off Swift's
+  // cooperative executor and serialize probes across short-lived footer tasks.
+  private static let probeQueue = DispatchQueue(label: "bassshake.device-battery", qos: .utility)
+
+  static func readAsync(_ output: OutputDevice, cancellation: DeviceBatteryCancellation) async -> DeviceBatteryReading? {
+    await withCheckedContinuation { continuation in
+      probeQueue.async {
+        continuation.resume(returning: read(output, cancellation: cancellation))
+      }
+    }
+  }
+
   static func supports(_ output: OutputDevice) -> Bool {
     // A built-in headphone jack is not a battery-powered output. CoreAudio's
     // BuiltInSpeakerDevice identity is intentionally stricter than display names.

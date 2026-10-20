@@ -68,17 +68,21 @@ float Limiter::pushMin(float v) {
   const int cap = int(dqVal_.size());
   // Drop larger-or-equal values from the back.
   while (dqSize_ > 0) {
-    const int back = (dqHead_ + dqSize_ - 1) % cap;
+    // Each sum is less than 2 * cap. A single wrap avoids an integer
+    // division in this per-sample path without changing the queue order.
+    int back = dqHead_ + dqSize_ - 1;
+    if (back >= cap) back -= cap;
     if (dqVal_[size_t(back)] < v) break;
     --dqSize_;
   }
-  const int at = (dqHead_ + dqSize_) % cap;
+  int at = dqHead_ + dqSize_;
+  if (at >= cap) at -= cap;
   dqVal_[size_t(at)] = v;
   dqIdx_[size_t(at)] = t_;
   ++dqSize_;
   // Expire entries older than the window.
   while (dqIdx_[size_t(dqHead_)] <= t_ - window_) {
-    dqHead_ = (dqHead_ + 1) % cap;
+    dqHead_ = dqHead_ + 1 == cap ? 0 : dqHead_ + 1;
     --dqSize_;
   }
   ++t_;

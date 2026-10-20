@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <initializer_list>
+#include <span>
 #include <vector>
 
 #include "punch/dsp_util.hpp"
@@ -30,7 +31,8 @@ double eqPeakBoostDb(const EqParams& p, double sampleRate);
 // Same, for several EQ stages in series.
 // minHz: ignore boosts below this (e.g. bass a bass-priority limiter handles).
 double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampleRate, double minHz = 20.0);
-// Fills `outDb` with the response sampled on a log grid between lo and hi.
+// Fills caller-owned output on a log grid between lo and hi without allocating.
+void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::span<double> outDb);
 void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::vector<double>& outDb);
 
 // Audio-thread processor. All bands run in series per channel. Parameter

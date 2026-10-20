@@ -153,6 +153,9 @@ final class SpectrumAnalyzer {
   private var slope = SpectrumSlope.db3
   private var setup: FFTSetup?
   private var window: [Float] = []
+  // Queue-confined working storage. Mutating a copy of the caller's frame
+  // otherwise allocates and copies the full FFT input on every update.
+  private var windowed: [Float] = []
   private var re: [Float] = [], im: [Float] = []
   private var power: [Float] = []
   /// Per column: bins [lo, hi] averaged (the smoothing band), or, where that's
@@ -174,6 +177,7 @@ final class SpectrumAnalyzer {
     let log2n = vDSP_Length(log2(Double(n)))
     setup = vDSP_create_fftsetup(log2n, FFTRadix(kFFTRadix2))
     window = [Float](repeating: 0, count: n)
+    windowed = [Float](repeating: 0, count: n)
     vDSP_hann_window(&window, vDSP_Length(n), Int32(vDSP_HANN_NORM))
     re = [Float](repeating: 0, count: n / 2)
     im = [Float](repeating: 0, count: n / 2)
@@ -220,12 +224,11 @@ final class SpectrumAnalyzer {
     var peak: Float = 0
     vDSP_maxmgv(x, 1, &peak, vDSP_Length(x.count))
     let quiet = peak <= 1e-5
-    var xs = x
-    vDSP_vmul(xs, 1, window, 1, &xs, 1, vDSP_Length(n))
+    vDSP_vmul(x, 1, window, 1, &windowed, 1, vDSP_Length(n))
     re.withUnsafeMutableBufferPointer { rp in
       im.withUnsafeMutableBufferPointer { ip in
         var split = DSPSplitComplex(realp: rp.baseAddress!, imagp: ip.baseAddress!)
-        xs.withUnsafeBufferPointer { xp in
+        windowed.withUnsafeBufferPointer { xp in
           xp.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: half) {
             vDSP_ctoz($0, 2, &split, 1, vDSP_Length(half))
           }

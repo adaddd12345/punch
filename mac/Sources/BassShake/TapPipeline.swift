@@ -34,14 +34,21 @@ final class TapPipeline {
   }
 
   private let engine: OpaquePointer
+  private let owner: UInt64
+  /// Serializes engine prepare against parameter setters/publish, which run on
+  /// AudioController's control queue (the C engine's pending params, sample
+  /// rate and mailbox writer are single-writer state).
+  private let engineLock: NSLock?
   private var context: OpaquePointer?
   private var tapID = unknownObject
   private var aggregateID = unknownObject
   private var procID: AudioDeviceIOProcID?
   private(set) var info: Info?
 
-  init(engine: OpaquePointer) {
+  init(engine: OpaquePointer, owner: UInt64, engineLock: NSLock? = nil) {
     self.engine = engine
+    self.owner = owner
+    self.engineLock = engineLock
   }
 
   deinit { stop(fade: false) }
@@ -79,6 +86,14 @@ final class TapPipeline {
     return BSRenderContextStats(context)
   }
 
+  /// Opt-in diagnostic setup only; no environment access in the IOProc.
+  private let profileAudio = ProcessInfo.processInfo.environment["BASS_SHAKE_PROFILE_AUDIO"] == "1"
+  var timing: BSRenderTiming? {
+    guard profileAudio, let context else { return nil }
+    let value = BSRenderContextTiming(context)
+    return value.enabled ? value : nil
+  }
+
   /// Builds and starts the pipeline. Blocking (AudioDeviceStart can stall
   /// while another tap client holds the device); call off the main thread.
   ///
@@ -114,7 +129,13 @@ final class TapPipeline {
       }
       try check(status, "create process tap")
       tapID = tap
-      BSCrashGuardSet(unknownObject, tap)
+      guard BSCrashGuardSetOwned(unknownObject, tap, owner) else {
+        // This new object was never registered; destroy only what this call
+        // created. A rescued/retired owner must not republish its old tap.
+        AudioHardwareDestroyProcessTap(tap)
+        tapID = unknownObject
+        throw CAError(-1, "retired process tap owner")
+      }
 
       let format = try HAL.get(tapID, .global(kAudioTapPropertyFormat), default: AudioStreamBasicDescription())
       let channels = max(1, Int(format.mChannelsPerFrame))
@@ -146,23 +167,34 @@ final class TapPipeline {
       var agg = unknownObject
       try check(AudioHardwareCreateAggregateDevice(dict as CFDictionary, &agg), "create aggregate device")
       aggregateID = agg
-      BSCrashGuardSet(agg, tapID)
+      guard BSCrashGuardSetOwned(agg, tapID, owner) else {
+        AudioHardwareDestroyAggregateDevice(agg)
+        aggregateID = unknownObject
+        throw CAError(-1, "retired aggregate owner")
+      }
 
-      let sampleRate = Devices.nominalSampleRate(agg) > 0 ? Devices.nominalSampleRate(agg) : format.mSampleRate
+      let aggregateRate = Devices.nominalSampleRate(agg)
+      let sampleRate = aggregateRate > 0 ? aggregateRate : format.mSampleRate
       let bufferFrames = Devices.bufferFrameSize(agg)
 
       // DSP engine must be prepared before IO starts (never concurrently).
+      engineLock?.lock()
       punch_engine_prepare(engine, sampleRate, Int32(channels), Int32(max(4096, bufferFrames * 2)))
+      engineLock?.unlock()
 
       guard let ctx = BSRenderContextCreate(engine) else { throw CAError(-1, "render context") }
       context = ctx
+      if profileAudio { _ = BSRenderContextEnableTiming(ctx, sampleRate) }
       // Real sub-device input streams (if any survive channels-in 0) come
       // first in the aggregate's input buffer list and the tap is appended
       // after them, so the last input buffer is always the tap.
       BSRenderContextSetTapBufferIndex(ctx, UInt32.max)
       if output.isOutputGroup {
         let map = try OutputGroups.channelMap(destinations)
-        guard map.withUnsafeBufferPointer({ BSRenderContextSetOutputMap(ctx, $0.baseAddress!, UInt32($0.count)) }) else {
+        guard map.withUnsafeBufferPointer({ buf in
+          guard let base = buf.baseAddress, !buf.isEmpty else { return false }
+          return BSRenderContextSetOutputMap(ctx, base, UInt32(buf.count))
+        }) else {
           throw CAError(-1, "output group channel map")
         }
       }
@@ -200,7 +232,7 @@ final class TapPipeline {
     procID = nil
     aggregateID = unknownObject
     tapID = unknownObject
-    BSCrashGuardClear()
+    _ = BSCrashGuardClearOwned(owner)
     if let ctx = context {
       BSRenderContextDestroy(ctx)  // the dead daemon won't call the IOProc again
       context = nil
@@ -211,13 +243,17 @@ final class TapPipeline {
   func stop(fade: Bool = true) {
     if fade, let ctx = context, procID != nil, let sr = info?.sampleRate {
       BSRenderContextFadeOut(ctx, sr, 40)
-      let deadline = Date().addingTimeInterval(0.25)
-      while !BSRenderContextIsFadedOut(ctx) && Date() < deadline { usleep(5_000) }
+      // Keep the existing 250 ms bound independent of wall-clock corrections.
+      // A clock moved backward must not strand lifecycle work on audioQueue.
+      let deadline = DispatchTime.now() + .milliseconds(250)
+      while !BSRenderContextIsFadedOut(ctx) && DispatchTime.now() < deadline { usleep(5_000) }
     }
     // The rescue path (AudioController's wedge rescue) may already have
     // destroyed these from another queue: never touch a released ID again.
     var ownsAgg = false, ownsTap = false
-    BSCrashGuardRelease(aggregateID, tapID, &ownsAgg, &ownsTap)
+    // False: a rescue destroy failed or is still stuck in a wedged coreaudiod
+    // (bounded wait, fails open), so the IOProc may yet run: leak the context.
+    let contextSafe = BSCrashGuardReleaseOwned(owner, aggregateID, tapID, &ownsAgg, &ownsTap)
     if let proc = procID {
       if ownsAgg {
         AudioDeviceStop(aggregateID, proc)
@@ -234,7 +270,7 @@ final class TapPipeline {
       tapID = unknownObject
     }
     if let ctx = context {
-      BSRenderContextDestroy(ctx)
+      if contextSafe { BSRenderContextDestroy(ctx) }
       context = nil
     }
     info = nil

@@ -189,7 +189,11 @@ final class RemoteConn {
   func seal(with box: RemoteBox) { self.box = box }
 
   func send(_ m: RemoteMessage, then: (() -> Void)? = nil) {
-    guard !closed, let box, let plain = try? Self.encoder.encode(m), let sealed = try? box.seal(plain) else { return }
+    guard !closed else { return }
+    // A failed encode/seal cannot leave a caller's backpressure slot waiting
+    // for a completion that will never arrive. Terminate the invalid session.
+    guard let box, let plain = try? Self.encoder.encode(m), let sealed = try? box.seal(plain)
+    else { close(.protocolError); return }
     nw.send(content: RemoteWire.frame(sealed), completion: .contentProcessed { [weak self] e in
       if e != nil { self?.close(.unreachable) } else { then?() }
     })
@@ -231,6 +235,32 @@ final class RemoteConn {
 
 // MARK: - Target (this Mac can be controlled)
 
+/// Queue-confined, latest-value backpressure for replaceable state snapshots.
+/// Commands and acknowledgements never pass through this outbox. A slow socket
+/// retains only its current send and the newest pending state, not a UI history.
+struct RemoteStateOutbox {
+  private var pending: RemoteState?
+  private var lastSent: RemoteState?
+  private var sending = false
+
+  mutating func offer(_ state: RemoteState) { pending = state }
+
+  mutating func take() -> RemoteState? {
+    guard !sending, let state = pending else { return nil }
+    pending = nil
+    guard state != lastSent else { return nil }
+    sending = true
+    lastSent = state
+    return state
+  }
+
+  mutating func completed() { sending = false }
+
+  /// Closing/reopening the popup needs a fresh snapshot. An in-progress send
+  /// still owns its slot until Network.framework calls its completion handler.
+  mutating func reset() { pending = nil; lastSent = nil }
+}
+
 protocol RemoteHostDelegate: AnyObject {
   // All called on main.
   func remoteHost(status: RemoteNetStatus)
@@ -257,7 +287,7 @@ final class RemoteHostServer {
     let name: String
     var watching = false
     var lastHeard = ProcessInfo.processInfo.systemUptime
-    var lastSent: RemoteState?
+    var outbox = RemoteStateOutbox()
     init(conn: RemoteConn, peer: Data, name: String) { self.conn = conn; self.peer = peer; self.name = name }
   }
   private var sessions: [ObjectIdentifier: Session] = [:]
@@ -329,10 +359,19 @@ final class RemoteHostServer {
   /// A fresh snapshot: sent to every controller whose popup is open, if it changed for it.
   func push(_ state: RemoteState) {
     RemoteNet.queue.async {
-      for s in self.sessions.values where s.watching && s.lastSent != state {
-        s.lastSent = state
-        s.conn.send(RemoteMessage(t: "state", state: state))
+      for s in self.sessions.values where s.watching {
+        s.outbox.offer(state)
+        self.flushState(s)
       }
+    }
+  }
+
+  private func flushState(_ session: Session) {
+    guard session.watching, !session.conn.closed, let state = session.outbox.take() else { return }
+    session.conn.send(RemoteMessage(t: "state", state: state)) { [weak self, weak session] in
+      guard let self, let session else { return }
+      session.outbox.completed()
+      self.flushState(session)
     }
   }
 
@@ -343,12 +382,23 @@ final class RemoteHostServer {
     started = true
     report(.starting)
     openListener()
+    if pairingOpen && code == nil { setCode(RemoteCrypto.newCode()) }
+  }
+
+  /// No sessions means nothing can time out. An enabled but unused host should
+  /// remain event-driven instead of waking every five seconds to scan nothing.
+  private func updateSweep() {
+    guard started, !sessions.isEmpty else {
+      sweep?.cancel()
+      sweep = nil
+      return
+    }
+    guard sweep == nil else { return }
     let t = DispatchSource.makeTimerSource(queue: RemoteNet.queue)
     t.schedule(deadline: .now() + 5, repeating: 5, leeway: .seconds(1))
     t.setEventHandler { [weak self] in self?.sweepIdle() }
     t.resume()
     sweep = t
-    if pairingOpen && code == nil { setCode(RemoteCrypto.newCode()) }
   }
 
   private func openListener() {
@@ -562,7 +612,7 @@ final class RemoteHostServer {
       let on = m.on ?? false
       guard on != s.watching else { return }
       s.watching = on
-      s.lastSent = nil
+      s.outbox.reset()
       publishSessions()
     case "cmd":
       guard let cmd = m.cmd, let id = m.id else { return }
@@ -586,6 +636,7 @@ final class RemoteHostServer {
   }
 
   private func publishSessions() {
+    updateSweep()
     var names: [String: String] = [:]
     for s in sessions.values { names[RemoteIdentity.fingerprint(s.peer)] = s.name }
     let watchers = sessions.values.filter(\.watching).count
@@ -821,6 +872,7 @@ final class RemoteClient {
   /// The controller's popup is open (state pushes only while it is).
   func setWatching(_ on: Bool) {
     RemoteNet.queue.async {
+      guard self.watching != on else { return }
       self.watching = on
       if self.connected { self.conn?.send(RemoteMessage(t: "watch", on: on)) }
     }

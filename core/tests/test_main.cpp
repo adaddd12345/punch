@@ -254,6 +254,123 @@ TEST(limiter_is_transparent_below_ceiling) {
   CHECK(lim.gainReductionDb() == 0.f);
 }
 
+// Compare the monotonic deque against an independent, exhaustive window
+// minimum. Long rising/falling envelopes exercise a full queue, expiration,
+// back removal and wraparound; odd callback sizes cross the ring boundary.
+TEST(limiter_window_matches_exhaustive_reference) {
+  for (float lookaheadMs : {0.02f, 1.5f, 5.f, 12.f}) {
+    Limiter lim;
+    lim.prepare(48000, 2, lookaheadMs);
+    const int delay = lim.latencyFrames(), window = delay + 1, n = 8192;
+    constexpr float ceilingDb = -3.f, releaseMs = 80.f;
+    lim.setParams({ceilingDb, releaseMs, true});
+    const float ceiling = dbToGain(ceilingDb);
+    const float release = float(1.0 - std::exp(-1.0 / (0.001 * double(releaseMs) * 48000.0)));
+    std::vector<float> l(size_t(n), 0.f), r(size_t(n), 0.f), required(size_t(n), 1.f);
+    for (int i = 0; i < n; ++i) {
+      const float ramp = float(i % 2000) / 1000.f;
+      const float amplitude = (i / 2000) % 2 ? 2.1f - ramp : 0.1f + ramp;
+      l[size_t(i)] = amplitude * (i % 2 ? -1.f : 1.f);
+      r[size_t(i)] = (i % 733 == 0 ? 3.f : amplitude * 0.8f);
+      const float peak = std::max(std::fabs(l[size_t(i)]), std::fabs(r[size_t(i)]));
+      required[size_t(i)] = peak > ceiling ? ceiling / peak : 1.f;
+    }
+    const auto inputL = l, inputR = r;
+    for (int start = 0; start < n; start += 257) {
+      float* ch[2] = {l.data() + start, r.data() + start};
+      lim.process(ch, 2, std::min(257, n - start));
+    }
+    std::vector<float> releasedHistory(size_t(n), 1.f);
+    float released = 1.f;
+    double sum = double(window);
+    const float invWindow = 1.f / float(window);
+    for (int i = 0; i < n; ++i) {
+      float held = 1.f;
+      for (int j = std::max(0, i - delay); j <= i; ++j) held = std::min(held, required[size_t(j)]);
+      if (held < released) released = held;
+      else released += (held - released) * release;
+      sum += double(released) - double(i >= window ? releasedHistory[size_t(i - window)] : 1.f);
+      releasedHistory[size_t(i)] = released;
+      const float gain = 1.f + (std::min(float(sum) * invWindow, 1.f) - 1.f);
+      const float expectedL = i < delay ? 0.f : std::clamp(inputL[size_t(i - delay)] * gain, -ceiling, ceiling);
+      const float expectedR = i < delay ? 0.f : std::clamp(inputR[size_t(i - delay)] * gain, -ceiling, ceiling);
+      CHECK(l[size_t(i)] == expectedL);
+      CHECK(r[size_t(i)] == expectedR);
+    }
+  }
+}
+
+// Original allocating curve formula retained as an independent reference:
+// the stateless API must preserve grid arithmetic and coefficient order.
+static std::vector<double> referenceEqCurve(const EqParams& eq, double rate, double lo, double hi, size_t count) {
+  std::vector<double> result(count);
+  if (count == 0) return result;
+  std::vector<SvfCoeffs> coefficients;
+  for (int i = 0; i < eq.numBands; ++i)
+    if (eq.bands[size_t(i)].enabled) coefficients.push_back(SvfCoeffs::make(eq.bands[size_t(i)], rate));
+  for (size_t i = 0; i < count; ++i) {
+    const double hz = count == 1 ? lo : lo * std::pow(hi / lo, double(i) / double(count - 1));
+    double db = eq.preampDb;
+    for (const auto& coefficient : coefficients) db += coefficient.magnitudeDb(hz, rate);
+    result[i] = db;
+  }
+  return result;
+}
+
+TEST(stateless_eq_curve_matches_original_formula_without_allocating) {
+  PunchEngine* engine = punch_engine_create();
+  // Repeated rates/edits also check that there is no hidden stale state.
+  for (double rate : {44100., 48000., 96000., 192000., 44100.}) {
+    punch_engine_prepare(engine, rate, 2, 64);
+    for (int type = PUNCH_BELL; type <= PUNCH_NOTCH; ++type) {
+      std::array<PunchEQBand, 29> bands;
+      for (size_t i = 0; i < bands.size(); ++i) {
+        bands[i] = {PunchFilterType((int(i) + type) % 7),
+                    i % 3 == 0 ? rate * 0.8 : 18.0 * std::pow(1.37, double(i)),
+                    i % 2 ? -36.0 : 24.0, i % 2 ? 0.01 : 80.0, (int(i) + type) % 5 != 2};
+      }
+      for (size_t bandCount : {size_t(0), size_t(1), size_t(24), size_t(29)}) {
+        for (float preamp : {0.f, -7.125f}) {
+          EqParams reference;
+          reference.numBands = int(std::min(bandCount, size_t(kMaxEqBands)));
+          reference.preampDb = preamp;
+          punch_set_num_bands(engine, int(bandCount));
+          punch_set_preamp_db(engine, preamp);
+          for (size_t i = 0; i < bandCount; ++i) {
+            const auto& b = bands[i];
+            punch_set_band(engine, int(i), b.type, b.freq_hz, b.gain_db, b.q, b.enabled);
+            if (i < size_t(kMaxEqBands))
+              reference.bands[i] = {FilterType(b.type), b.freq_hz, b.gain_db, b.q, b.enabled};
+          }
+          for (const auto grid : {std::pair{20., 20000.}, std::pair{19000., 48000.}, std::pair{1000., 30.}}) {
+            for (size_t count : {size_t(0), size_t(1), size_t(2), size_t(257)}) {
+              const auto expected = referenceEqCurve(reference, rate, grid.first, grid.second, count);
+              std::vector<double> actual(count + 2, 12345.), legacy(count + 2, 12345.);
+              g_allocCount = 0;
+              g_trackAllocs = true;
+              punch_eq_curve_for_bands(bands.data(), bandCount, rate, preamp, grid.first, grid.second,
+                                       count ? actual.data() + 1 : nullptr, count);
+              punch_eq_curve(engine, grid.first, grid.second, count ? legacy.data() + 1 : nullptr, count);
+              g_trackAllocs = false;
+              CHECK(g_allocCount.load() == 0);
+              CHECK(actual.front() == 12345. && actual.back() == 12345.);
+              CHECK(legacy.front() == 12345. && legacy.back() == 12345.);
+              for (size_t i = 0; i < count; ++i) {
+                CHECK(actual[i + 1] == expected[i]);
+                CHECK(legacy[i + 1] == expected[i]);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  double flat[3]{};
+  punch_eq_curve_for_bands(nullptr, 24, 48000., -3.f, 20., 20000., flat, 3);
+  CHECK(flat[0] == -3. && flat[1] == -3. && flat[2] == -3.);
+  punch_engine_destroy(engine);
+}
+
 TEST(bass_enhancer_adds_harmonics) {
   BassEnhancer be;
   const double fs = 48000;
@@ -317,6 +434,91 @@ TEST(engine_bypass_is_neutral) {
     for (int c = 0; c < 2; ++c)
       maxErr = std::max(maxErr, double(std::fabs(out[size_t(i) * 2 + size_t(c)] - in[size_t(i - L) * 2 + size_t(c)])));
   CHECK(maxErr < 1e-4);
+}
+
+TEST(engine_headroom_cache_tracks_dependencies) {
+  Engine e;
+  auto& p = e.edit();
+  p.eq.numBands = 2;
+  p.eq.bands[0] = {FilterType::Bell, 100, 12, 1.0, true};
+  p.eq.bands[1] = {FilterType::Bell, 8000, 4, 1.0, true};
+  p.correction.numBands = 1;
+  p.correction.bands[0] = {FilterType::HighShelf, 9000, 2, 0.7, true};
+  e.prepare(48000, 2, 256);
+  auto checkFresh = [&] {
+    e.publish();
+    const bool bassPriority = p.limiter.enabled && p.limiter.bassPriorityHz > 0.f && !p.bypass;
+    const double peak = eqPeakBoostDb({&p.correction, &p.eq}, e.sampleRate(),
+                                      bassPriority ? 2.0 * double(p.limiter.bassPriorityHz) : 20.0);
+    const double preamp = double(p.eq.preampDb) + double(p.correction.preampDb);
+    CHECK(e.effectivePreampDb() == (p.autoPreamp ? std::min(preamp, -peak) : preamp));
+  };
+  checkFresh();
+  const double initial = e.effectivePreampDb();
+  p.outputGainDb = 8.f; p.masterFadeDb = -30.f; p.dj.filter = 0.5f;
+  checkFresh();
+  CHECK(e.effectivePreampDb() == initial);
+  // Non-EQ edits reuse the expensive scan and its temporary allocation.
+  g_allocCount = 0;
+  g_trackAllocs = true;
+  for (int i = 0; i < 20; ++i) { p.outputGainDb = float(i); e.publish(); }
+  g_trackAllocs = false;
+  CHECK(g_allocCount.load() == 0);
+  p.eq.bands[1].gainDb = 9; checkFresh();
+  p.correction.bands[0].gainDb = 6; checkFresh();
+  p.eq.preampDb = -20.f; checkFresh();
+  p.eq.preampDb = 0.f; p.correction.preampDb = -3.f; checkFresh();
+  p.limiter.bassPriorityHz = 200.f; checkFresh();
+  p.limiter.enabled = false; checkFresh();
+  p.limiter.enabled = true; p.bypass = true; checkFresh();
+  p.bypass = false; p.limiter.bassPriorityHz = 300.f; checkFresh();
+  p.autoPreamp = false; checkFresh();
+  p.eq.bands[0].gainDb = 2; checkFresh();
+  p.autoPreamp = true; checkFresh();
+  p.eq.bands[1].enabled = false; checkFresh();
+  p.eq.numBands = 1; checkFresh();
+  p.correction.numBands = 0; checkFresh();
+  e.prepare(44100, 2, 256); checkFresh();
+  e.prepare(96000, 2, 256); checkFresh();
+}
+
+TEST(engine_layout_conversion_matches_planar) {
+  for (int channels : {1, 2, 8, 10}) {
+    for (int frames : {1, 63, 256, 513}) {
+      for (bool inPlace : {false, true}) {
+        Engine interleaved, planar;
+        for (Engine* e : {&interleaved, &planar}) {
+          e->edit().eq.numBands = 1;
+          e->edit().eq.bands[0] = {FilterType::Bell, 150, 5, 1.2, true};
+          e->edit().bass = {0.6f, 110.f, 4.f, true};
+          e->prepare(48000, channels, 64);
+        }
+        const int processed = std::min(channels, kMaxChannels);
+        std::vector<float> input(size_t(frames * channels)), output(input.size());
+        std::vector<std::vector<float>> expected(size_t(processed), std::vector<float>(size_t(frames), 0.f));
+        for (int i = 0; i < frames; ++i) {
+          for (int c = 0; c < channels; ++c) {
+            const float x = 0.4f * float(std::sin(i * 0.037 + c * 0.3));
+            input[size_t(i * channels + c)] = x;
+            if (c < processed) expected[size_t(c)][size_t(i)] = x;
+          }
+        }
+        const auto original = input;
+        float* destination = inPlace ? input.data() : output.data();
+        interleaved.processInterleaved(input.data(), destination, channels, frames);
+        for (int start = 0; start < frames; start += 64) {
+          float* ch[kMaxChannels];
+          for (int c = 0; c < processed; ++c) ch[c] = expected[size_t(c)].data() + start;
+          planar.processPlanar(ch, processed, std::min(64, frames - start));
+        }
+        for (int i = 0; i < frames; ++i)
+          for (int c = 0; c < channels; ++c)
+            CHECK(destination[size_t(i * channels + c)] ==
+                  (c < processed ? expected[size_t(c)][size_t(i)] : original[size_t(i * channels + c)]));
+        if (!inPlace) CHECK(input == original);
+      }
+    }
+  }
 }
 
 // Boost leveler: +12 dB on a loud master (Limit off, safety-net limiter)
@@ -1117,6 +1319,43 @@ TEST(dj_pads_stay_finite) {
     }
     CHECK(ok);
     CHECK(peak < 4.f);
+  }
+}
+
+TEST(dj_channel_reprepare_matches_fully_allocated_reference) {
+  DjFx sized, full;
+  constexpr int frames = 1024;
+  std::array<std::array<float, frames>, kMaxChannels> a{}, b{};
+  float* ap[kMaxChannels];
+  float* bp[kMaxChannels];
+  for (int c = 0; c < kMaxChannels; ++c) { ap[c] = a[size_t(c)].data(); bp[c] = b[size_t(c)].data(); }
+  for (double rate : {44100., 192000.}) {
+    for (int channels : {2, 8, 1, 2}) {
+      sized.setParams(DjParams{}); full.setParams(DjParams{});
+      sized.prepare(rate, channels); full.prepare(rate, kMaxChannels);
+      for (int block = 0; block < 128; ++block) {
+        DjParams p;
+        p.echo = block >= 16 && block < 112;
+        p.chipmunk = block >= 16 && block < 32;
+        p.lofi = p.screw = block >= 32 && block < 64;
+        p.roll = p.pump = block >= 64 && block < 96;
+        p.tapeStop = block >= 96 && block < 112;
+        sized.setParams(p); full.setParams(p);
+        for (int c = 0; c < channels; ++c)
+          for (int i = 0; i < frames; ++i)
+            a[size_t(c)][size_t(i)] = b[size_t(c)][size_t(i)] =
+                0.3f * float(std::sin(double(block * frames + i) * .031 + double(c) * .17));
+        g_allocCount = 0;
+        g_trackAllocs = true;
+        if (block == 100) { sized.reset(); full.reset(); }
+        sized.process(ap, channels, frames); full.process(bp, channels, frames);
+        g_trackAllocs = false;
+        CHECK(g_allocCount.load() == 0);
+        bool exact = true;
+        for (int c = 0; c < channels; ++c) exact &= a[size_t(c)] == b[size_t(c)];
+        CHECK(exact);
+      }
+    }
   }
 }
 

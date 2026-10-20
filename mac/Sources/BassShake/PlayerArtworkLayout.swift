@@ -38,6 +38,7 @@ struct PlayerArtworkHeader<Controls: View>: View {
   var entry: NowEntry? = nil
   @ViewBuilder let controls: () -> Controls
   @Environment(\.artworkStyle) private var style
+  @Environment(\.monoStyle) private var mono
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   @Environment(\.colorSchemeContrast) private var contrast
 
@@ -55,6 +56,9 @@ struct PlayerArtworkHeader<Controls: View>: View {
     let plate = reduceTransparency || contrast == .increased
     let full: CGFloat = preview ? 136 : 200
     VStack(spacing: 0) {
+      if mono {
+        monoTitle
+      } else {
       Group {
         if let stageAspect {
           PlayerArtworkStage(layout: layout, artwork: artwork, favicon: favicon, icon: icon,
@@ -88,6 +92,7 @@ struct PlayerArtworkHeader<Controls: View>: View {
       // and lets two-line titles grow without clipping the transport.
       .frame(minHeight: preview ? 44 : 54)
       .help([title, subtitle].filter { !$0.isEmpty }.joined(separator: " — "))
+      }
       controls()
         .frame(height: preview ? 44 : 60)
         .frame(maxWidth: .infinity)
@@ -100,6 +105,24 @@ struct PlayerArtworkHeader<Controls: View>: View {
         RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous).fill(.chromeSurface)
       }
     }
+  }
+}
+
+extension PlayerArtworkHeader {
+  /// Mono: no stage, the title in ink and the second line in grey, leading.
+  var monoTitle: some View {
+    let size: CGFloat = preview ? 20 : (layout == .expanded ? 30 : 27)
+    return VStack(alignment: .leading, spacing: 0) {
+      Text(title).foregroundStyle(.primary).lineLimit(2)
+      if !subtitle.isEmpty { Text(subtitle).foregroundStyle(.secondary).lineLimit(1) }
+    }
+    .font(.system(size: size, weight: .bold).leading(.tight))
+    .tracking(-0.4)
+    .fixedSize(horizontal: false, vertical: true)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(.horizontal, preview ? 4 : 8)
+    .padding(.top, preview ? 4 : 10)
+    .help([title, subtitle].filter { !$0.isEmpty }.joined(separator: " — "))
   }
 }
 
@@ -183,6 +206,7 @@ private struct LandscapeArtworkStage: View {
   let height: CGFloat
   @Environment(\.artworkStyle) private var style
   @Environment(\.vinylMaterial) private var material
+  @Environment(\.peekDisc) private var disc
   @Environment(\.colorScheme) private var scheme
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -207,7 +231,7 @@ private struct LandscapeArtworkStage: View {
       }
       ZStack(alignment: .leading) {
         if record {
-          VinylRecord(material: material, artwork: image, record: palette.record(dark: scheme == .dark),
+          VinylRecord(material: material, disc: disc, artwork: image, record: palette.record(dark: scheme == .dark),
                       label: palette.label(dark: scheme == .dark), diameter: diameter,
                       dark: scheme == .dark, spinning: false)
             .frame(width: diameter, height: diameter)
@@ -266,6 +290,7 @@ struct NowPlayingArtworkHeader: View {
                         preview: preview, entry: entry) {
       ArtworkHeroControls(model: model, entry: entry, preview: preview)
     }
+    .environment(\.artworkIsVideo, entry.isVideo)
     if !preview { HeaderPlaybackScrubber(entry: entry) }
     }
     .environment(\.drawPaused, inheritedPause || preview)

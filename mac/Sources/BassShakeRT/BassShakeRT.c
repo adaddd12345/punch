@@ -6,6 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include <mach/mach_time.h>
+#include <pthread.h>
+#include <time.h>
+#include <errno.h>
+#include <os/log.h>
 
 enum { kChunkFrames = 256, kMaxChannels = 16 };
 
@@ -26,6 +31,12 @@ struct BSRenderContext {
   _Atomic uint32_t inChannels;
   _Atomic uint32_t outChannels;
   _Atomic uint64_t deadOutputCallbacks;
+
+  bool timingEnabled;  // immutable while IO runs
+  double nanosecondsPerTick, ticksPerFrame;
+  uint64_t timingLimits[BSRenderTimingBucketCount - 1];
+  _Atomic uint64_t timingCallbacks, timingTotalTicks, timingMaxTicks, timingOverBudget;
+  _Atomic uint64_t timingBuckets[BSRenderTimingBucketCount];
 };
 
 BSRenderContext* BSRenderContextCreate(PunchEngine* engine) {
@@ -109,6 +120,53 @@ BSRenderStats BSRenderContextStats(const BSRenderContext* ctx) {
   return s;
 }
 
+bool BSRenderContextEnableTiming(BSRenderContext* ctx, double sampleRate) {
+  if (!ctx || !isfinite(sampleRate) || sampleRate <= 0.0) return false;
+  mach_timebase_info_data_t timebase;
+  if (mach_timebase_info(&timebase) != KERN_SUCCESS || !timebase.numer || !timebase.denom) return false;
+  if (!atomic_is_lock_free(&ctx->timingCallbacks)) return false;
+  ctx->nanosecondsPerTick = (double)timebase.numer / (double)timebase.denom;
+  ctx->ticksPerFrame = 1e9 / (ctx->nanosecondsPerTick * sampleRate);
+  if (!isfinite(ctx->ticksPerFrame) || ctx->ticksPerFrame <= 0.0) return false;
+  for (unsigned i = 0; i < BSRenderTimingBucketCount - 1; ++i)
+    ctx->timingLimits[i] = (uint64_t)ceil((double)(UINT64_C(1) << (i + 3)) * 1000.0 / ctx->nanosecondsPerTick);
+  ctx->timingEnabled = true;
+  return true;
+}
+
+BSRenderTiming BSRenderContextTiming(const BSRenderContext* ctx) {
+  BSRenderTiming s = {0};
+  s.enabled = ctx->timingEnabled;
+  s.nanosecondsPerTick = ctx->nanosecondsPerTick;
+  s.callbacks = atomic_load_explicit(&ctx->timingCallbacks, memory_order_relaxed);
+  s.totalTicks = atomic_load_explicit(&ctx->timingTotalTicks, memory_order_relaxed);
+  s.maxTicks = atomic_load_explicit(&ctx->timingMaxTicks, memory_order_relaxed);
+  s.overBudgetCallbacks = atomic_load_explicit(&ctx->timingOverBudget, memory_order_relaxed);
+  for (unsigned i = 0; i < BSRenderTimingBucketCount; ++i)
+    s.buckets[i] = atomic_load_explicit(&ctx->timingBuckets[i], memory_order_relaxed);
+  return s;
+}
+
+// These counters have one writer (this IOProc), so relaxed load/store suffices
+// and avoids compare/exchange retry loops. Readers never modify them.
+static void recordTiming(BSRenderContext* ctx, uint64_t begin, UInt32 frames) {
+  const uint64_t elapsed = mach_absolute_time() - begin;
+  const uint64_t maximum = atomic_load_explicit(&ctx->timingMaxTicks, memory_order_relaxed);
+  if (elapsed > maximum) atomic_store_explicit(&ctx->timingMaxTicks, elapsed, memory_order_relaxed);
+  const uint64_t total = atomic_load_explicit(&ctx->timingTotalTicks, memory_order_relaxed);
+  atomic_store_explicit(&ctx->timingTotalTicks, total + elapsed, memory_order_relaxed);
+  if (frames && (double)elapsed > ctx->ticksPerFrame * (double)frames) {
+    const uint64_t over = atomic_load_explicit(&ctx->timingOverBudget, memory_order_relaxed);
+    atomic_store_explicit(&ctx->timingOverBudget, over + 1, memory_order_relaxed);
+  }
+  unsigned bucket = 0;
+  while (bucket < BSRenderTimingBucketCount - 1 && elapsed > ctx->timingLimits[bucket]) ++bucket;
+  const uint64_t hits = atomic_load_explicit(&ctx->timingBuckets[bucket], memory_order_relaxed);
+  atomic_store_explicit(&ctx->timingBuckets[bucket], hits + 1, memory_order_relaxed);
+  const uint64_t count = atomic_load_explicit(&ctx->timingCallbacks, memory_order_relaxed);
+  atomic_store_explicit(&ctx->timingCallbacks, count + 1, memory_order_relaxed);
+}
+
 static void zeroOutput(AudioBufferList* out) {
   for (UInt32 b = 0; b < out->mNumberBuffers; ++b)
     if (out->mBuffers[b].mData) memset(out->mBuffers[b].mData, 0, out->mBuffers[b].mDataByteSize);
@@ -122,6 +180,8 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   (void)device; (void)now; (void)inputTime; (void)outputTime;
   BSRenderContext* ctx = (BSRenderContext*)clientData;
   if (!ctx || !output || output->mNumberBuffers == 0) return noErr;
+  const uint64_t timingBegin = ctx->timingEnabled ? mach_absolute_time() : 0;
+  UInt32 timingFrames = 0;
   bump(&ctx->callbacks);
 
   // ---- locate the tap buffer
@@ -137,7 +197,7 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
     // output so the watchdog steps aside instead of leaving the Mac silent.
     if (tap && tap->mNumberChannels > kMaxChannels) bump(&ctx->deadOutputCallbacks);
     zeroOutput(output);
-    return noErr;
+    goto finished;
   }
   const UInt32 inCh = tap->mNumberChannels;
   const UInt32 inFrames = tap->mDataByteSize / (UInt32)(inCh * sizeof(float));
@@ -154,13 +214,14 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   atomic_store_explicit(&ctx->inChannels, inCh, memory_order_relaxed);
   atomic_store_explicit(&ctx->outChannels, outChTotal, memory_order_relaxed);
   zeroOutput(output);
-  if (outChTotal == 0 || outFrames == UINT32_MAX) return noErr;
+  if (outChTotal == 0 || outFrames == UINT32_MAX) goto finished;
   if (ctx->outputMapCount && ctx->outputMapCount != outChTotal) {
     bump(&ctx->layoutErrors);
     bump(&ctx->deadOutputCallbacks);
-    return noErr;
+    goto finished;
   }
   const UInt32 frames = inFrames < outFrames ? inFrames : outFrames;
+  timingFrames = frames;
 
   // ---- watchdog signal: a live tap is essentially never bit-exact zero
   // for a whole cycle while something is playing.
@@ -225,6 +286,8 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
   // below what survives processing).
   if (inPeak > 1e-4f && target == 1.f && (outPeak == 0.f || isinf(outPeak))) bump(&ctx->deadOutputCallbacks);
   atomic_fetch_add_explicit(&ctx->frames, frames, memory_order_relaxed);
+finished:
+  if (timingBegin) recordTiming(ctx, timingBegin, timingFrames);
   return noErr;
 }
 
@@ -235,31 +298,193 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
 // file stays C and loads on any macOS.
 extern OSStatus AudioHardwareDestroyProcessTap(AudioObjectID inTapID) __attribute__((weak_import));
 
-static _Atomic AudioObjectID gGuardAggregate = kAudioObjectUnknown;
-static _Atomic AudioObjectID gGuardTap = kAudioObjectUnknown;
+// This registry is control-thread-only. Pair publication/claim is serialized,
+// while atexit can atomically take the pair without acquiring a possibly held
+// mutex. No IOProc enters this code and no HAL call holds the registry mutex.
+_Static_assert(sizeof(AudioObjectID) == sizeof(uint32_t), "packed HAL IDs");
+_Static_assert(ATOMIC_LLONG_LOCK_FREE == 2, "crash guard needs lock-free ID pair");
+static _Atomic uint64_t gGuardIDs;
+static pthread_mutex_t gGuardMutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t gGuardCompleted = PTHREAD_COND_INITIALIZER;
+static uint64_t gGuardOwner;
+static bool gGuardRetired = true;
+static uint64_t gGuardDestroyingOwner;
+// When the in-flight rescue destroy began (mach_absolute_time). A destroy that
+// outlives kGuardWaitNanos no longer blocks cleanup or new pipelines: a wedged
+// coreaudiod must not strand audioQueue (fail open, see guardWaitForOwner).
+static uint64_t gGuardDestroyStarted;
+// Owner whose rescue destroy failed or never finished in time: its IOProc may
+// still be called, so its callback context must be leaked, never freed.
+static uint64_t gGuardUnsafeOwner;
+enum { kGuardWaitMillis = 500 };
+static const uint64_t kGuardWaitNanos = (uint64_t)kGuardWaitMillis * 1000000ull;
 
+static uint64_t guardNanosSince(uint64_t start) {
+  static mach_timebase_info_data_t tb;
+  if (tb.denom == 0) mach_timebase_info(&tb);
+  return (mach_absolute_time() - start) * tb.numer / tb.denom;
+}
+static bool guardDestroyStale(void) {
+  return gGuardDestroyingOwner && guardNanosSince(gGuardDestroyStarted) >= kGuardWaitNanos;
+}
+
+static uint64_t guardIDs(AudioObjectID aggregate, AudioObjectID tap) {
+  return ((uint64_t)aggregate << 32) | tap;
+}
+static AudioObjectID guardAggregate(uint64_t ids) { return (AudioObjectID)(ids >> 32); }
+static AudioObjectID guardTap(uint64_t ids) { return (AudioObjectID)ids; }
+
+#ifdef BS_GUARD_TESTING
+// Deterministic interleavings in the standalone fake-HAL regression only.
+extern void BSGuardTestPublishing(void);
+extern void BSGuardTestWaiting(void);
+#endif
+
+bool BSCrashGuardSetOwned(AudioObjectID aggregate, AudioObjectID tap, uint64_t owner) {
+  if (!owner || tap == kAudioObjectUnknown) return false;
+  pthread_mutex_lock(&gGuardMutex);
+#ifdef BS_GUARD_TESTING
+  BSGuardTestPublishing();
+#endif
+  const uint64_t old = atomic_load(&gGuardIDs);
+  const bool newer = owner > gGuardOwner && old == 0;
+  const bool same = owner == gGuardOwner && !gGuardRetired &&
+      guardTap(old) == tap &&
+      (guardAggregate(old) == kAudioObjectUnknown || guardAggregate(old) == aggregate);
+  // A rescue destroy stuck past the bound no longer blocks a new owner: its
+  // IDs are already out of the registry and the new pair is independent.
+  const bool accepted = (!gGuardDestroyingOwner || (newer && guardDestroyStale())) && (newer || same);
+  if (accepted) {
+    gGuardOwner = owner;
+    gGuardRetired = false;
+    atomic_store(&gGuardIDs, guardIDs(aggregate, tap));
+  }
+  pthread_mutex_unlock(&gGuardMutex);
+  return accepted;
+}
+
+// Returns true when this owner's callback state may be freed. Bounded: if the
+// rescue destroy has not returned within kGuardWaitMillis (coreaudiod wedged,
+// exactly when rescue fires) the wait fails open and returns false, marking
+// the owner unsafe so the caller leaks its context instead of blocking forever.
+static bool guardWaitForOwner(uint64_t owner) {
+  if (!owner) return true;
+  if (gGuardDestroyingOwner == owner) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_nsec += (long)(kGuardWaitMillis % 1000) * 1000000L;
+    deadline.tv_sec += kGuardWaitMillis / 1000 + deadline.tv_nsec / 1000000000L;
+    deadline.tv_nsec %= 1000000000L;
+    while (gGuardDestroyingOwner == owner) {
+#ifdef BS_GUARD_TESTING
+      BSGuardTestWaiting();
+#endif
+      // timedwait releases the mutex. The claimant can complete HAL teardown
+      // and signal us; callback context / engine state remain alive meanwhile.
+      // Also stop on elapsed monotonic time, so a wall-clock jump can't stretch it.
+      if (pthread_cond_timedwait(&gGuardCompleted, &gGuardMutex, &deadline) == ETIMEDOUT ||
+          guardDestroyStale()) {
+        if (gGuardDestroyingOwner != owner) break;
+        gGuardUnsafeOwner = owner;
+        os_log_error(OS_LOG_DEFAULT, "BassShake crash guard: rescue destroy still pending after %d ms; "
+                     "failing open and leaking pipeline %llu", kGuardWaitMillis, (unsigned long long)owner);
+        return false;
+      }
+    }
+  }
+  return gGuardUnsafeOwner != owner;
+}
+
+static void guardReleaseLocked(AudioObjectID aggregate, AudioObjectID tap,
+                               bool* ownsAggregate, bool* ownsTap) {
+  uint64_t ids = atomic_load(&gGuardIDs);
+  *ownsAggregate = aggregate != kAudioObjectUnknown && guardAggregate(ids) == aggregate;
+  *ownsTap = tap != kAudioObjectUnknown && guardTap(ids) == tap;
+  if (*ownsAggregate) ids &= UINT32_MAX;
+  if (*ownsTap) ids &= (UINT64_MAX << 32);
+  atomic_store(&gGuardIDs, ids);
+  if (!ids) gGuardRetired = true;
+}
+
+bool BSCrashGuardReleaseOwned(uint64_t owner, AudioObjectID aggregate, AudioObjectID tap,
+                              bool* ownsAggregate, bool* ownsTap) {
+  pthread_mutex_lock(&gGuardMutex);
+  const bool safe = guardWaitForOwner(owner);
+  *ownsAggregate = *ownsTap = false;
+  if (owner && owner == gGuardOwner) guardReleaseLocked(aggregate, tap, ownsAggregate, ownsTap);
+  pthread_mutex_unlock(&gGuardMutex);
+  return safe;
+}
+
+bool BSCrashGuardClearOwned(uint64_t owner) {
+  pthread_mutex_lock(&gGuardMutex);
+  const bool safe = guardWaitForOwner(owner);
+  if (owner && owner == gGuardOwner) {
+    atomic_store(&gGuardIDs, 0);
+    gGuardRetired = true;
+  }
+  pthread_mutex_unlock(&gGuardMutex);
+  return safe;
+}
+
+static bool guardFailOpen(uint64_t owner, bool requireOwner) {
+  // Rescue must not wait behind publication or another rescue. A later tick
+  // can retry; failed claims must not latch the Swift watchdog as rescued.
+  if (pthread_mutex_trylock(&gGuardMutex) != 0) return false;
+  const uint64_t ids = atomic_load(&gGuardIDs);
+  if (!ids || gGuardDestroyingOwner || (requireOwner && (!owner || owner != gGuardOwner))) {
+    pthread_mutex_unlock(&gGuardMutex);
+    return false;
+  }
+  const uint64_t claimed = gGuardOwner;
+  gGuardDestroyingOwner = claimed;
+  gGuardDestroyStarted = mach_absolute_time();
+  gGuardRetired = true;
+  atomic_store(&gGuardIDs, 0);
+  pthread_mutex_unlock(&gGuardMutex);
+
+  OSStatus aggregateStatus = noErr;
+  if (guardAggregate(ids) != kAudioObjectUnknown)
+    aggregateStatus = AudioHardwareDestroyAggregateDevice(guardAggregate(ids));
+  if (guardTap(ids) != kAudioObjectUnknown && AudioHardwareDestroyProcessTap != NULL)
+    AudioHardwareDestroyProcessTap(guardTap(ids));
+
+  pthread_mutex_lock(&gGuardMutex);
+  // Always lift the barrier once the destroy attempt returns. Failure does not
+  // prove IO stopped, so mark the owner unsafe: waiters return false and the
+  // caller leaks the context the HAL may still call. Unknown object is safe:
+  // a daemon restart or prior teardown already removed the device.
+  if (aggregateStatus != noErr && aggregateStatus != kAudioHardwareBadObjectError) {
+    gGuardUnsafeOwner = claimed;
+    os_log_error(OS_LOG_DEFAULT, "BassShake crash guard: rescue destroy failed (%d); leaking pipeline %llu",
+                 (int)aggregateStatus, (unsigned long long)claimed);
+  }
+  if (gGuardDestroyingOwner == claimed) gGuardDestroyingOwner = 0;
+  pthread_cond_broadcast(&gGuardCompleted);
+  pthread_mutex_unlock(&gGuardMutex);
+  return true;
+}
+
+bool BSCrashGuardFailOpenOwned(uint64_t owner) { return guardFailOpen(owner, true); }
+
+// Legacy entry points remain for C clients; the app uses the owned variants.
 void BSCrashGuardSet(AudioObjectID aggregate, AudioObjectID tap) {
-  atomic_store(&gGuardAggregate, aggregate);
-  atomic_store(&gGuardTap, tap);
+  pthread_mutex_lock(&gGuardMutex);
+  guardWaitForOwner(gGuardDestroyingOwner);
+  if (!gGuardOwner) gGuardOwner = 1;
+  atomic_store(&gGuardIDs, guardIDs(aggregate, tap));
+  gGuardRetired = aggregate == kAudioObjectUnknown && tap == kAudioObjectUnknown;
+  pthread_mutex_unlock(&gGuardMutex);
 }
-
 void BSCrashGuardClear(void) { BSCrashGuardSet(kAudioObjectUnknown, kAudioObjectUnknown); }
-
 void BSCrashGuardRelease(AudioObjectID aggregate, AudioObjectID tap, bool* ownsAggregate, bool* ownsTap) {
-  AudioObjectID a = aggregate, t = tap;
-  *ownsAggregate = aggregate != kAudioObjectUnknown && atomic_compare_exchange_strong(&gGuardAggregate, &a, kAudioObjectUnknown);
-  *ownsTap = tap != kAudioObjectUnknown && atomic_compare_exchange_strong(&gGuardTap, &t, kAudioObjectUnknown);
+  pthread_mutex_lock(&gGuardMutex);
+  guardWaitForOwner(gGuardDestroyingOwner);
+  guardReleaseLocked(aggregate, tap, ownsAggregate, ownsTap);
+  pthread_mutex_unlock(&gGuardMutex);
 }
-
-bool BSCrashGuardFailOpen(void) {
-  const AudioObjectID agg = atomic_exchange(&gGuardAggregate, kAudioObjectUnknown);
-  const AudioObjectID tap = atomic_exchange(&gGuardTap, kAudioObjectUnknown);
-  if (agg != kAudioObjectUnknown) AudioHardwareDestroyAggregateDevice(agg);
-  if (tap != kAudioObjectUnknown && AudioHardwareDestroyProcessTap != NULL) AudioHardwareDestroyProcessTap(tap);
-  return agg != kAudioObjectUnknown || tap != kAudioObjectUnknown;
-}
-
-bool BSCrashGuardHoldsTap(void) { return atomic_load(&gGuardTap) != kAudioObjectUnknown; }
+bool BSCrashGuardFailOpen(void) { return guardFailOpen(0, false); }
+bool BSCrashGuardHoldsTap(void) { return guardTap(atomic_load(&gGuardIDs)) != kAudioObjectUnknown; }
 
 static _Atomic AudioObjectID gGuardExtraTaps[BSCrashGuardMaxExtraTaps];  // zero == kAudioObjectUnknown
 
@@ -281,8 +506,9 @@ void BSCrashGuardRemoveTap(AudioObjectID tap) {
 }
 
 static void guardTeardown(void) {
-  const AudioObjectID agg = atomic_exchange(&gGuardAggregate, kAudioObjectUnknown);
-  const AudioObjectID tap = atomic_exchange(&gGuardTap, kAudioObjectUnknown);
+  const uint64_t ids = atomic_exchange(&gGuardIDs, 0);
+  const AudioObjectID agg = guardAggregate(ids);
+  const AudioObjectID tap = guardTap(ids);
   if (agg != kAudioObjectUnknown) AudioHardwareDestroyAggregateDevice(agg);
   if (tap != kAudioObjectUnknown && AudioHardwareDestroyProcessTap != NULL) AudioHardwareDestroyProcessTap(tap);
   for (int i = 0; i < BSCrashGuardMaxExtraTaps; ++i) {

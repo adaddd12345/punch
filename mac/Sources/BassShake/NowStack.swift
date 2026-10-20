@@ -528,6 +528,7 @@ struct NowEntryArtButton: View {
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
       // Its record stays still (Vinyl Peek): only the hero's turns, one motion at a time.
       NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: size, paused: !playing)
+        .environment(\.artworkIsVideo, entry.isVideo)
         .nowPlayingBars(model, entry, art: size)
         .onSleeve(size: size) {
           if showGlyph {

@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splash Preview</title>
+<style>
+  :root {
+    --page: #eef1f7; --ink: #1d1d1f; --muted: #6e6e73; --ctl: rgba(0,0,0,0.05); --ctl-on: #ffffff;
+    --ctl-ink: #1d1d1f; --hair: rgba(0,0,0,0.08);
+    --pop: #f4f5f9; --pop-block: rgba(30,45,134,0.07); --pop-hero: rgba(63,105,221,0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #0d0f16; --ink: #f5f5f7; --muted: #98989d; --ctl: rgba(255,255,255,0.07); --ctl-on: rgba(255,255,255,0.18);
+      --ctl-ink: #f5f5f7; --hair: rgba(255,255,255,0.1);
+      --pop: #22252f; --pop-block: rgba(255,255,255,0.06); --pop-hero: rgba(123,155,240,0.16);
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #0d0f16; --ink: #f5f5f7; --muted: #98989d; --ctl: rgba(255,255,255,0.07); --ctl-on: rgba(255,255,255,0.18);
+    --ctl-ink: #f5f5f7; --hair: rgba(255,255,255,0.1);
+    --pop: #22252f; --pop-block: rgba(255,255,255,0.06); --pop-hero: rgba(123,155,240,0.16);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--page); color: var(--ink); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  main { min-height: 100svh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 16px; }
+  /* The popover: 360 × 680 pt, portrait, scaled to fit. */
+  .frame {
+    --h: min(calc(100svh - 132px), calc((100vw - 32px) * 680 / 360));
+    height: var(--h); width: calc(var(--h) * 360 / 680); position: relative; overflow: hidden;
+    border-radius: calc(var(--h) * 0.018); background: var(--pop);
+    box-shadow: 0 0 0 1px var(--hair), 0 18px 50px rgba(0,0,0,0.14);
+  }
+  .splash { position: absolute; inset: 0; }
+  .splash svg { display: block; width: 100%; height: 100%; }
+  /* The app underneath: the splash is an overlay on the popover, so it is already there. */
+  .app { position: absolute; inset: 0; padding: 6% 5.5%; display: grid; grid-template-rows: auto 30% auto auto 1fr; gap: 2.6%; }
+  .app i { display: block; border-radius: 999px; background: var(--pop-block); }
+  .app .row { display: flex; gap: 4%; align-items: center; }
+  .app .hero { border-radius: calc(var(--h) * 0.02); background: var(--pop-hero); }
+  .app .pills { display: flex; gap: 3%; }
+  .app .pills i { flex: 1; height: calc(var(--h) * 0.045); }
+  .app .bento { display: grid; grid-template-columns: 1fr 1fr; gap: 3%; }
+  .app .bento i { border-radius: calc(var(--h) * 0.016); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: center; max-width: 100%; }
+  button { font: inherit; color: var(--ctl-ink); border: 0; cursor: pointer; }
+  .replay { background: #0071e3; color: #fff; padding: 5px 14px; border-radius: 999px; font-weight: 600; }
+  .seg { display: inline-flex; background: var(--ctl); border-radius: 8px; padding: 2px; }
+  .seg button { background: transparent; padding: 3px 10px; border-radius: 6px; }
+  .seg button[aria-pressed="true"] { background: var(--ctl-on); box-shadow: 0 1px 2px rgba(0,0,0,0.12); font-weight: 600; }
+  .scrub { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .scrub input { width: min(220px, 40vw); accent-color: #0071e3; }
+  .note { margin: 0; color: var(--muted); text-align: center; max-width: 60ch; min-height: 1.4em; }
+</style>
+</head>
+<body>
+<main>
+  <div class="frame" id="frame">
+    <div class="app" id="app" aria-hidden="true" style="opacity:0">
+      <div class="row"><i style="width:34%;height:calc(var(--h)*0.022)"></i><i style="width:12%;height:calc(var(--h)*0.022);margin-left:auto"></i></div>
+      <div class="hero"></div>
+      <div class="pills"><i></i><i></i><i></i></div>
+      <div class="row"><i style="width:46%;height:calc(var(--h)*0.016)"></i></div>
+      <div class="bento"><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="splash" id="splash">
+      <!-- Stage units are points: 360 × 680, the popover the splash overlays. -->
+      <svg id="stage" viewBox="0 0 360 680" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="The Bass Shaker splash">
+        <defs id="defs">
+          <linearGradient id="stageBg" x1="0" y1="0" x2="1" y2="1">
+            <stop id="bg0" offset="0" stop-color="#E6ECFD"/><stop id="bg1" offset="1" stop-color="#D4DEFA"/>
+          </linearGradient>
+          <filter id="wsBlur" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="10"/></filter>
+        </defs>
+
+        <!-- ═══ SLOT: BACKGROUND, filled from splash/bg/bg-{light,dark}.svg (360 × 680 pt). Held still:
+             at 8 fps its data-drift would read as a constant shimmer, and only the moving piece may boil. ═══ -->
+        <g id="bgSlot"><rect width="360" height="680" fill="url(#stageBg)"/></g>
+
+        <g id="art">
+          <g transform="matrix(1.242718 0 0 1.242718 -124.2718 -124.2718)">
+            <!-- #shaker: the whole icon boils as one while the shaker forms, so the face stays registered in the cube. -->
+            <g id="shaker">
+              <g id="cubeWrap" opacity="0"></g>
+              <g id="lidWrap" opacity="0"></g>
+              <ellipse id="wShadow" filter="url(#wsBlur)"/>
+              <circle id="ghost" cx="512" cy="540.087" r="206.96" opacity="0"/>
+              <g id="wooferWrap"><g id="wooferArt"></g></g>
+            </g>
+          </g>
+        </g>
+
+        <!-- ═══ SLOT: TITLE BUBBLE, filled from splash/bubble/bubble{,-dark}.svg. #bubbleSlot sits at the
+             anchor and scales about it; #bubbleArt moves the art's tail tip onto (0, 0). ═══ -->
+        <g id="bubbleSlot" opacity="0"><g id="bubbleArt"></g></g>
+      </svg>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="replay" id="replay">Replay</button>
+    <div class="seg" role="group" aria-label="Speed">
+      <button data-speed="1" aria-pressed="true">1×</button><button data-speed="0.5">0.5×</button><button data-speed="0.25">0.25×</button>
+    </div>
+    <div class="seg" role="group" aria-label="Appearance">
+      <button data-theme="light">Light</button><button data-theme="dark">Dark</button>
+    </div>
+    <label class="scrub"><input id="scrub" type="range" min="0" max="1" step="0.001" value="0"><span id="clock">0.000 s</span></label>
+  </div>
+  <p class="note" id="note"></p>
+</main>
+
+<!-- The motion engine: pure functions of time, no DOM. Ports 1:1 to SwiftUI. -->
+<script id="engine">
+const Engine = (() => {
+  /* ───────────── PARAMETER TABLE: every timing, spring and amplitude ─────────────
+     STOP-MOTION. The physics and springs are smooth underneath, but the picture only changes on a
+     clock: 8 fps for the body ("on threes" at 24), 12 fps for the blink ("on twos", the Tempo
+     mascot's clock). Each step HOLDS. SwiftUI: a run-loop Timer at P.fps (the TempoTicker pattern:
+     `@Published frame`), and the view computes its pose from `frame / fps`, with no withAnimation.
+     Springs are SwiftUI's parameters (response = undamped period, dampingFraction = ζ), evaluated
+     in closed form at the step times instead of animated. Bounce distances are in D (the woofer's
+     diameter, ≈ 31 pt here); everything else is in points of the 360 × 680 pt overlay. */
+  const P = {
+    stage: { w: 360, h: 680 },        // the popover's splash overlay (PopoverView: .frame(width: 360))
+    art: { width: 0.42, centerY: 352 }, // cube width as a fraction of the stage; icon centre y (pt), a touch below optical centre
+
+    fps: 8,          // body clock: every pose holds 125 ms. SwiftUI: Timer at 8 Hz (TempoTicker(fps: 8)).
+    blinkFps: 12,    // blink clock: at 8 fps two held frames = 250 ms shut, which reads sleepy (a double
+                     // blink would take 0.75 s); 12 fps gives 167 ms, a real blink, the mascot's clock.
+    // Boil: each held step of a MOVING element gets a seeded jitter (hand-placed cut-out feel).
+    // Offset 0.75–1.5 pt in a random direction, rotation ±1.5–3°. Held still = no boil.
+    // SwiftUI: .offset + .rotationEffect from a tiny hash of (seed, frame, element), no animation.
+    boil: { pos: 1.5, rot: 3, seed: 8, bigScale: 0.5 },   // bigScale: the forming icon (a big piece, boiled as one) boils half as much
+    // Onion skin: the previous step's pose as a flat disc (no face), behind, only on the fastest fall
+    // steps (dropped > minStep D since the last step). SwiftUI: a Circle at that pose, .opacity(0.13).
+    ghost: { opacity: 0.13, minStep: 0.25 },
+    settle: 0.97,    // a sampled spring this close to its target snaps there (stop-motion has no creep)
+
+    // 0  In: the overlay appears in two held steps (adds no time; the face is already falling).
+    enter: { levels: [0.5, 1] },
+
+    // 1  Bounce. A gravity + restitution sim (stepped at 4 kHz), with a squash spring kicked on contact.
+    //    Sampled at 8 fps: a step that contains a key (a squash peak or an apex) shows the key, so every
+    //    contact gets its squash frame; any other step shows its midpoint (frame 0 its start). SwiftUI: bake the sampled steps to a pose table.
+    bounce: {
+      gravity: 22,            // D/s²
+      apex: 0.80,             // D: the first apex above the rest spot
+      startPastApex: 0.03,    // s: frame 0 is already (just) falling, so the fall gets two held frames
+      restitution: 0.42,      // apexes 0.80, 0.14, 0.03 D; contacts ≈ 0.17 / 0.49 / 0.68 s
+      stickBelow: 0.70,       // D/s: a rebound slower than this stays down (the landing)
+      // Squash: a spring on q (scaleY = 1 − q) kicked by each impact; the body stays on the floor
+      // until q swings back through 0 (≈ 92 ms). peak q = min(max, perVelocity · v_in).
+      squash: { response: 0.16, dampingFraction: 0.5, max: 0.16, perVelocity: 0.0316 },
+      // Stretch from speed: scaleY ×= 1 + min(max, perVelocity·|v|); max = the mascot's launch 0.88 × 1.14.
+      stretch: { perVelocity: 0.028, max: 0.14, response: 0.05, dampingFraction: 1 },
+      // scaleX = 1 / scaleY (area preserved), anchored at the woofer's bottom.
+      shadow: { width: 0.74, height: 0.085, opacityLight: 0.42, opacityDark: 0.70, shrinkAtApex: 0.55, fadeAtApex: 0.80 },
+    },
+
+    // 2  Hello: a double blink as held poses on the 12 fps clock (lid model = WooferFace.blink):
+    //    half-closed, closed, open, open, half-closed, closed, then open.
+    blink: { delayAfterLand: 0.08, frames: [0.5, 1, 0, 0, 0.5, 1],
+    //    …and one more, shared: during the hold both faces (the icon's and the bubble's) blink together once.
+             together: { afterPop: 0.375, frames: [0.5, 1] } },
+
+    // 3  The shaker forms around the face as the eyes reopen. Opacity in held steps (levels, one per
+    //    8 fps frame); scale 0.95 → 1 is .spring(response: 0.60, dampingFraction: 1) sampled per step.
+    cube: { delayAfterBlink: 0, response: 0.60, dampingFraction: 1.0, fromScale: 0.95, levels: [0.35, 0.7, 1] },
+    //    The lid drops 8 pt into place: .spring(response: 0.40, dampingFraction: 1) sampled; shares the cube's fade.
+    lid:  { delayAfterCube: 0.125, response: 0.40, dampingFraction: 1.0, drop: 8 },
+
+    // 4  The title bubble pops from the character once the lid has landed: held scales, one per
+    //    8 fps frame, about its tail tip (anchor, pt). No fade: a pop is a cut.
+    //    Text appears whole with the shape (calmer than typing at 8 fps). Art: splash/bubble/, tail tip
+    //    at (102.43, 56.86) in its own units; anchor = where that tip sits, 12 pt above the lid (lid top ≈ 274 pt).
+    bubble: { delayAfterLid: 0.25, poses: [0.5, 1.1, 1.0], anchor: { x: 180, y: 262 }, tip: { x: 102.43, y: 56.86 },
+              eye: { xs: [176.37, 187.48], cy: 23.58, rx: 2.52, ry: 3.30, lid: 0.435 } },   // the mini face, pt
+
+    // 5  Out: the overlay steps away (one level per frame) to the popover underneath.
+    exit: { holdAfterBubble: 0.75,  levels: [0.7, 0.35, 0] },
+  };
+
+  /* Icon geometry, in the layers' inner units (inside matrix(1.242718 … −124.2718)). */
+  const G = { cx: 512, cy: 540.087, R: 206.96, bottom: 747.05, D: 413.92, inner: 1.242718, cubeW: 734 };
+  const k = P.art.width * P.stage.w / G.cubeW;                  // icon canvas px → pt
+  const innerPerPt = 1 / (G.inner * k);
+  const artTransform = `translate(${(P.stage.w / 2 - 512 * k).toFixed(3)} ${(P.art.centerY - 512 * k).toFixed(3)}) scale(${k.toFixed(5)})`;
+  const Dpt = G.D * G.inner * k;
+
+  function spring(t, response, z) {
+    if (t <= 0) return 0;
+    const w = 2 * Math.PI / response;
+    if (z < 1) {
+      const wd = w * Math.sqrt(1 - z * z);
+      return 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t));
+    }
+    if (z === 1) return 1 - Math.exp(-w * t) * (1 + w * t);
+    const s = Math.sqrt(z * z - 1), r1 = -w * (z - s), r2 = -w * (z + s);
+    return 1 - (r2 * Math.exp(r1 * t) - r1 * Math.exp(r2 * t)) / (r2 - r1);
+  }
+  const stepSpring = (u, o) => { const p = spring(u, o.response, o.dampingFraction); return p >= P.settle ? 1 : p; };
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const frameOf = (t, fps = P.fps) => Math.floor(t * fps + 1e-9);
+  const snap = (t, fps = P.fps) => Math.ceil(t * fps - 1e-9) / fps;           // next frame boundary
+  const ladder = (u, levels, before) => u < 0 ? before : levels[Math.min(levels.length - 1, frameOf(u))];
+
+  /* Seeded hash → [0, 1). Same seed, same boil, every run. */
+  function rnd(n, ch) {
+    let h = Math.imul(P.boil.seed + 0x9E3779B9, 0x85EBCA6B) ^ Math.imul(n + 1, 0xC2B2AE35) ^ Math.imul(ch + 7, 0x27D4EB2F);
+    h = Math.imul(h ^ (h >>> 15), 0x2C1B3C6D); h = Math.imul(h ^ (h >>> 12), 0x297A2D39); h ^= h >>> 15;
+    return (h >>> 0) / 4294967296;
+  }
+  const NO_BOIL = { dx: 0, dy: 0, r: 0 };
+  function boil(n, ch, scale = 1) {
+    const a = rnd(n, ch) * 2 * Math.PI, m = P.boil.pos * (0.5 + 0.5 * rnd(n, ch + 10)) * scale;
+    const r = P.boil.rot * (0.5 + 0.5 * rnd(n, ch + 20)) * (rnd(n, ch + 30) < 0.5 ? -1 : 1) * scale;
+    return { dx: m * Math.cos(a), dy: m * Math.sin(a), r };
+  }
+
+  /* 1  The bounce, simulated once at 4 kHz; y (D), scaleX, scaleY recorded at 1 kHz, plus the keys. */
+  function simulate() {
+    const B = P.bounce, g = B.gravity, rate = 1000, sub = 4, dt = 1 / (rate * sub), tEnd = 2.5;
+    const wq = 2 * Math.PI / B.squash.response, zq = B.squash.dampingFraction;
+    const kq = wq * wq, cq = 2 * zq * wq;
+    const wqd = wq * Math.sqrt(1 - zq * zq), tp = Math.atan2(wqd, zq * wq) / wqd;
+    const peakPerKick = Math.exp(-zq * wq * tp) * Math.sin(wqd * tp) / wqd;
+    const ws = 2 * Math.PI / B.stretch.response, ks = ws * ws, cs = 2 * B.stretch.dampingFraction * ws;
+    let y = B.apex - 0.5 * g * B.startPastApex ** 2, v = -g * B.startPastApex;
+    let mode = "air", q = 0, qv = 0, stv = 0, vin = 0, land = null;
+    let st = Math.min(B.stretch.max, B.stretch.perVelocity * Math.abs(v));
+    const contacts = [], keys = [], n = Math.round(tEnd * rate) + 1, out = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const sy = (1 - q) * (1 + st);
+      out[i * 3] = Math.max(0, y); out[i * 3 + 1] = 1 / sy; out[i * 3 + 2] = sy;
+      for (let j = 0; j < sub; j++) {
+        const t = (i * sub + j) * dt;
+        qv += (-kq * q - cq * qv) * dt; q += qv * dt;
+        if (mode === "air") {
+          const v0 = v;
+          v -= g * dt; y += v * dt;
+          if (v0 > 0 && v <= 0) keys.push(t);                       // apex
+          if (y <= 0) {
+            y = 0; vin = -v; v = 0; contacts.push(t); keys.push(t + tp);   // squash peak
+            st = 0; stv = 0;
+            qv += Math.min(B.squash.max, B.squash.perVelocity * vin) / peakPerKick;
+            if (B.restitution * vin < B.stickBelow) { mode = "rest"; land = t; } else mode = "contact";
+          }
+        } else if (mode === "contact" && q <= 0 && qv < 0) {
+          mode = "air"; v = B.restitution * vin;
+        }
+        const target = mode === "air" ? Math.min(B.stretch.max, B.stretch.perVelocity * Math.abs(v)) : 0;
+        stv += (-ks * (st - target) - cs * stv) * dt; st += stv * dt;
+      }
+    }
+    return { out, rate, n, contacts, keys, land };
+  }
+  const SIM = simulate();
+  function bounceAt(t) {
+    const x = Math.max(0, Math.min(SIM.n - 1, t * SIM.rate)), i = Math.floor(x), f = x - i, j = Math.min(SIM.n - 1, i + 1);
+    const o = SIM.out, L = (c) => o[i * 3 + c] + (o[j * 3 + c] - o[i * 3 + c]) * f;
+    return { y: L(0), sx: L(1), sy: L(2) };
+  }
+  /* The time a body step shows: its start, or the key (squash peak / apex) inside it. */
+  function sampleTime(n) {
+    const a = n / P.fps, b = (n + 1) / P.fps, key = SIM.keys.find(x => x >= a && x < b);
+    return key ?? (n === 0 ? 0 : (a + b) / 2);
+  }
+  const moving = (p) => p.y > 0.002 || Math.abs(p.sy - 1) > 0.01;
+
+  /* The timeline, chained from the landing and snapped to the clocks. */
+  const T = {};
+  T.land = SIM.land;
+  T.blink = snap(T.land + P.blink.delayAfterLand, P.blinkFps);
+  T.blinkEnd = T.blink + P.blink.frames.length / P.blinkFps;
+  T.cube = snap(T.blinkEnd + P.cube.delayAfterBlink);
+  T.lid = T.cube + P.lid.delayAfterCube;
+  T.bubble = snap(T.lid + P.bubble.delayAfterLid);
+  T.together = snap(T.bubble + P.bubble.poses.length / P.fps + P.blink.together.afterPop, P.blinkFps);
+  T.exit = snap(T.bubble + P.bubble.poses.length / P.fps + P.exit.holdAfterBubble);
+  T.end = T.exit + P.exit.levels.length / P.fps;
+  T.rest = T.exit - 0.001;
+
+  function blinkAt(t) {
+    const u = t - T.blink; if (u < 0) return 0;
+    const i = frameOf(u, P.blinkFps), j = frameOf(t - T.together, P.blinkFps), F = P.blink.together.frames;
+    if (j >= 0 && j < F.length) return F[j];
+    return i < P.blink.frames.length ? P.blink.frames[i] : 0;
+  }
+
+  /* Everything at time t (held to the step). */
+  function state(t) {
+    const n = frameOf(t), ts = n / P.fps;
+    const pose = bounceAt(sampleTime(n)), prev = n > 0 ? bounceAt(sampleTime(n - 1)) : null;
+    const wBoil = moving(pose) ? boil(n, 1) : NO_BOIL;
+    const ghost = prev && prev.y - pose.y > P.ghost.minStep
+      ? { pose: prev, boil: moving(prev) ? boil(n - 1, 1) : NO_BOIL } : null;
+    const cube = stepSpring(ts - T.cube, P.cube), lid = stepSpring(ts - T.lid, P.lid);
+    const cubeO = ladder(ts - T.cube, P.cube.levels, 0);
+    const shakerMoving = (cubeO > 0 && cube < 1) || (ts >= T.lid && lid < 1);
+    const ub = ts - T.bubble, bi = frameOf(ub);
+    const bubble = ub < 0 ? 0 : P.bubble.poses[Math.min(P.bubble.poses.length - 1, bi)];
+    const r = clamp01(pose.y / P.bounce.apex);
+    return {
+      t, n, ts, pose, wBoil, ghost, cube, lid, cubeO,
+      sBoil: shakerMoving ? boil(n, 2, P.boil.bigScale) : NO_BOIL,
+      bubble, bBoil: ub >= 0 && bi < P.bubble.poses.length - 1 ? boil(n, 3) : NO_BOIL,
+      shadow: { scale: 1 - P.bounce.shadow.shrinkAtApex * r, fade: (1 - P.bounce.shadow.fadeAtApex * r) * (1 - cubeO) ** 2 },
+      blink: blinkAt(t),
+      splash: ladder(ts, P.enter.levels, 0) * ladder(ts - T.exit, P.exit.levels, 1),
+    };
+  }
+
+  /* Attributes for the stage (shared by the page and the snapshot script). */
+  const EYE = { xs: [-0.112, 0.112], cy: -0.007, rx: 0.05075, ry: 0.0665, lid: 0.00875,
+                glints: [{ dx: -0.30, dy: -0.38 }, { dx: 0.38, dy: 0.36 }] };   // face units
+  function wooferTransform(p, b, f) {
+    const yb = G.bottom - p.y * G.D, ccy = yb - G.R * p.sy;
+    return `translate(${f(b.dx * innerPerPt)} ${f(b.dy * innerPerPt)}) rotate(${f(b.r)} ${G.cx} ${f(ccy)}) ` +
+           `translate(${G.cx} ${f(yb)}) scale(${f(p.sx, 4)} ${f(p.sy, 4)}) translate(${-G.cx} ${-G.bottom})`;
+  }
+  function attrs(s, theme) {
+    const f = (x, d = 3) => +x.toFixed(d);
+    const B = P.bounce, D = G.D;
+    const shW = B.shadow.width * D / 2 * s.shadow.scale * (s.pose.y === 0 ? s.pose.sx : 1), shH = B.shadow.height * D / 2 * s.shadow.scale;
+    const shO = (theme === "dark" ? B.shadow.opacityDark : B.shadow.opacityLight) * s.shadow.fade;
+    const cs = P.cube.fromScale + (1 - P.cube.fromScale) * s.cube;
+    const sb = s.sBoil, bb = s.bBoil;
+    const eyesOf = (E, kb) => {   // WooferFace's lid: closes toward the lower lash line into a capsule
+      const ry = E.ry + (E.lid - E.ry) * kb, cy = E.cy + (E.ry - ry) * 0.35;
+      const ends = E.rx + (E.lid - E.rx) * kb * kb, ga = Math.max(0, 1 - kb * 1.8);
+      const eyes = E.xs.map(x => ({ x: f(x - E.rx, 5), y: f(cy - ry, 5), width: f(2 * E.rx, 5), height: f(2 * ry, 5), rx: f(ends, 5), ry: f(ry, 5) }));
+      const glints = [];
+      E.xs.forEach(() => EYE.glints.forEach(g => glints.push({ cy: f(cy + g.dy * ry, 5), opacity: f(ga) })));
+      return { eyes, glints };
+    };
+    const { eyes, glints } = eyesOf(EYE, s.blink), mini = eyesOf(P.bubble.eye, s.blink);
+    const A = P.bubble.anchor;
+    return {
+      art: artTransform,
+      wooferWrap: { transform: wooferTransform(s.pose, s.wBoil, f) },
+      ghost: s.ghost ? { transform: wooferTransform(s.ghost.pose, s.ghost.boil, f), opacity: P.ghost.opacity } : { transform: "", opacity: 0 },
+      wShadow: { cx: f(G.cx + s.wBoil.dx * innerPerPt), cy: G.bottom + 4, rx: f(shW, 2), ry: f(shH, 2), opacity: f(shO) },
+      shaker: { transform: `translate(${f(sb.dx * innerPerPt)} ${f(sb.dy * innerPerPt)}) rotate(${f(sb.r)} ${G.cx} ${G.cy})` },
+      cubeWrap: { transform: `translate(${G.cx} ${G.cy}) scale(${f(cs, 5)}) translate(${-G.cx} ${-G.cy})`, opacity: f(s.cubeO) },
+      lidWrap: { transform: `translate(0 ${f(-P.lid.drop * innerPerPt * (1 - s.lid))})`, opacity: f(s.cubeO) },
+      bubbleSlot: { transform: `translate(${f(A.x + bb.dx)} ${f(A.y + bb.dy)}) rotate(${f(bb.r)}) scale(${f(s.bubble, 3)})`, opacity: s.bubble > 0 ? 1 : 0 },
+      eyes, glints, mini,
+      splash: { opacity: f(s.splash) },
+      app: { opacity: s.ts >= T.exit ? 1 : 0 },   // the popover under the overlay shows only once the exit begins
+    };
+  }
+  return { P, G, T, SIM, Dpt, state, attrs };
+})();
+</script>
+
+<script>
+(() => {
+  const $ = (q) => document.querySelector(q), NS = "http://www.w3.org/2000/svg";
+  const { P, T, state, attrs } = Engine;
+  const root = document.documentElement, note = $("#note"), scrub = $("#scrub"), clock = $("#clock");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+  let theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  let speed = 1, t = 0, playing = false, last = 0, layers = {}, eyeEls = [], glintEls = [], miniEls = [], miniGlints = [], shown = "";
+
+  $("#art").setAttribute("transform", attrs(state(0), theme).art);
+  scrub.max = T.end.toFixed(3);
+
+  async function load(set) {
+    const parse = async (f) => new DOMParser().parseFromString(await (await fetch(`layers/${set}/${f}`)).text(), "image/svg+xml");
+    const [cube, lid, woofer] = await Promise.all(["1-cube.svg", "2-lid.svg", "3-woofer.svg"].map(parse));
+    const get = async (u) => new DOMParser().parseFromString(await (await fetch(u)).text(), "image/svg+xml");
+    const [bubble, bg] = await Promise.all([get(set === "dark" ? "bubble/bubble-dark.svg" : "bubble/bubble.svg"), get(`bg/bg-${set}.svg`)]);
+    return { cube, lid, woofer, bubble, bg };
+  }
+  const imp = (doc, id) => document.importNode(doc.getElementById(id), true);
+
+  function mount(set) {
+    const L = layers[set], defs = $("#defs");
+    if (!defs.querySelector("#w-open")) {   // the layers share one set of clip paths and the AO filter
+      for (const n of L.woofer.querySelector("defs").children) if (n.id !== "bg") defs.appendChild(document.importNode(n, true));
+    }
+    $("#cubeWrap").replaceChildren(imp(L.cube, "shadow"), imp(L.cube, "body"));
+    $("#lidWrap").replaceChildren(imp(L.lid, "lid"), imp(L.lid, "holes"));
+    const face = imp(L.woofer, "face");   // the face sits beside the ring + cone group, on top
+    $("#wooferArt").replaceChildren(imp(L.woofer, "woofer"), face);
+    // The real face-eyes group: each pupil ellipse becomes the same ellipse as a rect (rx = w/2,
+    // ry = h/2), so the lid can close it into a capsule; the glints stay.
+    eyeEls = []; glintEls = [];
+    for (const el of [...face.querySelector("#face-eyes").children]) {
+      if (el.tagName === "ellipse") {
+        const r = document.createElementNS(NS, "rect");
+        r.setAttribute("fill", el.getAttribute("fill"));
+        el.replaceWith(r); eyeEls.push(r);
+      } else glintEls.push(el);
+    }
+    // Background: the teammate's whole SVG (its own defs + clip), as is.
+    $("#bgSlot").replaceChildren(...[...L.bg.documentElement.children].map(n => document.importNode(n, true)));
+    // Bubble: shape, text, mini face; the mini face's eyes get the same ellipse → rect swap.
+    const tip = P.bubble.tip, ba = $("#bubbleArt");
+    ba.setAttribute("transform", `translate(${-tip.x} ${-tip.y})`);
+    ba.replaceChildren(imp(L.bubble, "bubble-shape"), imp(L.bubble, "bubble-text"), imp(L.bubble, "bubble-face"));
+    miniEls = []; miniGlints = [];
+    for (const el of [...ba.querySelectorAll("#bubble-face .eye, #bubble-face .glint")]) {
+      if (el.classList.contains("eye")) {
+        const r = document.createElementNS(NS, "rect");
+        r.setAttribute("fill", el.getAttribute("fill"));
+        el.replaceWith(r); miniEls.push(r);
+      } else miniGlints.push(el);
+    }
+    const dark = set === "dark";
+    $("#bg0").setAttribute("stop-color", dark ? "#1E2A48" : "#E6ECFD");
+    $("#bg1").setAttribute("stop-color", dark ? "#0B1120" : "#D4DEFA");
+    $("#wShadow").setAttribute("fill", dark ? "#04070F" : "#7F90CF");
+    $("#ghost").setAttribute("fill", "#1E2D86");   // the woofer ring's ink, flat
+    shown = "";
+  }
+
+  function render() {
+    const s = state(t);
+    clock.textContent = t.toFixed(3) + " s"; scrub.value = t;
+    const key = s.n + "|" + s.blink + "|" + theme;        // the picture only changes on a step
+    if (key === shown) return; shown = key;
+    const a = attrs(s, theme);
+    $("#wooferWrap").setAttribute("transform", a.wooferWrap.transform);
+    const g = $("#ghost"); g.setAttribute("transform", a.ghost.transform); g.setAttribute("opacity", a.ghost.opacity);
+    const sh = $("#wShadow");
+    for (const k of ["cx", "cy", "rx", "ry", "opacity"]) sh.setAttribute(k, a.wShadow[k]);
+    $("#shaker").setAttribute("transform", a.shaker.transform);
+    for (const id of ["cubeWrap", "lidWrap", "bubbleSlot"]) {
+      const el = document.getElementById(id);
+      el.setAttribute("transform", a[id].transform); el.setAttribute("opacity", a[id].opacity);
+    }
+    eyeEls.forEach((el, i) => { for (const k in a.eyes[i]) el.setAttribute(k, a.eyes[i][k]); });
+    glintEls.forEach((el, i) => { el.setAttribute("cy", a.glints[i].cy); el.setAttribute("opacity", a.glints[i].opacity); });
+    miniEls.forEach((el, i) => { for (const k in a.mini.eyes[i]) el.setAttribute(k, a.mini.eyes[i][k]); });
+    miniGlints.forEach((el, i) => { el.setAttribute("cy", a.mini.glints[i].cy); el.setAttribute("opacity", a.mini.glints[i].opacity); });
+    $("#splash").style.opacity = a.splash.opacity; $("#app").style.opacity = a.app.opacity;
+  }
+
+  function frame(now) {
+    if (!playing) return;
+    // dt clamped to [0, 50 ms]: a hidden tab resumes where it paused instead of skipping ahead.
+    t = Math.min(T.end, t + Math.min(0.05, Math.max(0, (now - last) / 1000)) * speed); last = now;
+    render();
+    if (t >= T.end) { playing = false; return; }
+    requestAnimationFrame(frame);
+  }
+  function play(from = 0) {
+    t = from; playing = true; last = performance.now(); render(); requestAnimationFrame(frame);
+  }
+
+  function setTheme(next) {
+    theme = next; root.dataset.theme = next;
+    document.querySelectorAll("button[data-theme]").forEach(b => b.setAttribute("aria-pressed", b.dataset.theme === next));
+    if (layers[next]) { mount(next); render(); }
+  }
+
+  $("#replay").onclick = () => { note.textContent = reduce.matches ? "Reduce Motion is on: playing anyway because you asked. In the app this splash is skipped." : ""; play(0); };
+  document.querySelectorAll("[data-speed]").forEach(b => b.onclick = () => {
+    speed = +b.dataset.speed;
+    document.querySelectorAll("[data-speed]").forEach(x => x.setAttribute("aria-pressed", x === b));
+  });
+  document.querySelectorAll("button[data-theme]").forEach(b => b.onclick = () => setTheme(b.dataset.theme));
+  scrub.oninput = () => { playing = false; t = +scrub.value; render(); };
+
+  (async () => {
+    try {
+      [layers.light, layers.dark] = await Promise.all([load("light"), load("dark")]);
+    } catch (e) {
+      note.textContent = "Couldn't load the icon layers (open this page from the gallery server, not as a file).";
+      return;
+    }
+    setTheme(theme);
+    if (reduce.matches) {
+      t = T.rest; render();
+      note.textContent = "Reduce Motion is on, so the app skips this splash. Showing its resting frame; Replay plays it anyway.";
+    } else play(0);
+  })();
+})();
+</script>
+</body>
+</html>

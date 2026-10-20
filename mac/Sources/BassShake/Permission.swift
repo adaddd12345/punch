@@ -18,7 +18,7 @@ enum AudioCapturePermission {
   private static let handle: UnsafeMutableRawPointer? =
     dlopen("/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_NOW)
 
-  static func preflight() -> State {
+  private static func preflight() -> State {
     guard let handle, let sym = dlsym(handle, "TCCAccessPreflight") else { return .unknown }
     let fn = unsafeBitCast(sym, to: PreflightFn.self)
     switch fn(service, nil) {
@@ -28,21 +28,13 @@ enum AudioCapturePermission {
     }
   }
 
-  /// Non-blocking preflight: runs off the main thread and gives up after
-  /// `timeout`, so a slow or stalled TCC daemon can never freeze launch.
-  /// Completion is always called once, on the main thread.
+  private static let probe = SingleFlightProbe<State>(fallback: .unknown) { preflight() }
+
+  /// One shared off-main preflight, with independent caller deadlines. A
+  /// timeout cannot cancel TCC, so keep sharing its worker until it returns.
+  /// Completion is always called once, on main (including overload fallback).
   static func preflightAsync(timeout: TimeInterval = 2, _ completion: @escaping (State) -> Void) {
-    var delivered = false
-    let deliver: (State) -> Void = { s in
-      guard !delivered else { return }
-      delivered = true
-      completion(s)
-    }
-    DispatchQueue.global(qos: .userInitiated).async {
-      let s = preflight()
-      DispatchQueue.main.async { deliver(s) }
-    }
-    DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { deliver(.unknown) }
+    probe.request(timeout: timeout, completion: completion)
   }
 
   /// Shows the system prompt if the user hasn't decided yet.

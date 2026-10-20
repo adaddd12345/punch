@@ -72,6 +72,21 @@ struct MarketDataCheck {
     check(apple.points.count == 3 && apple.points[1].price == nil, "Preserve a missing sample as a real gap")
     check(apple.points.last?.time == Date(timeIntervalSince1970: 1_792_094_400), "A missing sample cannot shift subsequent timestamps")
 
+    // Formatter reuse must preserve the exact existing text across exchanges,
+    // seasonal offsets, missing zones, and repeated zone switching.
+    for zone in ["America/New_York", "Asia/Bangkok", "UTC", "Europe/London", "invalid", nil] as [String?] {
+      let reference = DateFormatter()
+      reference.locale = Locale(identifier: "en_US_POSIX")
+      reference.dateFormat = "d MMM yyyy, HH:mm z"
+      reference.timeZone = zone.flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)
+      for offset in [0.0, 15_552_000.0, 0.0] {
+        var quote = apple
+        quote.exchangeTimezone = zone
+        quote.quotedAt = received.addingTimeInterval(offset)
+        check(quote.timestampText == reference.string(from: quote.quotedAt!), "Cached timestamp preserves zone and seasonal offset")
+      }
+    }
+
     let derived = MarketData.decodeYahoo(batch([yahoo(price: 105.0, percent: nil, previous: 100)]), receivedAt: received)["y:AAPL"]!
     check(abs((derived.change ?? -100) - 5) < 0.00001, "Derive movement from the prior close when necessary")
     let unknown = MarketData.decodeYahoo(batch([yahoo(percent: nil, previous: nil)]), receivedAt: received)["y:AAPL"]!

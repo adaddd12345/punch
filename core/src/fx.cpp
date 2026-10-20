@@ -162,7 +162,10 @@ void DjFx::prepare(double sampleRate, int numChannels) {
   crushMix_.prepare(sampleRate, 15.0);
   driveMix_.prepare(sampleRate, 15.0);
   delayLen_ = std::max(1, int(std::lround(0.375 * sampleRate)));
-  for (auto& d : delay_) d.assign(size_t(delayLen_), 0.f);
+  // Only prepared channels can be processed. Avoid allocating (and later
+  // clearing on the IO thread) six unused echo lines for a stereo route.
+  for (int c = 0; c < numChannels_; ++c) delay_[size_t(c)].assign(size_t(delayLen_), 0.f);
+  for (int c = numChannels_; c < kMaxChannels; ++c) delay_[size_t(c)] = std::vector<float>();
   setParams(p_);
   for (auto* s : {&gLow_, &gMid_, &gHigh_, &isoWet_, &filterPos_, &filterWet_, &echoSend_, &crushMix_, &driveMix_})
     s->snap(s->target());

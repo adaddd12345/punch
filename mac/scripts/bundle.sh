@@ -36,6 +36,8 @@ sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" mac/Resources/Info.pli
 cp mac/Resources/MenuBarIcon*.png "$APP/Contents/Resources/"
 # Optional preset-icon artwork (PresetIcons/<sf-symbol-or-id>.png).
 if [ -d mac/Resources/PresetIcons ]; then cp -R mac/Resources/PresetIcons "$APP/Contents/Resources/"; fi
+# The launch splash's baked frames (ShakerSplash.swift).
+if [ -d mac/Resources/Splash ]; then cp -R mac/Resources/Splash "$APP/Contents/Resources/"; fi
 # Optional App Icon colourways (right-click › App Icon): AppIconVariants/{light,dark,freezing,ember}.png.
 if [ -d mac/Resources/AppIconVariants ]; then cp -R mac/Resources/AppIconVariants "$APP/Contents/Resources/"; fi
 

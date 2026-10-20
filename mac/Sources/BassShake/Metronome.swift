@@ -62,9 +62,10 @@ enum MetronomeBeat: Int, Codable {
 
   private init() {
     // The song's tempo, while following (or while idle and never set by hand),
-    // so the number is never a stale 120 under an 85 BPM song.
-    sink = MusicSense.shared.$snapshot.sink { [weak self] s in
-      MainActor.assumeIsolated { self?.songChanged(s) }
+    // so the number is never a stale 120 under an 85 BPM song. The settled
+    // whole-number tempo (TempoReadings), so it never flicks between two.
+    sink = TempoReadings.shared.$bpm.sink { [weak self] b in
+      MainActor.assumeIsolated { self?.songChanged(b) }
     }
   }
 
@@ -101,7 +102,7 @@ enum MetronomeBeat: Int, Codable {
     guard on != following else { return }
     following = on
     if on {
-      takeSongTempo(MusicSense.shared.snapshot)
+      takeSongTempo(TempoReadings.shared.bpm)
       if running { followTick() }
     } else if running {
       restart(at: nil)   // carry on at the same tempo, on its own
@@ -191,17 +192,17 @@ enum MetronomeBeat: Int, Codable {
 
   // MARK: Following the song
 
-  private func songChanged(_ s: MusicSenseSnapshot) {
+  private func songChanged(_ bpm: Int?) {
     if following {
-      takeSongTempo(s)
-    } else if !running, !userSet, s.bpmShown, let b = s.bpm {
-      setBPM(b)
+      takeSongTempo(bpm)
+    } else if !running, !userSet, let b = bpm {
+      setBPM(Double(b))
     }
   }
 
-  private func takeSongTempo(_ s: MusicSenseSnapshot) {
-    guard s.bpmShown, let b = s.bpm else { return }
-    let v = min(Self.range.upperBound, max(Self.range.lowerBound, b.rounded()))
+  private func takeSongTempo(_ song: Int?) {
+    guard let b = song else { return }
+    let v = min(Self.range.upperBound, max(Self.range.lowerBound, Double(b)))
     if v != bpm { bpm = v }
   }
 

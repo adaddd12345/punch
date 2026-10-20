@@ -9,7 +9,7 @@
 // profile stays applied underneath whatever preset the user picks.
 //
 // Threading contract:
-//   * prepare() / control setters / publish(): one control thread (main).
+//   * prepare() / control setters / publish(): one serial control thread/queue.
 //   * process*(): the real-time IO thread only. Never allocates or locks.
 //   * takeMeters(): any single polling thread.
 #pragma once
@@ -126,6 +126,10 @@ class Engine {
 
   EngineParams pending_;
   double effectivePreampDb_ = 0.0;
+  // Control-thread-only cache. Headroom depends on the EQ shapes, sample
+  // rate and bass-priority scan boundary, not on Boost, fades or DJ edits.
+  EqParams headroomEq_, headroomCorrection_;
+  double headroomRate_ = 0.0, headroomMinHz_ = 0.0, headroomPeakDb_ = 0.0;
   TripleBuffer<EngineParams> mailbox_;
   EngineParams live_;
 

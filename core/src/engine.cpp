@@ -108,8 +108,17 @@ void Engine::publish() {
   // boosts well above the crossover turn the whole mix down.
   const bool bassPriority = snap.limiter.enabled && snap.limiter.bassPriorityHz > 0.f && !snap.bypass;
   const double minHz = bassPriority ? 2.0 * double(snap.limiter.bassPriorityHz) : 20.0;
-  if (snap.autoPreamp)
-    effectivePreampDb_ = std::min(effectivePreampDb_, -eqPeakBoostDb({&snap.correction, &snap.eq}, sampleRate_, minHz));
+  if (snap.autoPreamp) {
+    if (headroomRate_ != sampleRate_ || headroomMinHz_ != minHz ||
+        headroomEq_ != snap.eq || headroomCorrection_ != snap.correction) {
+      headroomPeakDb_ = eqPeakBoostDb({&snap.correction, &snap.eq}, sampleRate_, minHz);
+      headroomEq_ = snap.eq;
+      headroomCorrection_ = snap.correction;
+      headroomRate_ = sampleRate_;
+      headroomMinHz_ = minHz;
+    }
+    effectivePreampDb_ = std::min(effectivePreampDb_, -headroomPeakDb_);
+  }
   snap.correction.preampDb = float(effectivePreampDb_);
   snap.eq.preampDb = 0.f;
   mailbox_.write(snap);
@@ -342,16 +351,36 @@ void Engine::processInterleaved(const float* in, float* out, int numChannels, in
     const int n = std::min(maxFrames_, numFrames - start);
     const float* src = in + size_t(start) * size_t(numChannels);
     float* dst = out + size_t(start) * size_t(numChannels);
-    for (int c = 0; c < nc; ++c) {
-      float* s = scratchPtrs_[size_t(c)];
-      for (int i = 0; i < n; ++i) s[i] = src[size_t(i) * size_t(numChannels) + size_t(c)];
+    if (numChannels == 2 && nc == 2) {
+      // Fixed stereo strides let the compiler vectorize layout conversion.
+      // Only copies change; DSP still sees the same planar samples/chunks.
+      float* left = scratchPtrs_[0];
+      float* right = scratchPtrs_[1];
+      for (int i = 0; i < n; ++i) {
+        left[i] = src[size_t(i) * 2];
+        right[i] = src[size_t(i) * 2 + 1];
+      }
+    } else {
+      for (int c = 0; c < nc; ++c) {
+        float* s = scratchPtrs_[size_t(c)];
+        for (int i = 0; i < n; ++i) s[i] = src[size_t(i) * size_t(numChannels) + size_t(c)];
+      }
     }
     processPlanar(scratchPtrs_.data(), nc, n);
-    for (int i = 0; i < n; ++i) {
-      for (int c = 0; c < nc; ++c) dst[size_t(i) * size_t(numChannels) + size_t(c)] = scratchPtrs_[size_t(c)][i];
-      // Channels beyond what we process pass through untouched.
-      for (int c = nc; c < numChannels; ++c)
-        dst[size_t(i) * size_t(numChannels) + size_t(c)] = src[size_t(i) * size_t(numChannels) + size_t(c)];
+    if (numChannels == 2 && nc == 2) {
+      const float* left = scratchPtrs_[0];
+      const float* right = scratchPtrs_[1];
+      for (int i = 0; i < n; ++i) {
+        dst[size_t(i) * 2] = left[i];
+        dst[size_t(i) * 2 + 1] = right[i];
+      }
+    } else {
+      for (int i = 0; i < n; ++i) {
+        for (int c = 0; c < nc; ++c) dst[size_t(i) * size_t(numChannels) + size_t(c)] = scratchPtrs_[size_t(c)][i];
+        // Channels beyond what we process pass through untouched.
+        for (int c = nc; c < numChannels; ++c)
+          dst[size_t(i) * size_t(numChannels) + size_t(c)] = src[size_t(i) * size_t(numChannels) + size_t(c)];
+      }
     }
   }
 }

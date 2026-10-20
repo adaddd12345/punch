@@ -115,6 +115,7 @@ struct PlayingChannelMini<Chip: View>: View {
     return Button { if locked { model.open(app) } else { model.primary(app) } } label: {
       NowArt(artwork: artwork, favicon: favicon, icon: model.icon(app), size: art,
              spinning: model.barsLit(stack.entry(for: app)), paused: !playing)
+        .environment(\.artworkIsVideo, stack.entry(for: app).isVideo)
         .onSleeve(size: art) {
           if showGlyph {
             ZStack {

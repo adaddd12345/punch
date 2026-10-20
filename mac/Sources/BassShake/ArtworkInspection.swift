@@ -127,6 +127,8 @@ private struct InspectableArtwork: ViewModifier {
   @State private var hovered = false
   /// This artwork launched the open card: it steps aside while the card is up.
   @State private var launched = false
+  /// Where the sleeve sits in global space (a reference: writing it redraws nothing).
+  @State private var globalOrigin = GlobalOrigin()
 
   func body(content: Content) -> some View {
     let away = launched && inspecting
@@ -140,18 +142,28 @@ private struct InspectableArtwork: ViewModifier {
       .overlayPreferenceValue(ArtworkInspectionSourceKey.self) { anchor in
       if let image, let inspect {
         GeometryReader { geometry in
+          // Only local geometry in the body: reading the global frame here
+          // re-ran it whenever the popup's ScrollView republished its geometry.
           let local = anchor.map { geometry[$0] } ?? CGRect(origin: .zero, size: geometry.size)
-          let origin = geometry.frame(in: .global).origin
-          let rect = local.offsetBy(dx: origin.x, dy: origin.y)
           Button {
             launched = true
-            inspect(image, rect, effect, reduceMotion, powerSaver, entry,
+            let o = globalOrigin.point
+            inspect(image, local.offsetBy(dx: o.x, dy: o.y), effect, reduceMotion, powerSaver, entry,
                     ArtworkInspectionDesign(style: style, material: material, perspective: perspective, glass: glass, chrome: chrome))
           } label: {
             Color.clear.contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .onChange(of: rect) { _, now in if launched && inspecting { report?(now) } }
+          // The sleeve's moves matter only while its card is up.
+          .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .global).origin }) { o in
+            globalOrigin.point = o
+            if launched && inspecting { report?(local.offsetBy(dx: o.x, dy: o.y)) }
+          }
+          .onChange(of: local) { _, now in
+            guard launched && inspecting else { return }
+            let o = globalOrigin.point
+            report?(now.offsetBy(dx: o.x, dy: o.y))
+          }
           // Warm the caches on approach so a click starts the turn at once.
           .onHover { inside in
             hovered = inside
@@ -406,6 +418,8 @@ private struct ArtworkInspectionOverlay: View {
   @Environment(\.popupChrome) private var chrome
   @Environment(\.artworkStyle) private var artworkStyle
   @Environment(\.vinylMaterial) private var vinylMaterial
+  @Environment(\.peekRecord) private var peekRecord
+  @Environment(\.discMaterial) private var discMaterial
   @Environment(\.artworkPerspective) private var perspective
   @Environment(\.appGlassEnabled) private var glass
   @ObservedObject private var now = NowPlaying.shared
@@ -636,7 +650,9 @@ private struct ArtworkInspectionOverlay: View {
       ZStack {
         if artworkStyle == .vinyl {
           let colours = ArtPalettes.shared.cached(labelArtwork) ?? .neutral
-          VinylRecord(material: vinylMaterial, artwork: labelArtwork, record: colours.record(dark: palette.dark),
+          VinylRecord(material: vinylMaterial,
+                      disc: peekRecord == .disc || (peekRecord == .match && entry?.isVideo == true) ? discMaterial : nil,
+                      artwork: labelArtwork, record: colours.record(dark: palette.dark),
             label: colours.label(dark: palette.dark), diameter: height * 0.92,
             dark: palette.dark, spinning: false)
             .frame(width: height * 0.92, height: height * 0.92)

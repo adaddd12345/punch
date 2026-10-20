@@ -60,6 +60,23 @@ typedef struct {
 
 BSRenderStats BSRenderContextStats(const BSRenderContext* ctx);
 
+// Optional diagnostics, configured once before IO starts. Disabled by default.
+// Uses raw host-clock ticks and actual frame counts; never captures audio.
+bool BSRenderContextEnableTiming(BSRenderContext* ctx, double sampleRate);
+enum { BSRenderTimingBucketCount = 16 };
+typedef struct {
+  bool enabled;
+  double nanosecondsPerTick;
+  uint64_t callbacks;
+  uint64_t totalTicks;
+  uint64_t maxTicks;
+  uint64_t overBudgetCallbacks;
+  // Bucket i=0..14: elapsed <= 2^(i+3) microseconds. Bucket 15: overflow.
+  uint64_t buckets[BSRenderTimingBucketCount];
+} BSRenderTiming;
+// Cumulative, approximate snapshot while IO runs (no reset or RT-side locks).
+BSRenderTiming BSRenderContextTiming(const BSRenderContext* ctx);
+
 // The AudioDeviceIOProc. clientData must be a BSRenderContext*. Nullability
 // matches Core Audio's AudioDeviceIOProc typedef so Swift can pass it
 // directly as a @convention(c) function.
@@ -68,12 +85,30 @@ OSStatus BSIOProc(AudioObjectID device, const AudioTimeStamp* now, const AudioBu
                   void* _Nullable clientData);
 
 // ---- crash guard
-// A muted process tap that outlives us would silence the whole Mac. We
-// record the live tap/aggregate IDs here and tear them down from fatal and
-// termination signal handlers (best effort; Core Audio calls are not
-// async-signal-safe, but the process is dying anyway — FineTune does the
-// same). Install once at launch.
+// Record the live tap/aggregate IDs for normal exit and watchdog rescue.
+// Signal handlers exit/re-raise without calling HAL (it is not signal-safe);
+// coreaudiod releases a dead client's private objects. Install once at launch.
 void BSCrashGuardInstall(void);
+// Production pipeline registry. Owners must be nonzero and strictly increase
+// between pipelines. Publish the tap first, then add its aggregate with the
+// same owner. False means this publication was refused: the caller owns only
+// newly-created, unpublished IDs and must dispose of those itself.
+// A retired/claimed owner can never republish; no owner can publish while
+// rescue destruction is in flight (until it outlives the ~500 ms bound). All functions below are control-thread-only.
+bool BSCrashGuardSetOwned(AudioObjectID aggregate, AudioObjectID tap, uint64_t owner);
+// Atomically claims only the requested owner; true means teardown attempted.
+// False also means publication is
+// currently in progress; the watchdog may retry. No HAL call holds a mutex.
+bool BSCrashGuardFailOpenOwned(uint64_t owner);
+// Release/Clear wait (bounded, ~500 ms) for this owner's in-flight rescue
+// destruction. True: callers may free callback state. False: the HAL destroy
+// failed or has not returned in time (wedged coreaudiod) and the IOProc may
+// still run, so the caller must leak the render context rather than free it.
+// Waits release the registry mutex and never block indefinitely.
+bool BSCrashGuardReleaseOwned(uint64_t owner, AudioObjectID aggregate, AudioObjectID tap,
+                              bool* ownsAggregate, bool* ownsTap);
+bool BSCrashGuardClearOwned(uint64_t owner);
+
 void BSCrashGuardSet(AudioObjectID aggregate, AudioObjectID tap);
 void BSCrashGuardClear(void);
 // Hands this pipeline's IDs back from the guard. *owns… is false for an ID
@@ -82,7 +117,8 @@ void BSCrashGuardClear(void);
 void BSCrashGuardRelease(AudioObjectID aggregate, AudioObjectID tap, bool* ownsAggregate, bool* ownsTap);
 // Rescue path (never the IO thread, never main): destroys the guarded
 // aggregate and tap now so the original audio plays unprocessed. Used when
-// the audio queue is wedged in a HAL call. True if anything was destroyed.
+// the audio queue is wedged in a HAL call. True if ownership was claimed and
+// teardown was attempted; a HAL error is not a confirmed successful destroy.
 bool BSCrashGuardFailOpen(void);
 bool BSCrashGuardHoldsTap(void);
 // Extra taps destroyed by the same guard: the Live Channels per-app mute

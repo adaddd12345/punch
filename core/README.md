@@ -32,11 +32,20 @@ Real-time guarantees, all enforced by tests:
 cmake -S core -B core/build && cmake --build core/build -j
 ctest --test-dir core/build --output-on-failure
 core/build/punch_bench                       # CPU cost of the full chain
+core/build/punch_bench --control             # EQ/non-EQ publish cost, repeated medians
+core/build/punch_bench --limiter             # isolated limiter throughput
+core/build/punch_bench --callbacks           # p50/p95/p99 across rates/block sizes
 core/build/punch_render in.wav out.wav --apo profile.txt --bass 0.6 --width 1.3 --gain 6
 cmake -S core -B core/build-asan -DPUNCH_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug   # ASan/UBSan
 ```
 
-Measured on the Linux x86 CI container: 16-band EQ + bass + width + crossfeed
+Historically measured on the Linux x86 CI container: 16-band EQ + bass + width + crossfeed
 + limiter, stereo 48 kHz, 512-frame blocks = **~1.2 % of one core** (126 µs
-per 10.7 ms block). Apple Silicon P-cores are expected to be faster but have not
-been measured yet.
+per 10.7 ms block).
+
+That historical figure predates the benchmark's fresh-input and analyzer-drain
+fixes. Current runs keep the input signal alive and the analyzer feed writable;
+compare revisions with the same harness. The optional callback benchmark is an
+offline CPU measurement, not a Core Audio deadline or battery-life measurement.
+See [the 2026-10-18 plumbing audit](../docs/research/38-rt-optimization.md) for
+native arm64 measurements, preserved audio equivalence, and remaining work.

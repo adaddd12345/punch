@@ -124,7 +124,8 @@ final class MacVolume: ObservableObject {
     started = true
     queue.async {
       let l = PropertyListeners(queue: MacVolume.listenerQueue)
-      let rewatch: () -> Void = { [weak self] in self?.queue.async { self?.rewatch() } }
+      let refresh = LatestValueDelivery<Void>(queue: self.queue) { [weak self] _ in self?.rewatch() }
+      let rewatch: () -> Void = { refresh.submit(()) }
       // Device death is covered by each device's DeviceIsAlive listener.
       l.add(systemObject, .global(kAudioHardwarePropertyDefaultOutputDevice), rewatch)
       l.add(systemObject, .global(kAudioHardwarePropertyServiceRestarted)) { [weak self] in
@@ -311,7 +312,10 @@ final class MacVolume: ObservableObject {
     base = b
 
     let l = PropertyListeners(queue: MacVolume.listenerQueue)
-    let poke: () -> Void = { [weak self] in self?.queue.async { self?.readSoon() } }
+    // Coalesce before hopping queues as well as before the read. A slow HAL
+    // write must not accumulate one queued closure for every listener echo.
+    let reads = LatestValueDelivery<Void>(queue: queue) { [weak self] _ in self?.readSoon() }
+    let poke: () -> Void = { reads.submit(()) }
     // VirtualMainVolume also fires for per-channel volume changes.
     if HAL.has(id, Self.volumeAddress) { l.add(id, Self.volumeAddress, poke) }
     for el in els { l.add(id, Self.muteAddress(el), poke) }

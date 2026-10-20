@@ -1574,12 +1574,11 @@ final class NowPlaying: ObservableObject {
 
   // MARK: - Automation permission (AutomationGate; checks off main)
 
-  /// Artist Mode's explicit, source-level tempo command. Reuses the browser
-  /// bridge and process-wide AppleScript lock; never touches capture or the HAL.
+  /// The BPM popup's YouTube speed: an explicit, source-level command. Reuses the
+  /// browser bridge and process-wide AppleScript lock; never touches capture or the HAL.
   func tempo(_ target: BrowserTempoTarget, operation: BrowserTempoScript.Operation,
              token: String, rate: Double, completion: @escaping (BrowserTempoReply) -> Void) {
-    guard controller?.settings.artistMode == true || operation == .restore,
-          controller?.settings.playingDetails == true, gate.isOn(target.browser.rawValue),
+    guard controller?.settings.playingDetails == true || operation == .restore, gate.isOn(target.browser.rawValue),
           !denied.contains(target.browser.rawValue) else {
       completion(BrowserTempoReply(error: "permission")); return
     }

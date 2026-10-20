@@ -404,14 +404,10 @@ private struct PointerHintModifier: ViewModifier {
   func body(content: Content) -> some View {
     let space = CoordinateSpace.named(PointerHintSpace.name)
     content
-      .background(
-        GeometryReader { g in
-          let f = g.frame(in: space)
-          Color.clear
-            .onAppear { box.rect = f }
-            .onChange(of: f) { _, nf in box.rect = nf }
-        }
-      )
+      // A geometry callback, not a GeometryReader: a reader that converts into
+      // the root space re-ran its body whenever the popup's ScrollView
+      // republished its geometry (every frame while the meters tick).
+      .onGeometryChange(for: CGRect.self, of: { $0.frame(in: space) }) { box.rect = $0 }
       .onContinuousHover(coordinateSpace: space) { phase in
         guard let hub, on || essential else { return }
         switch phase {

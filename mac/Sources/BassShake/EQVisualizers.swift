@@ -27,19 +27,17 @@ struct EQFrequencyArtwork: View {
   /// Phosphor's memory: this view's own, so previews never share one.
   @State private var phosphorField = EQPhosphorField()
 
-  /// What's drawn, bottom to top.
-  private var layers: [EQVisual] {
-    switch style {
-    case .off: return []
-    case .heat: return [.heat]
-    case .phosphor: return [.phosphor]
-    default: return heatBehind ? [.heat, style] : [style]
-    }
+  /// The drawing inputs as plain values: a Canvas closure that captures this
+  /// view (its @State and @Environment) is synced back to the main thread,
+  /// which defeated `rendersAsynchronously`.
+  private var painter: EQArtworkPainter {
+    EQArtworkPainter(frame: frame, color: color, style: style, focus: focus,
+                     heatBehind: heatBehind, avoidY: avoidY, still: still)
   }
 
   var body: some View {
     let hi = contrast == .increased, dark = scheme == .dark
-    let layers = self.layers
+    let layers = painter.layers
     ZStack {
       if style.drawsOwnGrid {
         EQTracePaper(topDb: frame.topDb, bottomDb: frame.bottomDb, avoidY: avoidY)
@@ -79,15 +77,38 @@ struct EQFrequencyArtwork: View {
     // Read here, on the main thread: the Canvas renders off it, where a
     // view's state isn't reliable.
     let field = phosphorField
+    let painter = self.painter
     return Canvas(rendersAsynchronously: true) { context, size in
-      draw(&context, size: size, mode: mode, notes: notes, hi: hi, dark: dark, field: field)
+      painter.draw(&context, size: size, mode: mode, notes: notes, hi: hi, dark: dark, field: field)
     }
     .opacity(dataOpacity)
+  }
+}
+
+/// Everything EQFrequencyArtwork draws, from plain values only (safe to run
+/// on the Canvas's render thread).
+private struct EQArtworkPainter {
+  let frame: SpectrumFrame
+  let color: Color
+  let style: EQVisual
+  let focus: ClosedRange<Double>?
+  let heatBehind: Bool
+  let avoidY: CGFloat?
+  let still: Bool
+
+  /// What's drawn, bottom to top.
+  var layers: [EQVisual] {
+    switch style {
+    case .off: return []
+    case .heat: return [.heat]
+    case .phosphor: return [.phosphor]
+    default: return heatBehind ? [.heat, style] : [style]
+    }
   }
 
   private typealias Ink = (inout GraphicsContext) -> Void
 
-  private func draw(_ context: inout GraphicsContext, size: CGSize, mode: EQVisual, notes: Bool, hi: Bool, dark: Bool,
+  func draw(_ context: inout GraphicsContext, size: CGSize, mode: EQVisual, notes: Bool, hi: Bool, dark: Bool,
                     field: EQPhosphorField) {
     guard size.width > 0, size.height > 0 else { return }
     let plot = EQPlotGeometry(size: size, scale: context.environment.displayScale)

@@ -45,18 +45,23 @@ double eqPeakBoostDb(std::initializer_list<const EqParams*> stages, double sampl
 
 double eqPeakBoostDb(const EqParams& p, double sampleRate) { return eqPeakBoostDb({&p}, sampleRate); }
 
-void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::vector<double>& outDb) {
+void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::span<double> outDb) {
   const size_t n = outDb.size();
   if (n == 0) return;
-  std::vector<SvfCoeffs> cs;
-  for (int i = 0; i < p.numBands; ++i)
-    if (p.bands[size_t(i)].enabled) cs.push_back(SvfCoeffs::make(p.bands[size_t(i)], sampleRate));
+  std::array<SvfCoeffs, kMaxEqBands> cs;
+  size_t used = 0;
+  for (int i = 0; i < std::clamp(p.numBands, 0, kMaxEqBands); ++i)
+    if (p.bands[size_t(i)].enabled) cs[used++] = SvfCoeffs::make(p.bands[size_t(i)], sampleRate);
   for (size_t k = 0; k < n; ++k) {
     const double hz = n == 1 ? lo : lo * std::pow(hi / lo, double(k) / double(n - 1));
     double db = p.preampDb;
-    for (const auto& c : cs) db += c.magnitudeDb(hz, sampleRate);
+    for (size_t i = 0; i < used; ++i) db += cs[i].magnitudeDb(hz, sampleRate);
     outDb[k] = db;
   }
+}
+
+void eqResponseCurve(const EqParams& p, double sampleRate, double lo, double hi, std::vector<double>& outDb) {
+  eqResponseCurve(p, sampleRate, lo, hi, std::span<double>(outDb));
 }
 
 void ParametricEq::prepare(double sampleRate, int numChannels) {

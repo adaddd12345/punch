@@ -75,6 +75,8 @@ struct AppearancePanelView: View {
                 .environment(\.artworkEffect, controller.settings.artworkEffect)
                 .environment(\.artworkFoil, controller.settings.artworkFoil)
                 .environment(\.vinylMaterial, controller.settings.vinylMaterial)
+                .environment(\.peekRecord, controller.settings.peekRecord)
+                .environment(\.discMaterial, controller.settings.discMaterial)
                 .padding(.bottom, showsLiveEQ ? 0 : controller.settings.playerArtworkLayout == .compact ? -20 : 12)
                 .id("appearance-preview")
               Section {
@@ -86,6 +88,7 @@ struct AppearancePanelView: View {
                     finish
                     holographicFinish
                     vinyl
+                    disc
                   case .background:
                     breathingRoom
                     backgrounds
@@ -313,6 +316,10 @@ struct AppearancePanelView: View {
           .accessibilityLabel(style.title)
         }
       }
+      Toggle("Mono", isOn: bind(\.monoStyle))
+        .toggleStyle(.switch).controlSize(.small)
+        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .help("Hides every cover and tint; titles carry the player.")
       Toggle("Cover perspective", isOn: bind(\.artworkPerspective))
         .toggleStyle(.switch).controlSize(.small)
         .font(.system(size: 11, weight: .medium, design: .rounded))
@@ -495,6 +502,40 @@ struct AppearancePanelView: View {
                  }) {
             previewSurface {
               AppearanceRecordPreview(image: cover, material: material, dark: scheme == .dark)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private var disc: some View {
+    section("Disc") {
+      VStack(spacing: 10) {
+        Picker("Record", selection: Binding(get: { controller.settings.peekRecord }, set: {
+          controller.settings.peekRecord = $0
+          controller.settings.artworkStyle = .vinyl
+        })) {
+          Text("Match").tag(PeekRecord.match)
+          Text("Vinyl").tag(PeekRecord.vinyl)
+          Text("Disc").tag(PeekRecord.disc)
+        }
+        .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+        .pointerHint(PointerHint("Record", does: "Match spins a disc for video and vinyl for music."))
+        LazyVGrid(columns: vinylColumns, spacing: 8) {
+          ForEach(DiscMaterial.allCases) { material in
+            choice(material.title,
+                   selected: controller.settings.artworkStyle == .vinyl && controller.settings.peekRecord != .vinyl
+                     && controller.settings.discMaterial == material,
+                   labelLines: 1,
+                   action: {
+                     controller.settings.discMaterial = material
+                     controller.settings.artworkStyle = .vinyl
+                     if controller.settings.peekRecord == .vinyl { controller.settings.peekRecord = .match }
+                   }) {
+              previewSurface {
+                AppearanceRecordPreview(image: cover, material: .artwork, disc: material, dark: scheme == .dark)
+              }
             }
           }
         }
@@ -764,6 +805,7 @@ struct AppearanceArtworkPreview: View {
 private struct AppearanceRecordPreview: View {
   let image: NSImage
   let material: VinylMaterial
+  var disc: DiscMaterial? = nil
   let dark: Bool
   @State private var extracted: (id: ObjectIdentifier, palette: ArtPalette)?
 
@@ -771,7 +813,7 @@ private struct AppearanceRecordPreview: View {
     let id = ObjectIdentifier(image)
     let palette = ArtPalettes.shared.cached(image)
       ?? (extracted?.id == id ? extracted?.palette : nil) ?? .neutral
-    VinylRecord(material: material, artwork: image, record: palette.record(dark: dark),
+    VinylRecord(material: material, disc: disc, artwork: image, record: palette.record(dark: dark),
                 label: palette.label(dark: dark), diameter: 48, dark: dark, spinning: false)
       .frame(width: 48, height: 48)
       .task(id: id) {

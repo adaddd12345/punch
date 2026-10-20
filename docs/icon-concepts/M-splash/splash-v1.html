@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Splash Preview</title>
+<style>
+  :root {
+    --page: #eef1f7; --ink: #1d1d1f; --muted: #6e6e73; --ctl: rgba(0,0,0,0.05); --ctl-on: #ffffff;
+    --ctl-ink: #1d1d1f; --hair: rgba(0,0,0,0.08);
+    --desk: #dfe4ee; --pop: rgba(255,255,255,0.78); --pop-edge: rgba(0,0,0,0.06); --pop-block: rgba(30,45,134,0.07);
+    --pop-hero: rgba(63,105,221,0.16);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #0d0f16; --ink: #f5f5f7; --muted: #98989d; --ctl: rgba(255,255,255,0.07); --ctl-on: rgba(255,255,255,0.18);
+      --ctl-ink: #f5f5f7; --hair: rgba(255,255,255,0.1);
+      --desk: #161a26; --pop: rgba(40,44,58,0.82); --pop-edge: rgba(255,255,255,0.08); --pop-block: rgba(255,255,255,0.06);
+      --pop-hero: rgba(123,155,240,0.18);
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #0d0f16; --ink: #f5f5f7; --muted: #98989d; --ctl: rgba(255,255,255,0.07); --ctl-on: rgba(255,255,255,0.18);
+    --ctl-ink: #f5f5f7; --hair: rgba(255,255,255,0.1);
+    --desk: #161a26; --pop: rgba(40,44,58,0.82); --pop-edge: rgba(255,255,255,0.08); --pop-block: rgba(255,255,255,0.06);
+    --pop-hero: rgba(123,155,240,0.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--page); color: var(--ink); font: 13px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  main { min-height: 100svh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 16px; }
+  .frame {
+    --side: min(calc(100vw - 32px), calc(100svh - 132px));
+    width: var(--side); height: var(--side); position: relative; overflow: hidden;
+    border-radius: calc(var(--side) * 0.03); background: var(--desk);
+    box-shadow: 0 0 0 1px var(--hair), 0 18px 50px rgba(0,0,0,0.12);
+  }
+  .splash { position: absolute; inset: 0; will-change: opacity, transform; }
+  .splash svg { display: block; width: 100%; height: 100%; }
+  #title { font-family: -apple-system, "SF Pro Display", BlinkMacSystemFont, system-ui, sans-serif; font-weight: 600; }
+  /* The app, revealed underneath: a soft placeholder of the popover. */
+  .app { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0; will-change: opacity, transform; }
+  .pop { width: 56%; height: 74%; border-radius: 5.2%/4%; background: var(--pop); box-shadow: 0 0 0 1px var(--pop-edge), 0 12px 40px rgba(0,0,0,0.10);
+         padding: 5% 4.6%; display: grid; grid-template-rows: auto 1fr auto auto; gap: 4.2%; }
+  .pop i { display: block; border-radius: 999px; background: var(--pop-block); }
+  .pop .row { display: flex; gap: 6%; align-items: center; }
+  .pop .hero { border-radius: 9%/14%; background: var(--pop-hero); }
+  .pop .pills { display: flex; gap: 4%; }
+  .pop .pills i { flex: 1; height: calc(var(--side) * 0.05); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: center; max-width: 100%; }
+  button { font: inherit; color: var(--ctl-ink); border: 0; cursor: pointer; }
+  .replay { background: #0071e3; color: #fff; padding: 5px 14px; border-radius: 999px; font-weight: 600; }
+  .seg { display: inline-flex; background: var(--ctl); border-radius: 8px; padding: 2px; }
+  .seg button { background: transparent; padding: 3px 10px; border-radius: 6px; }
+  .seg button[aria-pressed="true"] { background: var(--ctl-on); box-shadow: 0 1px 2px rgba(0,0,0,0.12); font-weight: 600; }
+  .scrub { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .scrub input { width: min(220px, 40vw); accent-color: #0071e3; }
+  .note { margin: 0; color: var(--muted); text-align: center; max-width: 60ch; min-height: 1.4em; }
+</style>
+</head>
+<body>
+<main>
+  <div class="frame" id="frame">
+    <div class="app" id="app" aria-hidden="true">
+      <div class="pop">
+        <div class="row"><i style="width:30%;height:calc(var(--side)*0.028)"></i><i style="width:14%;height:calc(var(--side)*0.028);margin-left:auto"></i></div>
+        <div class="hero"></div>
+        <div class="pills"><i></i><i></i><i></i></div>
+        <div class="row"><i style="width:44%;height:calc(var(--side)*0.022)"></i></div>
+      </div>
+    </div>
+    <div class="splash" id="splash">
+      <svg id="stage" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The Bass Shaker splash">
+        <defs id="defs">
+          <linearGradient id="stageBg" x1="0" y1="0" x2="1" y2="1">
+            <stop id="bg0" offset="0" stop-color="#E6ECFD"/><stop id="bg1" offset="1" stop-color="#D4DEFA"/>
+          </linearGradient>
+          <filter id="wsBlur" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="9"/></filter>
+        </defs>
+        <rect width="1024" height="1024" fill="url(#stageBg)"/>
+        <g id="art">
+          <g transform="matrix(1.242718 0 0 1.242718 -124.2718 -124.2718)">
+            <g id="cubeWrap" opacity="0"></g>
+            <g id="lidWrap" opacity="0"></g>
+            <ellipse id="wShadow" filter="url(#wsBlur)"/>
+            <g id="wooferWrap"></g>
+          </g>
+        </g>
+        <text id="title" x="512" text-anchor="middle" opacity="0"></text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="replay" id="replay">Replay</button>
+    <div class="seg" role="group" aria-label="Speed">
+      <button data-speed="1" aria-pressed="true">1×</button><button data-speed="0.5">0.5×</button><button data-speed="0.25">0.25×</button>
+    </div>
+    <div class="seg" role="group" aria-label="Appearance">
+      <button data-theme="light">Light</button><button data-theme="dark">Dark</button>
+    </div>
+    <label class="scrub"><input id="scrub" type="range" min="0" max="1" step="0.001" value="0"><span id="clock">0.000 s</span></label>
+  </div>
+  <p class="note" id="note"></p>
+</main>
+
+<!-- The motion engine: pure functions of time, no DOM. Ports 1:1 to SwiftUI. -->
+<script id="engine">
+const Engine = (() => {
+  /* ───────────── PARAMETER TABLE: every timing, spring and amplitude ─────────────
+     Units. Time in seconds. Springs are SwiftUI's: response = undamped period (s),
+     dampingFraction = ζ, so { response: r, dampingFraction: z } is exactly
+     `.spring(response: r, dampingFraction: z)`. Bounce distances are in D, the
+     woofer's diameter (so the physics is resolution free); other offsets are in
+     points of a `windowPt`-wide splash window (the stage is 1024 units across). */
+  const P = {
+    windowPt: 400,            // splash window side in pt (stage 1024 units → 2.56 units/pt). D ≈ 120 pt.
+    art: { scale: 0.60, top: 325 },   // icon art (1024 canvas) → stage: scale, and stage y of the lid's top
+
+    // 1  Bounce. A gravity + restitution sim (stepped at 4 kHz), with a squash spring kicked on contact.
+    //    SwiftUI: no built-in; drive offset/scaleEffect from a TimelineView(.animation) reading this sim,
+    //    or bake it to keyframes (KeyframeAnimator) — the sim is deterministic.
+    bounce: {
+      gravity: 22,            // D/s² (snappy: no float on the second hop)
+      apex: 0.80,             // D: the first (off-screen-in-time) apex above the rest spot
+      startPastApex: 0.10,    // s: frame 0 is already falling (v = g·0.10)
+      restitution: 0.42,      // rebound speed / impact speed → apexes 0.80, 0.14, 0.03 D; contacts ≈ 0.17 / 0.49 / 0.68 s
+      stickBelow: 0.70,       // D/s: a rebound slower than this stays down (the landing)
+      // Squash: a spring on q (scaleY = 1 − q) kicked by each impact. The body stays on the
+      // floor until q swings back through 0 (half a period = the contact time, ~92 ms), so the
+      // rebound of the squash is the launch. ≈ .spring(response: 0.16, dampingFraction: 0.5)
+      squash: { response: 0.16, dampingFraction: 0.5, max: 0.16, perVelocity: 0.0316 },  // peak q = min(max, perVelocity·v_in)
+      // Stretch along the travel, from speed: scaleY ×= 1 + min(max, perVelocity·|v|), smoothed.
+      // max 0.14 = the mascot's launch pose (0.88 × 1.14). ≈ .spring(response: 0.05, dampingFraction: 1)
+      stretch: { perVelocity: 0.028, max: 0.14, response: 0.05, dampingFraction: 1 },
+      // scaleX = 1 / scaleY always (area preserved). Anchor: the woofer's bottom (UnitPoint.bottom).
+      shadow: { width: 0.74, height: 0.085, opacityLight: 0.42, opacityDark: 0.70,   // at rest, D
+                shrinkAtApex: 0.55, fadeAtApex: 0.80 },                          // by height / apex
+    },
+
+    // 2  Hello: a double blink after the landing settles. Same lid model and timing as
+    //    WooferFace's footer blink: withAnimation(.easeIn(duration: 0.07)) { blink = 1 }, hold, .easeOut(0.11).
+    // The 0.12 s gap (eyes open between blinks) keeps it a deliberate "hello", not a flutter.
+    blink: { delayAfterLand: 0.16, close: 0.07, hold: 0.04, open: 0.11, double: true, gap: 0.12 },
+
+    // 3  The shaker materialises around the face (scale about the woofer's centre).
+    //    .opacity + .scaleEffect(0.95 → 1, anchor: woofer centre) with .spring(response: 0.60, dampingFraction: 1),
+    //    delayed so it starts as the second blink has fully reopened.
+    cube: { delayAfterBlink: 0.56, response: 0.60, dampingFraction: 1.0, fromScale: 0.95 },
+    //    The lid drops 8 pt into place: .offset(y: -8 → 0) with .spring(response: 0.40, dampingFraction: 1).
+    //    No overshoot (it would poke into the cube). Its opacity is the cube's (they share one fade).
+    lid:  { delayAfterCube: 0.10, response: 0.40, dampingFraction: 1.0, drop: 8 },
+
+    // 4  The name. SF Pro Display semibold; size and baseline in stage units (52 u ≈ 20.3 pt).
+    //    SwiftUI: Text("The Bass Shaker").font(.system(size: 20, weight: .semibold)) with NO manual
+    //    .tracking (the system font tracks itself per size); .opacity + .offset(y: 8 → 0) with
+    //    .spring(response: 0.55, dampingFraction: 1). trackingEm is only for the web preview.
+    title: { text: "The Bass Shaker", delayAfterLid: 0.12, response: 0.55, dampingFraction: 1.0,
+             rise: 8, size: 52, baseline: 273, trackingEm: 0.011,    // rise in pt
+             colorLight: "#1D1D1F", colorDark: "#F5F5F7" },
+
+    // 0  In: the stage fades up over the first 0.12 s while the face is already falling (adds no time).
+    //    SwiftUI: .opacity 0 → 1 with .easeOut(duration: 0.12) on appear.
+    enter: { fade: 0.12 },
+
+    // 5  Out: the whole splash fades and grows a hair (.opacity 1 → 0, .scaleEffect 1 → 1.02,
+    //    .spring(response: 0.50, dampingFraction: 1)); the app comes up from behind (0.97 → 1, same spring).
+    exit: { holdAfterTitle: 1.0, response: 0.50, dampingFraction: 1.0, toScale: 1.02 },
+    app:  { delayAfterExit: 0.08, response: 0.50, dampingFraction: 1.0, fromScale: 0.97 },
+  };
+
+  /* Icon geometry, in the layers' inner units (inside matrix(1.242718 … −124.2718)). */
+  const G = { cx: 512, cy: 540.087, R: 206.96, bottom: 747.05, D: 413.92, inner: 1.242718, lidTop: 132 };
+  const unitsPerPt = 1024 / P.windowPt;
+  const innerPerPt = unitsPerPt / (G.inner * P.art.scale);
+  const artTransform = `translate(${(512 - 512 * P.art.scale).toFixed(2)} ${(P.art.top - G.lidTop * P.art.scale).toFixed(2)}) scale(${P.art.scale})`;
+
+  /* SwiftUI .spring(response:dampingFraction:) step response, 0 → 1, from rest. */
+  function spring(t, response, z) {
+    if (t <= 0) return 0;
+    const w = 2 * Math.PI / response;
+    if (z < 1) {
+      const wd = w * Math.sqrt(1 - z * z);
+      return 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t));
+    }
+    if (z === 1) return 1 - Math.exp(-w * t) * (1 + w * t);
+    const s = Math.sqrt(z * z - 1), r1 = -w * (z - s), r2 = -w * (z + s);
+    return 1 - (r2 * Math.exp(r1 * t) - r1 * Math.exp(r2 * t)) / (r2 - r1);
+  }
+  const sp = (t, o) => spring(t, o.response, o.dampingFraction);
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+
+  /* CSS/SwiftUI timing curves (.easeIn = 0.42,0,1,1; .easeOut = 0,0,0.58,1). */
+  function bezier(x1, y1, x2, y2) {
+    const f = (t, a, b) => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+    return x => {
+      if (x <= 0) return 0; if (x >= 1) return 1;
+      let lo = 0, hi = 1, t = x;
+      for (let i = 0; i < 30; i++) { t = (lo + hi) / 2; (f(t, x1, x2) < x) ? lo = t : hi = t; }
+      return f(t, y1, y2);
+    };
+  }
+  const easeIn = bezier(0.42, 0, 1, 1), easeOut = bezier(0, 0, 0.58, 1);
+
+  /* 1  The bounce, simulated once. Records y (D above the rest spot), scaleX, scaleY at 1 kHz. */
+  function simulate() {
+    const B = P.bounce, g = B.gravity, rate = 1000, sub = 4, dt = 1 / (rate * sub), tEnd = 2.5;
+    const wq = 2 * Math.PI / B.squash.response, zq = B.squash.dampingFraction;
+    const kq = wq * wq, cq = 2 * zq * wq;
+    const wqd = wq * Math.sqrt(1 - zq * zq), tp = Math.atan2(wqd, zq * wq) / wqd;
+    const peakPerKick = Math.exp(-zq * wq * tp) * Math.sin(wqd * tp) / wqd;   // q peak per unit kick velocity
+    const ws = 2 * Math.PI / B.stretch.response, ks = ws * ws, cs = 2 * B.stretch.dampingFraction * ws;
+    let y = B.apex - 0.5 * g * B.startPastApex ** 2, v = -g * B.startPastApex;
+    let mode = "air", q = 0, qv = 0, stv = 0, vin = 0, land = null;
+    let st = Math.min(B.stretch.max, B.stretch.perVelocity * Math.abs(v));   // already moving: already stretched
+    const contacts = [], n = Math.round(tEnd * rate) + 1, out = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const sy = (1 - q) * (1 + st);
+      out[i * 3] = Math.max(0, y); out[i * 3 + 1] = 1 / sy; out[i * 3 + 2] = sy;
+      for (let k = 0; k < sub; k++) {
+        const t = (i * sub + k) * dt;
+        qv += (-kq * q - cq * qv) * dt; q += qv * dt;
+        if (mode === "air") {
+          v -= g * dt; y += v * dt;
+          if (y <= 0) {
+            y = 0; vin = -v; v = 0; contacts.push(+t.toFixed(4));
+            st = 0; stv = 0;   // on the floor: the travel stretch ends at contact, the squash takes over
+            qv += Math.min(B.squash.max, B.squash.perVelocity * vin) / peakPerKick;
+            if (B.restitution * vin < B.stickBelow) { mode = "rest"; land = t; } else mode = "contact";
+          }
+        } else if (mode === "contact" && q <= 0 && qv < 0) {
+          mode = "air"; v = B.restitution * vin;
+        }
+        const target = mode === "air" ? Math.min(B.stretch.max, B.stretch.perVelocity * Math.abs(v)) : 0;
+        stv += (-ks * (st - target) - cs * stv) * dt; st += stv * dt;
+      }
+    }
+    return { out, rate, n, contacts, land };
+  }
+  const SIM = simulate();
+  function bounceAt(t) {
+    const x = Math.max(0, Math.min(SIM.n - 1, t * SIM.rate)), i = Math.floor(x), f = x - i, j = Math.min(SIM.n - 1, i + 1);
+    const o = SIM.out, L = (k) => o[i * 3 + k] + (o[j * 3 + k] - o[i * 3 + k]) * f;
+    return { y: L(0), sx: L(1), sy: L(2) };
+  }
+
+  /* The timeline, chained from the landing. */
+  const T = {};
+  T.land = SIM.land;
+  T.blink = T.land + P.blink.delayAfterLand;
+  T.blinkLen = P.blink.close + P.blink.hold + P.blink.open;
+  T.cube = T.blink + P.cube.delayAfterBlink;
+  T.lid = T.cube + P.lid.delayAfterCube;
+  T.title = T.lid + P.title.delayAfterLid;
+  T.exit = T.title + P.exit.holdAfterTitle;
+  T.app = T.exit + P.app.delayAfterExit;
+  T.end = T.app + 1.1 * P.app.response;     // critically damped: 99 % at ~1.06 × response
+  T.rest = T.exit - 0.001;                   // the full composite, before the exit
+
+  function blinkAt(t) {
+    const B = P.blink, one = (u) => {
+      if (u <= 0) return 0;
+      if (u < B.close) return easeIn(u / B.close);
+      if (u < B.close + B.hold) return 1;
+      if (u < T.blinkLen) return 1 - easeOut((u - B.close - B.hold) / B.open);
+      return 0;
+    };
+    const u = t - T.blink;
+    return Math.max(one(u), B.double ? one(u - T.blinkLen - B.gap) : 0);
+  }
+
+  /* Everything at time t. */
+  function state(t) {
+    const b = bounceAt(t), B = P.bounce;
+    const cube = sp(t - T.cube, P.cube), lid = sp(t - T.lid, P.lid), title = sp(t - T.title, P.title);
+    const exit = sp(t - T.exit, P.exit), app = sp(t - T.app, P.app);
+    const r = clamp01(b.y / B.apex);
+    return {
+      t, y: b.y, sx: b.sx, sy: b.sy,
+      shadow: { scale: 1 - B.shadow.shrinkAtApex * r, fade: (1 - B.shadow.fadeAtApex * r) * (1 - clamp01(cube)) ** 2 },   // gone before it can paint over the cube face
+      blink: blinkAt(t), cube, lid, title, exit, app,
+    };
+  }
+
+  /* Attributes for the stage (shared by the page and the snapshot script). */
+  const EYE = { xs: [-0.112, 0.112], cy: -0.007, rx: 0.05075, ry: 0.0665, lid: 0.00875,
+                glints: [{ dx: -0.30, dy: -0.38 }, { dx: 0.38, dy: 0.36 }] };   // face units (R = 0.35)
+  function attrs(s, theme) {
+    const f = (x, d = 3) => +x.toFixed(d);
+    const B = P.bounce, D = G.D;
+    // Woofer: up by y·D, squash/stretch about the bottom centre.
+    const wy = G.bottom - s.y * D;
+    const woofer = `translate(${G.cx} ${f(wy)}) scale(${f(s.sx, 4)} ${f(s.sy, 4)}) translate(${-G.cx} ${-G.bottom})`;
+    const shW = B.shadow.width * D / 2 * s.shadow.scale * (s.y === 0 ? s.sx : 1), shH = B.shadow.height * D / 2 * s.shadow.scale;
+    const shO = (theme === "dark" ? B.shadow.opacityDark : B.shadow.opacityLight) * s.shadow.fade;
+    const cs = P.cube.fromScale + (1 - P.cube.fromScale) * s.cube;
+    const cube = `translate(${G.cx} ${G.cy}) scale(${f(cs, 5)}) translate(${-G.cx} ${-G.cy})`;
+    const lidY = -P.lid.drop * innerPerPt * (1 - s.lid);
+    // Eyes: the lid closes toward the lower lash line into a capsule (WooferFace.draw).
+    const k = s.blink, ry = EYE.ry + (EYE.lid - EYE.ry) * k, cy = EYE.cy + (EYE.ry - ry) * 0.35;
+    const ends = EYE.rx + (EYE.lid - EYE.rx) * k * k, ga = Math.max(0, 1 - k * 1.8);
+    const eyes = EYE.xs.map(x => ({ x: f(x - EYE.rx, 5), y: f(cy - ry, 5), width: f(2 * EYE.rx, 5), height: f(2 * ry, 5), rx: f(ends, 5), ry: f(ry, 5) }));
+    const glints = [];
+    EYE.xs.forEach(x => EYE.glints.forEach(g => glints.push({ cy: f(cy + g.dy * ry, 5), opacity: f(ga) })));
+    return {
+      art: artTransform,
+      wooferWrap: { transform: woofer },
+      wShadow: { cx: G.cx, cy: G.bottom + 4, rx: f(shW, 2), ry: f(shH, 2), opacity: f(shO) },
+      cubeWrap: { transform: cube, opacity: f(clamp01(s.cube)) },
+      lidWrap: { transform: `translate(0 ${f(lidY)})`, opacity: f(clamp01(s.cube)) },   // the lid shares the cube's fade
+      title: { transform: `translate(0 ${f(P.title.rise * unitsPerPt * (1 - s.title))})`, opacity: f(clamp01(s.title)) },
+      eyes, glints,
+      splash: { opacity: f(easeOut(s.t / P.enter.fade) * (1 - clamp01(s.exit))), scale: f(1 + (P.exit.toScale - 1) * s.exit, 5) },
+      app: { opacity: f(clamp01(s.app)), scale: f(P.app.fromScale + (1 - P.app.fromScale) * s.app, 5) },
+    };
+  }
+  return { P, G, T, SIM, state, attrs };
+})();
+</script>
+
+<script>
+(() => {
+  const $ = (q) => document.querySelector(q), NS = "http://www.w3.org/2000/svg";
+  const { P, T, state, attrs } = Engine;
+  const root = document.documentElement, note = $("#note"), scrub = $("#scrub"), clock = $("#clock");
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+  let theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  let speed = 1, t = 0, playing = false, last = 0, layers = {}, eyeEls = [], glintEls = [];
+
+  $("#art").setAttribute("transform", attrs(state(0), theme).art);
+  const title = $("#title");
+  title.textContent = P.title.text;
+  title.setAttribute("y", P.title.baseline);
+  title.setAttribute("font-size", P.title.size);
+  title.style.letterSpacing = P.title.trackingEm + "em";
+  scrub.max = T.end.toFixed(3);
+
+  async function load(set) {
+    const parse = async (f) => new DOMParser().parseFromString(await (await fetch(`layers/${set}/${f}`)).text(), "image/svg+xml");
+    const [cube, lid, woofer] = await Promise.all(["1-cube.svg", "2-lid.svg", "3-woofer.svg"].map(parse));
+    return { cube, lid, woofer };
+  }
+  const imp = (doc, id) => document.importNode(doc.getElementById(id), true);
+
+  function mount(set) {
+    const L = layers[set], defs = $("#defs");
+    if (!defs.querySelector("#w-open")) {   // the layers share one set of clip paths and the AO filter
+      for (const n of L.woofer.querySelector("defs").children) if (n.id !== "bg") defs.appendChild(document.importNode(n, true));
+    }
+    $("#cubeWrap").replaceChildren(imp(L.cube, "shadow"), imp(L.cube, "body"));
+    $("#lidWrap").replaceChildren(imp(L.lid, "lid"), imp(L.lid, "holes"));
+    const w = imp(L.woofer, "face");   // the face sits beside the ring + cone group, on top
+    $("#wooferWrap").replaceChildren(imp(L.woofer, "woofer"), w);
+    // The real face-eyes group: swap each pupil ellipse for a rect with the same ellipse
+    // (rx = w/2, ry = h/2) so the lid can close it into a capsule; the glints stay as they are.
+    const eg = w.querySelector("#face-eyes");
+    eyeEls = []; glintEls = [];
+    for (const el of [...eg.children]) {
+      if (el.tagName === "ellipse") {
+        const r = document.createElementNS(NS, "rect");
+        r.setAttribute("fill", el.getAttribute("fill"));
+        el.replaceWith(r); eyeEls.push(r);
+      } else glintEls.push(el);
+    }
+    const dark = set === "dark";
+    $("#bg0").setAttribute("stop-color", dark ? "#1E2A48" : "#E6ECFD");
+    $("#bg1").setAttribute("stop-color", dark ? "#0B1120" : "#D4DEFA");
+    $("#wShadow").setAttribute("fill", dark ? "#04070F" : "#7F90CF");
+    title.setAttribute("fill", dark ? P.title.colorDark : P.title.colorLight);
+  }
+
+  function render() {
+    const a = attrs(state(t), theme);
+    $("#wooferWrap").setAttribute("transform", a.wooferWrap.transform);
+    const sh = $("#wShadow");
+    for (const k of ["cx", "cy", "rx", "ry", "opacity"]) sh.setAttribute(k, a.wShadow[k]);
+    for (const id of ["cubeWrap", "lidWrap", "title"]) {
+      const el = document.getElementById(id);
+      el.setAttribute("transform", a[id].transform); el.setAttribute("opacity", a[id].opacity);
+    }
+    eyeEls.forEach((el, i) => { for (const k in a.eyes[i]) el.setAttribute(k, a.eyes[i][k]); });
+    glintEls.forEach((el, i) => { el.setAttribute("cy", a.glints[i].cy); el.setAttribute("opacity", a.glints[i].opacity); });
+    const sp = $("#splash").style, ap = $("#app").style;
+    sp.opacity = a.splash.opacity; sp.transform = `scale(${a.splash.scale})`;
+    ap.opacity = a.app.opacity; ap.transform = `scale(${a.app.scale})`;
+    scrub.value = t; clock.textContent = t.toFixed(3) + " s";
+  }
+
+  function frame(now) {
+    if (!playing) return;
+    // dt clamped to [0, 50 ms]: a hidden tab resumes where it paused instead of skipping ahead.
+    t = Math.min(T.end, t + Math.min(0.05, Math.max(0, (now - last) / 1000)) * speed); last = now;
+    render();
+    if (t >= T.end) { playing = false; return; }
+    requestAnimationFrame(frame);
+  }
+  function play(from = 0) {
+    t = from; playing = true; last = performance.now(); render(); requestAnimationFrame(frame);
+  }
+
+  function setTheme(next) {
+    theme = next; root.dataset.theme = next;
+    document.querySelectorAll("[data-theme]").forEach(b => b.tagName === "BUTTON" && b.setAttribute("aria-pressed", b.dataset.theme === next));
+    if (layers[next]) { mount(next); render(); }
+  }
+
+  $("#replay").onclick = () => { note.textContent = reduce.matches ? "Reduce Motion is on: playing anyway because you asked. In the app this splash is skipped." : ""; play(0); };
+  document.querySelectorAll("[data-speed]").forEach(b => b.onclick = () => {
+    speed = +b.dataset.speed;
+    document.querySelectorAll("[data-speed]").forEach(x => x.setAttribute("aria-pressed", x === b));
+  });
+  document.querySelectorAll("button[data-theme]").forEach(b => b.onclick = () => setTheme(b.dataset.theme));
+  scrub.oninput = () => { playing = false; t = +scrub.value; render(); };
+
+  (async () => {
+    try {
+      [layers.light, layers.dark] = await Promise.all([load("light"), load("dark")]);
+    } catch (e) {
+      note.textContent = "Couldn't load the icon layers (open this page from the gallery server, not as a file).";
+      return;
+    }
+    setTheme(theme);
+    if (reduce.matches) {
+      t = T.rest; render();
+      note.textContent = "Reduce Motion is on, so the app skips this splash. Showing its resting frame; Replay plays it anyway.";
+    } else play(0);
+  })();
+})();
+</script>
+</body>
+</html>

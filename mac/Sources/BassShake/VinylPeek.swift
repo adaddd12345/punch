@@ -444,6 +444,8 @@ enum VinylArtCache {
 /// rotation (render server, 15 fps small / 30 fps large); stopping keeps its angle.
 struct VinylRecord: NSViewRepresentable {
   var material: VinylMaterial = .artwork
+  /// Disc Peek: an optical disc in place of the record (DiscPeek.swift).
+  var disc: DiscMaterial? = nil
   var artwork: NSImage? = nil
   @Environment(\.colorSchemeContrast) private var contrast
   let record: ArtRGB
@@ -452,10 +454,23 @@ struct VinylRecord: NSViewRepresentable {
   let dark: Bool
   let spinning: Bool
 
+  /// What the view was last configured with: a parent redraw that changes
+  /// none of it (the popup re-renders often) skips the layer work.
+  struct Inputs: Equatable {
+    var material: VinylMaterial, disc: DiscMaterial?, artwork: ObjectIdentifier?, contrast: Bool
+    var record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool, spinning: Bool
+  }
+  final class Coordinator { var last: Inputs? }
+  func makeCoordinator() -> Coordinator { Coordinator() }
+
   func makeNSView(context: Context) -> VinylRecordView { VinylRecordView() }
 
   func updateNSView(_ v: VinylRecordView, context: Context) {
-    v.configure(material: material, record: record, label: label, diameter: diameter, dark: dark)
+    let inputs = Inputs(material: material, disc: disc, artwork: artwork.map(ObjectIdentifier.init), contrast: contrast == .increased,
+                        record: record, label: label, diameter: diameter, dark: dark, spinning: spinning)
+    guard context.coordinator.last != inputs else { return }
+    context.coordinator.last = inputs
+    v.configure(material: material, disc: disc, record: record, label: label, diameter: diameter, dark: dark)
     v.configureLabel(artwork: artwork, colour: label, diameter: diameter, contrast: contrast == .increased)
     v.spinning = spinning
   }
@@ -464,6 +479,8 @@ struct VinylRecord: NSViewRepresentable {
 final class VinylRecordView: NSView {
   /// One turn, in seconds (a slowed 33⅓: calm, but visibly turning).
   static let period: CFTimeInterval = 7.5
+  /// An optical disc is lighter: a little quicker.
+  static let discPeriod: CFTimeInterval = 5
   private let shadowLayer = CALayer()
   private let discLayer = CALayer()
   private let labelLayer = CALayer()
@@ -474,7 +491,7 @@ final class VinylRecordView: NSView {
   private var labelContrast = false
   private let sheenLayer = CALayer()
   private var key = ""
-  private var inputs: (material: VinylMaterial, record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool)?
+  private var inputs: (material: VinylMaterial, disc: DiscMaterial?, record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool)?
   private var pad: CGFloat = 0
   /// The angle the disc stopped at (radians, clockwise).
   private var angle: CGFloat = 0
@@ -497,8 +514,16 @@ final class VinylRecordView: NSView {
   override var isFlipped: Bool { true }
   override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-  func configure(material: VinylMaterial, record: ArtRGB, label: ArtRGB, diameter: CGFloat, dark: Bool) {
-    if inputs?.material != material && material != .artwork {
+  func configure(material: VinylMaterial, disc: DiscMaterial? = nil, record: ArtRGB, label: ArtRGB,
+                 diameter: CGFloat, dark: Bool) {
+    if disc != inputs?.disc, discLayer.animation(forKey: "turn") != nil {
+      // A record and a disc turn at different speeds: restart from the current angle.
+      if let p = discLayer.presentation()?.value(forKeyPath: "transform.rotation.z") as? CGFloat {
+        angle = p.truncatingRemainder(dividingBy: 2 * .pi)
+      }
+      discLayer.removeAnimation(forKey: "turn")
+    }
+    if disc == nil && (inputs?.material != material || inputs?.disc != nil) && material != .artwork {
       // Fixed materials always retain the artist's intended reflection angle.
       discLayer.removeAnimation(forKey: "turn")
       angle = 0
@@ -507,7 +532,7 @@ final class VinylRecordView: NSView {
       discLayer.setValue(0, forKeyPath: "transform.rotation.z")
       CATransaction.commit()
     }
-    inputs = (material, record, label, diameter, dark)
+    inputs = (material, disc, record, label, diameter, dark)
     render()
   }
 
@@ -519,7 +544,8 @@ final class VinylRecordView: NSView {
 
   private func updateLabel() {
     let scale = window?.backingScaleFactor ?? 2
-    guard let pixels = VinylLabelGeometry.pixels(diameter: labelDiameter, scale: scale) else {
+    // A disc's hub is clear plastic: no paper label.
+    guard inputs?.disc == nil, let pixels = VinylLabelGeometry.pixels(diameter: labelDiameter, scale: scale) else {
       labelKey = ""; labelLayer.contents = nil; return
     }
     let source = labelDiameter * VinylLabelGeometry.diameterRatio >= VinylLabelGeometry.artworkMinimum ? labelSource : nil
@@ -542,14 +568,26 @@ final class VinylRecordView: NSView {
   }
 
   private func render() {
-    guard let (material, record, label, diameter, dark) = inputs else { return }
+    guard let (material, disc, record, label, diameter, dark) = inputs else { return }
     let scale = window?.backingScaleFactor ?? 2
-    let tintKey = material == .artwork ? "\(record.key)-\(label.key)" : material.rawValue
+    let tintKey = disc.map { "disc-\($0.rawValue)-\(record.key)" }
+      ?? (material == .artwork ? "\(record.key)-\(label.key)" : material.rawValue)
     let k = "\(tintKey)-\(diameter)-\(scale)-\(dark)"
     guard k != key else { return }
     let first = key.isEmpty
     key = k
-    if material == .artwork {
+    if let disc {
+      if let hit = DiscArtCache.cached(disc, tint: record, diameter: diameter, scale: scale, dark: dark) {
+        apply(hit, scale: scale, first: first); return
+      }
+      DiscArtCache.request(disc, tint: record, diameter: diameter, scale: scale, dark: dark) { [weak self] image in
+        guard let self, self.key == k else { return }
+        self.apply(image, scale: scale, first: self.discLayer.contents == nil)
+      }
+      if discLayer.contents == nil {
+        apply(DiscArtCache.images(disc, tint: record, diameter: 24, scale: 1, dark: dark), scale: scale, first: true)
+      }
+    } else if material == .artwork {
       VinylArtCache.request(record: record, label: label, diameter: diameter, scale: scale, dark: dark) { [weak self] image in
         guard let self, self.key == k else { return }
         self.apply(image, scale: scale, first: self.discLayer.contents == nil)
@@ -622,7 +660,7 @@ final class VinylRecordView: NSView {
       // The layer tree is flipped (y down), so a growing angle turns clockwise.
       a.fromValue = angle
       a.toValue = angle + 2 * .pi
-      a.duration = Self.period
+      a.duration = inputs?.disc != nil ? Self.discPeriod : Self.period
       a.repeatCount = .infinity
       a.isRemovedOnCompletion = false
       // Sharp hero labels need a smaller angular step; tiny material textures
@@ -678,13 +716,15 @@ struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
   let geometry: VinylGeometry
   let restingCenter: CGFloat
   let dark: Bool
+  /// Disc Peek: the case's tinted back instead of a paper one.
+  var disc = false
   let record: Record
   let sleeve: Sleeve
 
   init(progress: CGFloat, glint: CGFloat = 0, geometry: VinylGeometry, restingCenter: CGFloat, dark: Bool,
-       record: Record, sleeve: Sleeve) {
+       disc: Bool = false, record: Record, sleeve: Sleeve) {
     self.progress = progress; self.glint = glint; self.geometry = geometry
-    self.restingCenter = restingCenter; self.dark = dark; self.record = record; self.sleeve = sleeve
+    self.restingCenter = restingCenter; self.dark = dark; self.disc = disc; self.record = record; self.sleeve = sleeve
   }
 
   var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -699,8 +739,11 @@ struct VinylRevealScene<Record: View, Sleeve: View>: View, Animatable {
     let shift = pose.sleeveShift(g)
     let shape = RoundedRectangle(cornerRadius: g.sleeveRadius, style: .continuous)
     ZStack(alignment: .topLeading) {
-      shape.fill(LinearGradient(colors: [Color(red: 0.79, green: 0.73, blue: 0.65),
-                                        Color(red: 0.95, green: 0.91, blue: 0.86)],
+      shape.fill(LinearGradient(colors: disc
+                                  ? [Color(red: 0.16, green: 0.36, blue: 0.66).opacity(0.75),
+                                     Color(red: 0.36, green: 0.58, blue: 0.86).opacity(0.55)]
+                                  : [Color(red: 0.79, green: 0.73, blue: 0.65),
+                                     Color(red: 0.95, green: 0.91, blue: 0.86)],
                                 startPoint: .leading, endPoint: .trailing))
         .frame(width: g.sleeve, height: g.sleeve)
         .offset(x: shift + g.size * 0.00625, y: g.sleeveRect.minY)
@@ -794,6 +837,7 @@ struct VinylPeekArt: View {
   @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
   @Environment(\.colorScheme) private var scheme
   @Environment(\.vinylMaterial) private var material
+  @Environment(\.peekDisc) private var disc
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.drawPaused) private var drawPaused
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -812,8 +856,9 @@ struct VinylPeekArt: View {
     let shape = RoundedRectangle(cornerRadius: g.sleeveRadius, style: .continuous)
     let engaged = (hovering || (pointerOver && !Reshuffle.anyOn)) && canReveal
     VinylRevealScene(progress: engaged ? 1 : 0, glint: glint, geometry: g, restingCenter: center, dark: dark,
-      record: VinylRecord(material: material, artwork: artwork, record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
-                          spinning: material == .artwork && spinning && !reduceMotion && !powerSaver && !drawPaused),
+                     disc: disc != nil,
+      record: VinylRecord(material: material, disc: disc, artwork: artwork, record: p.record(dark: dark), label: p.label(dark: dark), diameter: g.record, dark: dark,
+                          spinning: (disc != nil || material == .artwork) && spinning && !reduceMotion && !powerSaver && !drawPaused),
       sleeve: sleeve(g, p, dark: dark, shape: shape, engaged: engaged)
         .modifier(SoftShadow(on: !powerSaver, color: Color.black.opacity(dark ? 0.35 : 0.2), radius: 2, y: 1)))
     .frame(width: size, height: size, alignment: .topLeading)
@@ -859,6 +904,20 @@ struct VinylPeekArt: View {
 
   @ViewBuilder
   private func sleeve(_ g: VinylGeometry, _ p: ArtPalette, dark: Bool, shape: RoundedRectangle, engaged: Bool) -> some View {
+    if disc != nil {
+      DiscCase(side: g.sleeve, radius: g.sleeveRadius, dark: dark) { inner in
+        cover(VinylGeometry(size: inner / 0.75), p, dark: dark,
+              shape: RoundedRectangle(cornerRadius: max(2, g.sleeveRadius - g.sleeve * 0.035), style: .continuous),
+              engaged: engaged)
+      }
+      .transition(.opacity)
+    } else {
+      cover(g, p, dark: dark, shape: shape, engaged: engaged)
+    }
+  }
+
+  @ViewBuilder
+  private func cover(_ g: VinylGeometry, _ p: ArtPalette, dark: Bool, shape: RoundedRectangle, engaged: Bool) -> some View {
     if let artwork {
       EffectArtworkImage(image: artwork, size: g.sleeve)
         .artworkInspectionSource()

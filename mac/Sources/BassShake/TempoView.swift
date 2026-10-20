@@ -98,20 +98,16 @@ private struct TempoThemed: ViewModifier {
 }
 
 /// A group's header: its name, what it's doing, and its close button.
-@MainActor private struct TempoHeader<Trailing: View>: View {
+@MainActor private struct TempoHeader<Status: View, Trailing: View>: View {
   let title: String
-  let status: String
+  @ViewBuilder let status: () -> Status
   let close: () -> Void
   @ViewBuilder let trailing: () -> Trailing
 
   var body: some View {
     HStack(spacing: 8) {
       Text(title).font(Drawer.headerFont)
-      Text(status)
-        .font(.system(size: 11, weight: .medium))
-        .monospacedDigit()
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
+      status()
       Spacer(minLength: 0)
       trailing()
       Button(action: close) {
@@ -128,39 +124,41 @@ private struct TempoThemed: ViewModifier {
   }
 }
 
+/// A header's status words.
+private struct TempoHeaderStatus: View {
+  let text: String
+  var body: some View {
+    Text(text)
+      .font(.system(size: 11, weight: .medium))
+      .monospacedDigit()
+      .foregroundStyle(.secondary)
+      .lineLimit(1)
+  }
+}
+
 // MARK: - BPM
 
 @MainActor private struct TempoBPMGroup: View {
   @ObservedObject var controller: AudioController
-  @ObservedObject private var sense = MusicSense.shared
   @Environment(\.tempoPalette) private var palette
   @Environment(\.spacing) private var gaps
 
+  // Only the small leaves below observe the 4 Hz snapshot (status, readout);
+  // the group and the metronome card don't re-render with every percent.
   var body: some View {
-    let s = sense.snapshot
     TempoGroup(wash: palette.tempo.fill) {
-      TempoHeader(title: "BPM", status: Self.status(s), close: { TempoPopups.shared.close(key: false) }) {
-        Button { MusicSense.shared.reset() } label: {
-          Text("Listen again")
-            .font(.system(size: 11, weight: .regular))
-            .padding(.horizontal, 6)
-            .frame(minHeight: 24)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .disabled(s.heardSeconds < 1)
-        .pointerHint("Listen again", does: "Starts fresh, for a new song or a beat switch.")
+      TempoHeader(title: "BPM", status: { TempoBPMStatus() }, close: { TempoPopups.shared.close(key: false) }) {
+        TempoListenAgain()
       }
     } cards: {
       VStack(spacing: gaps.sibling) {
         HStack(spacing: gaps.sibling) {
-          TempoReadoutCard(snapshot: s).frame(width: 177)
-          TempoMetronomeCard(metronome: Metronome.shared, sense: sense)
+          TempoReadoutCard().frame(width: 177)
+          TempoMetronomeCard(metronome: Metronome.shared, readings: TempoReadings.shared)
         }
         .frame(height: 216)
-        if controller.settings.artistMode && !controller.isMirror {
-          TempoSpeedBar(snapshot: s)
+        if !controller.isMirror {
+          TempoSpeedBar()
         }
       }
     }
@@ -170,7 +168,9 @@ private struct TempoThemed: ViewModifier {
     switch s.status {
     case .unavailable(let why): return why
     case .silent: return s.bpm == nil ? "Play something" : "Waiting for sound"
-    case .listening: return s.speech ? "Hearing speech" : "Listening… \(Int((s.tempoProgress * 100).rounded()))%"
+    case .listening:
+      if s.speech { return "Hearing speech" }
+      return s.bpmShown ? "Checking…" : "Listening… \(Int((s.tempoProgress * 100).rounded()))%"
     case .found:
       if s.bpmRecalibrating { return "Beat changed, re-listening…" }
       switch s.bpmSource {
@@ -182,37 +182,70 @@ private struct TempoThemed: ViewModifier {
   }
 }
 
+/// The BPM header's status words: the one part of the header that follows
+/// the snapshot's progress.
+@MainActor private struct TempoBPMStatus: View {
+  @ObservedObject private var sense = MusicSense.shared
+  var body: some View { TempoHeaderStatus(text: TempoBPMGroup.status(sense.snapshot)) }
+}
+
+@MainActor private struct TempoListenAgain: View {
+  @ObservedObject private var sense = MusicSense.shared
+  var body: some View {
+    Button { MusicSense.shared.reset() } label: {
+      Text("Listen again")
+        .font(.system(size: 11, weight: .regular))
+        .padding(.horizontal, 6)
+        .frame(minHeight: 24)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(.secondary)
+    .disabled(sense.snapshot.heardSeconds < 1)
+    .pointerHint("Listen again", does: "Starts fresh, for a new song or a beat switch.")
+  }
+}
+
 @MainActor private struct TempoReadoutCard: View {
-  let snapshot: MusicSenseSnapshot
+  @ObservedObject private var sense = MusicSense.shared
+  @ObservedObject private var readings = TempoReadings.shared
   @State private var showAlternative = false
   @Environment(\.tempoPalette) private var palette
 
   var body: some View {
-    let s = snapshot
+    let s = sense.snapshot
     let block = palette.tempo
-    let bpm = showAlternative ? (s.bpmAlternative ?? s.bpm) : s.bpm
-    // Not yet decided (or a backup, or re-listening): shown, but dimmed.
-    let unsure = s.bpm != nil && (!s.bpmShown || s.bpmConfidence < 0.35 || s.bpmSource != .detected || s.bpmRecalibrating)
+    // Only a shown tempo is drawn (whole numbers, held within ±0.6); raw
+    // candidates never are. A backup or a beat change being checked gets "~".
+    let alt = readings.bpm != nil ? s.bpmAlternative.map { Int($0.rounded()) } : nil
+    let bpm = showAlternative ? (alt ?? readings.bpm) : readings.bpm
+    let unsure = readings.provisional
     return TempoCard(block: block, title: "Tempo",
-                     trailing: AnyView(TempoSureness(level: s.bpm == nil ? 0 : s.bpmConfidence, ink: block.ink.color))) {
+                     trailing: AnyView(TempoSureness(level: bpm == nil ? 0 : s.bpmConfidence, ink: block.ink.color))) {
       VStack(alignment: .leading, spacing: 0) {
         Spacer(minLength: 0)
         HStack(alignment: .bottom, spacing: 6) {
-          CountingPixels(value: bpm.map { Int($0.rounded()) }, dot: 5.2, color: block.ink.color, dim: unsure)
+          if unsure && bpm != nil {
+            Text("~")
+              .font(.system(size: 22, weight: .bold, design: .rounded))
+              .foregroundStyle(block.ink.color.opacity(0.5))
+              .padding(.trailing, -4)
+          }
+          CountingPixels(value: bpm, dot: 5.2, color: block.ink.color, dim: unsure)
           PixelText("BPM", dot: 1.6, color: block.ink.color.opacity(bpm == nil ? 0.25 : 0.7))
             .padding(.bottom, 1)
         }
         Spacer(minLength: 0)
         HStack(spacing: 6) {
-          Text(bpm.map { String(format: "1 beat · %.1f ms", 60_000 / $0) } ?? "Listening for the beat")
+          Text(detail(bpm))
             .font(Drawer.detailFont)
             .monospacedDigit()
             .foregroundStyle(block.secondary.color)
             .lineLimit(1)
           Spacer(minLength: 0)
-          if let alt = s.bpmAlternative, s.bpm != nil {
+          if let alt, let shown = readings.bpm {
             Button { showAlternative.toggle() } label: {
-              Text("or \(Int((showAlternative ? (s.bpm ?? alt) : alt).rounded()))")
+              Text("or \(showAlternative ? shown : alt)")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(block.ink.color)
                 .padding(.horizontal, 7).frame(height: 20)
@@ -226,80 +259,105 @@ private struct TempoThemed: ViewModifier {
         .frame(height: 20)
       }
     }
-    .onChange(of: s.bpm == nil) { _, none in if none { showAlternative = false } }
+    .onChange(of: readings.bpm == nil) { _, none in if none { showAlternative = false } }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(bpm.map { "Tempo, \(Int($0.rounded())) BPM" } ?? "Tempo, listening")
+    .accessibilityLabel(bpm.map { "Tempo, \(unsure ? "about " : "")\($0) BPM" } ?? "Tempo, listening")
+  }
+
+  private func detail(_ bpm: Int?) -> String {
+    guard let bpm else { return "Listening for the beat" }
+    if let orig = readings.original, !showAlternative { return "Own tempo \(orig) BPM" }
+    return String(format: "1 beat · %.1f ms", 60_000 / Double(bpm))
   }
 }
 
-/// Artist Mode, with a YouTube video in front: play it at the metronome's
-/// tempo (the song's own BPM is the detected one), or put it back.
+/// YouTube speed, for the video in front (Safari or Chrome): fine steps,
+/// presets, and back to its own speed. Pitch stays the same. Acts at once.
 @MainActor private struct TempoSpeedBar: View {
-  let snapshot: MusicSenseSnapshot
   @ObservedObject private var stack = NowStack.shared
   @ObservedObject private var tempo = BrowserTempo.shared
-  @ObservedObject private var metronome = Metronome.shared
+  @ObservedObject private var readings = TempoReadings.shared
 
   var body: some View {
     if let entry = stack.lead, let target = BrowserTempoTarget(entry) {
-      let active = tempo.session.flatMap { $0.target.identity == target.identity ? $0 : nil }
-      let original = active?.original ?? snapshot.bpm
-      let goal = metronome.bpm
-      let valid = original.flatMap { BrowserTempoScript.rate(original: $0, target: goal) } != nil
-        && original.map { abs($0 - goal) >= 0.05 } == true
-      HStack(spacing: 8) {
+      let rate = tempo.rate(for: target)
+      let range = BrowserTempo.range
+      HStack(spacing: 4) {
         Image(systemName: "play.rectangle").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
-        Text(line(original: original, goal: goal, active: active))
+          .padding(.trailing, 2)
+        Text(line(rate))
           .font(.system(size: 11, weight: .medium))
           .monospacedDigit()
           .lineLimit(1)
-        Spacer(minLength: 0)
-        if active != nil {
-          barButton("Reset") { tempo.restore() }
-            .disabled(tempo.busy)
-            .pointerHint("Reset", does: "Puts the video back to its own speed.")
-        }
-        barButton("Play at \(Int(goal))") {
-          if let original { tempo.apply(target, original: original, bpm: goal) }
-        }
-        .disabled(!valid || tempo.busy)
-        .pointerHint("Play at the metronome's tempo", does: "Speeds the video up or down; pitch stays the same.")
+          .truncationMode(.tail)
+          .help(tempo.message ?? "")
+        Spacer(minLength: 2)
+        step("minus", "Slower") { tempo.setRate(target, rate: rate - 0.01) }
+          .disabled(rate <= range.lowerBound + 0.0005)
+          .pointerHint("Slower", does: "One percent slower; pitch stays the same.")
+        step("plus", "Faster") { tempo.setRate(target, rate: rate + 0.01) }
+          .disabled(rate >= range.upperBound - 0.0005)
+          .pointerHint("Faster", does: "One percent faster; pitch stays the same.")
+        preset("¾×", 0.75, rate, target)
+        preset("1×", 1, rate, target)
+          .pointerHint("Own speed", does: "Puts the video back as it was.")
+        preset("1¼×", 1.25, rate, target)
       }
-      .padding(.horizontal, 12)
+      .padding(.leading, 12).padding(.trailing, 8)
       .frame(height: Drawer.barHeight)
       .background(DrawerSurface(radius: TempoPopupsView.cardCorner))
+      .accessibilityElement(children: .contain)
+      .accessibilityLabel("YouTube speed")
     }
   }
 
-  private func line(original: Double?, goal: Double, active: BrowserTempo.Session?) -> String {
+  private func line(_ rate: Double) -> String {
     if let message = tempo.message { return message }
-    if let active { return String(format: "Playing at %.0f BPM · %.3f×", active.original * active.rate, active.rate) }
-    guard let original else { return "YouTube speed: waiting for the tempo" }
-    return "YouTube \(Int(original.rounded())) → \(Int(goal)) BPM"
+    let pct = Int(((rate - 1) * 100).rounded())
+    let speed = pct == 0 ? "Speed 100%" : String(format: "Speed %@%d%%", pct > 0 ? "+" : "\u{2212}", abs(pct))
+    guard pct != 0, let orig = readings.original ?? readings.bpm.map({ Int((Double($0) / rate).rounded()) }) else {
+      return speed
+    }
+    return "\(speed) · \(Int((Double(orig) * rate).rounded())) BPM"
   }
 
-  private func barButton(_ title: String, action: @escaping () -> Void) -> some View {
+  private func step(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
     Button(action: action) {
-      Text(title)
-        .font(.system(size: 11, weight: .semibold))
-        .padding(.horizontal, 9).frame(height: 22)
+      Image(systemName: symbol)
+        .font(.system(size: 10, weight: .bold))
+        .frame(width: 24, height: 22)
         .background(Capsule().fill(Color.primary.opacity(0.10)))
         .contentShape(Capsule())
     }
     .buttonStyle(.plain)
+    .accessibilityLabel(label)
+  }
+
+  private func preset(_ title: String, _ value: Double, _ rate: Double, _ target: BrowserTempoTarget) -> some View {
+    let on = abs(rate - value) < 0.0005
+    return Button { tempo.setRate(target, rate: value) } label: {
+      Text(title)
+        .font(.system(size: 11, weight: .semibold))
+        .padding(.horizontal, 7).frame(height: 22)
+        .background(Capsule().fill(Color.primary.opacity(on ? 0.22 : 0.10)))
+        .contentShape(Capsule())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(value == 1 ? "Own speed" : "\(title) speed")
+    .accessibilityValue(on ? "On" : "Off")
   }
 }
 
 @MainActor private struct TempoMetronomeCard: View {
   @ObservedObject var metronome: Metronome
-  @ObservedObject var sense: MusicSense
+  @ObservedObject var readings: TempoReadings
   @Environment(\.tempoPalette) private var palette
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     let block = palette.metronome
     let following = metronome.following
-    let songBPM = sense.snapshot.bpmShown ? sense.snapshot.bpm : nil
+    let songBPM = readings.bpm.map(Double.init)
     let shownBPM = following ? (songBPM ?? metronome.bpm) : metronome.bpm
     return TempoCard(block: block, title: "Metronome", trailing: AnyView(meterButton(block))) {
       VStack(spacing: 0) {
@@ -435,7 +493,7 @@ private struct TempoThemed: ViewModifier {
   var body: some View {
     let s = sense.snapshot
     TempoGroup(wash: palette.key.fill) {
-      TempoHeader(title: "Key", status: Self.status(s), close: { TempoPopups.shared.close(bpm: false) }) {
+      TempoHeader(title: "Key", status: { TempoHeaderStatus(text: Self.status(s)) }, close: { TempoPopups.shared.close(bpm: false) }) {
         EmptyView()
       }
     } cards: {

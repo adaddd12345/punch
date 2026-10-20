@@ -88,44 +88,90 @@ final class TempoPopups: ObservableObject {
 /// screen (so the BPM and Key chips can appear by themselves), follows the
 /// playing track (a new one starts over; a known one comes back at once),
 /// and reads the analyser feed itself when nothing else does.
+///
+/// A closed popup keeps listening for `grace` seconds, so a quick close and
+/// reopen picks up where it was instead of starting over.
 @MainActor final class TempoListening {
   nonisolated static let shared = TempoListening()
   nonisolated init() {}
+
+  /// How long listening carries on after the popup closes.
+  static let grace: CFTimeInterval = 30
 
   private var owners = Set<String>()
   private weak var controller: AudioController?
   private var check: Timer?
   private var feed: Timer?
   private var trackID: String?
+  /// When the popup went out of sight (nil while visible).
+  private var hiddenSince: CFTimeInterval?
 
   func attach(_ owner: String, controller: AudioController) {
     self.controller = controller
     owners.insert(owner)
+    startCheck()
+    refresh()
+  }
+
+  private func startCheck() {
     if check == nil {
       let t = Timer(timeInterval: 1, repeats: true) { _ in MainActor.assumeIsolated { TempoListening.shared.refresh() } }
       t.tolerance = 0.2
       RunLoop.main.add(t, forMode: .common)
       check = t
     }
-    refresh()
   }
 
+  /// The last owner going starts the grace period (the check timer ends it).
   func detach(_ owner: String) {
     owners.remove(owner)
     guard owners.isEmpty else { return }
+    if hiddenSince == nil { hiddenSince = CACurrentMediaTime() }
+  }
+
+  private func stopAll() {
     check?.invalidate(); check = nil
     stopFeed()
     MusicSense.shared.end()
   }
 
+  /// The source's playback rate for the lead (YouTube speed set here), so a
+  /// sped-up song isn't heard as a new one. Also called when the speed changes.
+  func syncRate() {
+    MusicSense.shared.setPlaybackRate(Self.rate(for: NowStack.shared.lead))
+  }
+
+  private static func rate(for lead: NowEntry?) -> Double {
+    guard let s = BrowserTempo.shared.session, let lead, let t = BrowserTempoTarget(lead),
+          t.identity == s.target.identity else { return 1 }
+    return s.rate
+  }
+
+  /// The song, not the tile: a YouTube video by its id, anything else by the
+  /// title it shows. A new video in the same tab is a new song; the same
+  /// song shown as its app or as its tab is not.
+  static func songID(_ lead: NowEntry) -> String {
+    if let url = lead.item?.url?.absoluteString, let v = BrowserTabs.youTubeID(url) { return "yt:" + v }
+    let title = NowPlaying.shared.describe(lead, state: false).title
+    return "t:" + title.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
   /// Availability, the output's delay and the track, once a second.
   func refresh() {
     let sense = MusicSense.shared
-    guard let c = controller, !owners.isEmpty else { return }
-    // Only while the popup is actually on screen (a closed popover can keep
-    // its views alive).
-    if let host = LiveDrawer.shared.host, !(host.isVisible && host.occlusionState.contains(.visible)) {
-      sense.end(); stopFeed(); return
+    guard let c = controller else { stopAll(); return }
+    // While the popup is on screen (a closed popover can keep its views
+    // alive), and for `grace` seconds after it goes.
+    let hostVisible = LiveDrawer.shared.host.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? true
+    if !owners.isEmpty && hostVisible {
+      hiddenSince = nil
+    } else {
+      let now = CACurrentMediaTime()
+      if hiddenSince == nil { hiddenSince = now }
+      if now - (hiddenSince ?? now) > Self.grace {
+        if owners.isEmpty { stopAll() } else { sense.end(); stopFeed() }
+        return
+      }
     }
     if c.isMirror { sense.setUnavailable("Listening works on this Mac only."); sense.end(); stopFeed(); return }
     guard c.settings.enabled else {
@@ -141,14 +187,18 @@ final class TempoPopups: ObservableObject {
     let latency = device?.isAirPlay == true ? 1.8 : device?.isBluetooth == true ? 0.19 : 0.03
     sense.begin(sampleRate: rate, outputLatency: latency)
     startFeed()
-    // The track: a new one starts detection over (a remembered one returns
-    // at once); its title can carry a BPM or key to fall back on.
-    let lead = NowStack.shared.lead
-    let id = lead.map { "\($0.id)" }
+    // The song: a new one starts detection over (a remembered one returns
+    // at once); its title can carry a BPM or key to fall back on. Nothing
+    // in front for a moment (a pause) keeps the current one.
+    guard let lead = NowStack.shared.lead else { return }
+    let id = Self.songID(lead)
+    let speed = Self.rate(for: lead)
     if id != trackID {
       trackID = id
-      sense.setTrack(id)
-      sense.setHints(title: lead.map { NowPlaying.shared.describe($0, state: false).title })
+      sense.setTrack(id, rate: speed)
+      sense.setHints(title: NowPlaying.shared.describe(lead, state: false).title)
+    } else {
+      sense.setPlaybackRate(speed)
     }
   }
 

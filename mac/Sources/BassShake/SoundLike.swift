@@ -77,7 +77,7 @@ enum SoundLike {
 
   private static func computeBands(_ choice: SoundLikeChoice, deviceName: String?, presetName: String?) -> [Band] {
     guard let t = target(choice.targetID), choice.blend > 0.001 else { return [] }
-    let grid: [Double] = (0..<48).map { 20 * pow(1_000.0, Double($0) / 47) }   // 20 Hz–20 kHz
+    let grid = fitGrid
     var diff: [Double] = grid.map { interp(t.db, at: $0) }
     if let src = sourcePreset(deviceName), src.name != presetName {
       // source deviation = −correction, so target − source = target + correction
@@ -90,7 +90,7 @@ enum SoundLike {
     }
     let mean = diff.reduce(0.0, +) / Double(diff.count)   // overall level isn't tone
     diff = diff.map { ($0 - mean) * choice.blend }
-    return fit(diff, grid)
+    return fit(diff)
   }
 
   private static func sourcePreset(_ name: String?) -> Preset? {
@@ -110,11 +110,19 @@ enum SoundLike {
     return db[db.count - 1]
   }
 
-  /// Greedy least squares: each step adds the candidate filter (type, freq,
-  /// Q) whose optimal gain removes the most residual error.
-  private static func fit(_ target: [Double], _ grid: [Double]) -> [Band] {
-    var residual = target
-    var out: [Band] = []
+  private static let fitGrid: [Double] = (0..<48).map { 20 * pow(1_000.0, Double($0) / 47) }
+  private struct FitCandidate {
+    let type: PunchFilterType
+    let frequency: Double
+    let q: Double
+    let shape: [Double]
+    let energy: Double
+  }
+
+  /// These 1 dB basis responses depend only on the fixed fitting grid and
+  /// sample rate. Reuse them across all six fit steps and subsequent choices.
+  /// Swift initializes the immutable table once, on the first fitting call.
+  private static let fitCandidates: [FitCandidate] = {
     var cands: [(PunchFilterType, Double, Double)] = [
       (PUNCH_LOW_SHELF, 60, 0.71), (PUNCH_LOW_SHELF, 105, 0.71),
       (PUNCH_HIGH_SHELF, 8_000, 0.71), (PUNCH_HIGH_SHELF, 12_000, 0.71),
@@ -125,22 +133,34 @@ enum SoundLike {
       cands.append((PUNCH_BELL, f, 1.4))
       cands.append((PUNCH_BELL, f, 2.5))
     }
+    return cands.map { c in
+      let shape = fitGrid.map { response((c.0, c.1, 1, c.2), $0) }
+      let energy = shape.reduce(0.0) { $0 + $1 * $1 }
+      return FitCandidate(type: c.0, frequency: c.1, q: c.2, shape: shape, energy: energy)
+    }
+  }()
+
+  /// Greedy least squares: each step adds the candidate filter (type, freq,
+  /// Q) whose optimal gain removes the most residual error.
+  private static func fit(_ target: [Double]) -> [Band] {
+    var residual = target
+    var out: [Band] = []
     for _ in 0..<fitNodes {
       var best: Band?
       var bestErr = Double.infinity
-      for c in cands {
+      for c in fitCandidates {
         // Shape at 1 dB (dB response is near-linear in gain at these sizes).
-        let u: [Double] = grid.map { response((c.0, c.1, 1, c.2), $0) }
-        var ru = 0.0, uu = 0.0
-        for k in 0..<u.count { ru += residual[k] * u[k]; uu += u[k] * u[k] }
+        let u = c.shape, uu = c.energy
+        var ru = 0.0
+        for k in 0..<u.count { ru += residual[k] * u[k] }
         guard uu > 1e-9 else { continue }
         let g = min(maxGain, max(-maxGain, ru / uu))
         var err = 0.0
         for k in 0..<u.count { let d = residual[k] - g * u[k]; err += d * d }
-        if err < bestErr { bestErr = err; best = (c.0, c.1, g, c.2) }
+        if err < bestErr { bestErr = err; best = (c.type, c.frequency, g, c.q) }
       }
       guard let b = best, abs(b.2) > 0.2 else { break }
-      for (k, f) in grid.enumerated() { residual[k] -= response(b, f) }
+      for (k, f) in fitGrid.enumerated() { residual[k] -= response(b, f) }
       out.append(b)
     }
     return out

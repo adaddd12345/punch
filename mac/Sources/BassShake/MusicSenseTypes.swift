@@ -124,8 +124,17 @@ struct MusicSenseSnapshot: Equatable {
   /// memory agrees), or a backup is available. Hidden after ~6 s of unclear
   /// tempo, > 4 s of silence, or sustained speech.
   var bpmShown = false
+  /// The shown (detected) tempo is not locked yet: draw it as "~128". The
+  /// tracker locks after ≥ 6 s once one tempo holds most of its belief.
+  var bpmProvisional = false
   /// Show `key`: the key is clear and the sound is music (not speech/noise).
   var keyShown = false
+  /// The shown (detected) key is not locked yet (first ~20 s of tonal sound,
+  /// or just after a key change): draw it as "~A minor".
+  var keyProvisional = false
+  /// The whole number to show for `bpm`. The analyser already holds `bpm`
+  /// to its whole number with ±0.6 hysteresis, so this is just its rounding.
+  var bpmDisplay: Int? { bpm.map { Int($0.rounded()) } }
   var bpmSource: Source = .detected
   var keySource: Source = .detected
   /// A tempo or key change is being checked (beat switch, modulation); the

@@ -75,6 +75,7 @@ struct NowPlayingHeadline: View {
     HStack(alignment: .center, spacing: 8) {
       NowArt(artwork: text.artwork, favicon: text.favicon, icon: model.icon(app), size: art,
              spinning: model.barsLit(entry), paused: text.paused)
+        .environment(\.artworkIsVideo, entry.isVideo)
         .nowPlayingBars(model, entry, art: art, hidden: loading)
         .loadingArt(loading, size: art)
         .modifier(NowMorph(id: entry.id))
@@ -420,6 +421,7 @@ struct NowArt: View {
   var cornerRadius: CGFloat? = nil
   @Environment(\.powerSaver) private var powerSaver
   @Environment(\.artworkStyle) private var setting
+  @Environment(\.monoStyle) private var mono
   @Environment(\.artworkFoil) private var foil
   @Environment(\.drawPaused) private var drawPaused
   @Environment(\.artworkPointerOver) private var pointerOver
@@ -431,7 +433,10 @@ struct NowArt: View {
 
   var body: some View {
     Group {
-    if (style ?? setting).resolved(for: size) == .vinyl {
+    if mono {
+      MonoArtPlate(size: size, cornerRadius: cornerRadius)
+        .accessibilityHidden(true)
+    } else if (style ?? setting).resolved(for: size) == .vinyl {
       VinylPeekArt(artwork: artwork, favicon: favicon, icon: icon, size: size,
                    spinning: spinning, out: !paused)
         .accessibilityHidden(true)

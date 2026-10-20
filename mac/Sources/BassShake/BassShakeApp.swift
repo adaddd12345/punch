@@ -307,8 +307,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     // Read the current measurement, never a size captured before another press.
     let want = host.preferredContentSize
     guard want.width.isFinite, want.height.isFinite, want.width > 1, want.height > 1 else { return }
-    if abs(popover.contentSize.height - want.height) > 0.5
-        || abs(popover.contentSize.width - want.width) > 0.5 {
+    // Under a point is settling noise: resizing for it only re-runs layout.
+    if abs(popover.contentSize.height - want.height) >= 1
+        || abs(popover.contentSize.width - want.width) >= 1 {
       popover.contentSize = want
     }
     keepOnAnchor()

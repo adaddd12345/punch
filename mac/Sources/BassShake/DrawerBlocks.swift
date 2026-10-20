@@ -8,7 +8,10 @@ struct DrawerAppearance: Equatable {
   var background: BackgroundStyle = .system
   var tint: BentoTint?
   var artworkStyle: ArtworkStyle = .cover
+  var mono = false
   var vinylMaterial: VinylMaterial = .artwork
+  var peekRecord: PeekRecord = .match
+  var discMaterial: DiscMaterial = .bluray
   var artworkEffect: ArtworkEffect = .none
   var artworkFoil = false
   var artworkPerspective = false

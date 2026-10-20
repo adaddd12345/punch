@@ -44,20 +44,29 @@ void DjPerform::prepare(double sampleRate, int numChannels) {
   numChannels_ = std::clamp(numChannels, 1, kMaxChannels);
   const double fs = sampleRate;
   // Roll's longest slice is an eighth note at 60 BPM (0.5 s).
-  for (auto& r : hist_) r.alloc(int(0.55 * fs) + 16);
-  for (auto& l : loop_) l.assign(size_t(0.5 * fs) + 16, 0.f);
+  for (int c = 0; c < numChannels_; ++c) hist_[size_t(c)].alloc(int(0.55 * fs) + 16);
+  for (int c = 0; c < numChannels_; ++c) loop_[size_t(c)].assign(size_t(0.5 * fs) + 16, 0.f);
   grain_ = 0.040 * fs;
-  for (auto& r : pitchBuf_) r.alloc(int(grain_) + 16);
+  for (int c = 0; c < numChannels_; ++c) pitchBuf_[size_t(c)].alloc(int(grain_) + 16);
   // Linear slow-down over 1 s: the read head falls 0.5 s behind.
   tapeStopSamples_ = 1.0 * fs;
-  for (auto& r : tapeBuf_) r.alloc(int(0.6 * fs) + 16);
+  for (int c = 0; c < numChannels_; ++c) tapeBuf_[size_t(c)].alloc(int(0.6 * fs) + 16);
   // Lofi: 4.5 ms base delay, +-1.5 ms wow at 0.5 Hz, +-0.1 ms flutter at 6 Hz.
   lofiBase_ = float(0.0045 * fs);
   wowDepth_ = float(0.0015 * fs);
   flutDepth_ = float(0.0001 * fs);
   wowInc_ = 0.5 / fs;
   flutInc_ = 6.0 / fs;
-  for (auto& r : lofiBuf_) r.alloc(int(0.008 * fs) + 16);
+  for (int c = 0; c < numChannels_; ++c) lofiBuf_[size_t(c)].alloc(int(0.008 * fs) + 16);
+  // A channel-count change always calls prepare. Release inactive channels
+  // here, off the IO thread; any later increase allocates fresh zeroed state.
+  for (int c = numChannels_; c < kMaxChannels; ++c) {
+    hist_[size_t(c)] = Ring{};
+    loop_[size_t(c)] = std::vector<float>();
+    pitchBuf_[size_t(c)] = Ring{};
+    tapeBuf_[size_t(c)] = Ring{};
+    lofiBuf_[size_t(c)] = Ring{};
+  }
   // 4th-order Butterworth low-pass at 3.5 kHz.
   lofiLp1_ = SvfCoeffs::make({FilterType::LowPass, 3500.0, 0.0, 0.5412, true}, fs);
   lofiLp2_ = SvfCoeffs::make({FilterType::LowPass, 3500.0, 0.0, 1.3066, true}, fs);

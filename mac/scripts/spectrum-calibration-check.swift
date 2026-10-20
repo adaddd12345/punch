@@ -53,5 +53,52 @@ final class AudioController {
       }
     }
     print("PASS: integrated sine power is 0 / -6.0206 dBFS with both Accelerate Hann normalizations")
+    checkWorkingStorage()
+  }
+
+  /// Reused FFT scratch must neither overwrite caller samples nor mutate
+  /// previously published output. Exercise resizing and both release paths.
+  static func checkWorkingStorage() {
+    let analyzer = SpectrumAnalyzer()
+    var retained: [SpectrumAnalyzer.Output] = []
+    var fingerprints: [UInt64] = []
+    var combined: UInt64 = 14695981039346656037
+    var elapsed: UInt64 = 0
+    let benchmark = CommandLine.arguments.contains("--benchmark")
+    let count = benchmark ? 1600 : 400
+    for rate in [44_100.0, 48_000, 96_000, 192_000, 48_000] {
+      let n = SpectrumAnalyzer.fftSize(for: rate)
+      let tone = (0..<n).map { i -> Float in
+        let phase = 2 * Double.pi * Double(i) / rate
+        return Float(0.4 * sin(113 * phase) + 0.12 * cos(6001 * phase))
+      }
+      let quiet = [Float](repeating: 0, count: n)
+      for i in 0..<count {
+        let input = i % 400 < 220 ? tone : quiet
+        let original = input.map(\.bitPattern)
+        let start = DispatchTime.now().uptimeNanoseconds
+        let out = analyzer.process(input, rate: rate, dt: i % 13 == 0 ? 0.1 : 1.0 / 30,
+                                   calm: i % 200 >= 100)
+        elapsed += DispatchTime.now().uptimeNanoseconds - start
+        precondition(input.map(\.bitPattern) == original, "FFT overwrote caller input")
+        precondition(out.line.count == SpectrumModel.columns && out.ghost.count == SpectrumModel.columns)
+        precondition(out.line.allSatisfy(\.isFinite) && out.ghost.allSatisfy(\.isFinite))
+        combined = (combined ^ fingerprint(out)) &* 1099511628211
+        if i % 200 == 0 { retained.append(out); fingerprints.append(fingerprint(out)) }
+        if i % 400 == 399 { precondition(out.silent, "Silence must complete the existing release") }
+      }
+    }
+    precondition(zip(retained, fingerprints).allSatisfy { fingerprint($0.0) == $0.1 },
+                 "Reusing analyzer scratch mutated a retained output")
+    print("PASS: spectrum inputs and retained outputs survive rate changes, silence and Reduce Motion")
+    if benchmark {
+      print("spectrum fingerprint=\(combined), mean=\(Double(elapsed) / Double(count * 5) / 1000) us/frame")
+    }
+  }
+
+  static func fingerprint(_ out: SpectrumAnalyzer.Output) -> UInt64 {
+    var hash: UInt64 = 14695981039346656037
+    for value in out.line + out.ghost { hash = (hash ^ UInt64(value.bitPattern)) &* 1099511628211 }
+    return (hash ^ (out.silent ? 1 : 0)) &* 1099511628211
   }
 }

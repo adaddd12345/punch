@@ -1,5 +1,5 @@
 /* Plain C surface of the DSP core, imported by the Swift app through a
- * module map. Control functions: call from one thread (main). Process
+ * module map. Control functions: call from one serial thread/queue. Process
  * functions: call only from the Core Audio IO thread. */
 #ifndef PUNCH_C_H
 #define PUNCH_C_H
@@ -23,6 +23,15 @@ typedef enum {
   PUNCH_BAND_PASS,
   PUNCH_NOTCH,
 } PunchFilterType;
+
+/* Plain transfer-function inputs. No engine or render state is required. */
+typedef struct {
+  PunchFilterType type;
+  double freq_hz;
+  double gain_db;
+  double q;
+  bool enabled;
+} PunchEQBand;
 
 typedef struct {
   float in_peak[2];
@@ -154,6 +163,13 @@ size_t punch_export_equalizer_apo(const PunchEngine* e, char* buf, size_t buf_le
 
 /* Response of the pending EQ (incl. preamp) on a log grid, for drawing. */
 void punch_eq_curve(const PunchEngine* e, double lo_hz, double hi_hz, double* out_db, size_t n);
+/* Stateless equivalent, with caller-owned output and no heap allocation.
+ * Uses the first min(band_count, punch_max_eq_bands()) bands; NULL bands means
+ * zero bands. Rate and grid endpoints must be finite and positive. n == 0
+ * does not access out_db; n == 1 evaluates lo_hz. Includes preamp_db exactly
+ * as punch_set_preamp_db/punch_eq_curve do, without auto-preamp compensation. */
+void punch_eq_curve_for_bands(const PunchEQBand* bands, size_t band_count, double sample_rate, float preamp_db,
+                              double lo_hz, double hi_hz, double* out_db, size_t n);
 
 /* --- real-time --- */
 void punch_process_interleaved(PunchEngine* e, const float* in, float* out, int num_channels, int num_frames);

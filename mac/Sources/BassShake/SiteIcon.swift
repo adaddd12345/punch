@@ -190,12 +190,26 @@ enum SiteIcon {
 /// registrable domain, https, public hosts) plus byte caps enforced while
 /// reading. Callbacks on its own serial queue.
 final class SiteIconLoader: ArtRedirectGuard, URLSessionDataDelegate {
-  private struct Job {
+  // Delegate callbacks share one job object on the serial queue. Copying a
+  // struct out of the dictionary before every append would retain its old Data
+  // storage and force a growing buffer copy for every network chunk.
+  private final class Job {
     var data = Data()
     let page: Bool
     let done: (Data?, URL?) -> Void
+    init(page: Bool, done: @escaping (Data?, URL?) -> Void) {
+      self.page = page
+      self.done = done
+    }
   }
   private var jobs: [Int: Job] = [:]   // delegate queue only
+  private let configuration: URLSessionConfiguration?
+
+  init(configuration: URLSessionConfiguration? = nil) {
+    self.configuration = configuration
+    super.init()
+  }
+
   private let queue: OperationQueue = {
     let q = OperationQueue()
     q.maxConcurrentOperationCount = 1
@@ -203,7 +217,7 @@ final class SiteIconLoader: ArtRedirectGuard, URLSessionDataDelegate {
     return q
   }()
   private lazy var session: URLSession = {
-    let c = URLSessionConfiguration.ephemeral
+    let c = configuration ?? URLSessionConfiguration.ephemeral
     c.httpCookieStorage = nil
     c.httpShouldSetCookies = false
     c.urlCache = nil
@@ -257,9 +271,12 @@ final class SiteIconLoader: ArtRedirectGuard, URLSessionDataDelegate {
     // A page asked as a desktop browser: the default agent gets mobile pages
     // (m.youtube.com) whose head declares no icons. Generic, so it identifies no one.
     if page { r.setValue(SiteIcon.pageAgent, forHTTPHeaderField: "User-Agent") }
-    let task = session.dataTask(with: r)
     queue.addOperation { [weak self] in
-      self?.jobs[task.taskIdentifier] = Job(page: page, done: done)
+      guard let self else { done(nil, nil); return }
+      // Session initialization and task registration use the same queue as
+      // delegate callbacks, including callers arriving from another queue.
+      let task = self.session.dataTask(with: r)
+      self.jobs[task.taskIdentifier] = Job(page: page, done: done)
       task.resume()
     }
   }
@@ -277,10 +294,10 @@ final class SiteIconLoader: ArtRedirectGuard, URLSessionDataDelegate {
 
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
     let id = dataTask.taskIdentifier
-    guard var job = jobs[id] else { return }
+    guard let job = jobs[id] else { return }
     let from = max(0, job.data.count - 8)
-    job.data.append(data)
     if job.page {
+      job.data.append(data.prefix(max(0, SiteIcon.maxPageBytes - job.data.count)))
       // Enough of the page: its head is in (or 128 KB read). Stop reading.
       let tail = job.data[(job.data.startIndex + from)...]
       let closed = tail.range(of: Data("</head>".utf8)) != nil || tail.range(of: Data("</HEAD>".utf8)) != nil
@@ -290,13 +307,17 @@ final class SiteIconLoader: ArtRedirectGuard, URLSessionDataDelegate {
         job.done(job.data.prefix(SiteIcon.maxPageBytes), dataTask.response?.url)
         return
       }
-    } else if job.data.count > SiteIcon.maxBytes {
-      jobs[id] = nil
-      dataTask.cancel()
-      job.done(nil, nil)
-      return
+    } else {
+      // Reject before appending, so even a large delegate chunk cannot grow
+      // the retained icon buffer past its advertised cap.
+      guard data.count <= SiteIcon.maxBytes - job.data.count else {
+        jobs[id] = nil
+        dataTask.cancel()
+        job.done(nil, nil)
+        return
+      }
+      job.data.append(data)
     }
-    jobs[id] = job
   }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {

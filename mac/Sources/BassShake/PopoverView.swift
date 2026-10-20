@@ -26,8 +26,9 @@ struct PopoverView: View {
   @State private var slowStart = false
   /// This opening shows "Updated to …": its band tapers the content (set as the popup opens).
   @State private var updateTaper = false
-  /// The trophy plays once ever, on the very first launch, at full length. Never again, and
+  /// The splash plays once ever, after a fresh install, at full length. Never again, and
   /// never a shortened version: under Reduce Motion or Power Saver it is simply skipped.
+  /// Marked shown only when it finishes, so closing the popup mid-way replays it whole.
   private static var splashShown = UserDefaults.standard.bool(forKey: "trophyShown")
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorSchemeContrast) private var contrast
@@ -83,9 +84,9 @@ struct PopoverView: View {
       } else {
         // One theme for every panel (the drawer has its own, same inputs):
         // My Sounds, Remote, Layout and the rest match the controls.
-        PopupChromeTheme(background: controller.settings.backgroundStyle,
-                         artworkEnabled: !controller.isMirror,
-                         holdsCover: controller.settings.artworkBackgroundBleed) {
+        PopupChromeTheme(background: controller.settings.shownBackground,
+                         artworkEnabled: !controller.isMirror && !controller.settings.monoStyle,
+                         holdsCover: controller.settings.artworkBackgroundBleed && !controller.settings.monoStyle) {
           panels
         }
       }
@@ -96,8 +97,11 @@ struct PopoverView: View {
     .pointerHintRoot(enabled: controller.settings.pointerHints)
     // Power Saver for everything inside; animation pauses while the window is covered.
     .drawBudgetRoot()
-    .environment(\.artworkStyle, controller.settings.artworkStyle)
+    .environment(\.artworkStyle, controller.settings.shownArtworkStyle)
+    .environment(\.monoStyle, controller.settings.monoStyle)
     .environment(\.vinylMaterial, controller.settings.vinylMaterial)
+    .environment(\.peekRecord, controller.settings.peekRecord)
+    .environment(\.discMaterial, controller.settings.discMaterial)
     .environment(\.artworkEffect, controller.settings.artworkEffect)
     .environment(\.artworkFoil, controller.settings.artworkFoil)
     .environment(\.artworkPerspective, controller.settings.artworkPerspective)
@@ -160,10 +164,13 @@ struct PopoverView: View {
   private var gaps: Spacing { Spacing(room: controller.settings.breathingRoom) }
 
   private var drawerAppearance: DrawerAppearance {
-    DrawerAppearance(background: controller.settings.backgroundStyle,
+    DrawerAppearance(background: controller.settings.shownBackground,
                      tint: popupTint,
-                     artworkStyle: controller.settings.artworkStyle,
+                     artworkStyle: controller.settings.shownArtworkStyle,
+                     mono: controller.settings.monoStyle,
                      vinylMaterial: controller.settings.vinylMaterial,
+                     peekRecord: controller.settings.peekRecord,
+                     discMaterial: controller.settings.discMaterial,
                      artworkEffect: controller.settings.artworkEffect,
                      artworkFoil: controller.settings.artworkFoil,
                      artworkPerspective: controller.settings.artworkPerspective,
@@ -311,7 +318,7 @@ struct PopoverView: View {
                         : AnyView(RemoteMacsBlock(directory: RemoteControl.shared.directory, size: size, opening: popupOpening)),
                       tickerBlock: tickerBlock,
                       reshuffle: reshuffle)
-              .onPreferenceChange(PopupTintPreference.self) { popupTint = $0 }
+              .onPreferenceChange(PopupTintPreference.self) { popupTint = controller.settings.monoStyle ? nil : $0 }
           }
         }
       }
@@ -380,7 +387,7 @@ struct PopoverView: View {
     .frame(width: 360)
     // Never taller than the screen space it hangs in (menu-bar popover only).
     .frame(maxHeight: role == .menuBar ? space.maxHeight : nil, alignment: .top)
-    .popupBackdrop(controller.settings.backgroundStyle, active: visible)
+    .popupBackdrop(controller.settings.shownBackground, active: visible)
     .environment(\.artworkBackdropContext, controller.isMirror ? nil :
       ArtworkBackdropContext(reaction: role == .launchWindow ? nil : controller.artworkReaction,
                              live: controller.settings.artworkBackgroundLive,
@@ -431,7 +438,11 @@ struct PopoverView: View {
     }
     .overlay {
       if splash {
-        LaunchSplash().transition(.opacity)
+        ShakerSplash {
+          Self.splashShown = true
+          UserDefaults.standard.set(true, forKey: "trophyShown")
+          splash = false
+        }
       }
     }
     .background(HostWindowReader { w in
@@ -516,6 +527,8 @@ struct PopoverView: View {
     .onAppear { appeared() }
     .onDisappear {
       visible = false
+      // Cut short: not marked shown, so the next opening plays it whole.
+      splash = false
       showDoctorReport = false
       doctorRequestedHere = false
       reshuffle.detach()
@@ -579,15 +592,8 @@ struct PopoverView: View {
       return c.settings.viewSize != .mini || role == .launchWindow
     }
     if let w = window.window { reshuffle.attach(w) }
-    if !Self.splashShown {
-      Self.splashShown = true
-      UserDefaults.standard.set(true, forKey: "trophyShown")
-      if !(reduceMotion || controller.settings.powerSaver) {
-        splash = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + ShakerTrophySplash.duration(reduceMotion: false)) {
-          withAnimation(.easeOut(duration: 0.35)) { splash = false }
-        }
-      }
+    if !Self.splashShown && !(reduceMotion || controller.settings.powerSaver) {
+      splash = true
     }
     // 30 Hz meters (10 Hz under Power Saver) only while this is on screen (nothing runs when closed).
     var artworkScratch: [Float] = []
@@ -1566,19 +1572,33 @@ struct OverflowScroll<Content: View>: View {
   init(@ViewBuilder content: () -> Content) { self.content = content() }
   @State private var contentHeight: CGFloat?
   @State private var overflows = false
+  @State private var measure = Measure()
   @Environment(\.displayScale) private var displayScale
+
+  /// The latest geometry, held outside the render graph. Both callbacks only
+  /// note values here; one deferred settle (never inside window layout)
+  /// turns them into state. Writing state from the callbacks fed a loop:
+  /// height -> preferredContentSize -> popover resize -> safe area -> layout
+  /// -> remeasure, which AppKit aborts (NSGenericException).
+  final class Measure {
+    var content: CGFloat?
+    var viewport: CGFloat?
+    var queued = false
+    /// The height before the current one, and when the current was written:
+    /// a quick return to it is a two-value cycle.
+    var previous: CGFloat?
+    var wroteAt: TimeInterval = 0
+  }
 
   var body: some View {
     let scale = max(1, displayScale)
     ScrollView(.vertical) {
       content
         .onGeometryChange(for: CGFloat.self, of: { ceil($0.size.height * scale) / scale }) { h in
-          guard h.isFinite, h >= 0, h != contentHeight else { return }
-          // Geometry is already the animated result. Do not spring its
-          // measurement a second time or chase sub-pixel settling changes.
-          var transaction = Transaction(animation: nil)
-          transaction.disablesAnimations = true
-          withTransaction(transaction) { contentHeight = h }
+          guard h.isFinite, h >= 0 else { return }
+          measure.content = h
+          // The first height lands in this pass, so the popup opens at its size.
+          if contentHeight == nil { settle() } else { settleSoon() }
         }
         .background(SlimScroller())
     }
@@ -1586,13 +1606,46 @@ struct OverflowScroll<Content: View>: View {
     // Fitting, it draws like a plain stack (glows and a dragged block aren't cut off).
     .scrollClipDisabled(!overflows)
     .frame(idealHeight: contentHeight, maxHeight: contentHeight)
-    // Only the clipping decision needs state, not every intermediate viewport
-    // height while the window is shrinking or expanding.
-    .onGeometryChange(for: Bool.self, of: { (contentHeight ?? 0) > $0.size.height + 1 / scale }) { value in
-      var transaction = Transaction(animation: nil)
-      transaction.disablesAnimations = true
-      withTransaction(transaction) { overflows = value }
+    // Only noted: the clipping decision is made in settle(), not every
+    // intermediate viewport height while the window is shrinking or expanding.
+    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { h in
+      measure.viewport = h
+      settleSoon()
     }
+  }
+
+  /// One main-queue turn later, coalesced: out of the layout pass that measured.
+  private func settleSoon() {
+    guard !measure.queued else { return }
+    measure.queued = true
+    DispatchQueue.main.async { settle() }
+  }
+
+  private func settle() {
+    measure.queued = false
+    let scale = max(1, displayScale)
+    // Geometry is already the animated result. Do not spring its
+    // measurement a second time or chase sub-pixel settling changes.
+    var transaction = Transaction(animation: nil)
+    transaction.disablesAnimations = true
+    if let h = measure.content {
+      let current = contentHeight
+      let moved = current.map { abs($0 - h) >= 1 } ?? true
+      // A -> B -> A: the layout is cycling between two heights. Settle on the
+      // taller (everything fits) instead of resizing the popup every frame.
+      let now = ProcessInfo.processInfo.systemUptime
+      let cycling = now - measure.wroteAt < 0.3 && measure.previous.map { abs($0 - h) < 1 } == true
+      if moved {
+        let next = cycling ? max(h, current ?? h) : h
+        if next != current {
+          measure.previous = current
+          measure.wroteAt = now
+          withTransaction(transaction) { contentHeight = next }
+        }
+      }
+    }
+    let over = (contentHeight ?? 0) > (measure.viewport ?? .infinity) + 1 / scale
+    if over != overflows { withTransaction(transaction) { overflows = over } }
   }
 }
 

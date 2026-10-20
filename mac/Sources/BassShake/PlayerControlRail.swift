@@ -40,9 +40,7 @@ struct PlayerControlRail: View {
 
       if tempo {
         Button { popups.toggleBPM() } label: {
-          Text("BPM")
-            .lineLimit(1)
-            .frame(maxWidth: .infinity)
+          RailTempoWord(kind: .bpm)
             .modifier(RailCell(height: height, selected: popups.bpm))
         }
         .accessibilityLabel("BPM")
@@ -50,9 +48,7 @@ struct PlayerControlRail: View {
         .pointerHint("BPM", does: "Detects the song's tempo; metronome and YouTube speed.")
 
         Button { popups.toggleKey() } label: {
-          Text("Key")
-            .lineLimit(1)
-            .frame(maxWidth: .infinity)
+          RailTempoWord(kind: .key)
             .modifier(RailCell(height: height, selected: popups.key))
         }
         .accessibilityLabel("Key")
@@ -110,6 +106,36 @@ struct PlayerControlRail: View {
       if flex { Text(title).lineLimit(1) }
     }
     .frame(maxWidth: flex ? .infinity : nil)
+  }
+}
+
+/// "BPM" / "Key", or the settled value once heard ("93 BPM", "8A"). A leaf
+/// that alone observes the readings; the plain word sets its size, so a
+/// value never resizes the rail or the popup.
+private struct RailTempoWord: View {
+  enum Kind { case bpm, key }
+  let kind: Kind
+  @ObservedObject private var readings = TempoReadings.shared
+
+  var body: some View {
+    let word = kind == .bpm ? "BPM" : "Key"
+    let value: String? = kind == .bpm
+      ? readings.bpm.flatMap { readings.provisional ? nil : "\($0) BPM" }
+      : readings.key?.camelot
+    Text(word)
+      .lineLimit(1)
+      .opacity(value == nil ? 1 : 0)
+      .frame(maxWidth: .infinity)
+      .overlay {
+        if let value {
+          Text(value)
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.horizontal, 4)
+        }
+      }
+      .accessibilityValue(value ?? "")
   }
 }
 

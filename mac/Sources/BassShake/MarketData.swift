@@ -104,11 +104,24 @@ struct Headline: Equatable {
 }
 
 private enum MarketTimestamp {
+  // Reused by quote and headline labels. A formatter's ICU setup is far more
+  // expensive than formatting an additional date. Configurations are immutable
+  // after insertion; NSCache and modern DateFormatter support concurrent reads.
+  private static let formatters: NSCache<NSString, DateFormatter> = {
+    let cache = NSCache<NSString, DateFormatter>()
+    cache.countLimit = 16
+    return cache
+  }()
+
   static func text(_ date: Date, timezone: String?) -> String {
+    let zone = timezone.flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)!
+    let key = zone.identifier as NSString
+    if let formatter = formatters.object(forKey: key) { return formatter.string(from: date) }
     let f = DateFormatter()
     f.locale = Locale(identifier: "en_US_POSIX")
     f.dateFormat = "d MMM yyyy, HH:mm z"
-    f.timeZone = timezone.flatMap(TimeZone.init(identifier:)) ?? TimeZone(secondsFromGMT: 0)
+    f.timeZone = zone
+    formatters.setObject(f, forKey: key)
     return f.string(from: date)
   }
 }

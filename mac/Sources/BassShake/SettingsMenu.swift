@@ -186,6 +186,18 @@ struct SettingsMenuContent: View {
         })) {
           ForEach(VinylMaterial.allCases) { Text($0.title).tag($0) }
         }
+        Picker("Record", selection: Binding(get: { controller.settings.peekRecord }, set: {
+          controller.settings.peekRecord = $0
+          controller.settings.artworkStyle = .vinyl
+        })) {
+          ForEach(PeekRecord.allCases) { Text($0.title).tag($0) }
+        }
+        Picker("Disc", selection: Binding(get: { controller.settings.discMaterial }, set: {
+          controller.settings.discMaterial = $0
+          controller.settings.artworkStyle = .vinyl
+        })) {
+          ForEach(DiscMaterial.allCases) { Text($0.title).tag($0) }
+        }
         Divider()
         Picker("Finish", selection: bind(\.artworkEffect)) {
           ForEach(ArtworkEffect.allCases) { Text($0.title).tag($0) }
@@ -194,6 +206,7 @@ struct SettingsMenuContent: View {
         Divider()
         Toggle("Holographic Finish", isOn: bind(\.artworkFoil))
       }
+      Toggle("Mono", isOn: bind(\.monoStyle))
       Picker("Play Button", selection: Binding(get: { controller.settings.playButtonLook }, set: {
         controller.settings.playButtonLook = $0
         // Older paired builds keep the nearest available appearance.

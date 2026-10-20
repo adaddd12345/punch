@@ -5,7 +5,7 @@ import Foundation
 
 @main
 struct DeviceBatteryCheck {
-  @MainActor static func main() throws {
+  @MainActor static func main() async throws {
     if CommandLine.arguments.count > 1 {
       NSApplication.shared.setActivationPolicy(.prohibited)
       let content = VStack(alignment: .leading, spacing: 16) {
@@ -83,6 +83,8 @@ struct DeviceBatteryCheck {
     neverStarted.executableURL = URL(fileURLWithPath: "/bin/sleep")
     neverStarted.arguments = ["30"]
     check(!alreadyCancelled.start(neverStarted), "cancelled route cannot launch late probe")
+    let cancelledReading = await DeviceBatteryProvider.readAsync(headphones, cancellation: alreadyCancelled)
+    check(cancelledReading == nil, "queued cancelled probe returns without launching system_profiler")
     print("PASS: cancellation bounds owned process lifetime and prevents late launch")
 
     // Read-only sanity check; intentionally prints no device names or addresses.

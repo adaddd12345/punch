@@ -156,6 +156,27 @@ struct OutputDevice: Identifiable, Hashable {
 }
 
 enum Devices {
+  /// A fresh inventory for the UI's combined input/output refresh. Enumerate
+  /// the HAL once and share metadata reads for duplex devices; the standalone
+  /// queries below still avoid inspecting the unused scope for other callers.
+  static func inventory() -> (outputs: [OutputDevice], inputs: [OutputDevice]) {
+    let ids = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyDevices), of: AudioObjectID.self, zero: 0)) ?? []
+    var outputs: [OutputDevice] = []
+    var inputs: [OutputDevice] = []
+    for id in ids {
+      let hasOutput = HAL.channelCount(id, scope: kAudioObjectPropertyScopeOutput) > 0
+      let hasInput = HAL.channelCount(id, scope: kAudioObjectPropertyScopeInput) > 0
+      guard hasOutput || hasInput,
+            let uid = try? HAL.string(id, .global(kAudioDevicePropertyDeviceUID)) else { continue }
+      let name = (try? HAL.string(id, .global(kAudioObjectPropertyName))) ?? uid
+      let transport = (try? HAL.get(id, .global(kAudioDevicePropertyTransportType), default: UInt32(0))) ?? 0
+      let device = OutputDevice(id: id, uid: uid, name: name, transport: transport)
+      if hasOutput && (!device.isAggregateOrVirtual || device.isOutputGroup) { outputs.append(device) }
+      if hasInput && !uid.hasPrefix("com.bassshake.") { inputs.append(device) }
+    }
+    return (outputs, inputs)
+  }
+
   static func allOutputs(includeGroups: Bool = true) -> [OutputDevice] {
     let ids = (try? HAL.array(systemObject, .global(kAudioHardwarePropertyDevices), of: AudioObjectID.self, zero: 0)) ?? []
     return ids.compactMap { id -> OutputDevice? in

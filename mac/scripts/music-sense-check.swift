@@ -397,7 +397,22 @@ struct MusicSenseCheck {
     let levelHeld = levelShown.count > 1 ? levelShown[1].0 - 10 : 14
     check(levelHeld >= 6, "Level change: switched level after only \(levelHeld) s")
 
-    // Key.
+    // A playback-rate change (1× → 1.25×) rescales the tempo: 120 reads 150
+    // within 4 s, with no beat switch counted.
+    let rated = MusicSenseAnalyzer(sampleRate: r)
+    run(rated, clicks(bpm: 120, seconds: 10, rate: r, offset: 0.2), rate: r, base: 9_000)
+    rated.playbackRateChanged(from: 1, to: 1.25)
+    var ratedAt: Double?, ratedWrong = false
+    run(rated, clicks(bpm: 150, seconds: 6, rate: r, offset: 0.1), rate: r, base: 9_010.1) { t, out in
+      guard out.snapshot.bpmShown, let b = out.snapshot.bpm else { return }
+      if abs(b - 150) <= 1 { if ratedAt == nil { ratedAt = t } } else if ratedAt != nil { ratedWrong = true }
+    }
+    check((ratedAt ?? 99) <= 4 && !ratedWrong && rated.relocks == 0,
+          "Rate change: 150 shown at \(ratedAt ?? -1) s, wrong after \(ratedWrong), relocks \(rated.relocks)")
+
+    // Key. A drum loop (pitched kick, snare body) has no key.
+    let drums = key(hipHop(bpm: 90, seconds: 25, rate: r, offset: 0.1), rate: r)
+    check(!drums.keyShown, "Drum loop showed a key (\(drums.key?.name ?? "–"))")
     let aMinor = key(chords([[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]], seconds: 25, rate: 48_000), rate: 48_000)
     guard let am = aMinor.key else { return check(false, "Am–F–C–G: no key after 25 s") }
     check(am == MusicKey(pitchClass: 9, minor: true) || am == MusicKey(pitchClass: 0, minor: false),

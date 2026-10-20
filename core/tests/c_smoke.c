@@ -22,6 +22,10 @@ int main(void) {
   size_t need = punch_export_equalizer_apo(e, out, sizeof out);
   double curve[8];
   punch_eq_curve(e, 20.0, 20000.0, curve, 8);
+  const PunchEQBand band = {PUNCH_BELL, 1000.0, 3.0, 1.0, true};
+  double stateless_curve[8];
+  punch_eq_curve_for_bands(&band, 1, 48000.0, -3.f, 20.0, 20000.0, stateless_curve, 8);
+  for (int i = 0; i < 8; ++i) if (curve[i] != stateless_curve[i]) return 2;
   printf("in %.3f out %.3f latency %d preamp %.2f export %zu bytes\n", m.in_peak[0], m.out_peak[0],
          punch_engine_latency_frames(e), punch_effective_preamp_db(e), need);
   punch_engine_destroy(e);

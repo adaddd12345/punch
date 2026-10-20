@@ -72,6 +72,8 @@ struct EQView: View {
   @State private var keyRun: (band: Int, at: TimeInterval, bands: [EQBand])?
   /// Response curves of the bands as drawn, memoized per (bands, count).
   @State private var curves = CurveCache()
+  /// The graph's origin in global space (not state: writing it redraws nothing).
+  @State private var globalOrigin = GlobalOrigin()
   /// Keyboard ownership follows a graph press; SwiftUI focusable consumes
   /// the graph's pointer drag on macOS, so it must not wrap this surface.
   @State private var focused = false
@@ -242,7 +244,11 @@ struct EQView: View {
           }
         }
       }
-      .gesture(dragGesture(size: size, frameOrigin: geo.frame(in: .global).origin))
+      // The global origin through a geometry callback into a reference: read
+      // in the body, it re-ran this whole surface (and redrew the curve)
+      // whenever the popup's ScrollView republished its geometry.
+      .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .global).origin }) { globalOrigin.point = $0 }
+      .gesture(dragGesture(size: size))
       .simultaneousGesture(TapGesture(count: 2).onEnded { resetHovered() })
       // Outside the drag: as an inner gesture, the hint's own drag would win
       // and the EQ's drag would never fire.
@@ -747,10 +753,11 @@ struct EQView: View {
 
   /// Measured in global coordinates, so the node doesn't lurch when a view
   /// above the EQ changes height mid-drag; local only to pick the node.
-  private func dragGesture(size: CGSize, frameOrigin: CGPoint) -> some Gesture {
+  private func dragGesture(size: CGSize) -> some Gesture {
     DragGesture(minimumDistance: 0, coordinateSpace: .global)
       .updating($dragHeld) { _, held, _ in held = true }
       .onChanged { v in
+        let frameOrigin = globalOrigin.point
         keyboardWindow = NSApp.currentEvent?.window ?? keyboardWindow ?? NSApp.keyWindow
         if kbActive { kbActive = false }
         if lineDrag != nil { dragLine(v, size: size, frameOrigin: frameOrigin); return }
@@ -1266,6 +1273,11 @@ private struct LimitOverlay: View {
 /// The EQ's response curves, memoized: a frame asks for the same curve
 /// several times (line, nodes, readout, hit tests), and only the bands
 /// being dragged change between frames.
+/// A view's latest global origin, kept out of the render graph.
+final class GlobalOrigin {
+  var point: CGPoint = .zero
+}
+
 final class CurveCache {
   private var entries: [(bands: [EQBand], count: Int, sampleRate: Double, curve: [Double])] = []
 

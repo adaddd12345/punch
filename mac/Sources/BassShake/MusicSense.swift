@@ -16,6 +16,9 @@ import QuartzCore
 /// to show is in the snapshot (`bpmShown`, `keyShown`, their sources).
 /// Backups: `setHints(title:)` parses a BPM/key from the track's title;
 /// `setTrack(_:)` recalls the last clear result for a track id.
+/// `setPlaybackRate(_:)`: the source plays sped up or slowed down (YouTube
+/// speed); results are heard at that rate, memory and title hints are kept
+/// at the song's own tempo.
 @MainActor
 final class MusicSense: ObservableObject {
   nonisolated static let shared = MusicSense()
@@ -63,6 +66,8 @@ final class MusicSense: ObservableObject {
   private var generation = 0
   private var hints = MusicTitleHints()
   private var track: String?
+  /// The source's playback rate (1 = its own speed).
+  private(set) var playbackRate = 1.0
   /// The last clear (detected, shown) result per track id, least recent first.
   private var memory: [(id: String, bpm: Double?, key: MusicKey?)] = []
   static let memorySize = 20
@@ -122,18 +127,44 @@ final class MusicSense: ObservableObject {
   /// detection afresh (like reset()) and clears the title hints; an id heard
   /// clearly before shows its remembered tempo and key at once while
   /// listening confirms them. Memory keeps the last 20 tracks.
-  func setTrack(_ id: String?) {
+  /// `rate`: the new track's playback rate (memory is at its own tempo).
+  func setTrack(_ id: String?, rate: Double = 1) {
     guard id != track else { return }
     track = id
     hints = MusicTitleHints()
+    playbackRate = Self.validRate(rate)
+    TempoReadings.shared.setRate(playbackRate)
     var recalled = MusicSenseAnalyzer.Backup()
     if let id, let i = memory.firstIndex(where: { $0.id == id }) {
       let m = memory.remove(at: i)
       memory.append(m)
-      recalled = MusicSenseAnalyzer.Backup(bpm: m.bpm, key: m.key)
+      recalled = MusicSenseAnalyzer.Backup(bpm: m.bpm.map { $0 * playbackRate }, key: m.key)
     }
     restartDetection(remembered: recalled, clearHints: true)
   }
+
+  /// The source now plays at `rate` × its own speed (YouTube speed). The
+  /// analyser scales what it has instead of hearing a new song; the title
+  /// hint and the remembered tempo follow.
+  func setPlaybackRate(_ rate: Double) {
+    let new = Self.validRate(rate)
+    guard abs(new - playbackRate) > 1e-4 else { return }
+    let old = playbackRate
+    playbackRate = new
+    TempoReadings.shared.setRate(new)
+    let titled = MusicSenseAnalyzer.Backup(bpm: hints.bpm.map { $0 * new }, key: hints.key)
+    var recalled = MusicSenseAnalyzer.Backup()
+    if let id = track, let m = memory.first(where: { $0.id == id }) {
+      recalled = MusicSenseAnalyzer.Backup(bpm: m.bpm.map { $0 * new }, key: m.key)
+    }
+    queue.async { [worker] in
+      worker.playbackRateChanged(from: old, to: new)
+      worker.setHints(titled)
+      worker.setRemembered(recalled)
+    }
+  }
+
+  private static func validRate(_ r: Double) -> Double { r.isFinite && r > 0 ? min(4, max(0.25, r)) : 1 }
 
   /// The track's title, for a BPM ("140 BPM", "bpm 140") and key ("C minor",
   /// "F# Minor", "Bb maj", "Am") to show while detection is weak, and to
@@ -142,7 +173,7 @@ final class MusicSense: ObservableObject {
     let parsed = MusicTitleHints(title: title)
     guard parsed != hints else { return }
     hints = parsed
-    let backup = MusicSenseAnalyzer.Backup(bpm: parsed.bpm, key: parsed.key)
+    let backup = MusicSenseAnalyzer.Backup(bpm: parsed.bpm.map { $0 * playbackRate }, key: parsed.key)
     queue.async { [worker] in worker.setHints(backup) }
   }
 
@@ -158,10 +189,12 @@ final class MusicSense: ObservableObject {
     }
   }
 
-  /// Keeps a clear detected result for the current track.
+  /// Keeps a clear detected result for the current track, at its own tempo
+  /// (what was heard ÷ the playback rate).
   private func remember(_ s: MusicSenseSnapshot) {
     guard let id = track else { return }
-    let bpm = s.bpmShown && s.bpmSource == .detected ? s.bpm : nil
+    let bpm = s.bpmShown && s.bpmSource == .detected && !s.bpmRecalibrating
+      ? s.bpm.map { ($0 / playbackRate * 10).rounded() / 10 } : nil
     let key = s.keyShown && s.keySource == .detected ? s.key : nil
     guard bpm != nil || key != nil else { return }
     var entry = (id: id, bpm: bpm, key: key)
@@ -231,7 +264,10 @@ final class MusicSense: ObservableObject {
     if force || wait <= 0 {
       pending = nil
       lastPublish = now
-      if force ? snapshot != s : s.differsVisibly(from: snapshot) { snapshot = s }
+      if force ? snapshot != s : s.differsVisibly(from: snapshot) {
+        snapshot = s
+        TempoReadings.shared.update(s)
+      }
       return
     }
     pending = s
@@ -244,6 +280,51 @@ final class MusicSense: ObservableObject {
         if let p = self.pending { self.publish(p) }
       }
     }
+  }
+}
+
+// MARK: - Settled readings (slow, for small views)
+
+/// What the Tempo views show as numbers, changing only when the shown value
+/// does: the BPM as a whole number (a ±0.6 band keeps it from flicking
+/// between neighbours), whether it is still provisional, the key once
+/// settled, and the playback rate. The rail's BPM/Key words and the
+/// metronome observe this, not the 4 Hz snapshot.
+@MainActor final class TempoReadings: ObservableObject {
+  nonisolated static let shared = TempoReadings()
+  nonisolated init() {}
+
+  /// The tempo heard (at the playing rate), nil while not shown.
+  @Published private(set) var bpm: Int?
+  /// A backup (title, memory), an early reading or a beat change being checked: drawn with "~".
+  @Published private(set) var provisional = false
+  /// The key once shown and not being re-checked.
+  @Published private(set) var key: MusicKey?
+  /// The source's playback rate (1 = its own speed).
+  @Published private(set) var rate = 1.0
+
+  /// The song's own tempo (heard ÷ rate), when it differs from what's heard.
+  var original: Int? {
+    guard let bpm, abs(rate - 1) > 1e-3 else { return nil }
+    return Int((Double(bpm) / rate).rounded())
+  }
+
+  func update(_ s: MusicSenseSnapshot) {
+    let raw = s.bpmShown && !s.speech ? s.bpm : nil
+    var shown: Int?
+    if let raw, raw.isFinite {
+      // Sticky within ±0.6 of the shown whole number.
+      if let old = bpm, abs(raw - Double(old)) <= 0.6 { shown = old } else { shown = Int(raw.rounded()) }
+    }
+    let unsure = shown != nil && (s.bpmSource != .detected || s.bpmRecalibrating || s.bpmProvisional)
+    if shown != bpm { bpm = shown }
+    if unsure != provisional { provisional = unsure }
+    let k = s.keyShown && !s.speech && !s.keyRecalibrating ? s.key : nil
+    if k != key { key = k }
+  }
+
+  func setRate(_ r: Double) {
+    if abs(r - rate) > 1e-4 { rate = r }
   }
 }
 
@@ -299,6 +380,12 @@ final class MusicSenseWorker: @unchecked Sendable {
     deliver?(analyzer.output(), generation, true)
   }
 
+  /// The source's speed changed: the analyser rescales its tempo state
+  /// instead of relocking as a new song.
+  func playbackRateChanged(from old: Double, to new: Double) {
+    analyzer?.playbackRateChanged(from: old, to: new)
+  }
+
   func setLatency(_ seconds: Double) {
     latency = seconds
     analyzer?.outputLatency = seconds
@@ -347,7 +434,7 @@ final class MusicSenseIngress: @unchecked Sendable {
     var epoch = 0
   }
 
-  static let capacity = 1 << 15   // 32768 samples: 0.68 s at 48 kHz
+  static let capacity = 1 << 16   // 65536 samples: 1.4 s at 48 kHz (a main-thread hitch never overflows it)
   static let maxChunks = 128
 
   private let lock = NSLock()
