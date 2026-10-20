@@ -59,10 +59,13 @@ MODEL3 = dict(
 # occlusion (footprint + bevel overhang, Gaussian-softened), the cone is
 # smooth, and the frame is centred from the body + shadow bounds.
 # =====================================================================
+# The angled view the app icon used before going face on: isometric turned 20 deg
+# toward the woofer and tilted 1.5 deg flatter. The menu-bar template keeps it.
+ANGLED_CAMERA = dict(yaw=45.0 - 20.0, pitch=math.degrees(math.atan(1 / math.sqrt(2))) - 1.5)
+
 MODEL4 = dict(
-    # The icon's angle, picked in viewer.py: isometric turned 20 deg toward the
-    # woofer and tilted 1.5 deg flatter (still orthographic, one camera).
-    camera=dict(yaw=45.0 - 20.0, pitch=math.degrees(math.atan(1 / math.sqrt(2))) - 1.5),
+    # The app icon looks straight at the woofer (picked in viewer.py's Face on).
+    camera=dict(yaw=0.0, pitch=0.0),
     light=dict(dir=(-0.35, 0.45, 0.82), ambient=0.24, diffuse=0.84),          # one sun + ambient
     body=dict(w=1.0, d=1.0, h=0.94, bevel=0.07),
     lid=dict(inset=0.18, height=0.07, bevel=0.045, ridge=0.025),               # tent fold: back -> front corner
@@ -1035,8 +1038,132 @@ def build_release():
     print("wrote", rel)
 
 
+# =====================================================================
+# Menu-bar template (python3 gen.py --menubar -> mac/Resources/source/menubar-icon.svg)
+# MODEL4's cube seen through ANGLED_CAMERA, drawn in the one-colour template
+# style: a solid silhouette, cut lines on the real projected bevel centrelines,
+# the woofer as a cut ring around a solid hub, and the lid as an island with
+# cut-out holes. Sizes below are in points of the 18 pt menu-bar box, except
+# the hole layout (body units, on the lid's top plane), enlarged so the holes
+# survive at 1x.
+# =====================================================================
+MENUBAR = dict(
+    box=18.0, units_per_pt=20.0, height_pt=17.2,   # silhouette fills the box like the old mark
+    edge_cut_pt=1.0,       # top-left / top-right / front-vertical face separations
+    lid_gap_pt=0.0,        # gap around the lid island (0 = no island: at 18 px it merges with the edge cut)
+    bottom_stop_pt=1.6,    # the front-edge cut stops this far above the base (old mark: round cap)
+    hub=0.55,              # solid hub radius, fraction of the woofer radius
+    hole_r=0.056, hole_pitch=0.16, segments=96,
+)
+
+
+def build_menubar():
+    MB, B, LD, WF = MENUBAR, MODEL4["body"], MODEL4["lid"], MODEL4["woofer"]
+    W, D, H, c = B["w"], B["d"], B["h"], B["bevel"]
+    upt = MB["units_per_pt"]
+    body = loft([rect_ring(0, W, 0, D, 0, c, 0), rect_ring(0, W, 0, D, c, 0, c),
+                 rect_ring(0, W, 0, D, H - c, 0, c), rect_ring(0, W, 0, D, H, c, 0)])
+    lx0, lx1, ly0, ly1 = LD["inset"], W - LD["inset"], LD["inset"], D - LD["inset"]
+    lc, lz1, rdg = LD["bevel"], H + LD["height"], LD["ridge"]
+    span = (lx1 - lc) - (lx0 + lc)
+    def tent(x, y):
+        return lz1 + rdg * (1 - abs((x - lx0) - (y - ly0)) / span)
+    lid_pts = (rect_ring(lx0, lx1, ly0, ly1, H, 0, lc) + rect_ring(lx0, lx1, ly0, ly1, lz1 - lc, 0, lc)
+               + [(x, y, tent(x, y)) for (x, y, _) in rect_ring(lx0, lx1, ly0, ly1, lz1, lc, 0)])
+    body_pts = [p for _, f in body for p in f]
+
+    def hull(pts):
+        pts = sorted(set((round(a, 6), round(b, 6)) for a, b in pts))
+        def cr(o, a, b):
+            return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+        lo, hi = [], []
+        for q in pts:
+            while len(lo) >= 2 and cr(lo[-2], lo[-1], q) <= 0:
+                lo.pop()
+            lo.append(q)
+        for q in reversed(pts):
+            while len(hi) >= 2 and cr(hi[-2], hi[-1], q) <= 0:
+                hi.pop()
+            hi.append(q)
+        return lo[:-1] + hi[:-1]
+
+    # fit: silhouette height = height_pt, centred in the box
+    cam0 = Cam3(ANGLED_CAMERA["yaw"], ANGLED_CAMERA["pitch"])
+    p0 = [cam0(p) for p in body_pts + lid_pts]
+    xs, ys = [q[0] for q in p0], [q[1] for q in p0]
+    s = MB["height_pt"] * upt / (max(ys) - min(ys))
+    half = MB["box"] * upt / 2
+    cam = Cam3(ANGLED_CAMERA["yaw"], ANGLED_CAMERA["pitch"], s,
+               half - s * (max(xs) + min(xs)) / 2, half - s * (max(ys) + min(ys)) / 2)
+    V = cam.view
+
+    def d(pts2, close=True):
+        return "M" + "L".join("%.1f %.1f" % q for q in pts2) + ("Z" if close else "")
+
+    shapes = []
+    def fill(pts2, paint):
+        shapes.append(f'<path d="{d(pts2)}" fill="{paint}"/>')
+    def cut(pts2, width_pt, close=False, cap="butt"):
+        shapes.append(f'<path d="{d(pts2, close)}" fill="none" stroke="black" stroke-width="{width_pt * upt:.1f}" '
+                      f'stroke-linejoin="round" stroke-linecap="{cap}"/>')
+
+    # 1. solid body silhouette
+    sil = hull([cam(p) for p in body_pts])
+    fill(sil, "white")
+    # 2. face separations along the side faces' top edges (where the top bevel meets
+    #    them), so the bevel stays with the top and leaves room for the lid gap, plus
+    #    the front vertical bevel's centreline; ends run past the silhouette
+    over = c
+    left_end, right_end = (-over, D, H - c), (W, -over, H - c)
+    a_, b_ = (W - c, D, H - c), (W, D - c, H - c)
+    assert all(v_dot(n, V) > 0 for n in ((0, 1, 1), (1, 0, 1), (1, 1, 0))), "bevels must face the camera"
+    cut([cam(left_end), cam(a_), cam(b_), cam(right_end)], MB["edge_cut_pt"])
+    zb = c + MB["bottom_stop_pt"] * upt / s / math.cos(math.radians(ANGLED_CAMERA["pitch"]))
+    cut([cam((W - c / 2, D - c / 2, H - c)), cam((W - c / 2, D - c / 2, zb))], MB["edge_cut_pt"], cap="round")
+    # 3. woofer: its real projected circle on the face plane, cut, with a solid hub
+    wx, wz = WF["cx"] * W, WF["cz"] * H
+    R = min(W - 2 * c, H - 2 * c) / 2 - WF["margin"]
+    n = MB["segments"]
+    ring = lambda r, z0=D: [cam((wx + r * math.cos(2 * math.pi * i / n), z0, wz + r * math.sin(2 * math.pi * i / n)))
+                            for i in range(n)]
+    fill(ring(R), "black")
+    fill(ring(R * MB["hub"]), "white")
+    # 4. lid: an island (gap cut around its silhouette, then the lid itself)
+    lid_sil = hull([cam(p) for p in lid_pts])
+    if MB["lid_gap_pt"] > 0:
+        cut(lid_sil, 2 * MB["lid_gap_pt"], close=True)
+        fill(lid_sil, "white")
+    # 5. holes: real circles on the lid's top plane, projected
+    hc = ((lx0 + lx1) / 2, (ly0 + ly1) / 2)
+    centres = [hc] + [(hc[0] + MB["hole_pitch"] * math.cos(math.radians(MODEL4["holes"]["angle"] + 60 * j)),
+                       hc[1] + MB["hole_pitch"] * math.sin(math.radians(MODEL4["holes"]["angle"] + 60 * j)))
+                      for j in range(6)]
+    for hx, hy in centres:
+        assert max(abs(hx - hc[0]), abs(hy - hc[1])) + MB["hole_r"] < span / 2, "holes must sit on the lid top"
+        fill([cam((hx + MB["hole_r"] * math.cos(2 * math.pi * i / n), hy + MB["hole_r"] * math.sin(2 * math.pi * i / n),
+                   tent(hx + MB["hole_r"] * math.cos(2 * math.pi * i / n), hy + MB["hole_r"] * math.sin(2 * math.pi * i / n))))
+              for i in range(n)], "black")
+
+    size = MB["box"] * upt
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size:g} {size:g}" fill="none" role="img" '
+           f'aria-label="Bass Shaker toolbar template" data-view="mono"><title>Bass Shaker toolbar template</title>'
+           f'<defs><mask id="shaker-mark-cutouts" maskUnits="userSpaceOnUse" x="0" y="0" width="{size:g}" '
+           f'height="{size:g}" style="mask-type:luminance">' + "".join(shapes) + '</mask></defs>'
+           f'<path d="M0 0L{size:g} 0L{size:g} {size:g}L0 {size:g}Z" fill="black" mask="url(#shaker-mark-cutouts)"/></svg>\n')
+    out = Path(__file__).resolve().parents[4] / "mac" / "Resources" / "source" / "menubar-icon.svg"
+    out.write_text(svg)
+    bx, by = [p[0] for p in sil], [p[1] for p in sil]
+    hole_minor = 2 * MB["hole_r"] * s * math.sin(math.radians(ANGLED_CAMERA["pitch"])) / upt
+    ring_w = R * (1 - MB["hub"]) * s * v_dot((0, 1, 0), V) / upt
+    print("menubar: silhouette %.2f x %.2f pt; woofer ring >= %.2f pt; hole minor axis %.2f pt"
+          % ((max(bx) - min(bx)) / upt, (max(by) - min(by)) / upt, ring_w, hole_minor))
+    print("wrote", out)
+
+
 if __name__ == "__main__":
-    if "--release" in sys.argv:
+    if "--menubar" in sys.argv:
+        build_menubar()
+    elif "--release" in sys.argv:
         build_release()
     elif "--v4" in sys.argv:
         build_v4()
