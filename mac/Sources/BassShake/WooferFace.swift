@@ -7,12 +7,14 @@ import SwiftUI
 /// release/icon.svg exactly (the face normal's fills, and the cone's own shading).
 ///
 /// `ring` draws the navy surround (R to 0.86 R); without it the cone's edge fills
-/// the frame. `blink` runs 0 (open) to 1 (closed). Drawn once per change of either:
+/// the frame. `blink` runs 0 (open) to 1 (closed); `wink` does the same for the eye
+/// on the right (as you look at it) alone (PlayHello). Drawn once per change of either:
 /// the struct is plain values, so a parent re-render with the same values skips it,
 /// and only an animated `blink` redraws the canvas, for the animation's frames.
 struct WooferFace: View, Animatable {
   var ring = true
   var blink: CGFloat = 0
+  var wink: CGFloat = 0
   /// The side of the square frame (nil: fill the proposed square).
   var size: CGFloat? = nil
   /// Recolour the woofer (ring, cone, plate) from a theme colour, keeping the
@@ -25,14 +27,14 @@ struct WooferFace: View, Animatable {
   }
 
   var body: some View {
-    let ring = ring, blink = min(1, max(0, blink)), tint = tint
+    let ring = ring, blink = min(1, max(0, blink)), wink = min(1, max(0, wink)), tint = tint
     Canvas { ctx, s in
       let half = min(s.width, s.height) / 2
       // The drawn disc's radius is R with the ring, 0.86 R without it.
       let r = half / (ring ? 1 : M.cone)
       ctx.translateBy(x: s.width / 2, y: s.height / 2)
       ctx.scaleBy(x: r, y: r)
-      Self.draw(&ctx, ring: ring, blink: blink, tint: tint)
+      Self.draw(&ctx, ring: ring, blink: blink, wink: wink, tint: tint)
     }
     .frame(width: size, height: size)
     .aspectRatio(1, contentMode: .fit)
@@ -150,7 +152,8 @@ struct WooferFace: View, Animatable {
   }
 
   /// Draws in R units around the centre.
-  private static func draw(_ ctx: inout GraphicsContext, ring: Bool, blink: CGFloat, tint: Color? = nil) {
+  private static func draw(_ ctx: inout GraphicsContext, ring: Bool, blink: CGFloat, wink: CGFloat = 0,
+                           tint: Color? = nil) {
     if let tint {
       if ring {
         ctx.fill(disc(1), with: .color(tint))
@@ -166,11 +169,12 @@ struct WooferFace: View, Animatable {
     }
 
     // Eyes: the lid closes toward the lower lash line, into a capsule.
-    let ry = M.eyeRY + (M.lid - M.eyeRY) * blink
-    let cy = M.eyeDY + (M.eyeRY - ry) * 0.35
-    let ends = M.eyeRX + (M.lid - M.eyeRX) * blink * blink   // end radius: the ellipse's rx, a capsule's when shut
-    let glintAlpha = Double(max(0, 1 - blink * 1.8))
     for sgn: CGFloat in [-1, 1] {
+      let blink = sgn > 0 ? max(blink, wink) : blink
+      let ry = M.eyeRY + (M.lid - M.eyeRY) * blink
+      let cy = M.eyeDY + (M.eyeRY - ry) * 0.35
+      let ends = M.eyeRX + (M.lid - M.eyeRX) * blink * blink   // end radius: the ellipse's rx, a capsule's when shut
+      let glintAlpha = Double(max(0, 1 - blink * 1.8))
       let x = sgn * M.eyeDX
       ctx.fill(eye(x: x, y: cy, rx: M.eyeRX, ry: ry, ends: ends), with: .color(C.eye))
       guard glintAlpha > 0 else { continue }

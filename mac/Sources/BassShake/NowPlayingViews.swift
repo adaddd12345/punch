@@ -162,7 +162,8 @@ struct NowPlayingControls: View {
       if extras && route != .mute && model.notice == nil {
         MuteButton(model: model, app: app, compact: false)
       }
-      PrimaryButton(model: model, app: app, size: primary, glyph: (primary * CGFloat(0.4)).rounded(), fill: tint)
+      PrimaryButton(model: model, app: app, size: primary, glyph: (primary * CGFloat(0.4)).rounded(), fill: tint,
+                    hello: true)
       if extras && route == .script {
         NextButton(model: model, app: app)
       }
@@ -199,6 +200,8 @@ private struct PrimaryButton: View {
   let glyph: CGFloat
   /// The live tint; nil draws the quiet "off" disc.
   let fill: Color?
+  /// The now-playing card's button: hosts the once-per-launch hello (PlayHello.swift).
+  var hello = false
   @Environment(\.colorScheme) private var scheme
   @Environment(\.playButtonLook) private var look
 
@@ -226,7 +229,7 @@ private struct PrimaryButton: View {
       : Caption.primary(app.name, route: route, playing: playing, muted: muted,
                         chosen: model.muteIsChoice(app), fallback: fallback,
                         browser: app.isBrowser)
-    let button = Button { model.primary(app) } label: {
+    let button = Button { PlayHello.shared.cancel(); model.primary(app) } label: {
       Group {
         switch look {
         case .sculpted:
@@ -243,6 +246,7 @@ private struct PrimaryButton: View {
             .background(Circle().fill(disc))
         }
       }
+      .playHello(size: hello ? size : nil)
       .overlay(alignment: .bottomTrailing) {
         if locked { LockBadge(size: size).transition(.opacity) }
       }
@@ -309,7 +313,7 @@ struct ArtworkHeroControls: View {
           .modifier(ChromePopupSurface())
         }
       PrimaryButton(model: model, app: entry.app, size: preview ? 44 : 60,
-                    glyph: preview ? 17 : 23, fill: darkDisc ? .black : .white)
+                    glyph: preview ? 17 : 23, fill: darkDisc ? .black : .white, hello: !preview)
         .environment(\.colorScheme, darkDisc ? .light : .dark)
         .environment(\.playButtonLook, .flat)
         .overlay(Circle().strokeBorder(secondaryInk.opacity(0.08), lineWidth: 0.5).allowsHitTesting(false))

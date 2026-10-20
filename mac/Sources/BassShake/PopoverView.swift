@@ -339,16 +339,20 @@ struct PopoverView: View {
       }
       // Retain the sound controls' identity and local disclosure state while
       // Appearance takes their place. They cannot receive input while hidden.
-      soundBlocks(gap: groupGap)
-      .frame(height: showAppearance ? 0 : nil)
-      .opacity(showAppearance ? 0 : 1)
-      .clipped()
-      .allowsHitTesting(!showAppearance)
-      .accessibilityHidden(showAppearance)
-      .modifier(AppearanceContentPause(paused: showAppearance))
-      if showAppearance {
-        AppearancePanelView(controller: controller) { setAppearance(false) }
-          .transition(.opacity)
+      // One slot, so the collapsed blocks leave no extra gap above the panel.
+      ZStack(alignment: .top) {
+        soundBlocks(gap: groupGap)
+        .frame(height: showAppearance ? 0 : nil)
+        .opacity(showAppearance ? 0 : 1)
+        .clipped()
+        .allowsHitTesting(!showAppearance)
+        .accessibilityHidden(showAppearance)
+        .modifier(AppearanceContentPause(paused: showAppearance))
+        if showAppearance {
+          // Its natural height, like the blocks: only a screen too short scrolls it.
+          OverflowScroll { AppearancePanelView(controller: controller) { setAppearance(false) } }
+            .transition(.opacity)
+        }
       }
       // No hairline: the shelf's own tone and the section gap set the footer apart.
       if (size != .mini || showAppearance) && !dockHeaderShown {

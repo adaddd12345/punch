@@ -4,6 +4,11 @@ import SwiftUI
 /// The appearance workspace changes the same settings as Look. Its thumbnails
 /// use production renderers, frozen at rest. The EQ preview shares the player's
 /// existing measurements while audio is playing; it never starts another reader.
+///
+/// It takes its natural height, built like the sound controls: bentos
+/// `gaps.section` apart, their insides `gaps.sibling` apart, every choice in
+/// the app's own segments. The popover grows to fit; PopoverView's
+/// OverflowScroll scrolls the whole panel only on a screen too short for it.
 struct AppearancePanelView: View {
   @ObservedObject var controller: AudioController
   let close: () -> Void
@@ -22,11 +27,16 @@ struct AppearancePanelView: View {
   /// The EQ preview's sample signal (visual only), and when it started.
   @State private var testing = false
   @State private var testStart = Date()
-  /// The Technical section's disclosure (a view preference, not a setting).
+  /// The Analyser disclosure (a view preference, not a setting).
   @AppStorage("appearance.eqTechnicalOpen") private var technicalOpen = false
+  /// Done's nudge: the look as it was when the panel opened, a count of
+  /// edits since (restarts the quiet timer), and whether to nudge now.
+  @State private var opened: AppearanceSnapshot?
+  @State private var edits = 0
+  @State private var nudge = false
 
-  private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
-  private let vinylColumns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
+  private var grid4: [GridItem] { Array(repeating: GridItem(.flexible(), spacing: gaps.sibling), count: 4) }
+  private var grid3: [GridItem] { Array(repeating: GridItem(.flexible(), spacing: gaps.sibling), count: 3) }
   // Intentional browsing order: adaptive choices, quiet colourways, moving
   // gradients, seasonal scenes, then the specialised market theme.
   private let backgroundOrder: [BackgroundStyle] = [
@@ -43,144 +53,63 @@ struct AppearancePanelView: View {
       now.isPlaying($0) && !now.isMuted($0.app.id) && $0.item?.muted != true
     }
   }
-  /// The Equalizer tab pins the real EQ tile (with or without sound).
-  private var showsLiveEQ: Bool { category == .equalizer }
-  private var pinnedHeight: CGFloat { 36 + (showsLiveEQ ? 154 + 6 + 22 + 6 + 8 : 0) }
+  private var ink: Color { chrome?.ink ?? Color.primary }
+  private var secondary: Color { chrome?.secondary ?? Color.secondary }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      // Two small tiles: back on the left, done on the right. Changes apply as
-      // you make them, so both return to the sound controls with them kept.
-      HStack(spacing: 8) {
+    VStack(alignment: .leading, spacing: gaps.section) {
+      // Back, the category, Done: one row of tiles. Changes apply as you
+      // make them, so both ends return to the sound controls with them kept.
+      HStack(spacing: gaps.sibling) {
         headerTile("chevron.left", label: "Back to sound controls", action: close)
           .keyboardShortcut(.cancelAction)
-        Spacer()
-        headerTile("checkmark", label: "Done", action: close)
+        AppearanceSegments(title: "Appearance category", options: AppearanceCategory.allCases,
+                           selection: $category, label: \.rawValue, height: 32, fontSize: 12, tile: true)
+          .accessibilityIdentifier("appearance-category")
+        AppearanceDoneButton(nudge: nudge, action: close)
       }
-      ScrollViewReader { scroll in
-        GeometryReader { viewport in
-          ScrollView(.vertical) {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-              Group {
-                if showsLiveEQ { Color.clear.frame(height: 0) }
-                else { headerPreview }
-              }
-                .environment(\.artworkStyle, controller.settings.artworkStyle)
-                .environment(\.artworkEffect, controller.settings.artworkEffect)
-                .environment(\.artworkFoil, controller.settings.artworkFoil)
-                .environment(\.vinylMaterial, controller.settings.vinylMaterial)
-                .environment(\.peekRecord, controller.settings.peekRecord)
-                .environment(\.discMaterial, controller.settings.discMaterial)
-                .padding(.bottom, showsLiveEQ ? 0 : controller.settings.playerArtworkLayout == .compact ? -20 : 12)
-                .id("appearance-preview")
-              Section {
-                VStack(alignment: .leading, spacing: gaps.section) {
-                  switch category {
-                  case .artwork:
-                    layouts
-                    artwork
-                    finish
-                    holographicFinish
-                    vinyl
-                    disc
-                  case .background:
-                    breathingRoom
-                    backgrounds
-                  case .equalizer:
-                    equalizer
-                  }
-                }
-                .padding(.top, 8)
-                .padding(.bottom, 8)
-                // Even a short category lets the preview scroll fully away.
-                .frame(minHeight: max(0, viewport.size.height - pinnedHeight), alignment: .top)
-              } header: {
-                VStack(spacing: 8) {
-                  if showsLiveEQ { liveEQPreview }
-                  Picker("Appearance category", selection: $category) {
-                    ForEach(AppearanceCategory.allCases) { category in
-                      Text(category.rawValue).tag(category)
-                    }
-                  }
-                  .pickerStyle(.segmented)
-                  .labelsHidden()
-                  .accessibilityIdentifier("appearance-category")
-                  .accessibilitySortPriority(1)
-                  .padding(6)
-                  .frame(height: 36)
-                }
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                  .fill(chrome?.surface ?? Color(nsColor: .windowBackgroundColor)))
-              }
-            }
-            .background(SlimScroller())
-          }
-          .scrollIndicators(.automatic)
-          .scrollBounceBehavior(.basedOnSize)
-          .mask(alignment: .top) {
-            VStack(spacing: 0) {
-              LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 6)
-              Rectangle()
-            }
-          }
-          .onChange(of: category) { _, _ in
-            testing = false
-            scroll.scrollTo("appearance-preview", anchor: .top)
-          }
-          .onChange(of: controller.settings.playerArtworkLayout) { _, _ in
-            scroll.scrollTo("appearance-preview", anchor: .top)
-          }
-        }
+      switch category {
+      case .artwork:
+        artworkPreview
+        playerBento
+        styleBento
+        if controller.settings.artworkStyle == .vinyl { recordBento }
+      case .background:
+        // The popup itself is the preview here.
+        backgroundBento
+        breathingRoom
+      case .equalizer:
+        liveEQPreview
+        liveViewBento
+        curveBento
       }
-      // GeometryReader needs an ideal height when the native host asks for its
-      // intrinsic size. It can still shrink to fit a short menu-bar popover.
-      .frame(idealHeight: 600, maxHeight: 600)
     }
     .frame(width: 336)
+    .onChange(of: category) { _, _ in testing = false }
+    .onAppear { if opened == nil { opened = AppearanceSnapshot(controller.settings) } }
+    .onChange(of: AppearanceSnapshot(controller.settings)) { _, _ in edits += 1 }
+    // Nudge Done once the look differs from how it opened and nothing has
+    // changed for 4 s; any further edit quiets it and restarts the wait.
+    .task(id: edits) {
+      nudge = false
+      guard edits > 0, let start = opened, AppearanceSnapshot(controller.settings) != start else { return }
+      try? await Task.sleep(for: .seconds(4))
+      if !Task.isCancelled, AppearanceSnapshot(controller.settings) != start { nudge = true }
+    }
   }
 
-  /// The real EQ tile at its real size, with what it's showing and a Test
-  /// that draws a sample signal behind the curve (nothing plays aloud).
-  private var liveEQPreview: some View {
-    let s = controller.settings
-    let status = testing ? "Sample music, shaped by your curve"
-      : !s.enabled ? "Power off"
-      : s.eqVisual == .off ? "Live sound off"
-      : somethingPlaying ? "Live" : "Nothing playing"
-    return VStack(spacing: 6) {
-      EQTile(controller: controller, full: false, preview: true,
-             demo: testing ? EQDemoSource(start: testStart, still: reduceMotion, slow: powerSaver) : nil)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("EQ preview, \(s.eqLineStyle.title) curve, "
-                            + (s.eqVisual == .off ? "live sound off." : "\(s.eqVisual.title). \(status)"))
-      HStack(spacing: 8) {
-        Text(status)
-          .font(.system(size: 11))
-          .foregroundStyle(chrome?.secondary ?? Color.secondary)
-          .lineLimit(1)
-        Spacer(minLength: 0)
-        Button(testing ? "Stop" : "Test") {
-          if !testing { testStart = Date() }
-          testing.toggle()
-        }
-        .controlSize(.small)
-        .disabled(s.eqVisual == .off)
-        .help(s.eqVisual == .off ? "Pick a live view above to test." : "")
-        .pointerHint("Test", does: "Draws sample music here; nothing plays aloud.")
-      }
-      .frame(height: 22)
-    }
-    .padding(.horizontal, 6)
-    .padding(.top, 6)
-    .foregroundStyle(chrome?.ink ?? Color.primary)
-    // A test runs at most 20 s, and never once the page is gone.
-    .task(id: testing) {
-      guard testing else { return }
-      try? await Task.sleep(for: .seconds(20))
-      if !Task.isCancelled { testing = false }
-    }
-    .onChange(of: s.eqVisual) { _, mode in if mode == .off { testing = false } }
-    .onDisappear { testing = false }
+  // MARK: Artwork
+
+  private var artworkPreview: some View {
+    headerPreview
+      .environment(\.artworkStyle, controller.settings.artworkStyle)
+      .environment(\.artworkEffect, controller.settings.artworkEffect)
+      .environment(\.artworkFoil, controller.settings.artworkFoil)
+      .environment(\.vinylMaterial, controller.settings.vinylMaterial)
+      .environment(\.peekRecord, controller.settings.peekRecord)
+      .environment(\.discMaterial, controller.settings.discMaterial)
+      // The small sleeve's halo tapers away: the first bento tucks under it.
+      .padding(.bottom, controller.settings.playerArtworkLayout == .compact ? -(12 + gaps.section) : 0)
   }
 
   @ViewBuilder private var headerPreview: some View {
@@ -207,12 +136,18 @@ struct AppearancePanelView: View {
     }
   }
 
-  private var layouts: some View {
-    section("Player layout") {
-      HStack(spacing: 8) {
+  /// What's Playing: its layout, and its own size or the popup's (⌘1/2/3).
+  private var playerBento: some View {
+    bento("Player", trailing: {
+      AppearanceSegments(title: "What’s Playing size", options: NowPlayingSize.allCases,
+                         selection: bind(\.nowPlayingSize), label: \.title)
+        .frame(width: 250)
+        .help("What’s Playing’s own size, or the popup’s (⌘1, ⌘2, ⌘3).")
+    }) {
+      HStack(spacing: gaps.sibling) {
         ForEach(PlayerArtworkLayout.allCases) { layout in
           choice(layout.title, selected: controller.settings.playerArtworkLayout == layout,
-                 labelLines: 1, action: { controller.settings.playerArtworkLayout = layout }) {
+                 help: layout.detail, action: { controller.settings.playerArtworkLayout = layout }) {
             previewSurface {
               if layout == .compact {
                 HStack(spacing: 5) {
@@ -239,217 +174,297 @@ struct AppearancePanelView: View {
           }
         }
       }
-      Text(controller.settings.playerArtworkLayout.detail)
-        .font(.system(size: 11)).foregroundStyle(chrome?.secondary ?? Color.secondary)
-      // Its own size, or follow the popup's (⌘1/2/3).
-      Picker("What’s Playing", selection: bind(\.nowPlayingSize)) {
-        ForEach(NowPlayingSize.allCases) { Text($0.title).tag($0) }
-      }
-      .pickerStyle(.segmented)
-      .controlSize(.small)
-      .font(.system(size: 11, weight: .medium))
-      .padding(.top, 2)
     }
   }
 
-  /// One setting for the popup's rhythm (Spacing): groups part, their insides stay close.
+  /// Cover or vinyl (the preview above shows which), its finish, and the
+  /// switches that apply to every cover.
+  private var styleBento: some View {
+    bento("Style", trailing: {
+      AppearanceSegments(title: "Artwork style", options: ArtworkStyle.allCases,
+                         selection: bind(\.artworkStyle), label: { $0 == .vinyl ? "Vinyl" : $0.title })
+        .frame(width: 160)
+    }) {
+      HStack(spacing: gaps.sibling) {
+        ForEach(ArtworkEffect.allCases) { effect in
+          choice(effect.title, selected: controller.settings.artworkEffect == effect,
+                 action: { controller.settings.artworkEffect = effect }) {
+            previewSurface {
+              EffectArtworkImage(image: cover, size: 46)
+                .environment(\.artworkEffect, effect)
+                .clipShape(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous))
+            }
+          }
+          .accessibilityLabel(effect == .none ? "Original" : effect.title)
+        }
+      }
+      HStack(spacing: gaps.sibling) {
+        optionPill("Perspective", bind(\.artworkPerspective), label: "Cover perspective",
+                   help: "Tilts artwork slightly, everywhere it appears.")
+        optionPill("Holographic", bind(\.artworkFoil), label: "Holographic finish",
+                   help: "A foil sheen over the artwork.")
+        optionPill("Mono", bind(\.monoStyle), label: "Mono",
+                   help: "Hides every cover and tint; titles carry the player.")
+      }
+    }
+  }
+
+  /// Vinyl only: what spins (Match: vinyl for music, a disc for video) and
+  /// the material of each.
+  private var recordBento: some View {
+    let record = controller.settings.peekRecord
+    return bento("Record", trailing: {
+      AppearanceSegments(title: "Record", options: [PeekRecord.match, .vinyl, .disc],
+                         selection: bind(\.peekRecord),
+                         label: { $0 == .match ? "Match" : $0 == .vinyl ? "Vinyl" : "Disc" })
+        .frame(width: 200)
+        .pointerHint(PointerHint("Record", does: "Match spins a disc for video and vinyl for music."))
+    }) {
+      if record != .disc {
+        if record == .match { subhead("Vinyl, for music") }
+        LazyVGrid(columns: grid3, spacing: gaps.sibling) {
+          ForEach(VinylMaterial.allCases) { material in
+            choice(material.title, selected: controller.settings.vinylMaterial == material,
+                   action: {
+                     controller.settings.vinylMaterial = material
+                     controller.settings.artworkStyle = .vinyl
+                   }) {
+              previewSurface {
+                AppearanceRecordPreview(image: cover, material: material, dark: scheme == .dark)
+              }
+            }
+          }
+        }
+      }
+      if record != .vinyl {
+        if record == .match { subhead("Disc, for video") }
+        LazyVGrid(columns: grid3, spacing: gaps.sibling) {
+          ForEach(DiscMaterial.allCases) { material in
+            choice(material.title, selected: controller.settings.discMaterial == material,
+                   action: {
+                     controller.settings.discMaterial = material
+                     controller.settings.artworkStyle = .vinyl
+                   }) {
+              previewSurface {
+                AppearanceRecordPreview(image: cover, material: .artwork, disc: material, dark: scheme == .dark)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // MARK: Background
+
+  private var backgroundBento: some View {
+    bento("Background") {
+      LazyVGrid(columns: grid4, spacing: gaps.sibling + 2) {
+        ForEach(backgroundOrder) { style in backgroundChoice(style) }
+      }
+      if controller.settings.backgroundStyle == .artwork {
+        HStack(spacing: gaps.sibling) {
+          optionPill("Bleed", bind(\.artworkBackgroundBleed),
+                     help: "Let one cover’s colours flow into the next.")
+          optionPill("Move with Bass", bind(\.artworkBackgroundLive),
+                     help: "The gradient moves with the bass you hear.")
+        }
+      }
+    }
+  }
+
+  /// One setting for the popup's rhythm (Spacing): groups part, their insides
+  /// stay close. The gap above this bento follows it live.
   private var breathingRoom: some View {
-    section("Breathing room") {
-      HStack(spacing: 8) {
-        Image(systemName: "rectangle.compress.vertical").accessibilityHidden(true)
+    BentoTile(tint: .graphite, look: .quiet, hoverResponse: false) {
+      HStack(spacing: gaps.sibling) {
+        Text("Breathing room")
+          .font(.system(size: 12, weight: .semibold, design: .rounded))
+          .lineLimit(1).fixedSize()
+          .accessibilityHidden(true)
         Slider(value: bind(\.breathingRoom), in: 0...1, step: 0.25)
           .controlSize(.small)
           .accessibilityLabel("Breathing room")
           .accessibilityValue(Spacing.name(controller.settings.breathingRoom))
-        Image(systemName: "rectangle.expand.vertical").accessibilityHidden(true)
         Text(Spacing.name(controller.settings.breathingRoom))
-          .font(.system(size: 11, weight: .medium))
-          .foregroundStyle(.secondary)
-          .frame(width: 54, alignment: .trailing)
+          .font(.system(size: 11, weight: .medium, design: .rounded))
+          .foregroundStyle(secondary)
+          .frame(width: 50, alignment: .trailing)
+          .accessibilityHidden(true)
       }
-      .font(.system(size: 11, weight: .medium))
+      .frame(height: 24)
       .help("Space between groups grows; items within a group stay close.")
     }
   }
 
-  private var backgrounds: some View {
-    section("Background") {
-      LazyVGrid(columns: columns, spacing: 10) {
-        ForEach(backgroundOrder) { style in backgroundChoice(style) }
-      }
-      if controller.settings.backgroundStyle == .artwork {
-        HStack(spacing: 12) {
-          Toggle("Bleed", isOn: bind(\.artworkBackgroundBleed))
-            .help("Let one cover’s colours flow into the next.")
-          Toggle("Move with Bass", isOn: bind(\.artworkBackgroundLive))
-            .help("The gradient moves with the bass you hear.")
+  // MARK: EQ
+
+  /// The real EQ tile at its real size, with what it's showing and a Test
+  /// that draws a sample signal behind the curve (nothing plays aloud).
+  private var liveEQPreview: some View {
+    let s = controller.settings
+    let status = testing ? "Sample music, shaped by your curve"
+      : !s.enabled ? "Power off"
+      : s.eqVisual == .off ? "Live sound off"
+      : somethingPlaying ? "Live" : "Nothing playing"
+    return VStack(spacing: gaps.sibling) {
+      EQTile(controller: controller, full: false, preview: true,
+             demo: testing ? EQDemoSource(start: testStart, still: reduceMotion, slow: powerSaver) : nil)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("EQ preview, \(s.eqLineStyle.title) curve, "
+                            + (s.eqVisual == .off ? "live sound off." : "\(s.eqVisual.title). \(status)"))
+      HStack(spacing: gaps.sibling) {
+        Text(status)
+          .font(.system(size: 11))
+          .foregroundStyle(secondary)
+          .lineLimit(1)
+        Spacer(minLength: 0)
+        Button(action: toggleTest) {
+          Text(testing ? "Stop" : "Test")
+            .font(.system(size: 11, weight: .semibold, design: .rounded))
+            .foregroundStyle(testing ? (chrome?.surface ?? Color.white) : ink)
+            .frame(width: 56, height: 22)
+            .contentShape(Rectangle())
         }
-        .toggleStyle(.switch)
-        .controlSize(.mini)
-        .font(.system(size: 11, weight: .medium))
+        .buttonStyle(BassSegmentStyle(selected: testing, active: true))
+        .background(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous).fill(ink.opacity(0.06)))
+          .disabled(s.eqVisual == .off)
+          .opacity(s.eqVisual == .off ? 0.45 : 1)
+          .help(s.eqVisual == .off ? "Pick a live view below to test." : "")
+          .pointerHint("Test", does: "Draws sample music here; nothing plays aloud.")
       }
+      .padding(.horizontal, 4)
     }
+    .foregroundStyle(ink)
+    // A test runs at most 20 s, and never once the page is gone.
+    .task(id: testing) {
+      guard testing else { return }
+      try? await Task.sleep(for: .seconds(20))
+      if !Task.isCancelled { testing = false }
+    }
+    .onChange(of: s.eqVisual) { _, mode in if mode == .off { testing = false } }
+    .onDisappear { testing = false }
   }
 
-  private var artwork: some View {
-    section("Artwork") {
-      VStack(spacing: 10) {
-      HStack(spacing: 8) {
-        ForEach(ArtworkStyle.allCases) { style in
-          choice(style == .vinyl ? "Vinyl" : style.title,
-                 selected: controller.settings.artworkStyle == style, labelLines: 1,
-                 action: { controller.settings.artworkStyle = style }) {
-            previewSurface {
-              NowArt(artwork: cover, icon: Self.sampleCover, size: 46,
-                     spinning: false, paused: false, style: style)
-                .environment(\.artworkEffect, controller.settings.artworkEffect)
-                .environment(\.artworkFoil, controller.settings.artworkFoil)
-                .environment(\.vinylMaterial, controller.settings.vinylMaterial)
-            }
-          }
-          .accessibilityLabel(style.title)
-        }
-      }
-      Toggle("Mono", isOn: bind(\.monoStyle))
-        .toggleStyle(.switch).controlSize(.small)
-        .font(.system(size: 11, weight: .medium, design: .rounded))
-        .help("Hides every cover and tint; titles carry the player.")
-      Toggle("Cover perspective", isOn: bind(\.artworkPerspective))
-        .toggleStyle(.switch).controlSize(.small)
-        .font(.system(size: 11, weight: .medium, design: .rounded))
-        .help("Tilts artwork slightly, everywhere it appears.")
-      }
-    }
+  private func toggleTest() {
+    if !testing { testStart = Date() }
+    testing.toggle()
   }
 
-  private var equalizer: some View {
+  /// The live view, its layer (Heat behind) and the analyser that feeds it.
+  private var liveViewBento: some View {
     let shown = controller.shownSettings
     let curve = controller.curve(for: shown.bands, count: 128)
     let sample = SpectrumFrame.still(
       EQPreviewDemo.still(curveDb: controller.curve(for: shown.bands, count: SpectrumModel.columns),
                           boostDb: shown.boostDb),
       params: controller.settings.spectrumParams)
-    return VStack(alignment: .leading, spacing: 8) {
-      section("Live sound") {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-          ForEach(EQVisual.allCases) { style in
-            choice(style.title, selected: controller.settings.eqVisual == style,
-                   labelLines: 1, action: { controller.settings.setEQVisualByHand(style) }) {
-              previewSurface {
-                ZStack {
-                  if style != .off {
-                    EQFrequencyArtwork(frame: sample, color: eqPreviewColor, style: style,
-                                       heatBehind: controller.settings.eqHeatBehind, still: true)
-                  }
-                  EQLinePreview(style: controller.settings.eqLineStyle, color: eqPreviewColor,
-                                response: curve, nodeFrequencies: [], boost: shown.boostDb)
-                    .opacity(style == .off ? 1 : 0.55)
+    return bento("Live view", trailing: {
+      // Heat is a layer as well as a mode: its stripes can sit under a line.
+      if [.flow, .trace, .regions].contains(controller.settings.eqVisual) {
+        optionPill("Heat behind", bind(\.eqHeatBehind),
+                   help: "Adds Heat’s stripes underneath; brighter is louder.")
+          .frame(width: 120)
+      }
+    }) {
+      LazyVGrid(columns: grid3, spacing: gaps.sibling) {
+        ForEach(EQVisual.allCases) { style in
+          choice(style.title, selected: controller.settings.eqVisual == style,
+                 action: { controller.settings.setEQVisualByHand(style) }) {
+            previewSurface {
+              ZStack {
+                if style != .off {
+                  EQFrequencyArtwork(frame: sample, color: eqPreviewColor, style: style,
+                                     heatBehind: controller.settings.eqHeatBehind, still: true)
                 }
-                .padding(.horizontal, 8)
+                EQLinePreview(style: controller.settings.eqLineStyle, color: eqPreviewColor,
+                              response: curve, nodeFrequencies: [], boost: shown.boostDb)
+                  .opacity(style == .off ? 1 : 0.55)
               }
+              .padding(.horizontal, 8)
             }
           }
         }
-        Text(Self.detail(controller.settings.eqVisual))
-          .font(.system(size: 11))
-          .foregroundStyle(chrome?.secondary ?? Color.secondary)
-        // Heat is a layer as well as a mode: its stripes can sit under a line.
-        if [.flow, .trace, .regions].contains(controller.settings.eqVisual) {
-          Toggle("Heat behind", isOn: bind(\.eqHeatBehind))
-            .toggleStyle(.switch).controlSize(.small)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
-            .help("Adds Heat’s stripes underneath; brighter is louder.")
-        }
       }
-      section("Curve style") {
-        HStack(spacing: 8) {
-          ForEach(EQLineStyle.allCases) { style in
-            choice(style.title, selected: controller.settings.eqLineStyle == style,
-                   labelLines: 1, action: { controller.settings.eqLineStyle = style }) {
-              previewSurface {
-                EQLinePreview(style: style, color: eqPreviewColor, response: curve,
-                              comparison: style == .prism ? contributionComparison(shown.bands) : nil,
-                              nodeFrequencies: shown.bands.map(\.freq), boost: shown.boostDb)
-                  .padding(.horizontal, 8)
-              }
-            }
-          }
-        }
-        Text(Self.detail(controller.settings.eqLineStyle))
-          .font(.system(size: 11))
-          .foregroundStyle(chrome?.secondary ?? Color.secondary)
-      }
+      detailText(Self.detail(controller.settings.eqVisual))
       technical
+    }
+  }
+
+  private var curveBento: some View {
+    let shown = controller.shownSettings
+    let curve = controller.curve(for: shown.bands, count: 128)
+    return bento("Curve") {
+      HStack(spacing: gaps.sibling) {
+        ForEach(EQLineStyle.allCases) { style in
+          choice(style.title, selected: controller.settings.eqLineStyle == style,
+                 action: { controller.settings.eqLineStyle = style }) {
+            previewSurface {
+              EQLinePreview(style: style, color: eqPreviewColor, response: curve,
+                            comparison: style == .prism ? contributionComparison(shown.bands) : nil,
+                            nodeFrequencies: shown.bands.map(\.freq), boost: shown.boostDb)
+                .padding(.horizontal, 8)
+            }
+          }
+        }
+      }
+      detailText(Self.detail(controller.settings.eqLineStyle))
     }
   }
 
   /// The analyser's settings for those who want them: tucked away, and
   /// inactive while nothing is measured.
-  private var technical: some View {
+  @ViewBuilder private var technical: some View {
     let off = controller.settings.eqVisual == .off
     let s = controller.settings
-    return VStack(alignment: .leading, spacing: 8) {
-      Button {
-        withAnimation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver)) { technicalOpen.toggle() }
-      } label: {
-        HStack {
-          Text("Analyser").font(.system(size: 12, weight: .semibold, design: .rounded))
-          Spacer()
-          Image(systemName: "chevron.down")
-            .font(.system(size: 10, weight: .semibold))
-            .rotationEffect(.degrees(technicalOpen ? 0 : -90))
-        }
-        .contentShape(Rectangle())
+    Button {
+      withAnimation(PopupMotion.settle(reduceMotion: reduceMotion, powerSaver: powerSaver)) { technicalOpen.toggle() }
+    } label: {
+      HStack {
+        Text("Analyser").font(.system(size: 11, weight: .semibold, design: .rounded))
+        Spacer()
+        Image(systemName: "chevron.down")
+          .font(.system(size: 10, weight: .semibold))
+          .rotationEffect(.degrees(technicalOpen ? 0 : -90))
       }
-      .buttonStyle(.plain)
-      .accessibilityAddTraits(.isHeader)
-      .accessibilityValue(technicalOpen ? "Expanded" : "Collapsed")
-      if technicalOpen {
-        Group {
-          techRow("Speed", bind(\.spectrumSpeed), SpectrumSpeed.allCases) { $0.title }
-            .pointerHint("Speed", does: "Average shows the overall balance, not the moment.")
-          techRow("Peak hold", bind(\.spectrumPeakHold), PeakHold.allCases) { $0.title }
-            .pointerHint("Peak hold", does: "1 s marks recent peaks; Max keeps them until reopened.")
-            // Heat and Phosphor draw no hold.
-            .disabled(s.eqVisual == .heat || s.eqVisual == .phosphor)
-          techRow("Range", bind(\.spectrumRange), SpectrumRange.allCases) { $0.title }
-            .pointerHint("Range", does: "90 dB shows quiet detail, like where lossy files stop.")
-          techRow("Slope", bind(\.spectrumSlope), SpectrumSlope.allCases) { $0.title }
-            .pointerHint("Slope", does: "3 draws pink noise flat; 4.5 matches mixing analysers.")
-          techRow("Detail", bind(\.spectrumResolution), SpectrumResolution.allCases) { $0.title }
-            .pointerHint("Detail", does: "Finer separates close notes above the bass.")
-        }
-        .disabled(off)
-        .opacity(off ? 0.45 : 1)
-        if reduceMotion && s.spectrumSpeed == .fast && !off {
-          Text("Reduce Motion is on, so Fast runs as Medium.")
-            .font(.system(size: 11))
-            .foregroundStyle(chrome?.secondary ?? Color.secondary)
-        }
-      }
+      .frame(height: 22)
+      .contentShape(Rectangle())
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(10)
-    .foregroundStyle(chrome?.ink ?? Color.primary)
-    .background {
-      RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
-        .fill(.chromeSurface)
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(.isHeader)
+    .accessibilityValue(technicalOpen ? "Expanded" : "Collapsed")
+    if technicalOpen {
+      Group {
+        techRow("Speed", bind(\.spectrumSpeed), SpectrumSpeed.allCases) { $0.title }
+          .pointerHint("Speed", does: "Average shows the overall balance, not the moment.")
+        techRow("Peak hold", bind(\.spectrumPeakHold), PeakHold.allCases) { $0.title }
+          .pointerHint("Peak hold", does: "1 s marks recent peaks; Max keeps them until reopened.")
+          // Heat and Phosphor draw no hold.
+          .disabled(s.eqVisual == .heat || s.eqVisual == .phosphor)
+        techRow("Range", bind(\.spectrumRange), SpectrumRange.allCases) { $0.title }
+          .pointerHint("Range", does: "90 dB shows quiet detail, like where lossy files stop.")
+        techRow("Slope", bind(\.spectrumSlope), SpectrumSlope.allCases) { $0.title }
+          .pointerHint("Slope", does: "3 draws pink noise flat; 4.5 matches mixing analysers.")
+        techRow("Detail", bind(\.spectrumResolution), SpectrumResolution.allCases) { $0.title }
+          .pointerHint("Detail", does: "Finer separates close notes above the bass.")
+      }
+      .disabled(off)
+      .opacity(off ? 0.45 : 1)
+      if reduceMotion && s.spectrumSpeed == .fast && !off {
+        detailText("Reduce Motion is on, so Fast runs as Medium.")
+      }
     }
   }
 
-  /// One technical row: a label column, then a compact segmented choice.
+  /// One technical row: a label column, then the app's segments.
   private func techRow<T: Hashable>(_ title: String, _ value: Binding<T>, _ options: [T],
                                     label: @escaping (T) -> String) -> some View {
-    HStack(spacing: 8) {
+    HStack(spacing: gaps.sibling) {
       Text(title)
-        .font(.system(size: 11, weight: .medium))
-        .frame(width: 66, alignment: .leading)
-      Picker(title, selection: value) {
-        ForEach(options, id: \.self) { Text(label($0)).tag($0) }
-      }
-      .labelsHidden()
-      .pickerStyle(.segmented)
-      .controlSize(.small)
+        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .frame(width: 62, alignment: .leading)
+        .accessibilityHidden(true)
+      AppearanceSegments(title: title, options: options, selection: value, label: label)
     }
   }
 
@@ -482,91 +497,7 @@ struct AppearancePanelView: View {
   /// The theme's accent (the EQ colour picker is gone: the artwork's accent won anyway).
   private var eqPreviewColor: Color { chrome?.accent ?? Color.accentColor }
 
-
-  private var vinyl: some View {
-    section("Vinyl") {
-      LazyVGrid(columns: vinylColumns, spacing: 8) {
-        ForEach(VinylMaterial.allCases) { material in
-          choice(material.title,
-                 selected: controller.settings.artworkStyle == .vinyl && controller.settings.vinylMaterial == material,
-                 labelLines: 1,
-                 action: {
-                   controller.settings.vinylMaterial = material
-                   controller.settings.artworkStyle = .vinyl
-                 }) {
-            previewSurface {
-              AppearanceRecordPreview(image: cover, material: material, dark: scheme == .dark)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  private var disc: some View {
-    section("Disc") {
-      VStack(spacing: 10) {
-        Picker("Record", selection: Binding(get: { controller.settings.peekRecord }, set: {
-          controller.settings.peekRecord = $0
-          controller.settings.artworkStyle = .vinyl
-        })) {
-          Text("Match").tag(PeekRecord.match)
-          Text("Vinyl").tag(PeekRecord.vinyl)
-          Text("Disc").tag(PeekRecord.disc)
-        }
-        .pickerStyle(.segmented).labelsHidden().controlSize(.small)
-        .pointerHint(PointerHint("Record", does: "Match spins a disc for video and vinyl for music."))
-        LazyVGrid(columns: vinylColumns, spacing: 8) {
-          ForEach(DiscMaterial.allCases) { material in
-            choice(material.title,
-                   selected: controller.settings.artworkStyle == .vinyl && controller.settings.peekRecord != .vinyl
-                     && controller.settings.discMaterial == material,
-                   labelLines: 1,
-                   action: {
-                     controller.settings.discMaterial = material
-                     controller.settings.artworkStyle = .vinyl
-                     if controller.settings.peekRecord == .vinyl { controller.settings.peekRecord = .match }
-                   }) {
-              previewSurface {
-                AppearanceRecordPreview(image: cover, material: .artwork, disc: material, dark: scheme == .dark)
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  private var finish: some View {
-    section("Finish") {
-      HStack(spacing: 8) {
-        ForEach(ArtworkEffect.allCases) { effect in
-          choice(effect.title,
-                 selected: controller.settings.artworkEffect == effect, labelLines: 2,
-                 action: { controller.settings.artworkEffect = effect }) {
-            previewSurface {
-              EffectArtworkImage(image: cover, size: 46)
-                .environment(\.artworkEffect, effect)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-          }
-          .accessibilityLabel(effect == .none ? "Original" : effect.title)
-        }
-      }
-    }
-  }
-
-  private var holographicFinish: some View {
-    HStack {
-      Text("Holographic finish").font(.system(size: 11, weight: .medium))
-      Spacer()
-      Toggle("Holographic finish", isOn: bind(\.artworkFoil)).labelsHidden()
-        .toggleStyle(.switch).controlSize(.small)
-    }
-      .padding(.horizontal, 12).padding(.vertical, 10)
-      .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-        .fill(.chromeSurface))
-  }
+  // MARK: Building blocks
 
   private func bind<T>(_ key: WritableKeyPath<Settings, T>) -> Binding<T> {
     Binding(get: { controller.settings[keyPath: key] },
@@ -578,7 +509,7 @@ struct AppearancePanelView: View {
     Button(action: action) {
       Image(systemName: symbol)
         .font(.system(size: 13, weight: .semibold))
-        .foregroundStyle(chrome?.ink ?? Color.primary)
+        .foregroundStyle(ink)
         .frame(width: 32, height: 32)
         .background(RoundedRectangle(cornerRadius: BentoRadius.inner + 4, style: .continuous).fill(.chromeSurface))
         .contentShape(RoundedRectangle(cornerRadius: BentoRadius.inner + 4, style: .continuous))
@@ -588,19 +519,71 @@ struct AppearancePanelView: View {
     .accessibilityLabel(label)
   }
 
-  private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text(title).font(.system(size: 12, weight: .semibold, design: .rounded))
-        .accessibilityAddTraits(.isHeader)
-      content()
+  /// One bento, as on the sound tab (BentoTile: its padding, corner and
+  /// surface): a title row, which may carry the bento's main choice, then
+  /// its contents `gaps.sibling` apart.
+  private func bento<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    bento(title, trailing: { EmptyView() }, content: content)
+  }
+  private func bento<Trailing: View, Content: View>(
+    _ title: String, @ViewBuilder trailing: () -> Trailing, @ViewBuilder content: () -> Content
+  ) -> some View {
+    // Built here: BentoTile keeps its content closure.
+    let trailing = trailing(), content = content()
+    return BentoTile(tint: .graphite, look: .quiet, hoverResponse: false) {
+      VStack(alignment: .leading, spacing: gaps.sibling) {
+        HStack(spacing: gaps.sibling) {
+          Text(title).font(.system(size: 12, weight: .semibold, design: .rounded))
+            .lineLimit(1).fixedSize()
+            .accessibilityAddTraits(.isHeader)
+          Spacer(minLength: 0)
+          trailing
+        }
+        .frame(minHeight: Trailing.self == EmptyView.self ? 0 : 24)
+        content
+      }
+      .foregroundStyle(ink)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(10)
-    .foregroundStyle(chrome?.ink ?? Color.primary)
-    .background {
-      RoundedRectangle(cornerRadius: BentoRadius.tile, style: .continuous)
-        .fill(.chromeSurface)
+  }
+
+  private func subhead(_ text: String) -> some View {
+    Text(text)
+      .font(.system(size: 11, weight: .medium, design: .rounded))
+      .foregroundStyle(secondary)
+      .accessibilityAddTraits(.isHeader)
+  }
+
+  private func detailText(_ text: String) -> some View {
+    Text(text)
+      .font(.system(size: 11))
+      .foregroundStyle(secondary)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+
+  /// A small on/off tile (the 2- and 3-up rows): its name, then a mini switch.
+  private func optionPill(_ title: String, _ value: Binding<Bool>, label: String? = nil,
+                          help: String) -> some View {
+    HStack(spacing: 4) {
+      Text(title)
+        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .lineLimit(1)
+        .minimumScaleFactor(0.85)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { value.wrappedValue.toggle() }
+        .accessibilityHidden(true)
+      Toggle(label ?? title, isOn: value)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .controlSize(.mini)
     }
+    .padding(.leading, 8)
+    .padding(.trailing, 6)
+    .frame(maxWidth: .infinity)
+    .frame(height: 28)
+    .background(RoundedRectangle(cornerRadius: BentoRadius.inner, style: .continuous)
+      .fill(ink.opacity(value.wrappedValue ? 0.09 : 0.05)))
+    .help(help)
   }
 
   /// A background is shown as its colourway, crisp and at full strength; on
@@ -616,7 +599,8 @@ struct AppearancePanelView: View {
     let ink = chrome?.ink ?? (scheme == .dark ? Color.white : Color.black)
     let accent = chrome?.accent ?? Color.accentColor
     let inset: CGFloat = glass ? 3 : 0
-    let swatchShape = RoundedRectangle(cornerRadius: BentoRadius.tile - inset, style: .continuous)
+    let radius = BentoRadius.inner + 2
+    let swatchShape = RoundedRectangle(cornerRadius: radius - inset, style: .continuous)
     let swatch = BackgroundSwatch(style: style)
       .environment(\.colorScheme, style == .artwork ? scheme
         : (PopupChromePalette.fixed(style, dark: scheme == .dark).artwork.dark ? .dark : .light))
@@ -629,14 +613,14 @@ struct AppearancePanelView: View {
         Group {
           if glass {
             swatch.padding(inset)
-              .modifier(AppGlassSurface(radius: BentoRadius.tile, interactive: !reduceMotion, selected: selected))
+              .modifier(AppGlassSurface(radius: radius, interactive: !reduceMotion, selected: selected))
           } else {
             swatch
           }
         }
         .overlay {
           if selected {
-            RoundedRectangle(cornerRadius: BentoRadius.tile + 2, style: .continuous)
+            RoundedRectangle(cornerRadius: radius + 2, style: .continuous)
               .stroke(accent, lineWidth: strong ? 2.5 : 2)
               .padding(-2)
           }
@@ -654,7 +638,7 @@ struct AppearancePanelView: View {
         .accessibilityHidden(true)
         Text(style.title)
           .font(.system(size: 11, weight: .semibold))
-          .foregroundStyle(strong ? ink : (chrome?.secondary ?? Color.secondary))
+          .foregroundStyle(strong ? ink : secondary)
           .lineLimit(1)
           .minimumScaleFactor(0.8)
           .frame(maxWidth: .infinity)
@@ -669,7 +653,9 @@ struct AppearancePanelView: View {
     .accessibilityAddTraits(selected ? [.isSelected] : [])
   }
 
-  private func choice<Preview: View>(_ title: String, selected: Bool, labelLines: Int = 2,
+  /// A choice card: a frozen preview over a one-line name, ringed in the
+  /// theme's accent while in use. Its corner nests inside the bento's.
+  private func choice<Preview: View>(_ title: String, selected: Bool, help: String? = nil,
                                      action: @escaping () -> Void,
                                      @ViewBuilder preview: () -> Preview) -> some View {
     let ink = chrome?.ink ?? (scheme == .dark ? Color.white : Color.black)
@@ -679,7 +665,8 @@ struct AppearancePanelView: View {
       if #available(macOS 26, *) { return glassEnabled && !strong }
       return false
     }()
-    let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+    let radius = BentoRadius.inner + 2
+    let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
     return Button(action: action) {
       VStack(spacing: 4) {
         preview()
@@ -687,19 +674,18 @@ struct AppearancePanelView: View {
           .accessibilityHidden(true)
         Text(title)
           .font(.system(size: 11, weight: .medium))
-          .multilineTextAlignment(.center)
-          .lineLimit(labelLines)
-          .fixedSize(horizontal: false, vertical: true)
-          .frame(minHeight: labelLines == 1 ? 13 : 26, alignment: .top)
+          .lineLimit(1)
+          .minimumScaleFactor(0.85)
+          .frame(height: 13)
           .frame(maxWidth: .infinity)
       }
       .padding(6)
       .foregroundStyle(ink)
-      .modifier(AppGlassSurface(radius: 10, selected: selected && glass))
+      .modifier(AppGlassSurface(radius: radius, selected: selected && glass))
       .overlay(shape.strokeBorder(ink.opacity(0.08), lineWidth: 0.5))
       .overlay {
         if selected {
-          RoundedRectangle(cornerRadius: 12, style: .continuous)
+          RoundedRectangle(cornerRadius: radius + 2, style: .continuous)
             .stroke(accent, lineWidth: strong ? 2.5 : 2)
             .padding(-2)
         }
@@ -722,7 +708,7 @@ struct AppearancePanelView: View {
     .accessibilityLabel(title)
     .accessibilityValue(selected ? "Selected" : "Not selected")
     .accessibilityAddTraits(selected ? [.isSelected] : [])
-    .help(title)
+    .help(help ?? title)
   }
 
   private func previewSurface<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -835,5 +821,83 @@ private struct AppearanceRecordPreview: View {
 private struct AppearanceChoicePressStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     configuration.label.opacity(configuration.isPressed ? 0.72 : 1)
+  }
+}
+
+/// The app's own segmented choice (the Bass tile's Off · Distort · Punch):
+/// the chosen one is the accent chip, hairlines part the others. `tile`
+/// sets it on a header tile's surface, the same height and corner as one.
+private struct AppearanceSegments<T: Hashable>: View {
+  let title: String
+  let options: [T]
+  @Binding var selection: T
+  let label: (T) -> String
+  var height: CGFloat = 24
+  var fontSize: CGFloat = 11
+  var tile = false
+  @Environment(\.popupChrome) private var chrome
+  @Environment(\.colorSchemeContrast) private var contrast
+
+  var body: some View {
+    let ink = chrome?.ink ?? Color.primary
+    let hc = contrast == .increased
+    let track = tile
+      ? AnyShapeStyle(ChromeSurfaceStyle())
+      : AnyShapeStyle(ink.opacity(0.06))
+    HStack(spacing: 0) {
+      ForEach(Array(options.enumerated()), id: \.offset) { i, option in
+        let sel = option == selection
+        if i > 0 {
+          Rectangle()
+            .fill(ink.opacity(hc ? 0.4 : 0.14))
+            .frame(width: hc ? 1 : 0.5, height: 10)
+            .opacity(sel || options[i - 1] == selection ? 0 : 1)
+        }
+        Button { if !sel { selection = option } } label: {
+          Text(label(option))
+            .font(.system(size: fontSize, weight: sel ? .semibold : .medium, design: .rounded))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .foregroundStyle(sel ? (chrome?.surface ?? Color.white) : ink.opacity(0.9))
+            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(BassSegmentStyle(selected: sel, active: true))
+        .accessibilityElement()
+        .accessibilityLabel(label(option))
+        .accessibilityAddTraits(sel ? [.isButton, .isSelected] : .isButton)
+      }
+    }
+    .padding(tile ? 3 : 0)
+    .frame(height: height)
+    .background(RoundedRectangle(cornerRadius: tile ? BentoRadius.inner + 4 : BentoRadius.inner, style: .continuous)
+      .fill(track))
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(title)
+  }
+}
+
+/// The settings Appearance changes, compared to tell whether the look moved
+/// since the panel opened (Done's nudge). Not saved.
+private struct AppearanceSnapshot: Equatable {
+  let layout: PlayerArtworkLayout, nowPlayingSize: NowPlayingSize
+  let artworkStyle: ArtworkStyle, effect: ArtworkEffect, foil: Bool, perspective: Bool, mono: Bool
+  let vinyl: VinylMaterial, record: PeekRecord, disc: DiscMaterial
+  let background: BackgroundStyle, bleed: Bool, live: Bool, room: Double
+  let eqVisual: EQVisual, heatBehind: Bool, line: EQLineStyle
+  let speed: SpectrumSpeed, hold: PeakHold, range: SpectrumRange, slope: SpectrumSlope,
+      resolution: SpectrumResolution
+
+  init(_ s: Settings) {
+    layout = s.playerArtworkLayout; nowPlayingSize = s.nowPlayingSize
+    artworkStyle = s.artworkStyle; effect = s.artworkEffect; foil = s.artworkFoil
+    perspective = s.artworkPerspective; mono = s.monoStyle
+    vinyl = s.vinylMaterial; record = s.peekRecord; disc = s.discMaterial
+    background = s.backgroundStyle; bleed = s.artworkBackgroundBleed
+    live = s.artworkBackgroundLive; room = s.breathingRoom
+    eqVisual = s.eqVisual; heatBehind = s.eqHeatBehind; line = s.eqLineStyle
+    speed = s.spectrumSpeed; hold = s.spectrumPeakHold; range = s.spectrumRange
+    slope = s.spectrumSlope; resolution = s.spectrumResolution
   }
 }

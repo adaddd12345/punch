@@ -17,14 +17,10 @@ struct LiveChannelsButton: View {
       withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expanded.toggle() }
     } label: {
       HStack(spacing: 4) {
-        if iconOnly {
-          // The footer: the icon's face, blinking; full colour while something plays.
-          FaceDot(live: n > 0)
-        } else {
-          Circle()
-            .fill(n > 0 ? MeterModel.zones[0].color : Color.secondary.opacity(0.45))
-            .frame(width: 6, height: 6)
-        }
+        // The face lives once, on the Appearance button; Live keeps its dot.
+        Circle()
+          .fill(n > 0 ? MeterModel.zones[0].color : Color.secondary.opacity(0.45))
+          .frame(width: 6, height: 6)
         if !iconOnly {
         Text(labels == .icons ? (n > 0 ? "\(n)" : "") : (n > 0 ? "\(n) Live" : "Live"))
           .font(.system(size: 10, weight: .bold, design: .rounded))
