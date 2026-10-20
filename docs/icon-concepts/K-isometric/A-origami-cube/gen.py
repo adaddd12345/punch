@@ -60,7 +60,9 @@ MODEL3 = dict(
 # smooth, and the frame is centred from the body + shadow bounds.
 # =====================================================================
 MODEL4 = dict(
-    camera=dict(yaw=45.0, pitch=math.degrees(math.atan(1 / math.sqrt(2)))),   # true isometric
+    # The icon's angle, picked in viewer.py: isometric turned 20 deg toward the
+    # woofer and tilted 1.5 deg flatter (still orthographic, one camera).
+    camera=dict(yaw=45.0 - 20.0, pitch=math.degrees(math.atan(1 / math.sqrt(2))) - 1.5),
     light=dict(dir=(-0.35, 0.45, 0.82), ambient=0.24, diffuse=0.84),          # one sun + ambient
     body=dict(w=1.0, d=1.0, h=0.94, bevel=0.07),
     lid=dict(inset=0.18, height=0.07, bevel=0.045, ridge=0.025),               # tent fold: back -> front corner
@@ -726,11 +728,15 @@ def build_v3():
     print("v3 view vector", tuple(round(x, 4) for x in V))
     print("wrote", out_path)
 
-def build_v4(palette=None, out_path=None, report=True):
+def build_v4(palette=None, out_path=None, report=True, camera=None):
     """Render MODEL4. `palette` (a PALETTES4 entry) swaps only materials and the
     field; geometry, camera and light are untouched. Returns the SVG lines and
-    the index of each part, so the release layers can be cut from one render."""
+    the index of each part, so the release layers can be cut from one render.
+    `camera` (yaw, pitch in degrees) views the same model from another angle
+    (viewer.py); the release layers are only cut at the isometric default."""
     M = dict(MODEL4, **(palette or {}))
+    if camera is not None:
+        M["camera"] = dict(yaw=float(camera[0]), pitch=float(camera[1]))
     out_path = out_path or Path(__file__).with_name("icon4.svg")
     marks = {}
     B, LD, HO, WF, FA, FR = M["body"], M["lid"], M["holes"], M["woofer"], M["face"], M["frame"]
@@ -903,7 +909,8 @@ def build_v4(palette=None, out_path=None, report=True):
         n = newell(q)
         if n[1] < 0:
             n = tuple(-x for x in n)
-        assert v_dot(n, V) > 0, "cone too steep for this camera"
+        if v_dot(n, V) <= 0:                                   # turned away: hidden behind the rim (viewer angles)
+            continue
         add(facet(q, colour("cone", n)))
     plate = circle3(lambda a, b: wp(a, b, dw + dc), Rp, seg)
     add(facet(plate, colour("cone", face_n)))
@@ -977,7 +984,7 @@ def build_v4(palette=None, out_path=None, report=True):
     # layers must be stackable in any order: the woofer and the lid never overlap on screen
     lid_px = [cam(p) for _, f in lid for p in f]
     open_px = [cam(p) for p in opening]
-    assert max(q[1] for q in lid_px) < min(q[1] for q in open_px) or \
+    assert camera is not None or max(q[1] for q in lid_px) < min(q[1] for q in open_px) or \
         max(q[0] for q in open_px) < min(q[0] for q in lid_px), "woofer and lid overlap"
     if not report:
         return o, marks

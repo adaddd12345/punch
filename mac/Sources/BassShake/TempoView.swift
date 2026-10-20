@@ -894,7 +894,7 @@ private struct TempoSureness: View {
   }
 }
 
-/// The hopping friend (a placeholder circle with a face for now). Each beat:
+/// The hopping friend: the app icon's woofer face (`WooferFace`). Each beat:
 /// land squash, settle, rest, a crouch, launch, a held apex, fall, landing on
 /// the next beat. Poses are picked by the beat's phase on the 12 fps clock,
 /// so they step like hand-drawn frames. The hop is an offset: it takes no room.
@@ -931,20 +931,8 @@ struct TempoMascot: View {
       Ellipse()
         .fill(Color.black.opacity(0.16 - 0.08 * Double(pose.lift / 14)))
         .frame(width: 22 - 8 * pose.lift / 14, height: 4)
-      ZStack {
-        Circle().fill(fill)
-        HStack(spacing: 6) {
-          Circle().fill(.white).frame(width: 3.5, height: 3.5)
-          Circle().fill(.white).frame(width: 3.5, height: 3.5)
-        }
-        .offset(y: -1.5)
-        HStack(spacing: 12) {
-          Capsule().fill(cheek).frame(width: 3.5, height: 2.2)
-          Capsule().fill(cheek).frame(width: 3.5, height: 2.2)
-        }
-        .offset(y: 3)
-      }
-      .frame(width: size, height: size)
+      // The icon's exact colours: `body` and `cheek` are kept for the init's sake only.
+      WooferFace(ring: true, blink: currentBlink, size: size)
       .scaleEffect(x: pose.x, y: pose.y, anchor: .bottom)
       .offset(y: -pose.lift - 2)
     }
@@ -969,6 +957,26 @@ struct TempoMascot: View {
     }
     let p = Self.poses.last(where: { $0.0 <= phase }) ?? Self.poses[0]
     return (p.1, p.2, p.3)
+  }
+
+  /// A blink after landing on beat 3 of every 8 (every 16 under Power Saver), skipped
+  /// when that is a downbeat: half shut, shut, half open, one 12 fps frame each, only
+  /// in the hop's ground phases (settle to crouch), so never mid-hop; a short gap
+  /// drops the first frame, then the last.
+  private var currentBlink: CGFloat {
+    guard let position, let period, period > 0 else { return 0 }
+    var landing = position.beat, phase = position.phase, hop = period
+    if period < 0.4 {   // a hop every other beat (as in currentPose)
+      let odd = ((position.beat % 2) + 2) % 2 == 1
+      landing -= odd ? 1 : 0; phase = (Double(odd ? 1 : 0) + phase) / 2; hop = 2 * period
+    }
+    let every = PowerSaver.isOn ? 16 : 8, n = max(1, beats)
+    guard ((landing % every) + every) % every == 2, ((landing % n) + n) % n != 0 else { return 0 }
+    let t = (phase - 0.12) * hop, window = (0.50 - 0.12) * hop
+    guard t >= 0, t < window else { return 0 }
+    let frames: [CGFloat] = window >= 0.25 ? [0.6, 1, 0.4] : [1, 0.4]
+    let f = Int(t * 12)
+    return f < frames.count ? frames[f] : 0
   }
 }
 

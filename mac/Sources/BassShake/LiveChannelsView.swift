@@ -17,9 +17,14 @@ struct LiveChannelsButton: View {
       withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expanded.toggle() }
     } label: {
       HStack(spacing: 4) {
-        Circle()
-          .fill(n > 0 ? MeterModel.zones[0].color : Color.secondary.opacity(0.45))
-          .frame(width: 6, height: 6)
+        if iconOnly {
+          // The footer: the icon's face, blinking; full colour while something plays.
+          FaceDot(live: n > 0)
+        } else {
+          Circle()
+            .fill(n > 0 ? MeterModel.zones[0].color : Color.secondary.opacity(0.45))
+            .frame(width: 6, height: 6)
+        }
         if !iconOnly {
         Text(labels == .icons ? (n > 0 ? "\(n)" : "") : (n > 0 ? "\(n) Live" : "Live"))
           .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -54,6 +59,19 @@ struct LiveChannelsButton: View {
   private func hint(_ n: Int, _ mutedCount: Int) -> PointerHint {
     PointerHint("Apps Playing", value: mutedCount > 0 ? "\(mutedCount) muted" : nil,
                 does: "Mute any one app, or let it skip The Bass Shaker.")
+  }
+}
+
+/// Bento's footer, where Live is a hero button: the same face at the far left,
+/// decorative, reflecting whether anything plays.
+struct LiveFaceDot: View {
+  @ObservedObject var model: LiveChannels
+  @ObservedObject private var beats = BeatPlayer.shared
+
+  var body: some View {
+    FaceDot(live: model.liveCount + (beats.playing ? 1 : 0) > 0)
+      .footerChip(iconOnly: true)
+      .accessibilityHidden(true)
   }
 }
 

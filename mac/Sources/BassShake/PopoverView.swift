@@ -1142,6 +1142,7 @@ struct PopoverView: View {
       if !controller.settings.bento || size == .mini {
         LiveChannelsButton(model: controller.live, expanded: $showLive, iconOnly: true)
       }
+      if controller.settings.bento && size != .mini { LiveFaceDot(model: controller.live) }
       Button {
         setAppearance(false)
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; tempoPopups.close(); showDJ = true }
