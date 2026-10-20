@@ -15,6 +15,9 @@ struct WooferFace: View, Animatable {
   var blink: CGFloat = 0
   /// The side of the square frame (nil: fill the proposed square).
   var size: CGFloat? = nil
+  /// Recolour the woofer (ring, cone, plate) from a theme colour, keeping the
+  /// cone's light; the face itself (eyes, glints, cheeks, mouth) never changes.
+  var tint: Color? = nil
 
   var animatableData: CGFloat {
     get { blink }
@@ -22,14 +25,14 @@ struct WooferFace: View, Animatable {
   }
 
   var body: some View {
-    let ring = ring, blink = min(1, max(0, blink))
+    let ring = ring, blink = min(1, max(0, blink)), tint = tint
     Canvas { ctx, s in
       let half = min(s.width, s.height) / 2
       // The drawn disc's radius is R with the ring, 0.86 R without it.
       let r = half / (ring ? 1 : M.cone)
       ctx.translateBy(x: s.width / 2, y: s.height / 2)
       ctx.scaleBy(x: r, y: r)
-      Self.draw(&ctx, ring: ring, blink: blink)
+      Self.draw(&ctx, ring: ring, blink: blink, tint: tint)
     }
     .frame(width: size, height: size)
     .aspectRatio(1, contentMode: .fit)
@@ -85,6 +88,24 @@ struct WooferFace: View, Animatable {
     return Gradient(stops: stops)
   }()
 
+  /// The same light as `coneShading`, as a black/white wash over a tinted cone:
+  /// lit sides lighten, the far side darkens, around the plate's flat tone.
+  private static let coneWash: Gradient = {
+    let l = (x: -0.35, y: 0.45, z: 0.82)
+    let lm = (l.x * l.x + l.y * l.y + l.z * l.z).squareRoot()
+    let tilt = atan2(0.03, 0.35 * 0.16)
+    let n = 48
+    let stops = (0...n).map { i -> Gradient.Stop in
+      let a = 2 * Double.pi * Double(i) / Double(n)
+      let (u, v) = (cos(a), sin(a))
+      let nx = -u * sin(tilt), ny = cos(tilt), nz = v * sin(tilt)
+      let t = min(1, max(0, 0.24 + 0.84 * max(0, (nx * l.x + ny * l.y + nz * l.z) / lm)))
+      let k = (t - 0.62) * 0.9                       // the plate sits at about t = 0.62
+      return .init(color: k >= 0 ? Color.white.opacity(k) : Color.black.opacity(-k), location: Double(i) / Double(n))
+    }
+    return Gradient(stops: stops)
+  }()
+
   /// Both cheeks' "~": one full sine period each, starting upward (gen.py's sampling).
   private static let cheeks: Path = {
     var p = Path()
@@ -129,10 +150,20 @@ struct WooferFace: View, Animatable {
   }
 
   /// Draws in R units around the centre.
-  private static func draw(_ ctx: inout GraphicsContext, ring: Bool, blink: CGFloat) {
-    if ring { ctx.fill(disc(1), with: .color(C.ring)) }
-    ctx.fill(disc(M.cone), with: .conicGradient(coneShading, center: .zero, angle: .zero))
-    ctx.fill(disc(M.plate), with: .color(C.plate))
+  private static func draw(_ ctx: inout GraphicsContext, ring: Bool, blink: CGFloat, tint: Color? = nil) {
+    if let tint {
+      if ring {
+        ctx.fill(disc(1), with: .color(tint))
+        ctx.fill(disc(1), with: .color(.black.opacity(0.45)))
+      }
+      ctx.fill(disc(M.cone), with: .color(tint))
+      ctx.fill(disc(M.cone), with: .conicGradient(coneWash, center: .zero, angle: .zero))
+      ctx.fill(disc(M.plate), with: .color(tint))
+    } else {
+      if ring { ctx.fill(disc(1), with: .color(C.ring)) }
+      ctx.fill(disc(M.cone), with: .conicGradient(coneShading, center: .zero, angle: .zero))
+      ctx.fill(disc(M.plate), with: .color(C.plate))
+    }
 
     // Eyes: the lid closes toward the lower lash line, into a capsule.
     let ry = M.eyeRY + (M.lid - M.eyeRY) * blink
@@ -171,12 +202,14 @@ private func hex(_ v: UInt32) -> Color {
 struct FaceDot: View {
   let live: Bool
   var size: CGFloat = 14
+  /// The popup's theme colour for the woofer (nil: the icon's own blue).
+  var tint: Color? = nil
   @State private var blink: CGFloat = 0
   @Environment(\.drawPaused) private var drawPaused
   @Environment(\.powerSaver) private var powerSaver
 
   var body: some View {
-    WooferFace(ring: false, blink: blink, size: size)
+    WooferFace(ring: false, blink: blink, size: size, tint: tint)
       .saturation(live ? 1 : 0)
       .opacity(live ? 1 : 0.5)
       .animation(.easeInOut(duration: 0.3), value: live)

@@ -1145,10 +1145,15 @@ struct PopoverView: View {
   /// Status and modes: what's playing (Live), DJ, Beats, and Latency when it's on.
   private var statusGroup: some View {
     FooterGroup {
+      // The metronome leads the footer (bottom left).
+      TempoFooterButton(controller: controller, expanded: tempoOpen) {
+        setAppearance(false)
+        if !tempoPopups.open { showLive = false; showDJ = false; showBeats = false }
+        tempoPopups.toggleAll()
+      }
       if !controller.settings.bento || size == .mini {
         LiveChannelsButton(model: controller.live, expanded: $showLive, iconOnly: true)
       }
-      if controller.settings.bento && size != .mini { LiveFaceDot(model: controller.live) }
       Button {
         setAppearance(false)
         if showDJ { showDJ = false } else { showLive = false; showBeats = false; tempoPopups.close(); showDJ = true }
@@ -1184,11 +1189,6 @@ struct PopoverView: View {
       .buttonStyle(FooterButtonStyle(chip: true))
       .accessibilityLabel("Beats")
       .help("Beats: play lofi beat drops, mute parts and change the tempo")
-      TempoFooterButton(controller: controller, expanded: tempoOpen) {
-        setAppearance(false)
-        if !tempoPopups.open { showLive = false; showDJ = false; showBeats = false }
-        tempoPopups.toggleAll()
-      }
       LatencyChip(lab: latencyLab, iconOnly: true) { withAnimation { showLatencyLab = true } }
     }
   }
@@ -1213,9 +1213,8 @@ struct PopoverView: View {
   private var toolsGroup: some View {
     FooterGroup {
       Button { setAppearance(!showAppearance) } label: {
-        Image(systemName: "paintpalette")
-          .font(.system(size: 13, weight: .regular))
-          .symbolRenderingMode(.hierarchical)
+        // The app's face, in the popup's own colour, blinking on its steady loop.
+        AppearanceFace()
           .frame(width: 16, height: 16)
           .footerChip(iconOnly: true)
           .modifier(FooterModePlate(active: false, expanded: showAppearance))
@@ -1671,5 +1670,14 @@ private struct AppearanceContentPause: ViewModifier {
   @Environment(\.drawPaused) private var inherited
   func body(content: Content) -> some View {
     content.environment(\.drawPaused, inherited || paused)
+  }
+}
+
+/// The Appearance button's icon: the woofer face (no lip) at full strength,
+/// recoloured from the popup's background accent.
+private struct AppearanceFace: View {
+  @Environment(\.popupChrome) private var chrome
+  var body: some View {
+    FaceDot(live: true, size: 16, tint: chrome?.accent ?? Color.accentColor)
   }
 }

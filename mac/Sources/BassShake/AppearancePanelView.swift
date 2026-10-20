@@ -49,19 +49,13 @@ struct AppearancePanelView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
+      // Two small tiles: back on the left, done on the right. Changes apply as
+      // you make them, so both return to the sound controls with them kept.
       HStack(spacing: 8) {
-        Button(action: close) {
-          Image(systemName: "chevron.left")
-            .font(.system(size: 13, weight: .semibold))
-            .frame(width: 28, height: 28)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Back to sound controls")
-        .accessibilityLabel("Back to sound controls")
-        .keyboardShortcut(.cancelAction)
-        Text("Appearance").font(.system(size: 14, weight: .bold, design: .rounded))
+        headerTile("chevron.left", label: "Back to sound controls", action: close)
+          .keyboardShortcut(.cancelAction)
         Spacer()
+        headerTile("checkmark", label: "Done", action: close)
       }
       ScrollViewReader { scroll in
         GeometryReader { viewport in
@@ -577,6 +571,21 @@ struct AppearancePanelView: View {
   private func bind<T>(_ key: WritableKeyPath<Settings, T>) -> Binding<T> {
     Binding(get: { controller.settings[keyPath: key] },
             set: { controller.settings[keyPath: key] = $0 })
+  }
+
+  /// A header button as a small bento tile: one glyph on the tiles' surface.
+  private func headerTile(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Image(systemName: symbol)
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(chrome?.ink ?? Color.primary)
+        .frame(width: 32, height: 32)
+        .background(RoundedRectangle(cornerRadius: BentoRadius.inner + 4, style: .continuous).fill(.chromeSurface))
+        .contentShape(RoundedRectangle(cornerRadius: BentoRadius.inner + 4, style: .continuous))
+    }
+    .buttonStyle(.plain)
+    .help(label)
+    .accessibilityLabel(label)
   }
 
   private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {

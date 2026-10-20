@@ -51,7 +51,10 @@ jobs:
           ARCHS: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/claude/macos-audio-routing-research-xpbcuk') && 'arm64 x86_64' || 'native' }}
         run: |
           mkdir -p build
-          ( mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "${{ github.run_number }}"; echo $? > build/bundle.exit ) \
+          # The build number (what Sparkle compares) runs 10 ahead of the run
+          # number: local test installs once took 243-246, and an update must
+          # always count as newer than those.
+          ( mac/scripts/bundle.sh "0.1.0-beta.${{ github.run_number }}" "$(( ${{ github.run_number }} + 10 ))"; echo $? > build/bundle.exit ) \
             > build/bundle.log 2>&1 &
           echo "Building ($ARCHS) in the background"
       - name: DSP core tests
@@ -176,7 +179,7 @@ jobs:
           V="0.1.0-beta.${{ github.run_number }}"
           PUB="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' mac/Resources/Info.plist)"
           build/venv/bin/python mac/scripts/sparkle_appcast.py "build/BassShake-$V.zip" \
-            --version "${{ github.run_number }}" --short "$V" \
+            --version "$(( ${{ github.run_number }} + 10 ))" --short "$V" \
             --url "https://github.com/${{ github.repository }}/releases/download/v$V/BassShake-$V.zip" \
             --notes "$(printf '%s\n' "$NOTES" | head -n 1)" \
             --expect-public-key "$PUB" --previous build/appcast-previous.xml --keep 4 \

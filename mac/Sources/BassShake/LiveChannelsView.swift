@@ -62,19 +62,6 @@ struct LiveChannelsButton: View {
   }
 }
 
-/// Bento's footer, where Live is a hero button: the same face at the far left,
-/// decorative, reflecting whether anything plays.
-struct LiveFaceDot: View {
-  @ObservedObject var model: LiveChannels
-  @ObservedObject private var beats = BeatPlayer.shared
-
-  var body: some View {
-    FaceDot(live: model.liveCount + (beats.playing ? 1 : 0) > 0)
-      .footerChip(iconOnly: true)
-      .accessibilityHidden(true)
-  }
-}
-
 /// The expanded list: every app outputting audio, where it plays, a live
 /// level and a one-click mute. Metering runs only while this is on screen.
 struct LiveChannelsPanel: View {
